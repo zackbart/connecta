@@ -927,9 +927,14 @@ scalar, cursor claim, encoding Connecta produces and structural field;
 provider lanes and bounded reads call it too. Its matching steps run nowhere
 else. Only fixed
 words are kept whatever was sent: envelope keys, MCP and JSON-RPC member names
-and tag values, booleans under outcome names, and on an error Connecta's code
-constructed, its classification code and class name; a number or string under
-any name is matched like any other. Exact relay states and connect links
+and tag values, booleans under outcome names, and on an error its
+classification code and a name its class is registered with in
+`redaction-identity.ts` (the built-in errors, `DOMException`, and Connecta's
+and the pinned MCP SDK's own classes, each with literals beside the class); a
+number or string under any name is matched like any other, and any other error
+name is withheld whole as `[redacted]` when anything in it matches, keeping the
+copy's class. An accessor an error's chain defines is held on its copy under its
+checked name. Exact relay states and connect links
 Connecta mints and authenticates are kept whole: they hold only sealed state or
 Connecta's own facts. Serialized JSON whose keys, syntax and leaves together
 hold a run of a form that no single leaf holds is withheld whole.

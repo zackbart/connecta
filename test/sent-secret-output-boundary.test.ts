@@ -12,7 +12,11 @@ import {
   sentSecretsForRequest,
   SentSecrets,
 } from "../src/sent-secrets.js";
+import { ProtocolError, SdkError, SdkErrorCode, UnauthorizedError } from "@modelcontextprotocol/client";
+import { CallAdmissionError } from "../src/call-admission.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { ExecutorExecutionError } from "../src/executor-admission.js";
+import "../src/connectors/remote-mcp.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import {
@@ -66,6 +70,18 @@ function shown(value: unknown): string {
 function encoded(text: string, url = false): string {
   const standard = btoa(Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join(""));
   return url ? standard.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : standard;
+}
+
+/** Every own property name, enumerable or not, and every string under one, read from
+ * descriptors, never invoking an accessor. */
+function everyText(value: unknown, seen = new Set<object>()): string[] {
+  if (typeof value === "string") return [value];
+  if (value === null || typeof value !== "object" || seen.has(value)) return [];
+  seen.add(value);
+  return Object.getOwnPropertyNames(value).flatMap((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
+    return [name, ...("value" in descriptor ? everyText(descriptor.value, seen) : [])];
+  });
 }
 
 afterEach(() => {
@@ -1672,6 +1688,29 @@ describe("review round 5", () => {
       (depth) => Object.assign(new Echo(pick(strings)), { cause: make(depth), callback: () => token }),
       (depth) => Object.assign(new Error(pick(strings)), { code: pick(strings), data: make(depth) }),
       (depth) => JSON.stringify({ nested: pick(strings), b: depth }),
+      // A class of any built-in base whose constructor and instances carry a chosen name.
+      (depth) => {
+        const name = pick(strings);
+        const Base = pick([Error, TypeError, RangeError, DOMException]);
+        class Named extends Base {}
+        Object.defineProperty(Named, "name", { value: pick([name, pick(strings)]) });
+        const error = new Named(pick(strings));
+        return Object.defineProperty(Object.assign(error, { cause: make(depth) }), "name", {
+          value: pick([name, pick(strings), Base.name]),
+          configurable: true,
+          writable: true,
+        });
+      },
+      // Accessors on the prototype, under chosen names and for the name itself.
+      (depth) => {
+        const key = pick(strings) || "k";
+        const [answer, name] = [make(depth), pick(strings)];
+        class Getters extends Error {}
+        Object.defineProperty(Getters.prototype, key, { get: () => answer, configurable: true });
+        if (next() < 0.5) Object.defineProperty(Getters.prototype, "name", { get: () => name, configurable: true });
+        else Object.defineProperty(Getters.prototype, "name", { value: name, configurable: true });
+        return new Getters(pick(strings));
+      },
     ];
     function make(depth: number): unknown {
       return depth > 3 || next() < 0.45 ? pick(leaves)() : pick(containers)(depth + 1);
@@ -1683,11 +1722,15 @@ describe("review round 5", () => {
       secrets.arguments({ value }, schema);
       for (const out of [secrets.redact(input), redactAgentOutput(secrets, input)]) {
         expect(nonJson(out), `round ${round}`).toEqual([]);
-        const text = wire(out);
-        expect(text, `round ${round}`).not.toContain(token);
-        expect(leakedRun(text, token), `round ${round}`).toBeUndefined();
+        // What JSON shows, and every field name and string an in-process read can reach.
+        for (const text of [wire(out), everyText(out).join("\n")]) {
+          expect(text, `round ${round}`).not.toContain(token);
+          expect(leakedRun(text, token), `round ${round}`).toBeUndefined();
+        }
       }
-      expect(holdsValue(wire(secrets.redact(input)), value), `round ${round}`).toBe(false);
+      const payload = secrets.redact(input);
+      expect(holdsValue(wire(payload), value), `round ${round}`).toBe(false);
+      expect(holdsValue(everyText(payload).join("\n"), value), `round ${round}`).toBe(false);
     }
   });
 
@@ -1706,15 +1749,17 @@ describe("review round 5", () => {
     const fragments = Object.getPrototypeOf(helpers.fragments()) as Record<string, (...args: unknown[]) => unknown>;
     let [checking, tokens, checks] = [0, 0, 0];
     const outside: string[] = [];
+    // Every string the checker was handed, so a path that skips it entirely is found too.
+    const handed = new Set<string>();
     const around = (
       target: Record<string, (...args: unknown[]) => unknown>,
       name: string,
-      enter: () => void,
+      enter: (args: unknown[]) => void,
       leave: () => void,
     ) => {
       const original = target[name]!;
       vi.spyOn(target, name).mockImplementation(function (this: unknown, ...args: unknown[]) {
-        enter();
+        enter(args);
         try {
           return original.apply(this, args);
         } finally {
@@ -1725,7 +1770,11 @@ describe("review round 5", () => {
     around(
       proto,
       "checked",
-      () => (checking++, checks++),
+      ([parts]) => {
+        checking++;
+        checks++;
+        for (const part of parts as string[]) handed.add(part);
+      },
       () => checking--,
     );
     around(
@@ -1753,8 +1802,15 @@ describe("review round 5", () => {
     guard(matcher, "openAt");
     guard(fragments, "scan", () => checking > 0 || tokens > 0);
     const echo = encoded(`x${TOKEN}z`);
+    class Hostile extends Error {
+      get [`getter ${TOKEN}`]() {
+        return `answer ${TOKEN}`;
+      }
+    }
+    Object.defineProperty(Hostile, "name", { value: `class ${TOKEN}` });
     const value = {
       [echo]: `echo ${TOKEN}`,
+      hostile: Object.assign(new Hostile(`message ${TOKEN}`), { name: `class ${TOKEN}` }),
       keyed: { "eHBpbjQyeg==": true },
       nested: JSON.stringify({ v: echo, n: 1 }),
       declared: { format: "base64", content: encodeURIComponent(btoa("xpin42z")) },
@@ -1781,6 +1837,15 @@ describe("review round 5", () => {
     secrets.redactCredentials(value);
     expect(outside).toEqual([]);
     expect(checks).toBeGreaterThan(10);
+    for (const text of [
+      echo,
+      `echo ${TOKEN}`,
+      `class ${TOKEN}`,
+      `getter ${TOKEN}`,
+      `answer ${TOKEN}`,
+      `message ${TOKEN}`,
+    ])
+      expect(handed.has(text), text).toBe(true);
   });
 
   it("INV-5: structural fields are refused through the same lattice: base64 of a sent value in a URL or host", () => {
@@ -1792,6 +1857,145 @@ describe("review round 5", () => {
     expect(secrets.containsUrl(`https://example.com/cb?s=${echo}`)).toBe(true);
     expect(secrets.contains(`${TOKEN.slice(0, K).toLowerCase()}.example.com`, true)).toBe(true);
     expect(secrets.contains("https://example.com/cb?s=public-state")).toBe(false);
+  });
+});
+
+describe("review round 6", () => {
+  const credential = "Q8!wZ2?A7@vR4#";
+
+  it("INV-5: an error name its class chose dynamically is checked before JSON serialization", () => {
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    class Dynamic extends Error {}
+    Object.defineProperty(Dynamic, "name", { value: credential });
+    const out = secrets.redact(Object.assign(new Dynamic("public"), { name: credential }));
+    expect(JSON.stringify(out)).not.toContain(credential);
+    // Withheld whole as the placeholder; the copy keeps its class and its checked message.
+    expect([out.name, out.message, out instanceof Dynamic]).toEqual([MARK, "public", true]);
+    // A prototype's name, data or accessor, and one only partly a sent value, are checked too.
+    class Inherited extends Error {}
+    Object.defineProperty(Inherited.prototype, "name", { value: `x${credential}`, configurable: true });
+    class Answered extends Error {
+      override get name() {
+        return encoded(`x${credential}z`);
+      }
+    }
+    for (const error of [new Inherited("public"), new Answered("public")]) {
+      const copy = secrets.redact(error);
+      expect(copy.name).toBe(MARK);
+      expect(everyText(copy).join("\n")).not.toContain(credential);
+      expect(leakedRun(everyText(copy).join("\n"), credential)).toBeUndefined();
+    }
+  });
+
+  it("INV-5: materialized error accessor names pass through the whole lattice", () => {
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    secrets.arguments({ value: "pin42" }, schema);
+    for (const key of [credential, btoa(`x${credential}z`), btoa("xpin42z"), `echo=x+${btoa("xpin42")}`]) {
+      class Getter extends Error {}
+      Object.defineProperty(Getter.prototype, key, { get: () => "answer", configurable: true });
+      const out = secrets.redact(new Getter("public"));
+      expect(Object.hasOwn(out, key), key).toBe(false);
+      // The renamed accessor's answer is still a checked field of the copy.
+      const names = Object.getOwnPropertyNames(out);
+      expect(names.filter((name) => Object.getOwnPropertyDescriptor(out, name)!.value === "answer").length, key).toBe(
+        1,
+      );
+      expect(holdsValue(everyText(out).join("\n"), "pin42"), key).toBe(false);
+      expect(leakedRun(everyText(out).join("\n"), credential), key).toBeUndefined();
+    }
+    // Two accessors renamed alike keep the first; neither leaves its own name behind.
+    class Twice extends Error {
+      get [credential]() {
+        return "first";
+      }
+      get [`${credential}!`]() {
+        return "second";
+      }
+    }
+    const twice = secrets.redact(new Twice("public"));
+    expect(Object.getOwnPropertyNames(twice).filter((name) => name.includes(credential))).toEqual([]);
+    expect(everyText(twice).join("\n")).not.toContain(credential);
+    // An error's toJSON shadow keeps its name whatever is registered, so it still shadows.
+    const json = new SentSecrets();
+    json.arguments({ value: "JSON" }, schema);
+    class Serializing extends Error {
+      toJSON() {
+        return { echo: credential };
+      }
+    }
+    const own = Object.defineProperty(new Serializing("public"), "toJSON", {
+      value: () => ({ echo: credential }),
+      configurable: true,
+      writable: true,
+    });
+    for (const error of [new Serializing("public"), own]) {
+      const shadowed = json.redact(error);
+      expect(Object.getOwnPropertyDescriptor(shadowed, "toJSON")).toMatchObject({ value: undefined });
+      expect(JSON.stringify(shadowed)).not.toContain(credential);
+    }
+  });
+
+  it("INV-5: built-in, Connecta and MCP SDK error names are kept whatever was sent; others are checked", () => {
+    // "Error" is a short private value, so it matches inside any name that is not on the allowlist.
+    const secrets = set("Error");
+    const kept: Error[] = [
+      new Error("public"),
+      new TypeError("public"),
+      new RangeError("public"),
+      new SyntaxError("public"),
+      new ReferenceError("public"),
+      new EvalError("public"),
+      new URIError("public"),
+      new AggregateError([], "public"),
+      new DOMException("public"),
+      new DOMException("public", "AbortError"),
+      new DOMException("public", "TimeoutError"),
+      new ConnectorCallError("connector_call_failed", "public"),
+      new CallAdmissionError("concurrency", "rate_limited", "public"),
+      new ExecutorExecutionError("executor_closed", "public"),
+      new UnauthorizedError("public"),
+      new ProtocolError(-32602, "public"),
+      new SdkError(SdkErrorCode.RequestTimeout, "public"),
+      // A subclass that names nothing keeps the name its registered ancestor gives it.
+      new (class Narrow extends TypeError {})("public"),
+    ];
+    for (const error of kept) {
+      const copy = secrets.redact(error);
+      expect(copy, error.name).not.toBe(error);
+      expect([copy.name, Object.getPrototypeOf(copy)], error.name).toEqual([error.name, Object.getPrototypeOf(error)]);
+    }
+    // The same words on a class not on the allowlist, or a name its class does not give, are text.
+    class CustomError extends Error {}
+    Object.defineProperty(CustomError.prototype, "name", { value: "CustomError", configurable: true });
+    expect(secrets.redact(new CustomError("public")).name).toBe(MARK);
+    expect(secrets.redact(Object.assign(new TypeError("public"), { name: "WeirdError" })).name).toBe(MARK);
+    expect(secrets.redact(Object.assign(new Error("public"), { name: "Plain" })).name).toBe("Plain");
+    // A plain object's name is never an error name.
+    expect(secrets.redact({ name: "TypeError" }).name).toBe(`Type${MARK}`);
+  });
+
+  it("INV-5: an error whose name is withheld keeps its class and the identity facts registered beside it", () => {
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    class RoundSixHttpError extends Error {}
+    labelErrorClass(RoundSixHttpError, "RoundSixHttpError");
+    const original = attachFailureFacts(Object.assign(new RoundSixHttpError("public"), { name: credential }), {
+      httpStatus: 502,
+      origin: "https://api.example.com",
+    });
+    const copy = secrets.redact(original);
+    expect(copy).toBeInstanceOf(RoundSixHttpError);
+    expect(copy.name).toBe(MARK);
+    expect(failureRecord({}, copy)).toEqual(failureRecord({}, original));
+    expect(failureRecord({}, copy)).toMatchObject({ errorClass: "RoundSixHttpError", httpStatus: 502 });
+    // The label it registered is kept as its name.
+    expect(secrets.redact(Object.assign(new RoundSixHttpError("public"), { name: "RoundSixHttpError" })).name).toBe(
+      "RoundSixHttpError",
+    );
+    const typed = carryFailureFacts(original, new ConnectorCallError("connector_call_failed", "public"));
+    expect(failureRecord({}, secrets.redact(typed))).toMatchObject({ errorClass: "RoundSixHttpError" });
   });
 });
 

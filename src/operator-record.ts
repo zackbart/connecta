@@ -48,7 +48,7 @@
 // boundary removes credentials used by the upstream request from those answers, including
 // allowed diagnostics, tool results and nested error causes/data (INV-5).
 
-import { followRedactedCopies } from "./redaction-identity.js";
+import { followRedactedCopies, keepErrorName } from "./redaction-identity.js";
 import {
   classificationCode,
   ConnectorCallError,
@@ -210,6 +210,8 @@ export function labelErrorClass(ctor: { readonly prototype: object }, label: str
   if (!LABEL_RE.test(label)) throw new TypeError(`Invalid error class label "${label}"`);
   labels.set(ctor.prototype, label);
   labelNames.add(label);
+  // A label is a literal and the class's own name, so redaction keeps it as its instances' name.
+  keepErrorName(ctor, label);
 }
 
 for (const [ctor, label] of [

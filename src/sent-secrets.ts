@@ -3,7 +3,7 @@
 import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
-import { redactedCopyOf } from "./redaction-identity.js";
+import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
@@ -1060,12 +1060,6 @@ interface Nested {
   dirty: boolean;
 }
 
-/** The name an error's own class gives it, read without invoking an accessor. */
-function className(item: object): unknown {
-  const constructor = inherited(item, "constructor", undefined);
-  return typeof constructor === "function" ? Object.getOwnPropertyDescriptor(constructor, "name")?.value : undefined;
-}
-
 /** Spans of a decoded layer's units, in the source text. */
 function toSource(layers: readonly Layer[], unit: number, last: boolean): number {
   for (let index = layers.length - 1; index >= 0; index--) unit = above(layers[index]!, unit, last);
@@ -1826,9 +1820,10 @@ export class SentSecrets {
    * own fields included, declared binary fields and the bytes and numbers typed binary holds
    * among them; the one checker matches the joined projection, so a form split across adjacent
    * leaves is found, and only the affected piece of each leaf is written back. Keys and scalars
-   * go through the same checker alone. Fixed framing words and tags, outcome booleans, and on a
-   * Connecta error its own code and class name are kept: nothing downstream chooses them. Every
-   * other field is matched, whatever its name.
+   * go through the same checker alone. Fixed framing words and tags, outcome booleans, and on an
+   * error its classification code and a name its registered class gives it (redaction-identity's
+   * fixed allowlist) are kept: nothing downstream chooses them. Every other field is matched,
+   * whatever its name, and an error's other name is withheld whole when anything in it matches.
    *
    * What returns is what was checked, and only JSON data: strings, numbers, booleans, null,
    * plain objects and arrays, a fresh built-in Uint8Array, and error copies. A caller's container
@@ -2174,13 +2169,16 @@ export class SentSecrets {
         keys.push(name);
         visible.push(descriptor.enumerable === true);
       }
-      const renamed = keys.map((key) => (FRAMING_KEYS.has(key) ? key : check(seen.keys, key, TEXT)));
+      // A key is checked like any text; an error's toJSON shadow keeps its name, so it shadows.
+      const rename = (key: string) =>
+        FRAMING_KEYS.has(key) || (error && key === "toJSON") ? key : check(seen.keys, key, TEXT);
+      const renamed = keys.map(rename);
       if (renamed.some((name, index) => name !== keys[index])) plain = false;
       // An error's copy is of its class. Every accessor its chain defines, such as DOMException's
       // name and message or an SDK error's status, and whatever the chain answers for the names
-      // in ERROR_ACCESSORS, is read once and held as a checked field, so no later read of the
-      // copy invokes a getter. A toJSON, data or accessor, is never read: the copy shadows it, so
-      // no serializer can run. Any other copy is plain data.
+      // in ERROR_ACCESSORS, is read once and held as a checked field under its checked name, so
+      // no later read of the copy invokes a getter. A toJSON, data or accessor, is never read: the
+      // copy shadows it, so no serializer can run. Any other copy is plain data.
       let extras: [string, unknown][] | undefined;
       if (error && prototype) {
         for (const name of [...ERROR_ACCESSORS, ...accessorsOf(prototype)]) {
@@ -2206,14 +2204,13 @@ export class SentSecrets {
             slot,
           };
       const out = own.target as Holder;
-      const kind = error ? className(item) : undefined;
       const field = (name: string) => values[keys.indexOf(name)];
       const count = keys.length + (extras?.length ?? 0);
       for (let index = 0; index < count; index++) {
         const extra = index >= keys.length ? extras![index - keys.length]! : undefined;
         const key = extra ? extra[0] : keys[index]!;
         const value = extra ? extra[1] : values[index];
-        const name = extra ? key : renamed[index]!;
+        const name = extra ? rename(key) : renamed[index]!;
         // Two keys renamed alike keep the first; the second's leaves write nowhere.
         const target: Frame =
           !plain && Object.hasOwn(out, name) ? { target: {}, shared: false, parent: undefined, slot: name } : own;
@@ -2221,11 +2218,13 @@ export class SentSecrets {
         if (
           (typeof value === "string" && TAGS.has(`${key}:${value}`)) ||
           (typeof value === "boolean" && FACTS.has(key)) ||
-          (error &&
-            typeof value === "string" &&
-            ((key === "code" && classificationCode(value) !== undefined) || (key === "name" && value === kind)))
+          (error && typeof value === "string" && key === "code" && classificationCode(value) !== undefined)
         )
           next = value;
+        // An error's name is kept only as one its registered class gives it. Any other is checked
+        // and withheld whole when anything in it matches; the copy keeps its class.
+        else if (error && key === "name" && typeof value === "string")
+          next = keptErrorName(prototype, value) || check(seen.keys, value, TEXT) === value ? value : REDACTED;
         else if (typeof value === "string" && binaryField(field, key)) next = declared(value, target, name, owner);
         else next = visit(value, target, name, depth + 1, level, owner, owned);
         if (target !== own) continue;

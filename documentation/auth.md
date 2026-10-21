@@ -1515,8 +1515,13 @@ check is withheld.
 Only fixed words are copied unchanged whatever was sent: Connecta, MCP, and
 JSON-RPC envelope member names, tag values such as a content `type` or result
 `format`, booleans under outcome names (`isError`, `ok`, `retryable`,
-`truncated`, `hasMore`), and, on an error object Connecta's code constructed,
-its classification code and class name. A number or a string under any name,
+`truncated`, `hasMore`), and, on an error, its classification code and a fixed
+name: one a built-in error, `DOMException` (`DOMException`, `AbortError`,
+`TimeoutError`), Connecta's own classes, or the pinned MCP SDK's classes give
+their instances. Any other error `name`, including one a custom class gives
+itself, is checked like text and replaced whole by `[redacted]` when anything in
+it matches; the copy keeps its class, so classification and identity facts
+still see it. A number or a string under any name,
 such as `retryAfterMs` or a plain object's `code`, is matched like any other
 value; a matching typed number on an error is dropped. Relay states and connect
 links Connecta minted are kept whole. The agent boundary around Connecta's own
@@ -1549,7 +1554,8 @@ never mutated:
 
 - An error is always copied, as its own class. Its stack, and every accessor its
   class defines, such as DOMException's `name` and `message` or an SDK error's
-  `status`, is read once into a checked field. Its `toJSON`, a data field or an
+  `status`, is read once into a checked field, under its name checked as any key
+  is. Its `toJSON`, a data field or an
   accessor, is never read and is shadowed by an `undefined` field on the copy,
   and a field holding a function is withheld, so the copy carries no
   serializer. Methods its class defines stay on its prototype; JSON calls none

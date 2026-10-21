@@ -45,6 +45,7 @@ import {
   assertDownstreamOutputSafe,
   type DownstreamInputResult,
 } from "./downstream-input-context.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 function defined<T extends object>(values: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as {
@@ -292,6 +293,7 @@ export class InvocationFailure extends Error {
     this.data = details;
   }
 }
+keepErrorName(InvocationFailure, "InvocationFailure");
 
 /**
  * Shared downstream invocation engine. Address/catalog resolution is delegated

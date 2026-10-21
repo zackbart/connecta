@@ -13,6 +13,7 @@ import {
   isAgentName,
   trustAgentProvider,
 } from "./agent-identity.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
@@ -100,6 +101,7 @@ export class AccessTokenError extends Error {
     super(message);
   }
 }
+keepErrorName(AccessTokenError, "AccessTokenError");
 
 /** Options every token mutation takes. */
 export interface AccessTokenOperationOptions {

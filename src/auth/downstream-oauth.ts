@@ -42,6 +42,7 @@ import {
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
 import { deleteV2Keys, discoveryIssuer, readV2Grant, type MigratedGrantBody } from "./oauth-v2-migration.js";
+import { keepErrorName } from "../redaction-identity.js";
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
 const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
@@ -84,6 +85,7 @@ export class OAuthCallbackClaimedError extends ConnectorCallError {
     this.name = "OAuthCallbackClaimedError";
   }
 }
+keepErrorName(OAuthCallbackClaimedError, "OAuthCallbackClaimedError");
 
 /** A local destination guard proved that no OAuth HTTP request left. */
 export class OAuthRequestNotSentError extends ConnectorCallError {}

@@ -310,6 +310,30 @@ it("INV-5: an array whose toJSON echoes a credential reaches the QuickJS guest o
   expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
 });
 
+it("INV-5: an error whose class and instance name a credential reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  class Named extends Error {}
+  Object.defineProperty(Named, "name", { value: token });
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return { value: Object.assign(new Named("public"), { name: token }) };
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: seven units are below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.name.slice(0, 7)' });
+  expect(review.isError, JSON.stringify(review.structuredContent)).toBeFalsy();
+  expect(review.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  const seen = await execute({ code: 'async () => JSON.stringify((await connecta.call("wire.read")).data.value)' });
+  expect(JSON.stringify(seen.structuredContent)).not.toContain(token.slice(0, 7));
+});
+
 it.each([
   [
     "a function with a toJSON",
