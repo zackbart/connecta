@@ -104,7 +104,12 @@ describe("deployment shapes", () => {
       expect(code).toContain(binding);
     }
     // Production and local development keep the same runtime opt-ins.
-    const flags = ["nodejs_compat", "enable_request_signal", "unhandled_rejection_after_microtask_checkpoint"];
+    const flags = [
+      "nodejs_compat",
+      "enable_request_signal",
+      "enable_weak_ref",
+      "unhandled_rejection_after_microtask_checkpoint",
+    ];
     expect(code).toContain('date: "2025-01-01"');
     for (const flag of flags) {
       expect(code.match(/flags:\s*\[([^\]]*)\]/)?.[1]).toContain(`"${flag}"`);

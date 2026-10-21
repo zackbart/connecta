@@ -3,11 +3,10 @@ import { accessTokens } from "../../../src/access-tokens.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 
-// Retirement compares Date.now() with an invocation's platform end. Tests
-// move this isolate's clock instead of waiting out the 30-second window.
-const realNow = Date.now.bind(Date);
-let clockOffset = 0;
-Date.now = () => realNow() + clockOffset;
+// Collection evidence, as in entry.ts: sentinels reachable only through a
+// fetch cancelled with its invocation, and garbage that drives V8 to collect.
+const finalized = new Set<string>();
+const sentinels = new FinalizationRegistry<string>((name) => finalized.add(name));
 
 // Native separate requests share only Connecta's plain admission counter.
 // Every adapter fetch, controller, response, and body belongs to its caller.
@@ -38,9 +37,23 @@ export default {
   async fetch(request: Request, _env: unknown, ctx: ExecutionContext) {
     try {
       const url = new URL(request.url);
-      if (url.pathname === "/__clock") {
-        clockOffset = url.searchParams.has("reset") ? 0 : clockOffset + Number(url.searchParams.get("advance"));
+      if (url.pathname === "/__sentinel") {
+        const name = url.searchParams.get("name")!;
+        const sentinel = { name };
+        sentinels.register(sentinel, name);
+        const held = fetch(request.headers.get("X-Auth-Upstream")!)
+          .then((response) => response.text())
+          .then(() => sentinel);
+        ctx.waitUntil(Promise.race([held, new Promise((resolve) => setTimeout(resolve, Number(url.searchParams.get("ms") ?? 500)))]));
         return new Response("{}");
+      }
+      if (url.pathname === "/__pressure") {
+        let allocated = 0;
+        for (let i = 0; i < Number(url.searchParams.get("mb") ?? 32); i++) {
+          allocated += Array.from({ length: 131_072 }).fill(i).length;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return Response.json({ finalized: [...finalized], allocated });
       }
       const kind = request.headers.get("X-Binding-Kind");
       if (kind) {
@@ -74,7 +87,7 @@ export default {
         // has run its course after the response; Miniflare never does. With
         // this header the fixture enforces such a window: when it closes,
         // every waitUntil promise is settled and workerd ends the
-        // invocation, dropping the callbacks of its unfinished operations.
+        // invocation, dropping its unfinished operations.
         const window = Number(request.headers.get("X-Wait-Until-Window") ?? NaN);
         let closeWindow!: () => void;
         const windowClosed = new Promise<void>((resolve) => {
@@ -84,7 +97,6 @@ export default {
           const response = await binding.fetch(request, undefined, {
             waitUntil: (pending: Promise<unknown>) =>
               ctx.waitUntil(Number.isFinite(window) ? Promise.race([pending, windowClosed]) : pending),
-            passThroughOnException: ctx.passThroughOnException.bind(ctx),
             access: {
               aud: "app",
               getIdentity: async () => {

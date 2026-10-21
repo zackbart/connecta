@@ -14,7 +14,7 @@ import type {
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { assertsAgents, isAgentName } from "../agent-identity.js";
-import { authenticate, type AuthenticationInvocation, type AuthenticationRetirement } from "../auth-admission.js";
+import { authenticate } from "../auth-admission.js";
 import type { Logger } from "../types.js";
 import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
@@ -54,10 +54,6 @@ export interface RouteContext {
   opts: ServerOptions;
   defer: DeferredWork | undefined;
   runtimeContext: RuntimeExecutionContext | undefined;
-  /** The invocation this request's authentications settle into (src/auth-admission.ts). */
-  invocation: AuthenticationInvocation | undefined;
-  /** Whether this request's entry can retire its charges, reported by /health. */
-  retirement: AuthenticationRetirement;
 }
 
 export function privateJson(body: unknown, init: ResponseInit = {}): Response {
@@ -204,7 +200,6 @@ export async function authorize(
   partitionIdentity = true,
   interactiveOnly = false,
   logger: Logger = console,
-  invocation?: AuthenticationInvocation,
 ): Promise<
   | {
       ok: true;
@@ -289,7 +284,14 @@ export async function authorize(
   // A header owns one verdict even for adapters without a recognition hook.
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
-    const admission = await authenticate(provider, request, baseUrl, runtimeContext, logger, invocation);
+    const admission = await authenticate(
+      provider,
+      request,
+      baseUrl,
+      runtimeContext,
+      logger,
+      runtimeContext?.waitUntil.bind(runtimeContext),
+    );
     if (!admission.admitted) return { ok: false, response: admission.response };
     const result = admission.result;
     // Only the built-in access-token adapter asserts an agent, and it never
@@ -385,20 +387,13 @@ export async function authorizeAgent(
   baseUrl: string,
   auth: readonly InboundAuth[],
   logger: Logger = console,
-  invocation?: AuthenticationInvocation,
+  settle?: (pending: Promise<unknown>) => void,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
   const provider = auth.find(assertsAgents);
   if (!provider || !isMachineCredential(request)) return agentChallenge();
   let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
   try {
-    const admission = await authenticate(
-      provider,
-      authorizationRequest(request),
-      baseUrl,
-      undefined,
-      logger,
-      invocation,
-    );
+    const admission = await authenticate(provider, authorizationRequest(request), baseUrl, undefined, logger, settle);
     if (!admission.admitted) return { ok: false, response: admission.response };
     result = admission.result;
   } catch {
@@ -429,7 +424,6 @@ export async function authorizeUiIdentity(
   purpose: string,
   runtimeContext?: RuntimeExecutionContext,
   logger: Logger = console,
-  invocation?: AuthenticationInvocation,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
   if (!auth.some((provider) => provider.interactiveOperator)) {
     return {
@@ -437,7 +431,7 @@ export async function authorizeUiIdentity(
       response: privateJson({ error: `${purpose} requires interactive user authentication` }, { status: 403 }),
     };
   }
-  return authorize(request, baseUrl, auth, runtimeContext, true, true, logger, invocation);
+  return authorize(request, baseUrl, auth, runtimeContext, true, true, logger);
 }
 
 export function isSameOrigin(request: Request, baseUrl: string): boolean {

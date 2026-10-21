@@ -249,80 +249,47 @@ authorizations** are ever outstanding per loaded core. A full wave of 16
 stalled operations fills the allowance. While the allowance is full, no
 authorization starts, even when active slots are free. Overdue work that finds
 the allowance full keeps its active slot until an abandoned operation ends and
-makes room. Each charge ends exactly once. A binding that never settles
-therefore fills the allowance and fails closed instead of accumulating I/O.
+makes room. A binding that never settles therefore fills the allowance and
+fails closed instead of accumulating I/O.
 
-How a charge ends depends on how the request entered Connecta:
+Each charge ends exactly once, in one of two ways:
 
-- **Node, and every Worker entry except the outermost `workerHandler`.** A
-  charge ends only when its operation actually settles. An operation that never
-  settles keeps its count for the life of the process or isolate, bounded only
-  by the abandoned allowance and visible in `/health`.
-- **A Worker's outermost `workerHandler`.** A charge also ends when its
-  invocation certainly has. Cloudflare ends a Worker fetch invocation,
-  cancelling every I/O operation it owns, at most 30 seconds after its response
-  is sent or its client disconnects, and a cancelled operation's settlement
-  never runs. Behind the outermost handler, Connecta's response is the one the
-  platform sends, so Connecta notes when it finished or was cancelled, when the
-  handler failed, or when the client disconnected. **35 seconds** later (that
-  30-second `waitUntil` limit plus five seconds of margin), the next admission
-  or `/health` read retires the invocation's unsettled charges, and the
-  operator log records the checked reason `authentication_invocation_ended`.
-  Until then the charge counts: an invocation whose caller is still connected
-  and whose response is unfinished may run indefinitely, so its charge never
-  retires. A settlement arriving after retirement changes nothing, so no count
-  is released twice.
+- **Settlement.** The adapter's promise and every native operation it
+  registered have settled. This applies on every runtime and through every
+  entry.
+- **Unreachable work.** Nothing can ever settle the charge: the garbage
+  collector has freed every promise and callback that could have. On Workers
+  this follows invocation cancellation. Cloudflare ends a fetch invocation at
+  most 30 seconds after its response is sent or its client disconnects
+  ([`waitUntil` limit](https://developers.cloudflare.com/workers/runtime-apis/context/)),
+  and drops each I/O operation it still owns without running its callbacks.
+  Once the collector frees that work, Connecta releases the charge, and the
+  next admission logs the checked reason `authentication_unreachable`.
 
-To get Workers retirement, export the handler from `workerHandler` as the
-Worker module's default, unwrapped, as the installed Worker example does:
+Release through unreachable work is **eventual, never timed**. It waits for a
+garbage collection, which runs as the process or isolate allocates. On
+workerd, a collection triggered by allocation can keep a recently freed object
+for several later collections, so one charge may linger after the rest are
+released. While anything can still settle the work, the charge counts: a
+connected caller, middleware that reads Connecta's response and then awaits
+other work, and a scheduled handler that is still running all keep their
+charges. A late settlement after such a release changes nothing, so no count
+is released twice.
 
-```ts
-import { createConnecta, workerHandler } from "@zackbart/connecta";
-import connectaConfig, { type Env } from "./connecta.config.js";
-
-const handler = workerHandler((env: Env) => createConnecta(connectaConfig(env)));
-export default handler;
-```
-
-`workerHandler(start)` runs `start(env)` on the first request in each isolate
-and serves every later request with that instance. To add another event
-handler, spread it, keeping its exact `fetch`:
-`export default { ...handler, scheduled }`. Retirement needs all of these:
-
-- workerd itself calls that `fetch` for a fetch event. Connecta checks that no
-  JavaScript frame called it, so its context is the event's own
-  `ExecutionContext` and its response is the one the platform sends.
-- The `enable_request_signal` compatibility flag is set, so a client that
-  disconnects before its response also ends the invocation.
-
-Anything else serves the same responses and keeps the Node behavior, counting
-each charge until it settles. That includes middleware or another library that
-wraps the handler or calls its `fetch`, a scheduled, queue, or alarm handler, a
-Durable Object or RPC method calling it, and any call to `connecta.fetch`. Such
-a caller may consume Connecta's response and keep running, so no response end
-bounds its invocation. A stuck native operation there stays charged, bounded
-only by the abandoned allowance of 16 and visible on `/health`.
-
-`GET /health` reports how the request reading it entered, as
-`admission.authentication.retirement`: `{ "enabled": true }` behind the
-outermost handler, otherwise `{ "enabled": false, "reason": "<reason>" }` with
-one fixed reason:
-
-| Reason                    | Meaning                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `not_workers`             | The runtime is not workerd; it makes no invocation-end promise.                                         |
-| `not_worker_handler`      | The request entered through `connecta.fetch`.                                                           |
-| `not_outermost_handler`   | Other JavaScript called the `workerHandler` fetch, or called it without the event's `ExecutionContext`. |
-| `request_signal_disabled` | `enable_request_signal` is not set, so a client disconnect before the response would go unobserved.     |
-
-Read it through the deployment's public route to confirm a production Worker:
-a development server that wraps the handler reports `not_outermost_handler`.
+Release through unreachable work needs `FinalizationRegistry`. Node always
+provides it. On Workers, set the `enable_weak_ref` compatibility flag, or use
+a compatibility date of 2025-05-05 or later, and keep `enable_request_signal`;
+the installed Worker example sets both flags. Without `FinalizationRegistry`,
+only settlement releases a charge. A native authentication operation that
+hangs past invocation cancellation then consumes one abandoned slot until the
+isolate is recycled, and 16 such operations in one isolate make every later
+authentication return `authentication_busy`, visible on `/health`.
 
 A request refused because the allowance is full receives the same 503
 `authentication_busy` response and headers. The operator log records the
 checked reason `authentication_abandoned_saturated` instead. `GET /health`
 reports `admission.authentication` with `active`, `limit`, `abandoned`,
-`abandonedLimit`, `abandonedSaturated`, and `retirement`, for example:
+`abandonedLimit`, `abandonedSaturated`, and `unreachableRelease`, for example:
 
 ```json
 {
@@ -331,15 +298,16 @@ reports `admission.authentication` with `active`, `limit`, `abandoned`,
   "abandoned": 16,
   "abandonedLimit": 16,
   "abandonedSaturated": true,
-  "retirement": { "enabled": true }
+  "unreachableRelease": true
 }
 ```
 
-That state refuses all new authentication until an underlying operation
-settles or, behind the outermost `workerHandler`, its invocation's 35-second
-bound passes. Investigate the
-identity binding or token storage; restarting the process or isolate clears its
-local accounting.
+`unreachableRelease` is `true` when the runtime provides
+`FinalizationRegistry`. On Workers, `false` means neither `enable_weak_ref` nor
+a compatibility date of 2025-05-05 or later is in effect. A saturated allowance
+refuses all new authentication until an underlying operation settles or its
+unreachable work is collected. Investigate the identity binding or token
+storage; restarting the process or isolate clears its local accounting.
 
 Clerk creates a client per authorization: SDK verification (opaque
 access tokens, JWT/JWKS, browser handshakes and session refresh), domain checks,
@@ -349,12 +317,13 @@ cancels the upstream body on every exit, and gives the SDK only buffered bytes.
 JWKS fetches make one attempt; cancellation starts no retry timer. Additional
 Backend API admission reads retain their 64 KiB response bound.
 
-On Workers, the event's `ctx` reaches Connecta through the outermost
-`workerHandler` (or the `ctx` argument of `connecta.fetch`). Its `waitUntil` keeps only that request's
+On Workers, the event's `ctx` reaches Connecta through the `ctx` argument of
+`connecta.fetch`. Its `waitUntil` keeps only that request's
 already-running authorization and cleanup runnable after disconnect, so an
 aborted upstream settles before its slot is released. No other request shares
-its promise or I/O. Custom adapters must honor `request.signal` and settle only
-after their work ends; ignoring cancellation consumes the bounded abandoned allowance.
+its promise or I/O. Custom adapters must honor `request.signal` and return a promise that settles
+only after their work ends; ignoring cancellation consumes the bounded
+abandoned allowance, and work the promise does not await is not counted.
 The current adapters cannot cheaply establish a fully authenticated cache hit
 before verification, so every adapter invocation counts, including one that
 later uses a cached membership or policy verdict. Cache hits finish their slots

@@ -143,19 +143,18 @@ An admitted non-preflight `/mcp` request then takes five steps in
    moves to a separate allowance of 16 abandoned operations, or stays active
    while that allowance is full. A full allowance refuses all new work, logged
    as `authentication_abandoned_saturated`; only a charge's end decrements it
-   and promotes an overdue active charge. Everywhere that end is real settlement, except
-   behind a Worker's outermost `workerHandler` (`src/worker-handler.ts`). Its
-   `fetch` first asks `workerRetirement` whether workerd itself called it (no
-   JavaScript caller frame) with `enable_request_signal` set; only then does
-   `openInvocation` (from `src/server.ts`) stamp a plain `aliveUntil` 35
-   seconds after Connecta's response finishes or is cancelled, the handler
-   fails, or the client disconnects (Cloudflare's 30-second `waitUntil` limit
-   plus margin). `connecta.fetch`, a wrapped or called handler, and other event
-   handlers never retire, since their caller may consume the response and run
-   on. Admission and health then lazily retire unsettled charges past the
-   stamp, logging `authentication_invocation_ended`; a late settlement finds
-   the charge closed. Before that stamp no charge retires, and health reports
-   the entry's fixed `retirement` verdict. Health exposes both counters. Access
+   and promotes an overdue active charge. A charge ends exactly once, through a
+   released state in its plain record: on settlement, or when the collector
+   frees its token. That token is an object held only by the closures
+   attached to the adapter promise and the registered native operations (plus
+   the deadline timer and the request's lifetime entry, which refers to the
+   lifetime through a `WeakRef`, because workerd keeps a `Request` and its
+   WeakMap entries alive past its invocation). A module-level
+   `FinalizationRegistry` holds the record, never the token, so a freed token
+   proves nothing can settle the charge; the next admission logs
+   `authentication_unreachable`. Without `FinalizationRegistry` (workerd
+   without `enable_weak_ref` before 2025-05-05) only settlement releases.
+   Health exposes both counters and `unreachableRelease`. Access
    and agent verification race five-second deadlines while registering their
    uncancellable native work with the invocation's charge. The request's
    `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
@@ -398,6 +397,32 @@ not proof that workerd cancelled an old stream. A still-live request reaches
 the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+### Authentication release by collection on workerd
+
+Measured on 2026-10-20 with workerd 1.20260722.1 (Miniflare 4.20260722.0),
+compatibility date `2025-01-01`:
+
+- `FinalizationRegistry` and `WeakRef` are undefined without
+  `enable_weak_ref`; the flag's default-on date is 2025-05-05.
+- With `enable_weak_ref` and `enable_request_signal`, an object reachable only
+  through a fetch continuation is finalized once its invocation ends and
+  workerd cancels the fetch; while the invocation runs it is not. Pending
+  timers and listeners on the request's signal do not keep it.
+- Strong values in a WeakMap keyed by a `Request` (even one the handler
+  created), properties set on a `Request`, and WeakMap values keyed by its
+  `Headers`, `ctx` or `env` stay reachable after the invocation ends. The
+  lifetime registry in `src/auth-admission.ts` therefore stores `WeakRef`s.
+- No `gc()` is exposed. Allocating large arrays (32 × 1 MiB per request)
+  triggers collections, but the most recent unreachable object often survives
+  them; V8 in this build scans the native stack conservatively. The inspector's
+  precise `HeapProfiler.collectGarbage` freed it.
+- In the vitest-pool-workers harness, an isolate that had already collected
+  one scenario's cancelled work sometimes kept a later scenario's cancelled
+  work reachable through 400 rounds of pressure; standalone Miniflare never
+  did. `test/auth-admission-binding.test.ts` gives each collection scenario a
+  fresh isolate and requires two of four sentinels collected before asserting
+  that live charges stayed counted.
 
 A second production run on the same date tested the request bound at 2,000 ms.
 All twelve raw-stream and MCP cases passed with both flag configurations. Live

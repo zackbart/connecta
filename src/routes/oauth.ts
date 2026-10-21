@@ -195,7 +195,6 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
       "OAuth callback",
       context.runtimeContext,
       opts.config.logger,
-      context.invocation,
     );
     if (!browserIdentity.ok) {
       if (browserIdentity.response.status === 503) return browserIdentity.response;

@@ -129,7 +129,7 @@ export type AuthDenialReason =
   | "authentication_abandoned_saturated"
   | "authentication_busy"
   | "authentication_failed"
-  | "authentication_invocation_ended"
+  | "authentication_unreachable"
   | "authorization_header_invalid"
   | "token_type_mismatch"
   | "oauth_verification_failed"
@@ -154,7 +154,7 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "authentication_abandoned_saturated",
   "authentication_busy",
   "authentication_failed",
-  "authentication_invocation_ended",
+  "authentication_unreachable",
   "authorization_header_invalid",
   "token_type_mismatch",
   "oauth_verification_failed",
@@ -481,7 +481,7 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  */
 export type FailureEvent =
   | "Authentication admission refused"
-  | "Authentication retired after its Worker invocation ended"
+  | "Authentication released after its pending work became unreachable"
   | "negotiation cache read failed"
   | "negotiation cache write failed"
   | "pool tool grant is unreachable"

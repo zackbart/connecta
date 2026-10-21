@@ -1,12 +1,6 @@
 import { accessTokens } from "../../../src/access-tokens.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
-import { createConnecta, customExecutor, workerHandler, type Connecta } from "../../../src/index.js";
-
-// Retirement compares Date.now() with an invocation's platform end. Tests
-// move this isolate's clock instead of waiting out the 30-second window.
-const realNow = Date.now.bind(Date);
-let clockOffset = 0;
-Date.now = () => realNow() + clockOffset;
+import { createConnecta, customExecutor } from "../../../src/index.js";
 
 interface Env {
   ORIGIN: string;
@@ -17,8 +11,8 @@ interface Env {
 // Production ends an invocation, cancelling its I/O, once waitUntil has run
 // its course after the response; Miniflare never does. With a window set,
 // every ExecutionContext in this isolate settles each waitUntil promise that
-// long after it was registered, so workerd ends the invocation and drops the
-// callbacks of its unfinished operations. Each context stays the event's own.
+// long after it was registered, so workerd ends the invocation and drops its
+// unfinished operations. Each context stays the event's own object.
 let windowMs: number | undefined;
 let enforcing = false;
 function enforceWindow(ctx: ExecutionContext) {
@@ -33,6 +27,23 @@ function enforceWindow(ctx: ExecutionContext) {
   };
 }
 
+// Collection evidence. A sentinel is reachable only through the continuation
+// of a fetch that workerd cancels when its invocation ends (after `ms`), as a
+// stalled charge's token is; once sentinels as old as the tokens under test
+// are finalized, a collection that could have freed those tokens has run. Pressure allocates large garbage arrays, which drives
+// V8 to collect; workerd exposes no gc() here. Without enable_weak_ref the
+// twin Worker has no FinalizationRegistry at all.
+const finalized = new Set<string>();
+const sentinels =
+  typeof FinalizationRegistry === "function"
+    ? new FinalizationRegistry<string>((name) => finalized.add(name))
+    : undefined;
+function pressure(megabytes: number) {
+  let allocated = 0;
+  for (let i = 0; i < megabytes; i++) allocated += Array.from({ length: 131_072 }).fill(i).length;
+  return allocated;
+}
+
 // Agent-token reads deliberately take no signal, as with a native D1 or KV
 // read: each holds one fixture connection until released or cancelled.
 let origin = "";
@@ -44,9 +55,10 @@ storage.get = async () => {
   return null;
 };
 let app: Connecta | undefined;
-const handler = workerHandler((env: Env) => {
+type Connecta = ReturnType<typeof createConnecta>;
+function connecta(env: Env): Connecta {
   origin = env.ORIGIN;
-  app = createConnecta({
+  app ??= createConnecta({
     readOnly: true,
     logger: "silent",
     connectors: [{ id: "notes", kind: "api", listTools: async () => [], callTool: async () => null }],
@@ -56,7 +68,7 @@ const handler = workerHandler((env: Env) => {
       kind: "fixture",
       interactiveOperator: true,
       // A human adapter honoring its signal, with no answer of its own until
-      // the upstream does: a connected caller's invocation has no end.
+      // the upstream does.
       async authorize(request) {
         const response = await fetch(request.headers.get("X-Auth-Upstream")!, { signal: request.signal });
         await response.text();
@@ -68,56 +80,74 @@ const handler = workerHandler((env: Env) => {
     pools: { team: { tools: ["notes"], members: ["agent:assistant"] } },
   });
   return app;
-});
+}
+
+// The plain Worker export, exactly as the example writes it.
+const handler = {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    enforceWindow(ctx);
+    return connecta(env).fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;
 
 const agentRequest = () =>
   new Request("https://connecta.test/agent/team", {
     method: "POST",
     headers: { "Mcp-Method": "subscriptions/listen", Authorization: `Bearer cta_${"a".repeat(43)}` },
   });
-const retirementOf = async (response: Response) =>
-  ((await response.json()) as { admission: { authentication: { retirement: unknown } } }).admission.authentication
-    .retirement;
-let scheduled: { retirement?: unknown[]; statuses?: number[]; done?: boolean } = {};
+let scheduled: { statuses?: number[]; done?: boolean } = {};
 
-// The handler itself, spread as the default export beside a cron handler.
 export default {
   ...handler,
-  // A cron job calling Connecta with its own ExecutionContext through both
-  // entries, consuming each answer and then running on: nothing may retire.
+  // A cron job calling Connecta with its own ExecutionContext, consuming each
+  // answer and then running on: its charges count while it runs.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    const branded = await handler.fetch(new Request("https://connecta.test/health"), env, ctx);
-    const direct = await app!.fetch(new Request("https://connecta.test/health"), env, ctx);
-    scheduled.retirement = [await retirementOf(branded), await retirementOf(direct)];
-    const answered = await Promise.all([handler.fetch(agentRequest(), env, ctx), app!.fetch(agentRequest(), env, ctx)]);
+    const answered = await Promise.all([
+      connecta(env).fetch(agentRequest(), env, ctx),
+      connecta(env).fetch(agentRequest(), env, ctx),
+    ]);
     scheduled.statuses = await Promise.all(answered.map(async (response) => (await response.text(), response.status)));
     await (await fetch(`${env.ORIGIN}/binding/scheduled-hold`)).text();
     scheduled.done = true;
   },
 } satisfies ExportedHandler<Env>;
 
-// Middleware around the handler: it consumes Connecta's response, then keeps
-// its invocation running on another fetch before answering.
+// Ordinary Promise-chain middleware around the handler: it leaves no caller
+// frame, consumes Connecta's response, then keeps its invocation running on
+// another fetch before answering.
 let after = 0;
 export const middleware = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const response = await handler.fetch(request, env, ctx);
-    const body = await response.text();
-    if (new URL(request.url).pathname !== "/health") {
-      await (await fetch(`${env.ORIGIN}/binding/after-${after++}`)).text();
-    }
-    return new Response(body, { status: response.status, headers: response.headers });
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return Promise.resolve()
+      .then(handler.fetch.bind(undefined, request, env, ctx))
+      .then(async (response) => {
+        const body = await response.text();
+        if (new URL(request.url).pathname !== "/health") {
+          await (await fetch(`${env.ORIGIN}/binding/after-${after++}`)).text();
+        }
+        return new Response(body, response);
+      });
   },
 } satisfies ExportedHandler<Env>;
 
 export const control = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    enforceWindow(ctx);
     const url = new URL(request.url);
-    if (url.pathname === "/clock") {
-      clockOffset = url.searchParams.has("reset") ? 0 : clockOffset + Number(url.searchParams.get("advance"));
-    } else if (url.pathname === "/window") {
+    if (url.pathname === "/window") {
       windowMs = url.searchParams.has("ms") ? Number(url.searchParams.get("ms")) : undefined;
+    } else if (url.pathname === "/sentinel") {
+      const name = url.searchParams.get("name")!;
+      const sentinel = { name };
+      sentinels?.register(sentinel, name);
+      const held = fetch(`${env.ORIGIN}/binding/sentinel-${name}`)
+        .then((response) => response.text())
+        .then(() => sentinel);
+      ctx.waitUntil(Promise.race([held, new Promise((resolve) => setTimeout(resolve, Number(url.searchParams.get("ms") ?? 500)))]));
+    } else if (url.pathname === "/pressure") {
+      const allocated = pressure(Number(url.searchParams.get("mb") ?? 32));
+      // Finalizers run as their own tasks after a collection.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return Response.json({ finalized: [...finalized], allocated });
     } else if (url.pathname === "/scheduled") {
       scheduled = {};
       ctx.waitUntil(env.SELF.scheduled({ cron: "* * * * *" }));

@@ -1,10 +1,5 @@
 import { Effect } from "effect";
-import {
-  authenticationSnapshot,
-  openInvocation,
-  type AuthenticationInvocation,
-  type AuthenticationRetirement,
-} from "./auth-admission.js";
+import { authenticationSnapshot } from "./auth-admission.js";
 import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
@@ -38,11 +33,7 @@ export type { ServerOptions } from "./routes/shared.js";
  */
 export function createFetchHandler(
   opts: ServerOptions,
-): (
-  request: Request,
-  runtimeContext: RuntimeExecutionContext | undefined,
-  retirement: AuthenticationRetirement,
-) => Promise<Response> {
+): (request: Request, runtimeContext?: RuntimeExecutionContext) => Promise<Response> {
   const { registry } = opts;
   const { auth, publicUrl } = opts.config;
   const routeMcp = createMcpRoute(opts);
@@ -50,7 +41,7 @@ export function createFetchHandler(
   const metadata = (request: Request, baseUrl: string): Effect.Effect<Response | null> =>
     Effect.promise(async () => (await authMetadata(request, baseUrl, auth))?.response ?? null);
 
-  const health = async (retirement: AuthenticationRetirement): Promise<Response> => {
+  const health = async (): Promise<Response> => {
     // The executor is required, so code admission always has a shape to
     // report: either the executor's own pool or the fallback controller
     // wrapped around it at construction.
@@ -67,8 +58,7 @@ export function createFetchHandler(
       admission: {
         policy: "global-fifo",
         requests: opts.requestAdmission.snapshot(),
-        // How this request's own entry ends charges: a fixed verdict, no request facts.
-        authentication: { ...authenticationSnapshot(opts.config.logger), retirement },
+        authentication: authenticationSnapshot(),
         code: codeAdmission ?? { managedByExecutor: true },
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
@@ -127,7 +117,7 @@ export function createFetchHandler(
         return notFoundResponse(request, opts.config);
       }
 
-      if (path === "/health") return yield* Effect.promise(() => health(context.retirement));
+      if (path === "/health") return yield* Effect.promise(health);
 
       const mcp = yield* routeMcp.handle(context);
       if (mcp) return mcp;
@@ -138,8 +128,6 @@ export function createFetchHandler(
   const serve = (
     request: Request,
     runtimeContext: RuntimeExecutionContext | undefined,
-    invocation: AuthenticationInvocation | undefined,
-    retirement: AuthenticationRetirement,
   ): Effect.Effect<Response, unknown> =>
     Effect.suspend(() => {
       const url = new URL(request.url);
@@ -190,20 +178,11 @@ export function createFetchHandler(
         opts,
         defer,
         runtimeContext,
-        invocation,
-        retirement,
       };
       return Effect.map(route(context), (response) => withSecurityHeaders(response, url, path));
     });
 
-  return function fetch(
-    request: Request,
-    runtimeContext: RuntimeExecutionContext | undefined,
-    retirement: AuthenticationRetirement,
-  ): Promise<Response> {
-    // Behind the Worker's outermost handler, the response's end bounds how
-    // long this invocation's authentication charges can still be live.
-    const { invocation, observe } = openInvocation(request, runtimeContext, retirement);
-    return observe(runEdge(serve(request, runtimeContext, invocation, retirement), { signal: request.signal }));
+  return function fetch(request: Request, runtimeContext?: RuntimeExecutionContext): Promise<Response> {
+    return runEdge(serve(request, runtimeContext), { signal: request.signal });
   };
 }

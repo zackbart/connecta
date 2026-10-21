@@ -10,7 +10,6 @@ import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
-const workerd = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 const refused = (): AuthResult => ({ ok: false, response: new Response(null, { status: 401 }) });
 const request = (signal?: AbortSignal) => new Request(`${BASE}/mcp`, signal ? { signal } : {});
 
@@ -249,16 +248,7 @@ it.each(["access", "agent"] as const)(
         signal: caller.signal,
         ...(kind === "agent" ? { headers: { Authorization: `Bearer ${token}` } } : {}),
       });
-      const result = authenticate(
-        provider,
-        req,
-        BASE,
-        context,
-        { ...silentLogger, warn },
-        {
-          waitUntil: (work) => void waits.push(work),
-        },
-      );
+      const result = authenticate(provider, req, BASE, context, { ...silentLogger, warn }, (work) => waits.push(work));
       pending.push(result);
       return result;
     };
@@ -269,6 +259,7 @@ it.each(["access", "agent"] as const)(
         limit: 16,
         abandonedLimit: 16,
         abandonedSaturated: abandoned === 16,
+        unreachableRelease: typeof FinalizationRegistry === "function",
       });
     try {
       const first = start();
@@ -340,9 +331,9 @@ it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten 
   };
   const caller = new AbortController();
   const waits: Promise<unknown>[] = [];
-  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, {
-    waitUntil: (work) => void waits.push(work),
-  });
+  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, (work) =>
+    waits.push(work),
+  );
   try {
     caller.abort();
     await vi.advanceTimersByTimeAsync(10_999);
@@ -360,7 +351,8 @@ it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten 
         abandoned: 1,
         abandonedLimit: 16,
         abandonedSaturated: false,
-        retirement: { enabled: false, reason: workerd ? "not_worker_handler" : "not_workers" },
+        // workerd hides FinalizationRegistry without enable_weak_ref.
+        unreachableRelease: typeof FinalizationRegistry === "function",
       });
     } finally {
       await app.close();

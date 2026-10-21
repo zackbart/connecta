@@ -71,12 +71,14 @@ async function clerkOrganizationWorker(backend: string) {
 }
 
 // A separate native Worker: requests share no test-request I/O or promises.
-function authAdmissionWorker(backend?: string) {
+// enable_weak_ref matches the Worker example, so a charge whose work workerd
+// cancelled can be released by the collector (src/auth-admission.ts).
+function authAdmissionWorker(backend?: string, name = backend ? "auth-admission-sdk" : "auth-admission") {
   return {
-    name: backend ? "auth-admission-sdk" : "auth-admission",
+    name,
     ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
     compatibilityDate: "2025-01-01",
-    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
     modules: true,
     script: buildSync({
       entryPoints: [
@@ -96,18 +98,18 @@ function authAdmissionWorker(backend?: string) {
   };
 }
 
-// The Worker handler exported as is, so workerd itself calls it, plus named
-// middleware and control entrypoints sharing its isolate. Without
-// enable_request_signal the same handler reports retirement disabled.
-function authAdmissionEntryWorker(origin: string, requestSignal: boolean) {
-  const name = requestSignal ? "auth-admission-entry" : "auth-admission-entry-no-signal";
+// The plain Worker export plus named middleware and control entrypoints
+// sharing its isolate. Without enable_weak_ref, at this compatibility date,
+// the twin has no FinalizationRegistry and releases on settlement alone.
+function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) {
   return {
     name,
     compatibilityDate: "2025-01-01",
     compatibilityFlags: [
       "nodejs_compat",
+      "enable_request_signal",
       "service_binding_extra_handlers",
-      ...(requestSignal ? ["enable_request_signal"] : []),
+      ...(weakRef ? ["enable_weak_ref"] : []),
     ],
     bindings: { ORIGIN: origin },
     serviceBindings: { SELF: name },
@@ -122,6 +124,13 @@ function authAdmissionEntryWorker(origin: string, requestSignal: boolean) {
     }).outputFiles[0]!.text,
   };
 }
+
+// One fresh isolate per collection scenario (test/auth-admission-binding.test.ts):
+// in this harness, objects left unreachable by an earlier scenario's cancelled
+// invocations were seen to keep later ones reachable in the same isolate.
+const AUTH_ADMISSION_BINDING_ISOLATES = ["ended-access", "ended-agent", "replaced-access", "replaced-agent"];
+const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "scheduled", "ended"];
+const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replaceAll("-", "_")}`;
 
 export default defineConfig({
   test: {
@@ -177,9 +186,10 @@ export default defineConfig({
           executorBundles(),
           cloudflareTest(async ({ inject }) => ({
             miniflare: {
-              // Match the Worker example's compatibility date and rejection
-              // reporting, plus a Worker Loader so the guest API contract
-              // suite can run against a real Dynamic Worker executor.
+              // Match the Worker example's compatibility date, rejection
+              // reporting, and weak references, plus a Worker Loader so the
+              // guest API contract suite can run against a real Dynamic
+              // Worker executor.
               compatibilityDate: "2025-01-01",
               // Before 2026-03-03, workerd reports a rejection as unhandled even
               // when its handler attaches later in the same microtask
@@ -187,7 +197,13 @@ export default defineConfig({
               // first await, or a pending read of a cancelled internal stream.
               // Report only what is still unhandled after the checkpoint, as
               // Node does. A rejection nothing handles still fails the run.
-              compatibilityFlags: ["nodejs_compat", "unhandled_rejection_after_microtask_checkpoint"],
+              // enable_weak_ref exposes FinalizationRegistry, which releases an
+              // authentication charge whose pending work became unreachable.
+              compatibilityFlags: [
+                "nodejs_compat",
+                "unhandled_rejection_after_microtask_checkpoint",
+                "enable_weak_ref",
+              ],
               workerLoaders: { LOADER: {} },
               // A real local Workers KV namespace and D1 database for the
               // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
@@ -197,17 +213,30 @@ export default defineConfig({
                 CLERK_ORGANIZATION: "clerk-organization",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
-                AUTH_ADMISSION_ENTRY: "auth-admission-entry",
-                AUTH_ADMISSION_MIDDLEWARE: { name: "auth-admission-entry", entrypoint: "middleware" },
-                AUTH_ADMISSION_CONTROL: { name: "auth-admission-entry", entrypoint: "control" },
-                AUTH_ADMISSION_NO_SIGNAL: "auth-admission-entry-no-signal",
+                ...Object.fromEntries(
+                  AUTH_ADMISSION_BINDING_ISOLATES.map((key) => [bindingName(key), `auth-admission-${key}`]),
+                ),
+                ...Object.fromEntries(
+                  [...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`), "entry-no-weak-ref"].flatMap(
+                    (key) => [
+                      [bindingName(key), `auth-admission-${key}`],
+                      [`${bindingName(key)}_CONTROL`, { name: `auth-admission-${key}`, entrypoint: "control" }],
+                      [`${bindingName(key)}_MIDDLEWARE`, { name: `auth-admission-${key}`, entrypoint: "middleware" }],
+                    ],
+                  ),
+                ),
               },
               workers: [
                 await clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
-                authAdmissionEntryWorker(inject("authAdmissionServer"), true),
-                authAdmissionEntryWorker(inject("authAdmissionServer"), false),
+                ...AUTH_ADMISSION_BINDING_ISOLATES.map((key) =>
+                  authAdmissionWorker(undefined, `auth-admission-${key}`),
+                ),
+                ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
+                  authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
+                ),
+                authAdmissionEntryWorker("auth-admission-entry-no-weak-ref", inject("authAdmissionServer"), false),
               ],
             },
           })),
