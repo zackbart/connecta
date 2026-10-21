@@ -53,77 +53,54 @@ instructions in `examples/` and `documentation/`.
 
 ## Verification
 
-`pnpm run check:fast` is the inner loop: formatting, docs, fragment, Node-suite, UI, lint,
-Knip, and typecheck checks run concurrently with `vitest related` on both
-projects for files changed since the `origin/main` merge base (uncommitted and
-untracked and deleted paths included, with both sides of renames), suites
-naming a changed path, and the purity, package-surface, and deployment-shapes
-guards. Related runs skip INV and spec coverage checks; `package.json` or
-Vitest config changes wait for `check`.
-Deleted modules require a full Vitest run because their import graph is gone.
+`pnpm run check:fast` is the inner loop. It runs the static checks, the
+purity, package-surface and deployment-shape guards, and `vitest run
+--changed origin/main` concurrently. Vitest selects the suites whose imports
+reach a file changed since the merge base, uncommitted and untracked files
+included, and reruns every suite when `package.json` or a Vitest config
+changed. The run is partial, so the coverage reporter skips the INV and spec
+checks. `--base <ref>` compares against another ref.
 
 `pnpm run check` must pass before you claim anything is done. It runs
-`check:core` (formatting, docs, fragments, Node-suite reasons, UI freshness, lint, unused,
-typecheck, both vitest projects, build, declarations, bundle, examples), then
-`test:browser` in Chromium; run `pnpm run test:browser:install` once per machine.
-`release:check` adds `check:security` (`pnpm audit`) and `check:package` (the
-package smoke); use it when touching packaging, dependencies, or exports.
+`check:static` (formatting, generated providers, docs links, changelog
+fragments, operator UI and Clerk SDK freshness, Oxlint, Knip, typecheck),
+`test` (both Vitest projects), `check:build` (build, declarations, bundle
+budget, examples), then `test:browser` in Chromium. Run
+`pnpm run test:browser:install` once per machine. `release:check` adds
+`check:security` (`pnpm audit`) and `check:package` (the package and Docker
+smoke); use it when touching packaging, dependencies, or exports.
 
-CI runs `static` (formatting, generated providers, docs, changes, UI/Clerk
-freshness, lint, Knip, typecheck), `node` (the complete Node suite with invariant
-and spec enforcement through `vitest.config.node.ts`), `workers` (the complete
-Workers suite), and `build` (build, declarations, bundle, examples, package and
-Docker smoke) in parallel with a shared pnpm store cache. The build job packs
-its existing `dist/` without rebuilding. Superseded PR runs are cancelled;
-every push to main runs every check. A planning-only PR, whose every path is
-under `decisions/` or `.changes/` (`scripts/ci-planning-paths.sh`), runs only the golden suites in
-`node` and `workers`, and skips `build` and `browser`; `static` still runs. Shipped docs are
-not planning. `browser` skips a PR whose every path is
-in the safe set in `scripts/ci-browser-paths.sh`; `security` runs on PRs when
-a root or nested manifest, lockfile, `pnpm-workspace.yaml`, or `.npmrc` changes
-(the list is in `scripts/ci-security-paths.sh`), including the template
-installed by package/Docker smoke and published examples. The nightly Security
-workflow and publishing also audit dependencies. The single required `check` gate requires static, changes, Node and Workers
-to succeed, build to succeed or skip as planning-only, and browser/security
-to pass or be intentionally skipped. Playwright's `visual`
-project (pixel comparisons) never retries; `behavior` and `@unstable`-tagged
-comparisons keep two CI retries. A browser run with any failed attempt uploads
-the `playwright-report` artifact (HTML report, diffs, traces). The advisory
-Provider drift workflow scans only the providers a PR changes
-(`scripts/ci-drift-providers.mjs`); the weekly and manual runs scan all of them.
-The Node job sets `CONNECTA_STANDARD_BASE` to the pre-push SHA on main pushes
-or the PR base SHA (the merge checkout's base parent). Its depth-two checkout
-fetches only that commit at depth one if missing. The provider exemption ratchet
-fails closed on missing history or an all-zero first-push SHA. Local runs without
-this variable compare against the `origin/main` merge base; if either comparison
-base equals HEAD, they use HEAD's first parent. Fetch the base SHA and sufficient
-history (increase CI `fetch-depth`) if the guard reports missing history.
-Local `pnpm run check` remains the full core and browser gate.
+CI runs every job for every pull request and every push to main, with no
+path or tier selection. Each job maps to a script:
 
-Provider characterization has two tiers, selected by
-`scripts/ci-goldens-tier.mjs` through the `changes` job's `goldens` output and
-`CONNECTA_GOLDENS_TIER` in both runtime jobs. Every PR runs the always tier:
-Node compares all golden bytes under fresh forward and reverse module graphs;
-Workers compares every golden's canonical observation under a fresh graph.
-Load-time source controls and the runtime-independent mutation/source checks
-remain active, with one seed. Planning-only PRs run these two suites while
-skipping the remaining runtime suites, build and browser.
-Every main push runs the full tier. PRs also run full when changing
-`src/providers/`, `src/connectors/`, `src/http/`, `src/storage/`, transitive
-provider/harness imports (derived with TypeScript's parser and resolver),
-`test/goldens/`, the golden suites, provider fixtures, Vitest configuration,
-dependency manifests/lockfiles, or selector/source-boundary tooling. Unknown
-paths/dependencies and classification errors select full. The `changes` job first classifies with
-Node built-ins from the runner: main pushes and directly relevant or unknown
-paths select full, docs-only paths select always, and deletions (including
-renames with rename detection disabled) select full. Only existing source/test
-modules whose tier depends on transitive imports install dependencies and run
-the TypeScript graph selector. This includes every
-step-1 provider migration. Full adds Workers reverse order, repeated provider
-captures and the complete jitter matrix on both runtimes. Only the exact env
-value `always` reduces the tier; unset or invalid values run full locally, so
-`pnpm run check` keeps the complete gate. Fixed public test PEM keys avoid
-repeated RSA generation; module graphs remain freshly evaluated for each order.
+| Job        | Runs                                                                  |
+| ---------- | --------------------------------------------------------------------- |
+| `static`   | `check:static`                                                        |
+| `node`     | `test:node`: the complete Node project, with INV and spec enforcement |
+| `workers`  | `test:workers`: the workerd project                                   |
+| `build`    | `check:build`, then `check:package` on that `dist/`                   |
+| `security` | `check:security`                                                      |
+| `browser`  | `test:browser`, uploading `playwright-report` on any failed attempt   |
+| `check`    | the aggregate gate                                                    |
+
+`check` is the single required status. It always runs and fails unless every
+other job succeeded; a failed, cancelled or skipped job blocks the merge.
+Superseded PR runs are cancelled. An upstream advisory fails `security` on
+every PR until a dependency PR fixes it; publishing audits again. Playwright's
+`visual` project (pixel comparisons) never retries; `behavior` and
+`@unstable`-tagged comparisons keep two CI retries. The advisory Provider
+drift workflow scans every provider weekly, on demand, and for PRs touching
+`src/providers/` or the drift scripts, outside the gate.
+
+`test:node` uses `vitest.config.node.ts`, the Node project without a
+`--project` filter, because the coverage reporter treats any filter as a
+partial run. An unfiltered run of `test` or `test:node` fails when an INV
+ID or a `spec/coverage.json` reference loses its last passing test.
+
+The provider exemption ratchet (`test/provider-standard.node.test.ts`) needs
+the comparison commit. The `node` job sets `CONNECTA_STANDARD_BASE` to the PR
+base SHA, or the pre-push SHA on main, and fetches it. Locally it compares
+against the `origin/main` merge base, or HEAD's first parent when that is HEAD.
 
 ## Source map
 
@@ -167,9 +144,13 @@ checks health, executor, and the current meta-tool set.
 
 ## Tests
 
-Suites live in `test/` and `src/providers/<name>/`. Node runs every `*.test.ts`; workerd runs the same
-files except `*.node.test.ts`, each of which starts with `// Node-only: <reason>`;
-`check:changes` checks Vitest collection and reasons. Cite the `INV-n` IDs a
+Suites live in `test/` and `src/providers/<name>/`. Node runs every `*.test.ts`.
+workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
+those that need Workers bindings or the Worker executor, or exercise behaviour
+that can differ under workerd (fetch, streams, unhandled rejections, Web
+Crypto, provider request bytes). List a new suite there only for such
+behaviour; pure logic runs once, on Node. A suite that needs Node APIs is named
+`*.node.test.ts` and starts with `// Node-only: <reason>`. Cite the `INV-n` IDs a
 test enforces in its title. The full Node run's coverage reporter rejects
 missing and unknown IDs, and spec coverage titles that no passing test matches.
 

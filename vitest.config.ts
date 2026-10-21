@@ -4,7 +4,43 @@ import goldenSourceBoundary from "./scripts/golden-source-boundary.mjs";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
-import { TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
+
+const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
+
+// workerd reruns only suites whose behaviour can differ from Node's. Pure
+// logic runs once, under Node. A listed suite that no longer exists matches
+// nothing. Never list a *.node.test.ts suite.
+const WORKERS_SUITES = [
+  // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
+  // service-bound Workers. These skip or fail outside workerd.
+  "test/auth-admission-binding.test.ts",
+  "test/auth-admission-live.test.ts",
+  "test/auth-admission-workerd.test.ts",
+  "test/catalog-cache.test.ts",
+  "test/clerk-organization-workerd.test.ts",
+  "test/client-activity-d1.test.ts",
+  "test/codemode-compat.test.ts",
+  "test/guest-api-contract.test.ts",
+  "test/kv-to-d1.test.ts",
+  "test/usage-guide.test.ts",
+  // workerd's own fetch, stream, timer and unhandled-rejection behaviour,
+  // through real sockets and the MCP SDK edges.
+  "test/direct-write-finalizer.test.ts",
+  "test/mcp-core.test.ts",
+  "test/oauth-refresh-http.test.ts",
+  "test/remote-mcp.test.ts",
+  "test/server.test.ts",
+  "test/unhandled-rejections.test.ts",
+  "test/write-evidence.test.ts",
+  "test/write-provenance.test.ts",
+  // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.
+  "test/access-tokens.test.ts",
+  "test/clerk.test.ts",
+  "test/cloudflare-access-auth.test.ts",
+  "test/credentials.test.ts",
+  // Every provider's characterized requests, built by workerd.
+  "test/goldens.test.ts",
+];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
 // Worker project it executes inside workerd with the native Loader binding.
@@ -171,19 +207,14 @@ export default defineConfig({
         },
         test: {
           name: "node",
-          env: {
-            CONNECTA_GOLDENS_RUNTIME: "node",
-            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
-            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
-          },
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
-          include: TEST_INCLUDE,
-          exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
+          include: ["test/**/*.test.ts", "src/providers/**/*.test.ts"],
+          exclude: EXCLUDE,
         },
       },
       {
@@ -249,12 +280,6 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
-          // workerd does not inherit arbitrary host process.env entries.
-          env: {
-            CONNECTA_GOLDENS_RUNTIME: "workers",
-            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
-            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
-          },
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
@@ -262,8 +287,8 @@ export default defineConfig({
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
-          include: TEST_INCLUDE,
-          exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
+          include: WORKERS_SUITES,
+          exclude: EXCLUDE,
         },
       },
     ],

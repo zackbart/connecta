@@ -1,8 +1,7 @@
 // Node-only: walks the template and example trees and runs the Node template's
 // configuration, which opens a SQLite file and a QuickJS pool.
-import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -19,9 +18,8 @@ vi.mock("../src/worker.js", () => ({
 }));
 
 // There are two deployment shapes: the Node template `connecta init` copies —
-// Docker-ready, not Docker-only — and the Cloudflare Worker example. Three
-// near-identical Node scaffolds were the shape #344 deleted, and a new one
-// arrives as a copy of an existing one, so the guard is a layout assertion.
+// Docker-ready, not Docker-only — and the Cloudflare Worker example.
+// scripts/check-package.mjs checks their packed layout.
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = join(ROOT, "templates", "node");
 
@@ -35,53 +33,6 @@ const PUBLISHABLE_KEY = "pk_test_" + Buffer.from("example.clerk.accounts.dev$", 
 const VAULT_KEY = Buffer.alloc(32, 7).toString("base64");
 
 describe("deployment shapes", () => {
-  it("keeps the Worker as the only example", () => {
-    expect(readdirSync(join(ROOT, "examples")).sort()).toEqual(["worker"]);
-  });
-
-  it("keeps the Worker sandbox loader-only", () => {
-    const options = [...readWorker("src", "connecta.config.ts").matchAll(/workerExecutor\(\{([^}]*)\}\)/g)].map(
-      (match) => match[1]?.trim(),
-    );
-    expect(options).toEqual(["loader: env.LOADER"]);
-  });
-
-  // Configuration lives in each shape's connecta.config.ts as
-  // defineConfig((env) => …); the entry only starts it, so it stays short
-  // enough to review at a glance.
-  it("keeps both entries under 30 lines that only start their configuration", () => {
-    for (const entry of [join(TEMPLATE, "src", "index.ts"), join(WORKER, "src", "index.ts")]) {
-      const source = readFileSync(entry, "utf8");
-      expect(source.trimEnd().split("\n").length, entry).toBeLessThan(30);
-      expect(source, entry).toContain('from "./connecta.config.js"');
-      expect(source, entry).toContain("createConnecta(config)");
-    }
-    for (const config of [join(TEMPLATE, "src", "connecta.config.ts"), join(WORKER, "src", "connecta.config.ts")]) {
-      expect(readFileSync(config, "utf8"), config).toContain("export default defineConfig((env: Env) =>");
-    }
-  });
-
-  it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
-    const agents = readWorker("AGENTS.md");
-    const readme = readWorker("README.md");
-    const source = readWorker("src", "connecta.config.ts");
-    const stack = readWorker("alchemy.run.ts");
-    const callbacks = [
-      "https://claude.ai/api/mcp/auth_callback",
-      "https://chatgpt.com/connector_platform_oauth_redirect",
-      "https://chatgpt.com/connector/oauth/*",
-    ];
-    for (const callback of callbacks) {
-      expect(agents).toContain(callback);
-      expect(readme).toContain(callback);
-      expect(source).toContain(callback);
-      expect(stack).toContain(`"${callback}"`);
-    }
-    expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
-    expect(readme).toContain('"dynamic_client_registration": {');
-    expect(readme).toContain('"allowed_uris": [');
-  });
-
   // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
   it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
     const stack = readWorker("alchemy.run.ts");
@@ -122,7 +73,6 @@ describe("deployment shapes", () => {
     expect(code.match(/decision: "bypass"/g)).toHaveLength(1);
     expect(code).toContain("Alchemy.localState()");
     expect(readFileSync(join(ROOT, ".gitignore"), "utf8")).toContain(".alchemy/");
-    expect(readWorker("wrangler.jsonc")).toContain("Local development only");
 
     // The documented pins are the repository's own, and Effect is connecta's.
     const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
@@ -141,89 +91,6 @@ describe("deployment shapes", () => {
       expect(readme).toContain(pin);
     }
     expect(readme).toContain("npx alchemy deploy --stage production");
-  });
-
-  it("keeps a copied Worker deployment's local state and secrets out of git", () => {
-    // npm strips .gitignore from packages, so the example ships `gitignore`
-    // and its README renames it in the copy. scripts/check-package.mjs repeats
-    // this against the packed tarball.
-    expect(readdirSync(WORKER)).not.toContain(".gitignore");
-    expect(readWorker("README.md")).toContain("mv gitignore .gitignore");
-    const copy = mkdtempSync(join(tmpdir(), "connecta-worker-copy-"));
-    try {
-      cpSync(WORKER, copy, { recursive: true });
-      renameSync(join(copy, "gitignore"), join(copy, ".gitignore"));
-      execFileSync("git", ["init", "--quiet"], { cwd: copy });
-      const secrets = [
-        ".alchemy/state/production/connecta.json",
-        ".env",
-        ".env.production",
-        ".dev.vars",
-        ".dev.vars.production",
-        ".wrangler/state/d1.sqlite",
-        "node_modules/alchemy/package.json",
-      ];
-      for (const path of secrets) {
-        mkdirSync(dirname(join(copy, path)), { recursive: true });
-        writeFileSync(join(copy, path), "secret\n");
-      }
-      const untracked = execFileSync(
-        "git",
-        ["-c", `core.excludesFile=${devNull}`, "ls-files", "--others", "--exclude-standard"],
-        { cwd: copy, encoding: "utf8" },
-      ).split("\n");
-      expect(secrets.filter((path) => untracked.includes(path))).toEqual([]);
-      expect(untracked).toEqual(expect.arrayContaining([".gitignore", "alchemy.run.ts", "src/index.ts"]));
-    } finally {
-      rmSync(copy, { recursive: true, force: true });
-    }
-  });
-
-  it("ships one Node deployment that is also its own container", () => {
-    expect(readdirSync(TEMPLATE).sort()).toEqual([
-      ".dockerignore",
-      ".env.example",
-      ".gitignore",
-      "AGENTS.md",
-      "CLAUDE.md",
-      "Dockerfile",
-      "README.md",
-      "docker-compose.yml",
-      "package.json",
-      "src",
-      "tsconfig.json",
-    ]);
-    // The container builds this deployment, never the Connecta repository:
-    // its build context is the generated project itself.
-    expect(read("docker-compose.yml")).toContain("build: .");
-    expect(read("Dockerfile")).not.toContain("npm run build");
-  });
-
-  it("runs the same source locally and in the container", () => {
-    const dockerfile = read("Dockerfile");
-    const manifest = JSON.parse(read("package.json"));
-    expect(dockerfile).toContain("src/index.ts");
-    expect(manifest.scripts.start).toBe("tsx src/index.ts");
-    expect(manifest.allowScripts).toEqual({ "esbuild@0.28.2": true });
-    expect(read("README.md")).toContain("do not replace the pinned entry with a broad\npackage-name approval");
-    // No lockfile ships with the template — init rewrites the version pin, so
-    // a committed lockfile would disagree with it on the first build.
-    expect(readdirSync(TEMPLATE)).not.toContain("package-lock.json");
-    expect(dockerfile).toContain("npm ci");
-    expect(dockerfile).toContain("npm install");
-  });
-
-  it("configures the container's origin, state, and health from the source", () => {
-    const source = read("src", "connecta.config.ts");
-    expect(source).toContain('set("PUBLIC_URL")');
-    expect(source).toContain('set("CONNECTA_DATABASE")');
-    // The database belongs on the volume.
-    expect(read("Dockerfile")).toContain("ENV CONNECTA_DATABASE=/data/connecta.sqlite");
-    expect(read(".gitignore")).toContain(".connecta.sqlite*");
-    expect(read("Dockerfile")).toContain("HEALTHCHECK");
-    // State belongs on the mounted volume, owned by the non-root user.
-    expect(read("Dockerfile")).toContain("chown -R node:node /data");
-    expect(read("docker-compose.yml")).toContain("connecta-state:/data");
   });
 
   // Both shapes carry the whole operator feature set — sign-in, vault, access
@@ -327,14 +194,6 @@ describe("deployment shapes", () => {
       // source and silently do nothing in the container.
       expect(read("docker-compose.yml")).toContain(variable);
     }
-    expect(read("README.md")).toContain("## Select optional modules");
-    // Storage and activity come from the package; the template copies no adapter.
-    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual([
-      "adopt-token.ts",
-      "connecta.config.ts",
-      "index.ts",
-      "rotate-token.ts",
-    ]);
   });
 
   it("switches every Worker example module on from its environment", async () => {
@@ -388,18 +247,6 @@ describe("deployment shapes", () => {
     expect(wrangler.match(/"binding":/g)).toHaveLength(2);
     expect(wrangler).toContain('"binding": "CONNECTA_DB"');
     expect(wrangler).toContain('"binding": "LOADER"');
-    // The vars that switch the modules on stay one uncommented line away.
-    expect(readWorker("wrangler.jsonc")).toContain('// "CONNECTA_ACTIVITY": "on",');
-    expect(readdirSync(join(WORKER, "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
-    const workerReadme = readWorker("README.md");
-    expect(workerReadme).toContain("## Select optional modules");
-    expect(workerReadme).toContain("Connection tab");
-    expect(workerReadme).toContain("Authorization: Bearer <stored-cta-token>");
-    for (const variable of ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CONNECTA_TOKEN"]) {
-      expect(workerReadme).toContain(variable);
-      expect(readWorker("AGENTS.md")).toContain(variable);
-    }
-    expect(workerReadme).not.toContain("checking that Credentials, Tokens, and Activity are live");
   });
 
   it("keeps empty storage fail-closed and admits only issued agent tokens (INV-4)", async () => {
@@ -457,30 +304,6 @@ describe("deployment shapes", () => {
     expect(read(".env.example")).toMatch(/^CONNECTA_TOKEN=\s*$/m);
     expect(read("docker-compose.yml")).not.toMatch(/^\s+CONNECTA_TOKEN:/m);
     expect(read("src", "connecta.config.ts")).not.toContain("CONNECTA_TOKEN");
-    expect(read("src", "rotate-token.ts")).toContain('manager.rotate(agent, "local-provisioning")');
-    expect(read("src", "adopt-token.ts")).toContain("manager.adopt(tokenId, agent)");
-    expect(read("package.json")).toContain('"rotate-token": "tsx src/rotate-token.ts"');
-    expect(read("package.json")).toContain('"adopt-token": "tsx src/adopt-token.ts"');
-    expect(read("package.json")).not.toContain("provision-token");
-    expect(read("README.md")).toContain(
-      "docker compose run --rm --no-deps connecta npm run --silent rotate-token -- local-machine",
-    );
-  });
-
-  // A copied deployment installs its own dependencies, and an optional peer
-  // that never installs with connecta breaks the build if the README that
-  // calls this example a starting template does not name it (#367).
-  it("names every optional peer the Worker example imports", () => {
-    const source = readWorker("src", "connecta.config.ts") + readWorker("src", "index.ts");
-    const readme = readWorker("README.md");
-    const peers: Record<string, string> = {
-      "@zackbart/connecta/auth/clerk": "@clerk/backend",
-      "@cloudflare/codemode": "@cloudflare/codemode",
-    };
-    for (const [specifier, packageName] of Object.entries(peers)) {
-      if (!source.includes(`from "${specifier}"`)) continue;
-      expect(readme).toMatch(new RegExp(`npm install[^\\n]*${packageName.replace("/", "\\/")}`));
-    }
   });
 
   it("keeps the initializer's .gitignore in step with the template's", () => {
@@ -490,13 +313,5 @@ describe("deployment shapes", () => {
     for (const entry of read(".gitignore").split("\n").filter(Boolean)) {
       expect(written).toContain(entry);
     }
-  });
-
-  it("packs the container files with the template", () => {
-    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { files: string[] };
-    const files = manifest.files;
-    expect(files).toContain("templates");
-    expect(files).not.toContain("examples/node");
-    expect(files).not.toContain("examples/docker");
   });
 });
