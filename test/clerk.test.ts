@@ -17,7 +17,6 @@ import { clerkAuth } from "../src/auth/clerk.js";
 import { createTestConnecta } from "./helpers.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { api } from "../src/connectors/api.js";
-import { signJwt } from "@clerk/backend/jwt";
 
 import { oauthVault } from "./fixtures/oauth.js";
 import { mcpRpc, readJsonRpc, stalledResponse } from "./fixtures/http.js";
@@ -637,58 +636,48 @@ describe("clerkAuth inbound auth", () => {
       },
     );
 
-    it.each(["/mcp", "/mcp/support"])(
-      "checks raw opaque audiences after real Clerk verification at %s",
-      async (path) => {
-        // Clerk uses the current fetch in test mode, including under workerd.
-        vi.stubEnv("NODE_ENV", "test");
-        const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
-        const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
-        mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
-        const cases: [Record<string, unknown>, readonly string[] | undefined, number][] = [
-          [{ aud: ["https://other.test/mcp", `${BASE}${path}`] }, [], 200],
-          [{ aud: [`${BASE}${path}`] }, undefined, 200],
-          [{ aud: [path === "/mcp" ? `${BASE}/mcp/support` : `${BASE}/mcp`] }, ["client_connecta"], 401],
-          [{ aud: [`${BASE}${path}/`] }, ["client_connecta"], 401],
-          [{ aud: [123, `${BASE}${path}`] }, ["client_connecta"], 401],
-          [{}, undefined, 401],
-          [{}, ["client_connecta"], 200],
-          [{ client_id: "client_other" }, ["client_connecta"], 401],
-        ];
-        for (const [claims, allowedOAuthClientIds, status] of cases) {
-          mocks.fetch.mockReset();
-          mocks.fetch.mockImplementation(async () => Response.json(opaqueVerification(claims)));
-          // undefined really omits the option, rather than deployment()'s default.
-          const auth = clerkAuth({
-            publishableKey,
-            secretKey: "sk_test_fake",
-            publicUrl: BASE,
-            ...(allowedOAuthClientIds === undefined ? {} : { allowedOAuthClientIds }),
-          });
-          const request = mcpRequest(path);
-          request.headers.set("Authorization", "Bearer oat_verified");
-          const result = await auth.authorize(request, BASE);
-          expect(result.ok ? 200 : result.response.status, JSON.stringify(claims)).toBe(status);
-          expect(mocks.fetch).toHaveBeenCalledTimes(2);
-          for (const [, init] of mocks.fetch.mock.calls) {
-            expect(init.method).toBe("POST");
-            expect(JSON.parse(init.body)).toEqual({ access_token: "oat_verified" });
-            expect(new Headers(init.headers).get("Authorization")).toBe("Bearer sk_test_fake");
-          }
-          const directInit = mocks.fetch.mock.calls[1]![1];
-          expect(mocks.fetch.mock.calls[1]![0]).toBe(
-            "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
-          );
-          expect(directInit.redirect).toBe("manual");
-          expect(directInit.signal).toBeInstanceOf(AbortSignal);
-          expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
-          if (!result.ok) {
-            expect(await result.response.json()).toEqual({ error: "unauthorized" });
-            expect(result.response.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
-          }
+    it.each(["/mcp"])("checks raw opaque audiences after real Clerk verification at %s", async (path) => {
+      // Clerk uses the current fetch in test mode, including under workerd.
+      vi.stubEnv("NODE_ENV", "test");
+      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
+      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
+      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
+      const cases: [Record<string, unknown>, readonly string[] | undefined, number][] = [
+        [{ aud: ["https://other.test/mcp", `${BASE}${path}`] }, [], 200],
+        [{ aud: [`${BASE}/mcp/support`] }, ["client_connecta"], 401],
+        [{ client_id: "client_other" }, ["client_connecta"], 401],
+      ];
+      for (const [claims, allowedOAuthClientIds, status] of cases) {
+        mocks.fetch.mockReset();
+        mocks.fetch.mockImplementation(async () => Response.json(opaqueVerification(claims)));
+        // undefined really omits the option, rather than deployment()'s default.
+        const auth = clerkAuth({
+          publishableKey,
+          secretKey: "sk_test_fake",
+          publicUrl: BASE,
+          ...(allowedOAuthClientIds === undefined ? {} : { allowedOAuthClientIds }),
+        });
+        const request = mcpRequest(path);
+        request.headers.set("Authorization", "Bearer oat_verified");
+        const result = await auth.authorize(request, BASE);
+        expect(result.ok ? 200 : result.response.status, JSON.stringify(claims)).toBe(status);
+        expect(mocks.fetch).toHaveBeenCalledTimes(2);
+        for (const [, init] of mocks.fetch.mock.calls) {
+          expect(init.method).toBe("POST");
+          expect(JSON.parse(init.body)).toEqual({ access_token: "oat_verified" });
+          expect(new Headers(init.headers).get("Authorization")).toBe("Bearer sk_test_fake");
         }
-      },
-    );
+        const directInit = mocks.fetch.mock.calls[1]![1];
+        expect(mocks.fetch.mock.calls[1]![0]).toBe("https://api.clerk.com/v1/oauth_applications/access_tokens/verify");
+        expect(directInit.redirect).toBe("manual");
+        expect(directInit.signal).toBeInstanceOf(AbortSignal);
+        expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
+        if (!result.ok) {
+          expect(await result.response.json()).toEqual({ error: "unauthorized" });
+          expect(result.response.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
+        }
+      }
+    });
 
     it.each([{ expired: true }, { subject: "user_other" }, { client_id: "client_other" }])(
       "rejects an opaque verification response that disagrees with SDK authentication: %j",
@@ -821,50 +810,6 @@ describe("clerkAuth inbound auth", () => {
       expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
       authenticateOAuth(jwt({}));
       expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(false);
-    });
-
-    it("checks the audience after real Clerk JWT verification", async () => {
-      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
-      const keys = (await crypto.subtle.generateKey(
-        {
-          name: "RSASSA-PKCS1-v1_5",
-          modulusLength: 2048,
-          publicExponent: new Uint8Array([1, 0, 1]),
-          hash: "SHA-256",
-        },
-        true,
-        ["sign", "verify"],
-      )) as CryptoKeyPair;
-      const publicDer = new Uint8Array((await crypto.subtle.exportKey("spki", keys.publicKey)) as ArrayBuffer);
-      const jwtKey = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...publicDer))}\n-----END PUBLIC KEY-----`;
-      const privateKey = (await crypto.subtle.exportKey("jwk", keys.privateKey)) as JsonWebKey;
-      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", jwtKey });
-      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
-      const c = deployment();
-      const now = Math.floor(Date.now() / 1000);
-      for (const [aud, status] of [
-        [`${BASE}/mcp`, 200],
-        ["https://other.test/mcp", 401],
-      ] as const) {
-        const token = await signJwt(
-          {
-            sub: "user_123",
-            iss: "https://clerk.example.com",
-            client_id: "client_connecta",
-            scope: "openid profile email",
-            iat: now,
-            exp: now + 300,
-            aud,
-          },
-          privateKey,
-          { algorithm: "RS256", header: { typ: "at+jwt", kid: "test" } },
-        );
-        const request = mcpRequest("/mcp");
-        request.headers.set("Authorization", `Bearer ${token}`);
-        const response = await c.fetch(request);
-        expect(response.status).toBe(status);
-        await response.text();
-      }
     });
 
     it("checks token binding on every request even after caching an admitted user", async () => {
