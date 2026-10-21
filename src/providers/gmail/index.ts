@@ -37,7 +37,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut } from "../../sent-secrets.js";
+import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -550,13 +550,7 @@ async function readAttachment(
     const bytes = await attachmentBytes(client, ctx, messageId, part);
     if (!bytes) return unavailable("Gmail returned no attachment data; open it in Gmail.");
     if (bytes.length > limit) return tooLarge();
-    if (!isText) {
-      let binary = "";
-      for (let index = 0; index < bytes.length; index += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-      }
-      return { ...envelope, content: btoa(binary) };
-    }
+    if (!isText) return { ...envelope, content: encodeForAgent(ctx, bytes) };
     const rendered = decodeBytes(ctx, part, bytes);
     decoded = rendered.text;
     if (mime === "message/rfc822" && !decoded.trim()) {
@@ -729,11 +723,9 @@ function callKey(tool: string, shape: Record<string, unknown>): Promise<string> 
   return digest(JSON.stringify([tool, shape]));
 }
 
-function encodeCursor(claims: CursorClaims): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(claims));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+/** A cursor of connecta's own claims; Gmail's page token, its only downstream text, arrives redacted. */
+function encodeCursor(ctx: ConnectorContext, claims: CursorClaims): string {
+  return encodeForAgent(ctx, JSON.stringify(claims), { url: true, claims: true });
 }
 
 /** The claims of a cursor this call may resume, or a refusal saying why not. */
@@ -780,8 +772,14 @@ async function resumeAt(ids: readonly string[], claims: CursorClaims | undefined
   return seen;
 }
 
-async function cursorAfter(ids: readonly string[], seen: number, tool: string, call: string): Promise<string> {
-  return encodeCursor({ v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
+async function cursorAfter(
+  ctx: ConnectorContext,
+  ids: readonly string[],
+  seen: number,
+  tool: string,
+  call: string,
+): Promise<string> {
+  return encodeCursor(ctx, { v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
 }
 
 /** A page object whose cursor is as long as any this connection issues. */
@@ -1367,11 +1365,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const bodyChars = (args: JsonRecord, fallback: number): number =>
     typeof args["maxBodyChars"] === "number" ? args["maxBodyChars"] : fallback;
-  // Gmail's own page token, carried inside a cursor bound to this call.
-  const gmailPage = (listing: JsonRecord, tool: string, call: string) => {
+  // Gmail's own page token, carried inside a cursor bound to this call. It is redacted first:
+  // an agent decodes the cursor, and no later pass reads through its encoding.
+  const gmailPage = (ctx: ConnectorContext, listing: JsonRecord, tool: string, call: string) => {
     const token = text(listing["nextPageToken"]);
     if (token === undefined) return { hasMore: false, nextCursor: null };
-    const cursor = encodeCursor({ v: 1, t: tool, c: call, p: token });
+    const cursor = encodeCursor(ctx, { v: 1, t: tool, c: call, p: redactSentSecrets(ctx, token) });
     if (cursor.length > MAX_CURSOR_LENGTH) {
       throw new ConnectorCallError(
         "connector_call_failed",
@@ -1490,7 +1489,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           threads: threads.filter((thread) => thread !== undefined),
           resultSizeEstimate:
             typeof listing["resultSizeEstimate"] === "number" ? listing["resultSizeEstimate"] : undefined,
-          page: gmailPage(listing, "search_threads", call),
+          page: gmailPage(ctx, listing, "search_threads", call),
         });
       },
     },
@@ -1559,7 +1558,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           id: threadId,
           messageCount: all.length,
           messages,
-          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "get_thread", call) : null },
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ctx, ids, next, "get_thread", call) : null },
         };
       },
     },
@@ -1736,7 +1735,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         return compact({
           labels,
           labelsOmitted: omitted > 0 ? omitted : undefined,
-          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "list_labels", call) : null },
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ctx, ids, next, "list_labels", call) : null },
         });
       },
     },
@@ -1802,7 +1801,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ),
           ),
         );
-        return { drafts: drafts.filter((draft) => draft !== undefined), page: gmailPage(listing, "list_drafts", call) };
+        return {
+          drafts: drafts.filter((draft) => draft !== undefined),
+          page: gmailPage(ctx, listing, "list_drafts", call),
+        };
       },
     },
     {

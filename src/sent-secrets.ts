@@ -1,9 +1,9 @@
 // Credentials and submitted private argument values used by one upstream request. Memory
 // only; never part of a context's public shape, a failure record, storage, or a log. Web APIs only.
-import { carryFailureFacts } from "./operator-record.js";
-import { ConnectorCallError } from "./errors.js";
+import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
+import { redactedCopyOf } from "./redaction-identity.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
@@ -22,16 +22,22 @@ const headerLine =
 // Short credentials can match protocol fields or legitimate configuration.
 const MIN_SECRET_LENGTH = 8;
 // K: every contiguous run this long of a registered form is matched wherever it appears. It
-// equals MIN_SECRET_LENGTH, so exactly the values shorter than K (short private values) are
-// matched whole only. Eight units keeps ordinary words, dates, counts and auth framing out of
-// the index: a public run must repeat eight consecutive units of a secret's form to match.
+// equals MIN_SECRET_LENGTH, so every registered credential and every private value of at least K
+// units is fragment-indexed. Eight units keeps ordinary words, dates, counts and auth framing out
+// of the index: a public run must repeat eight consecutive units of a secret's form to match.
 const FRAGMENT_LENGTH = MIN_SECRET_LENGTH;
-// Form kinds, weakest first. A short private value is matched whole: anywhere in payload
-// text, and as a whole key, number or boolean. Longer private values and credentials are
-// matched whole and by every K-unit run, wherever they occur.
-const SHORT = 1;
-const PRIVATE = 2;
-const CREDENTIAL = 3;
+// A private value shorter than this is matched only as a whole field value: a leaf, key, number,
+// boolean or decoded view equal to one of its forms. One to three units recur inside ordinary
+// words, counts and ids, so a substring match would rewrite them everywhere.
+const SUBSTRING_LENGTH = 4;
+// Form kinds, weakest first, by the length of the value they came from. A tiny private value
+// (1-3 units) is matched whole only. A short one (4-7) is also matched as a substring of payload
+// text and decoded views. Longer private values and credentials are matched whole and by every
+// K-unit run, wherever they occur.
+const TINY = 1;
+const SHORT = 2;
+const PRIVATE = 3;
+const CREDENTIAL = 4;
 // Submitted values register at most this many form code units and argument nodes. A form
 // that does not fit withholds every string long enough to contain it.
 const MAX_PRIVATE_FORM_CHARS = 524_288;
@@ -68,17 +74,30 @@ for (let length = 1; length < FRAGMENT_LENGTH; length++) {
 const MAX_WALK_NODES = 1_048_576;
 const MAX_WALK_DEPTH = 512;
 const MAX_DECODE_LEVELS = 8;
+// A decoded layer is scanned only around the escapes it decoded, this far past the widest form
+// on each side: a match holding no newly decoded unit was already found a layer up. Wider forms
+// scan the whole layer.
+const MAX_WINDOW_UNITS = 4_096;
 // Leaves too large to match joined within the work budget are matched alone; a run crossing
 // two of them is matched this many units deep on each side of their seam.
 const SEAM_UNITS = 512;
+// Base64 or base64url text no declared field names is decoded and checked too: a whole leaf of
+// at least ENCODED_FIELD_UNITS (four bytes), or a run inside one of at least ENCODED_RUN_UNITS
+// (twelve bytes), up to MAX_ENCODED_LEVELS encodings deep.
+const ENCODED_FIELD_UNITS = 6;
+const ENCODED_RUN_UNITS = 16;
+const MAX_ENCODED_LEVELS = 3;
+// Checked encoded content this long is remembered for the request, so a later pass over the
+// same bytes under the same set is not decoded and scanned again.
+const MEMO_UNITS = 4_096;
 // Work for one redaction call, across parsing and every scanned view. Credential-only sets
 // keep the multi-MiB document and skill-file reads they always allowed.
 const PRIVATE_SCAN_WORK = 64 * 1_048_576;
 const CREDENTIAL_SCAN_WORK = 1_024 * 1_048_576;
-// Connecta, MCP and JSON-RPC framing: these names, tag values, and typed facts are copied
-// unchanged, so a submitted value such as "text", "true" or one holding the word "resource"
-// cannot rewrite an envelope, a listing Connecta parses, or an outcome. Fixed words carry
-// no secret material; any other key is checked like text.
+// Connecta, MCP and JSON-RPC framing: these names and tag values are fixed words, copied
+// unchanged, so a submitted value such as "text" or one holding the word "resource" cannot
+// rename an envelope member or rewrite a content type. They carry no downstream-chosen content
+// beyond the word itself. Any other key, and every other value, is checked like text.
 const FRAMING_KEYS = new Set(
   (
     "content structuredContent isError _meta resultType dev.connecta/format type text data mimeType resource uri " +
@@ -95,7 +114,9 @@ const TAGS = new Set(
     "resultType:input_required mode:form mode:url method:elicitation/create jsonrpc:2.0"
   ).split(" "),
 );
-const FACTS = new Set(["isError", "ok", "retryable", "retryAfterMs", "truncated", "hasMore"]);
+// Outcome flags: a boolean under these names is kept, since a boolean carries one bit whatever
+// produced it. A number or string under them is matched like any other.
+const FACTS = new Set(["isError", "ok", "retryable", "truncated", "hasMore"]);
 // Leaves of a projection: text, a number's canonical text, or a container too large to walk,
 // serialized. A number or container that changes is withheld whole.
 const TEXT = 0;
@@ -105,10 +126,12 @@ const SERIALIZED = 2;
 /** Payload scans also match short private values; envelope scans leave Connecta's own
  * identifiers, counts and addresses to them. */
 type Scan = { budget: { work: number; nodes: number }; payload: boolean };
-type Found = { spans: number[]; short: boolean; exact: boolean };
-/** Source spans to replace, and those of every form but short private ones. `deep` text still
- * held escapes after MAX_DECODE_LEVELS layers. */
-type Matches = { spans: number[]; long: number[]; deep: boolean };
+type Found = { spans: number[] };
+/** Source spans to replace. `deep` text still held escapes after MAX_DECODE_LEVELS layers. */
+type Matches = { spans: number[]; deep: boolean };
+
+/** An accessor met while looking up an inherited field: never invoked. */
+const WITHHELD_ACCESSOR = Symbol("accessor");
 
 /** Spend work that fits the call's remaining budget. Work that does not fit is refused
  * without spending, so its field is withheld while smaller fields can still be checked. */
@@ -118,31 +141,15 @@ function spend(scan: Scan, work: number): boolean {
   return true;
 }
 
-// A container's projection plan: walk its entries, or withhold it.
-const WALK = Symbol("walk");
-const WITHHELD = Symbol("withheld");
-const DROP = Symbol("drop");
-
-/** Base64 fields MCP and Connecta declare: resource blobs, image and audio data, and content
- * a provider marks `format: "base64"`. They are checked as the bytes they carry. */
-function binaryField(item: object, key: string): boolean {
-  const field = (name: string) => Object.getOwnPropertyDescriptor(item, name)?.value;
+/** Base64 fields MCP and Connecta declare: resource blobs, image and audio data, content a
+ * provider marks `format: "base64"`, and a REST body's `base64` beside its `contentType`. They
+ * are checked as the bytes they carry. `field` reads the snapshot, never the original again. */
+function binaryField(field: (name: string) => unknown, key: string): boolean {
   return (
     (key === "blob" && typeof field("uri") === "string") ||
     (key === "data" && (field("type") === "image" || field("type") === "audio")) ||
-    (key === "content" && field("format") === "base64")
-  );
-}
-
-/** Define one entry on a copy. An own accessor here is Error.stack, already snapshotted. */
-function define(copy: object, item: object, key: string, name: string, value: unknown): void {
-  const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-  Object.defineProperty(
-    copy,
-    name,
-    "value" in descriptor
-      ? { ...descriptor, value, ...(name !== key ? { configurable: true } : {}) }
-      : { value, configurable: true, writable: true },
+    (key === "content" && field("format") === "base64") ||
+    (key === "base64" && typeof field("contentType") === "string")
   );
 }
 
@@ -159,6 +166,130 @@ function parse(text: string): { json: unknown } | undefined {
   } catch {
     return undefined; // Prose rather than serialized JSON.
   }
+}
+
+/** A data property found on `item` or its prototypes, or undefined. An accessor on the way is
+ * never invoked: it reads as `accessor`. */
+function inherited(item: object, name: string, accessor: unknown): unknown {
+  for (let at: object | null = item; at; at = Object.getPrototypeOf(at) as object | null) {
+    const descriptor = Object.getOwnPropertyDescriptor(at, name);
+    if (descriptor) return "value" in descriptor ? descriptor.value : accessor;
+  }
+  return undefined;
+}
+
+/** Bytes as a string of byte-valued code units, in bounded batches. */
+function latin1(bytes: Uint8Array): string {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 0x8000)
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
+  return chunks.join("");
+}
+
+/** The UTF-8 text a string of byte-valued code units decodes to, invalid sequences replaced. */
+function utf8(binary: string): string {
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes);
+}
+
+/** Base64 or base64url text decoded to byte-valued code units, or undefined when it is not. */
+function decodeBase64(text: string): string | undefined {
+  let standard = text.includes("-") || text.includes("_") ? text.replace(/-/g, "+").replace(/_/g, "/") : text;
+  // An unpadded encoding cut one unit past a whole quad still decodes up to that quad.
+  let bare = standard.length;
+  while (bare > 0 && standard.charCodeAt(bare - 1) === 0x3d) bare--;
+  if (bare % 4 === 1) standard = standard.slice(0, bare - 1);
+  try {
+    return atob(standard);
+  } catch {
+    return undefined;
+  }
+}
+
+const BASE64_UNIT = new Uint8Array(65_536);
+for (const unit of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_")
+  BASE64_UNIT[unit.charCodeAt(0)] = 1;
+
+/** Base64 or base64url runs worth decoding: the whole text when it is one, at least
+ * ENCODED_FIELD_UNITS long with its padding, or each run inside it of ENCODED_RUN_UNITS. */
+function encodedRuns(text: string): string[] {
+  const runs: string[] = [];
+  for (let at = 0; at < text.length;) {
+    if (!BASE64_UNIT[text.charCodeAt(at)]) {
+      at++;
+      continue;
+    }
+    let end = at + 1;
+    while (end < text.length && BASE64_UNIT[text.charCodeAt(end)]) end++;
+    const run = end - at;
+    let padded = end;
+    while (padded < text.length && padded - end < 2 && text.charCodeAt(padded) === 0x3d) padded++;
+    if (at === 0 && padded === text.length ? run >= ENCODED_FIELD_UNITS : run >= ENCODED_RUN_UNITS)
+      runs.push(text.slice(at, end));
+    at = padded;
+  }
+  return runs;
+}
+
+/** One layer of JSON string escapes decoded, with where each decoded escape lies: `at` in the
+ * decoded text, `from` and `width` in the text it came from. Undefined when the layer decodes
+ * nothing, so it equals its source. */
+interface Layer {
+  text: string;
+  at: number[];
+  from: number[];
+  width: number[];
+}
+
+function unescapeLayer(text: string): Layer | undefined {
+  const parts: string[] = [];
+  const layer: Layer = { text: "", at: [], from: [], width: [] };
+  let [cursor, length] = [0, 0];
+  for (let index = text.indexOf("\\"); index >= 0 && index < text.length - 1; index = text.indexOf("\\", index)) {
+    const code = text.charCodeAt(index + 1);
+    let unit = shortEscape[code] ?? -1;
+    let width = 2;
+    if (unit < 0 && code === 0x75 && index + 6 <= text.length) {
+      unit = 0;
+      for (let offset = 2; offset < 6 && unit >= 0; offset++) {
+        const digit = hex(text.charCodeAt(index + offset));
+        unit = digit < 0 ? -1 : unit * 16 + digit;
+      }
+      width = 6;
+    }
+    if (unit < 0) {
+      index++;
+      continue;
+    }
+    parts.push(text.slice(cursor, index), String.fromCharCode(unit));
+    length += index - cursor;
+    layer.at.push(length++);
+    layer.from.push(index);
+    layer.width.push(width);
+    cursor = index + width;
+    index = cursor;
+  }
+  if (!layer.at.length) return undefined;
+  parts.push(text.slice(cursor));
+  layer.text = parts.join("");
+  return layer;
+}
+
+/** The unit a decoded layer's unit came from in the text above it: the first unit of its
+ * escape, or with `last` the escape's final unit. */
+function above(layer: Layer, unit: number, last: boolean): number {
+  const { at, from, width } = layer;
+  let [low, high] = [0, at.length];
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (at[middle]! <= unit) low = middle + 1;
+    else high = middle;
+  }
+  const escape = low - 1;
+  if (escape < 0) return unit;
+  if (at[escape] === unit) return last ? from[escape]! + width[escape]! - 1 : from[escape]!;
+  return from[escape]! + width[escape]! + (unit - at[escape]! - 1);
 }
 
 type SecretWarning = { code: "short_secret_not_redacted" };
@@ -323,6 +454,9 @@ class Fragments {
   private firsts = new Int32Array(1_024);
   private seconds = new Int32Array(1_024);
   private shift = 22;
+  /** One bit per first hash's top 16 mixed bits: a clear bit rules a run out in one load, so
+   * only a run that might match computes its second hash and probes the table. */
+  private readonly filter = new Int32Array(2_048);
 
   constructor(forms: readonly (readonly [form: string, frame: number])[]) {
     for (const [form, frame] of forms) {
@@ -353,6 +487,8 @@ class Fragments {
 
   /** Add one fragment; repeated runs, as in a self-similar credential, are stored once. */
   private insert(first: number, second: number): void {
+    const mixed = Math.imul(first, 0x9e_37_79_b1);
+    this.filter[mixed >>> 21]! |= 1 << ((mixed >>> 16) & 31);
     const key = second || 1;
     const mask = this.firsts.length - 1;
     for (let slot = Math.imul(first, 0x9e_37_79_b1) >>> this.shift; ; slot = (slot + 1) & mask) {
@@ -386,26 +522,30 @@ class Fragments {
     return false;
   }
 
-  /** Scan a whole view, percent hex folded as forms are, mapping each run back to its source. */
-  scan(units: Units, spans: number[], marks: number[] | undefined): void {
+  /** Scan text from `from` to `to`, percent hex folded as forms are, reporting each run's span. */
+  scan(text: string, from: number, to: number, spans: number[], marks: number[] | undefined): void {
+    if (!this.size) return;
     const codes = new Uint16Array(FRAGMENT_LENGTH);
-    const starts = new Float64Array(FRAGMENT_LENGTH);
+    const { filter } = this;
     const base = spans.length;
-    let [first, second, count, percent] = [0, 0, 0, 0];
-    for (let code = units.next(); code >= 0; code = units.next()) {
+    let [first, percent, slot] = [0, 0, 0];
+    for (let at = from; at < to; at++) {
+      let code = text.charCodeAt(at);
       if (code === 0x25) percent = 2;
       else if (percent) {
         percent--;
         if (code >= 0x61 && code <= 0x66) code -= 0x20;
       }
-      const at = count % FRAGMENT_LENGTH;
-      const old = count >= FRAGMENT_LENGTH ? codes[at]! : 0;
-      first = (Math.imul(first - Math.imul(old, FIRST_TOP), HASH_BASE) + code) | 0;
-      second = (Math.imul(second - Math.imul(old, SECOND_TOP), SECOND_BASE) + code) | 0;
-      codes[at] = code;
-      starts[at] = units.start;
-      if (++count >= FRAGMENT_LENGTH && this.size && this.has(first, second))
-        push(spans, base, starts[count % FRAGMENT_LENGTH]!, units.end, marks);
+      first = (Math.imul(first - Math.imul(codes[slot]!, FIRST_TOP), HASH_BASE) + code) | 0;
+      codes[slot] = code;
+      slot = (slot + 1) & (FRAGMENT_LENGTH - 1);
+      const mixed = Math.imul(first, 0x9e_37_79_b1);
+      if ((filter[mixed >>> 21]! & (1 << ((mixed >>> 16) & 31))) === 0 || at + 1 - from < FRAGMENT_LENGTH) continue;
+      // The window's units, oldest first, are the ring from the next slot round.
+      let second = 0;
+      for (let unit = 0; unit < FRAGMENT_LENGTH; unit++)
+        second = (Math.imul(second, SECOND_BASE) + codes[(slot + unit) & (FRAGMENT_LENGTH - 1)]!) | 0;
+      if (this.has(first, second)) push(spans, base, at + 1 - FRAGMENT_LENGTH, at + 1, marks);
     }
   }
 }
@@ -598,6 +738,8 @@ function hash(text: string): number {
 class Matcher {
   /** The shortest form left unindexed; any string this long might contain it. */
   readonly unindexed: number = Infinity;
+  /** The longest indexed form, whole: a match is never wider. */
+  readonly widest: number = 0;
   private readonly root = new Int32Array(65_536);
   private readonly branches = new Map<number, number>();
   private readonly child: Int32Array;
@@ -608,11 +750,10 @@ class Matcher {
   private readonly truncated = new Map<number, Group[]>();
   private readonly fail: Int32Array;
   private readonly longest: Uint16Array;
-  private readonly short: Uint8Array;
   private readonly starts: Int32Array;
   private readonly hashes: Int32Array;
 
-  /** Forms of at least `spanKind` report spans; weaker ones only flag that they occurred. */
+  /** Forms of at least `spanKind` report spans; weaker ones only steer the open-tail search. */
   constructor(forms: Iterable<readonly [string, number]>, spanKind = PRIVATE) {
     // Credentials are indexed first; sorting is stable, so registration order is otherwise kept.
     const indexed: (readonly [string, number])[] = [];
@@ -623,12 +764,13 @@ class Matcher {
       else {
         units += length;
         indexed.push(entry);
+        this.widest = Math.max(this.widest, entry[0].length);
       }
     }
     const size = units + 1;
     [this.child, this.fail] = [new Int32Array(size), new Int32Array(size)];
     [this.unit, this.depth, this.longest] = [new Uint16Array(size), new Uint16Array(size), new Uint16Array(size)];
-    [this.kind, this.short] = [new Uint8Array(size), new Uint8Array(size)];
+    this.kind = new Uint8Array(size);
     const parent = new Int32Array(size);
     let states = 1;
     let longestForm = 0;
@@ -675,7 +817,6 @@ class Matcher {
       const fail = this.depth[state]! > 1 ? this.step(this.fail[parent[state]!]!, this.unit[state]!) : 0;
       this.fail[state] = fail;
       this.longest[state] = this.kind[state]! >= spanKind ? this.depth[state]! : this.longest[fail]!;
-      this.short[state] = this.kind[state] === SHORT ? 1 : this.short[fail]!;
     }
     this.starts = new Int32Array(1 << (32 - Math.clz32(longestForm)));
     this.hashes = new Int32Array(this.starts.length);
@@ -698,7 +839,7 @@ class Matcher {
 
   /** Scan one view, mapping each match back to the source units it came from. False when its
    * long-form checks exceed the remaining work or MAX_PENDING_RUNS, so the view is withheld. */
-  scan(units: Units, found: Found, budget: { work: number }, marks?: number[]): boolean {
+  scan(text: string, from: number, to: number, found: Found, budget: { work: number }, marks?: number[]): boolean {
     let state = 0;
     let count = 0;
     let percent = 0;
@@ -707,19 +848,19 @@ class Matcher {
     let tails: Map<Group, Run> | undefined;
     const base = found.spans.length;
     const mask = this.starts.length - 1;
-    for (let code = units.next(); code >= 0; code = units.next()) {
+    for (let at = from; at < to; at++) {
+      let code = text.charCodeAt(at);
       if (code === 0x25) percent = 2;
       else if (percent) {
         percent--;
         if (code >= 0x61 && code <= 0x66) code -= 0x20;
       }
-      this.starts[count & mask] = units.start;
+      this.starts[count & mask] = at;
       this.hashes[count++ & mask] = rolling;
       rolling = (Math.imul(rolling, HASH_BASE) + code) | 0;
       state = this.step(state, code);
       const length = this.longest[state]!;
-      if (length) push(found.spans, base, this.starts[(count - length) & mask]!, units.end, marks);
-      if (this.short[state]) found.short = true;
+      if (length) push(found.spans, base, this.starts[(count - length) & mask]!, at + 1, marks);
       const groups = this.depth[state] === FORM_PREFIX ? this.truncated.get(state) : undefined;
       if (groups) {
         if (CHECK_WORK * groups.length > budget.work) return false;
@@ -741,7 +882,7 @@ class Matcher {
       while (runs?.items.length && runs.items[0]!.due === count) {
         const run = runs.items[0]!;
         if (run.group.hashes.has((rolling - Math.imul(run.before, run.group.power)) | 0))
-          push(found.spans, base, run.start, units.end, marks);
+          push(found.spans, base, run.start, at + 1, marks);
         run.count--;
         run.due += run.step;
         run.before = (Math.imul(run.before, run.stepPower) + run.stepHash) | 0;
@@ -749,7 +890,6 @@ class Matcher {
         runs.settle();
       }
     }
-    if (this.kind[state] === SHORT && this.depth[state] === count) found.exact = true;
     return true;
   }
 
@@ -810,6 +950,51 @@ class Matcher {
   }
 }
 
+/** A nested JSON string in a projection: the container and slot it is written back to, its
+ * parsed value, the nested JSON holding it, whether its tokens hold a run no leaf holds, and
+ * whether anything in it changed. */
+interface Nested {
+  frame: object;
+  slot: PropertyKey;
+  json: unknown;
+  owner: number;
+  crossing: boolean;
+  dirty: boolean;
+}
+
+/** The name an error's own class gives it, read without invoking an accessor. */
+function className(item: object): unknown {
+  const constructor = inherited(item, "constructor", undefined);
+  return typeof constructor === "function" ? Object.getOwnPropertyDescriptor(constructor, "name")?.value : undefined;
+}
+
+/** Spans of a decoded layer's units, in the source text. */
+function toSource(layers: readonly Layer[], unit: number, last: boolean): number {
+  for (let index = layers.length - 1; index >= 0; index--) unit = above(layers[index]!, unit, last);
+  return unit;
+}
+
+/** The ranges of a decoded layer to scan: `reach` units on each side of every escape it decoded,
+ * merged, or the whole layer when that is no larger. */
+function windows(layer: Layer, reach: number): number[] {
+  const length = layer.text.length;
+  if (reach > MAX_WINDOW_UNITS) return [0, length];
+  const ranges: number[] = [];
+  let units = 0;
+  for (const unit of layer.at) {
+    const [start, end] = [Math.max(0, unit - reach + 1), Math.min(length, unit + reach)];
+    if (ranges.length && ranges[ranges.length - 1]! >= start) {
+      units += end - ranges[ranges.length - 1]!;
+      ranges[ranges.length - 1] = end;
+    } else {
+      units += end - start;
+      ranges.push(start, end);
+    }
+    if (units >= length) return [0, length];
+  }
+  return ranges;
+}
+
 export class SentSecrets {
   /** Normalized form to its strongest kind. */
   private readonly forms = new Map<string, number>();
@@ -817,7 +1002,14 @@ export class SentSecrets {
   private readonly frames = new Map<string, number>();
   private readonly recipients = new Set<SentSecrets>();
   private readonly mintedStates = new Set<string>();
+  /** Encoded content this set already found clean, and whether under payload rules, which
+   * cover envelope ones. Cleared whenever the set changes. */
+  private memo = new Map<string, boolean>();
   private privateChars = 0;
+  /** The longest form; whether any comes from a value shorter than K; whether any is not ASCII. */
+  private widestForm = 0;
+  private smallForms = false;
+  private unicodeForms = false;
   /** The shortest form left unregistered; any string this long might contain it. */
   private unmatched = Infinity;
   private views: {
@@ -842,7 +1034,11 @@ export class SentSecrets {
     this.forms.set(form, Math.max(prior, kind));
     if (nextFrame) this.frames.set(form, nextFrame);
     else this.frames.delete(form);
+    this.widestForm = Math.max(this.widestForm, form.length);
+    this.smallForms ||= kind < PRIVATE;
+    this.unicodeForms ||= /[\u0080-\uffff]/.test(form);
     this.views = {};
+    this.memo = new Map();
     for (const recipient of this.recipients) recipient.store(form, kind, frame);
   }
 
@@ -850,6 +1046,7 @@ export class SentSecrets {
     if (length >= this.unmatched) return;
     this.unmatched = length;
     this.views = {};
+    this.memo = new Map();
     for (const recipient of this.recipients) recipient.unregistered(length);
   }
 
@@ -915,7 +1112,7 @@ export class SentSecrets {
     const submit = (value: string) => {
       if (!value) return;
       if (value.length > MAX_PRIVATE_FORM_CHARS) return this.unregistered(value.length);
-      this.register(value, value.length < MIN_SECRET_LENGTH ? SHORT : PRIVATE);
+      this.register(value, value.length < SUBSTRING_LENGTH ? TINY : value.length < MIN_SECRET_LENGTH ? SHORT : PRIVATE);
     };
     const collect = (value: unknown, depth: number): void => {
       if (++nodes > MAX_ARGUMENT_NODES || depth > MAX_ARGUMENT_DEPTH) return this.unregistered(1);
@@ -936,7 +1133,7 @@ export class SentSecrets {
   contains(value: string, ignoreCase = false): boolean {
     if (value.length >= Math.min(this.unmatched, this.unmatched < Infinity ? FRAGMENT_LENGTH : Infinity)) return true;
     if (!this.forms.size) return false;
-    const found: Found = { spans: [], short: false, exact: false };
+    const found: Found = { spans: [] };
     const lowered = () =>
       [...this.forms].flatMap(([form, kind]) =>
         wireForms(form.toLowerCase()).map((low) => [low, kind, this.frames.get(form) ?? 0] as const),
@@ -953,8 +1150,8 @@ export class SentSecrets {
       : this.fragments();
     if (value.length >= matcher.unindexed || (!fragments.complete && value.length >= FRAGMENT_LENGTH)) return true;
     const text = ignoreCase ? value.toLowerCase() : value;
-    if (!matcher.scan(new Source(text), found, { work: Infinity }) || found.spans.length) return true;
-    fragments.scan(new Source(text), found.spans, undefined);
+    if (!matcher.scan(text, 0, text.length, found, { work: Infinity }) || found.spans.length) return true;
+    fragments.scan(text, 0, text.length, found.spans, undefined);
     return found.spans.length > 0;
   }
 
@@ -1021,16 +1218,25 @@ export class SentSecrets {
 
   /** Serialized wire text about to be returned, stored, or paged, under payload rules. */
   text(value: string): string {
-    return this.idle() ? value : (this.project(value, this.scan(true)) as string);
+    return this.idle() ? value : (this.project(value, this.scan(true)).value as string);
   }
 
-  /** Copy only what changes, including non-enumerable Error fields; never retain a raw cause or
-   * invoke a downstream accessor. Payload rules apply where downstream or guest data enters;
-   * the envelope pass at the agent boundary repeats every check except short private values,
-   * which would rewrite Connecta's own identifiers, counts and addresses. */
+  /** A plain-data snapshot of `value` with every match removed: own enumerable data properties
+   * (an error's own fields, non-enumerable ones included), read once each. Accessors are never
+   * invoked, except an error's stack and the accessors its class defines, read once into the
+   * copy. The original object is never returned, so nothing read later can differ from what was
+   * checked. Payload rules apply where downstream or guest data enters; the envelope pass at the
+   * agent boundary repeats every check except short private values, which would rewrite
+   * Connecta's own identifiers, counts and addresses. */
   redact<T>(value: T, mode: "payload" | "envelope" = "payload"): T {
     if (this.idle()) return value;
-    return this.project(value, this.scan(mode === "payload")) as T;
+    return this.project(value, this.scan(mode === "payload")).value as T;
+  }
+
+  /** Whether payload redaction would change anything in `value`, for fields that must be
+   * refused rather than rewritten. */
+  changes(value: unknown): boolean {
+    return !this.idle() && this.project(value, this.scan(true)).changed;
   }
 
   /** Relay state and links Connecta minted and authenticates are framing, not payload: they
@@ -1040,6 +1246,28 @@ export class SentSecrets {
   mintedState(value: string): string {
     this.mintedStates.add(value);
     return value;
+  }
+
+  /** Base64, or base64url with `url`, of bytes Connecta returns to an agent. No later pass
+   * reads through an encoding the output does not declare, so the bytes are checked first: as
+   * byte-valued units, as UTF-8 text, and through any base64 they carry, then the encoding
+   * itself. Content holding a match encodes the placeholder instead. Downstream content takes
+   * payload rules. `claims` is text Connecta assembled, such as a page cursor, from its own
+   * counts and fingerprints and downstream values it already redacted under payload rules: it
+   * takes the boundary's rules, so a count never meets a short private value, and is
+   * remembered as clean for later passes over the same set. */
+  encode(bytes: Uint8Array, { url = false, claims = false }: { url?: boolean; claims?: boolean } = {}): string {
+    const binary = latin1(bytes);
+    const finish = (text: string) => {
+      const encoded = btoa(text);
+      return url ? encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : encoded;
+    };
+    if (this.idle()) return finish(binary);
+    const scan = this.scan(!claims);
+    const encoded = finish(binary);
+    if (!this.bytesClean(binary, scan) || this.isolated(encoded, scan) !== encoded) return finish(REDACTED);
+    if (claims || encoded.length >= MEMO_UNITS) this.memo.set(encoded, true);
+    return encoded;
   }
 
   /** Text pieces a provider reads as one lane, such as rich-text runs with metadata between
@@ -1052,7 +1280,8 @@ export class SentSecrets {
     const matches = this.spansOf(text, scan, true);
     if (!matches || matches.deep || (bounded && this.uncheckedTail())) return parts.map((part) => part && REDACTED);
     if (bounded) this.openSpans(text, matches.spans);
-    const safe = replaceParts(parts, matches.spans);
+    let safe = replaceParts(parts, matches.spans);
+    if (this.smallForms) safe = safe.map((next, index) => (this.whole(parts[index]!) ? REDACTED : next));
     const limit = this.limit(scan);
     return limit < Infinity ? withholdRuns(parts, safe, limit) : safe;
   }
@@ -1065,7 +1294,7 @@ export class SentSecrets {
     if (this.idle()) return text;
     const scan = this.scan(true);
     // A form too large to register or index could begin anywhere in what was read.
-    if (this.uncheckedTail() || this.limit(scan) <= text.length) return REDACTED;
+    if (this.uncheckedTail() || this.limit(scan) <= text.length || this.whole(text)) return REDACTED;
     const matches = this.spansOf(text, scan, true);
     if (!matches || matches.deep) return REDACTED;
     this.openSpans(text, matches.spans);
@@ -1091,7 +1320,7 @@ export class SentSecrets {
     return (this.views.matcher ??= new Matcher(this.forms));
   }
 
-  /** Short private forms, matched whole wherever they occur in payload text. */
+  /** Short private forms, matched as substrings of payload text. */
   private shortMatcher(): Matcher | null {
     if (this.views.short === undefined) {
       const forms = [...this.forms].filter(([, kind]) => kind === SHORT);
@@ -1143,46 +1372,75 @@ export class SentSecrets {
     return this.unmatched < Infinity || this.matcher().unindexed < Infinity;
   }
 
-  /** A form whole: a short private value equal to a key, number or boolean. */
+  /** A form whole: a leaf, key, number, boolean or decoded view equal to one, as it stands or
+   * under JSON escapes. This is how a tiny private value is matched. */
   private whole(text: string): boolean {
-    return this.forms.has(text.includes("%") ? wireForms(text)[0]! : text);
+    let view: string | undefined = text;
+    for (let layer = 0; view !== undefined && layer <= MAX_DECODE_LEVELS; layer++) {
+      if (view.length <= this.widestForm && this.forms.has(view.includes("%") ? wireForms(view)[0]! : view))
+        return true;
+      // An escape is at most six units for one, so a longer text cannot decode to a form.
+      view = view.length <= 6 * this.widestForm && view.includes("\\") ? unescapeLayer(view)?.text : undefined;
+    }
+    return false;
   }
 
-  /** Every K-unit run of a registered form, and in payload text every short private form, in
-   * the raw text and each JSON-unescaped layer, mapped to source spans before any replacement.
-   * Text decodes one more layer while the last one could still hold an escape. Work beyond
+  /** Every K-unit run of a registered form, every identifier form, and in payload text every
+   * short private form, in the raw text and each JSON-unescaped layer, mapped to source spans
+   * before any replacement. A layer decodes while the one above holds an escape; each is scanned
+   * only around the escapes it decoded, since any other match was found a layer up. Work beyond
    * the call's budget returns undefined, which withholds the text. */
   private spansOf(text: string, scan: Scan, short: boolean): Matches | undefined {
     const spans: number[] = [];
-    const shortSpans: number[] = [];
     const fragments = this.fragments();
-    const whole = this.wholeMatcher();
-    const shorts = short ? this.shortMatcher() : null;
-    const scanners = 1 + Number(whole !== null) + Number(shorts !== null);
-    if (!fragments.size && scanners === 1) return { spans, long: spans, deep: false };
+    const matchers = [this.wholeMatcher(), short ? this.shortMatcher() : null].filter(
+      (matcher): matcher is Matcher => matcher !== null,
+    );
+    const scanners = Number(fragments.size > 0) + matchers.length;
+    if (!scanners) return { spans, deep: false };
     const marks = markers(text);
-    const found: Found = { spans, short: false, exact: false };
-    const foundShort: Found = { spans: shortSpans, short: false, exact: false };
-    for (let layer = 0, more = true; more; layer++) {
-      if (layer > MAX_DECODE_LEVELS) return { spans: spans.concat(shortSpans), long: spans, deep: true };
-      if (!spend(scan, 2 * text.length * (layer + 1) * scanners)) return undefined;
-      const view = () => {
-        let units: Units = new Source(text);
-        for (let depth = 0; depth < layer; depth++) units = new Unescaped(units);
-        return units;
-      };
-      const units = view();
-      fragments.scan(units, spans, marks);
-      if (whole && !whole.scan(view(), found, scan.budget, marks)) return undefined;
-      if (shorts && !shorts.scan(view(), foundShort, scan.budget, marks)) return undefined;
-      more = units instanceof Unescaped ? units.decoded > 0 && units.slashes > 0 : text.includes("\\");
+    if (!spend(scan, 2 * text.length * scanners)) return undefined;
+    fragments.scan(text, 0, text.length, spans, marks);
+    for (const matcher of matchers)
+      if (!matcher.scan(text, 0, text.length, { spans }, scan.budget, marks)) return undefined;
+    const reach = Math.max(FRAGMENT_LENGTH, ...matchers.map((matcher) => matcher.widest));
+    const layers: Layer[] = [];
+    for (let upper = text; upper.includes("\\");) {
+      // Decoding a layer copies text past its escapes, far cheaper per unit than scanning it.
+      if (!spend(scan, Math.ceil(upper.length / 8))) return undefined;
+      const layer = unescapeLayer(upper);
+      if (!layer) break;
+      if (layers.length === MAX_DECODE_LEVELS) return { spans, deep: true };
+      layers.push(layer);
+      const ranges = windows(layer, reach);
+      let units = 0;
+      for (let at = 0; at < ranges.length; at += 2) units += ranges[at + 1]! - ranges[at]!;
+      if (!spend(scan, 2 * units * scanners)) return undefined;
+      const local: number[] = [];
+      for (let at = 0; at < ranges.length; at += 2) {
+        const [start, end] = [ranges[at]!, ranges[at + 1]!];
+        fragments.scan(layer.text, start, end, local, undefined);
+        for (const matcher of matchers)
+          if (!matcher.scan(layer.text, start, end, { spans: local }, scan.budget)) return undefined;
+      }
+      const ordered = merged(local);
+      const base = spans.length;
+      for (let at = 0; at < ordered.length; at += 2)
+        push(
+          spans,
+          base,
+          toSource(layers, ordered[at]!, false),
+          toSource(layers, ordered[at + 1]! - 1, true) + 1,
+          marks,
+        );
+      upper = layer.text;
     }
     // Auth framing is never indexed, but an echo carrying it goes whole, as a header line does.
     for (let at = 0; at < spans.length; at += 2) {
       const framing = /(?:Bearer|token)(?: |\+|%20)$/.exec(text.slice(Math.max(0, spans[at]! - 9), spans[at]));
       if (framing) spans[at]! -= framing[0].length;
     }
-    return { spans: spans.concat(shortSpans), long: spans, deep: false };
+    return { spans, deep: false };
   }
 
   /** Add the span of an unfinished form the text ends inside, at any decoded layer. */
@@ -1209,48 +1467,111 @@ export class SentSecrets {
     if (open >= 0) spans.push(open, text.length);
   }
 
-  /** One string checked alone: an object key, a typed code, a decoded binary view. A short
-   * private value withholds it only when it is the whole string. */
-  private isolated(text: string, scan: Scan, short: boolean): string {
-    if (text.length >= this.limit(scan) || (short && this.whole(text))) return REDACTED;
-    const matches = this.spansOf(text, scan, false);
+  /** One string checked alone: an object key or a decoded view. In payload scans a tiny
+   * private value withholds it when it is the whole string, and a short one is replaced
+   * wherever it occurs. */
+  private isolated(text: string, scan: Scan): string {
+    if (text.length >= this.limit(scan) || (scan.payload && this.smallForms && this.whole(text))) return REDACTED;
+    const matches = this.spansOf(text, scan, scan.payload);
     if (!matches || matches.deep) return REDACTED;
     return matches.spans.length ? replace(text, matches.spans) : text;
   }
 
-  /** A declared binary field is decoded and checked as bytes and as UTF-8, so an echo at any
-   * byte alignment is found, and as the base64 text the agent receives. A match withholds the
-   * whole field as the encoded marker, never partially scrubbed bytes. A field that is not
-   * base64 is checked as text. */
+  /** A declared binary field is decoded and checked as bytes, as UTF-8 and as the base64 text
+   * the agent receives, so an echo at any byte alignment is found. A match withholds the whole
+   * field as the encoded marker, never partially scrubbed bytes. A field that is not base64 is
+   * checked as text. Content found clean, here or as it was encoded, is not checked again. */
   private binary(value: string, scan: Scan): string {
-    let bytes: string;
-    try {
-      bytes = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
-    } catch {
-      return this.isolated(value, scan, scan.payload);
+    if (this.memo.get(value) === true || (!scan.payload && this.memo.has(value))) return value;
+    const bytes = decodeBase64(value);
+    if (bytes === undefined) return this.isolated(value, scan);
+    if (this.bytesClean(bytes, scan) && this.isolated(value, scan) === value) {
+      if (value.length >= MEMO_UNITS) this.memo.set(value, scan.payload);
+      return value;
     }
-    const utf8 = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
-      Uint8Array.from(bytes, (unit) => unit.charCodeAt(0)),
-    );
-    if ([bytes, utf8, value].every((view) => this.isolated(view, scan, scan.payload) === view)) return value;
     const withheld = btoa(REDACTED);
-    return this.isolated(withheld, scan, false) === withheld ? withheld : "";
+    return this.isolated(withheld, scan) === withheld ? withheld : "";
   }
 
-  /** The leaves' joined text, matched once, with each leaf's replacement. A number or a
-   * serialized container that a match touches is withheld whole. */
+  /** Whether bytes, as byte-valued units, hold no match: nor their UTF-8 text when a form is not
+   * ASCII, nor any base64 they carry, MAX_ENCODED_LEVELS deep. */
+  private bytesClean(binary: string, scan: Scan, level = 1): boolean {
+    if (this.isolated(binary, scan) !== binary) return false;
+    if (this.unicodeForms && /[\x80-\xff]/.test(binary)) {
+      const text = utf8(binary);
+      if (this.isolated(text, scan) !== text) return false;
+    }
+    if (level < MAX_ENCODED_LEVELS)
+      for (const run of encodedRuns(binary)) {
+        const inner = decodeBase64(run);
+        if (inner !== undefined && !this.bytesClean(inner, scan, level + 1)) return false;
+      }
+    return true;
+  }
+
+  /** Text leaves carrying base64 or base64url, the whole leaf or a long run inside it, whose
+   * decoded bytes or their UTF-8 text hold a match are withheld whole: no later pass reads
+   * through an encoding the output does not declare. Every leaf's decoded views are matched
+   * together, as one lane between unmatched separators. */
+  private encodedLeaves(parts: string[], kinds: number[], safe: string[], scan: Scan): void {
+    const views: string[] = [];
+    const owners: number[] = [];
+    const add = (binary: string, owner: number, level: number) => {
+      views.push(binary);
+      owners.push(owner);
+      if (this.unicodeForms && /[\x80-\xff]/.test(binary)) {
+        views.push(utf8(binary));
+        owners.push(owner);
+      }
+      if (level < MAX_ENCODED_LEVELS)
+        for (const run of encodedRuns(binary)) {
+          const inner = decodeBase64(run);
+          if (inner) add(inner, owner, level + 1);
+        }
+    };
+    for (let index = 0; index < parts.length; index++) {
+      // The leaf as text matching left it: a run it replaced in place, such as a registered base64
+      // form, leaves no decodable remnant of K units; a match only decoding reveals withholds all.
+      const text = safe[index]!;
+      if (kinds[index] !== TEXT || text === REDACTED || this.memo.get(text) === true) continue;
+      if (!scan.payload && this.memo.has(text)) continue;
+      for (const run of encodedRuns(text)) {
+        const bytes = decodeBase64(run);
+        if (bytes) add(bytes, index, 1);
+      }
+    }
+    if (!views.length) return;
+    const withhold = (at: number) => (safe[owners[at]!] = REDACTED);
+    if (scan.payload && this.smallForms) views.forEach((view, at) => this.whole(view) && withhold(at));
+    const lane = views.join("￿");
+    const matches = this.spansOf(lane, scan, scan.payload);
+    if (!matches) return views.forEach((_, at) => withhold(at));
+    if (matches.deep) views.forEach((view, at) => view.includes("\\") && withhold(at));
+    const starts: number[] = [];
+    for (let at = 0, offset = 0; at < views.length; offset += views[at++]!.length + 1) starts.push(offset);
+    const ranges = merged(matches.spans);
+    for (let at = 0; at < ranges.length; at += 2) {
+      let [low, high] = [0, starts.length];
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (starts[middle]! <= ranges[at]!) low = middle + 1;
+        else high = middle;
+      }
+      for (let view = Math.max(0, low - 1); view < starts.length && starts[view]! < ranges[at + 1]!; view++)
+        withhold(view);
+    }
+  }
+
+  /** The leaves' joined text, matched once, with each leaf's replacement. A tiny or short
+   * private value equal to a whole leaf withholds it. A number or a serialized container that
+   * a match touches is withheld whole. */
   private safeParts(parts: string[], kinds: number[], scan: Scan): string[] {
     if (!parts.length) return parts;
     const matches = this.spansOf(parts.join(""), scan, scan.payload);
-    // A short private value matches a number only as its whole text: its digits recur in
-    // ordinary counts, ids and times.
-    const numbers = matches && matches.long.length < matches.spans.length ? replaceParts(parts, matches.long) : [];
-    let safe = matches
-      ? replaceParts(parts, matches.spans).map((next, index) =>
-          kinds[index] === NUMBER && numbers.length && !this.whole(parts[index]!) ? numbers[index]! : next,
-        )
-      : this.leafByLeaf(parts, scan);
+    let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan);
     if (matches?.deep) safe = safe.map((next, index) => (parts[index]!.includes("\\") ? REDACTED : next));
+    if (scan.payload && this.smallForms)
+      safe = safe.map((next, index) => (kinds[index] !== SERIALIZED && this.whole(parts[index]!) ? REDACTED : next));
     const limit = this.limit(scan);
     if (limit < Infinity) safe = withholdRuns(parts, safe, limit);
     return safe.map((next, index) => (next !== parts[index] && kinds[index] !== TEXT ? REDACTED : next));
@@ -1268,7 +1589,7 @@ export class SentSecrets {
     let pieces: { index: number; start: number; text: string }[] = [];
     const seam = () => {
       const text = pieces.map((piece) => piece.text).join("");
-      const matches = pieces.length > 1 ? this.spansOf(text, scan, scan.payload) : { spans: [], long: [], deep: false };
+      const matches = pieces.length > 1 ? this.spansOf(text, scan, scan.payload) : { spans: [], deep: false };
       const ranges = matches ? merged(matches.spans) : [];
       let offset = 0;
       for (const piece of pieces) {
@@ -1305,7 +1626,7 @@ export class SentSecrets {
     if (!this.fragments().size) return false;
     if (!spend(scan, 2 * text.length)) return true;
     const spans: number[] = [];
-    this.fragments().scan(new Source(text), spans, undefined);
+    this.fragments().scan(text, 0, text.length, spans, undefined);
     if (!spans.length) return false;
     const tokens = jsonTokens(text);
     const ranges = merged(spans);
@@ -1322,148 +1643,318 @@ export class SentSecrets {
     return false;
   }
 
-  /** The output boundary. A first pass projects every string and number leaf in serialization
-   * order, nested JSON strings parsed and errors' own fields included; the joined projection is
-   * matched once, so a form split across adjacent leaves is found; a second pass replays the
-   * same walk, replacing only the affected piece of each leaf and copying only changed
-   * containers. Keys, typed codes and declared binary fields are checked alone. The first pass
-   * records each budget-dependent choice, which the second replays. */
-  private project(value: unknown, scan: Scan): unknown {
+  /** The output boundary. One walk reads every field once, from its descriptor, and projects
+   * every string and number leaf in serialization order, nested JSON strings parsed and errors'
+   * own fields included; the joined projection is matched once, so a form split across adjacent
+   * leaves is found, and only the affected piece of each leaf is written back. Keys and declared
+   * binary fields are checked alone, and text leaves carrying base64 are also checked through
+   * it. Fixed framing words and tags, outcome booleans, and on a Connecta error its own code and
+   * class name are kept: nothing downstream chooses them. Every other field is matched,
+   * whatever its name.
+   *
+   * What returns is what was checked. A caller's container is returned as it stands only while
+   * every field is a data property this walk read (an error's engine-rendered stack aside) and
+   * nothing in it changed: a later read returns the same values. Any other container is a copy:
+   * one holding an accessor, which is never invoked and is left out; one with a toJSON, which is
+   * called once, as serialization would, and replaced by its checked result; one whose key was
+   * renamed; and every container a change reaches, copied on its first write, so no caller's
+   * value is ever mutated. Copies keep the identity facts registered in redaction-identity. */
+  private project(value: unknown, scan: Scan): { value: unknown; changed: boolean } {
+    type Holder = Record<PropertyKey, unknown>;
+    /** Where values are written: `target` itself when this walk made it, or for a caller's
+     * container (`shared`) a copy made on its first write and put in place of it in `parent`. */
+    interface Frame {
+      target: object;
+      shared: boolean;
+      parent: Frame | undefined;
+      slot: PropertyKey;
+      copy?: object;
+      /** An error's class accessors, read once, for its copy. */
+      accessors?: [string, unknown][];
+    }
     const parts: string[] = [];
     const kinds: number[] = [];
-    const decisions: unknown[] = [];
+    const frames: Frame[] = [];
+    const slots: PropertyKey[] = [];
+    const owners: number[] = [];
+    // Structural changes found while walking: a withheld or checked field, a copied container.
+    const replaced: [frame: Frame, slot: PropertyKey, value: unknown][] = [];
+    const nested: Nested[] = [];
     const active = new Set<object>();
-    // Keys, typed codes and binary fields repeat across rows; each is checked once per call.
-    const checked = [new Map<string, string>(), new Map<string, string>(), new Map<string, string>()] as const;
-    const check = (kind: 0 | 1 | 2, text: string): string => {
+    // Keys and binary fields repeat across rows; each is checked once per call.
+    const checked = [new Map<string, string>(), new Map<string, string>()] as const;
+    let changed = false;
+    const touch = (owner: number) => {
+      changed = true;
+      if (owner >= 0) nested[owner]!.dirty = true;
+    };
+    const check = (kind: 0 | 1, text: string): string => {
       let result = checked[kind].get(text);
       if (result === undefined) {
-        result =
-          kind === 0
-            ? this.isolated(text, scan, scan.payload)
-            : kind === 1
-              ? this.credentials().isolated(text, { ...scan, payload: false }, false)
-              : this.binary(text, scan);
+        result = kind === 0 ? this.isolated(text, scan) : this.binary(text, scan);
         checked[kind].set(text, result);
       }
-      if (result !== text) changed = true;
       return result;
     };
-    // Whether anything but a leaf's text changes, which the second pass must then apply.
-    let changed = false;
-    let safe: string[] | undefined;
-    let [part, decision] = [0, 0];
-    const decide = <D>(make: () => D): D => {
-      if (safe) return decisions[decision++] as D;
-      const made = make();
-      decisions.push(made);
-      return made;
+    const replace = (frame: Frame, slot: PropertyKey, next: unknown, owner: number) => {
+      replaced.push([frame, slot, next]);
+      touch(owner);
     };
-    const leaf = (text: string, kind: number, original: unknown): unknown => {
-      if (!safe) {
-        parts.push(text);
-        kinds.push(kind);
-        return original;
+    const leaf = (text: string, kind: number, frame: Frame, slot: PropertyKey, owner: number) => {
+      parts.push(text);
+      kinds.push(kind);
+      frames.push(frame);
+      slots.push(slot);
+      owners.push(owner);
+    };
+    /** A field put on a copy: an error's keeps its attributes, and `__proto__` stays a field. */
+    const put = (holder: object, slot: PropertyKey, next: unknown, enumerable = true) => {
+      if (holder instanceof Error || slot === "__proto__" || !enumerable)
+        Object.defineProperty(holder, slot, {
+          value: next,
+          writable: true,
+          configurable: true,
+          enumerable: Object.getOwnPropertyDescriptor(holder, slot)?.enumerable ?? enumerable,
+        });
+      else (holder as Holder)[slot] = next;
+    };
+    /** A caller's container copied from its descriptors, never invoking an accessor. */
+    const shallow = (frame: Frame): object => {
+      const item = frame.target;
+      if (Array.isArray(item)) {
+        const length = (item as unknown[]).length;
+        // Holes stay holes.
+        const out: unknown[] = [];
+        out.length = length;
+        for (let index = 0; index < length; index++) {
+          const descriptor = Object.getOwnPropertyDescriptor(item, index);
+          if (descriptor) out[index] = "value" in descriptor ? descriptor.value : REDACTED;
+        }
+        return out;
       }
-      const next = safe[part++]!;
-      return next === text ? original : next;
+      const out = Object.create(Object.getPrototypeOf(item) as object | null) as Holder;
+      for (const name of Object.getOwnPropertyNames(item)) {
+        const descriptor = Object.getOwnPropertyDescriptor(item, name)!;
+        if ("value" in descriptor) Object.defineProperty(out, name, { ...descriptor, configurable: true });
+        else if (item instanceof Error && name === "stack")
+          Object.defineProperty(out, name, { value: item.stack, writable: true, configurable: true });
+      }
+      for (const [name, read] of frame.accessors ?? []) put(out, name, read, false);
+      return redactedCopyOf(item, out);
     };
-    const withheld = (): string => {
-      changed = true;
-      return REDACTED;
+    const writable = (frame: Frame): Holder => {
+      if (!frame.shared) return frame.target as Holder;
+      if (!frame.copy) {
+        frame.copy = shallow(frame);
+        put(writable(frame.parent!), frame.slot, frame.copy);
+      }
+      return frame.copy as Holder;
     };
-    const visit = (item: unknown, depth: number, level: number): unknown => {
+    const visit = (
+      item: unknown,
+      frame: Frame,
+      slot: PropertyKey,
+      depth: number,
+      level: number,
+      owner: number,
+      owned: boolean,
+    ): unknown => {
       if (typeof item === "string") {
         if (this.mintedStates.has(item)) return item;
-        if (level < MAX_DECODE_LEVELS && /^\s*["[{]/.test(item)) {
-          const parsed = decide(() => (spend(scan, item.length) ? parse(item) : undefined));
+        if (level < MAX_DECODE_LEVELS && /^\s*["[{]/.test(item) && spend(scan, item.length)) {
+          const parsed = parse(item);
           if (parsed) {
-            const crossing = decide(() => this.spansTokens(item, scan));
-            const next = visit(parsed.json, depth + 1, level + 1);
-            if (crossing) return withheld();
-            return next === parsed.json ? item : JSON.stringify(next);
+            const entry: Nested = { frame, slot, json: undefined, owner, crossing: false, dirty: false };
+            entry.crossing = this.spansTokens(item, scan);
+            const index = nested.push(entry) - 1;
+            // Parsed JSON is this walk's own, so it is written in place.
+            const holder: Frame = { target: entry, shared: false, parent: undefined, slot: "json" };
+            entry.json = visit(parsed.json, holder, "json", depth + 1, level + 1, index, true);
+            return item;
           }
         }
-        return leaf(item, TEXT, item);
+        leaf(item, TEXT, frame, slot, owner);
+        return item;
       }
-      if (typeof item === "number" || typeof item === "bigint") return leaf(String(item), NUMBER, item);
+      if (typeof item === "number" || typeof item === "bigint") {
+        leaf(String(item), NUMBER, frame, slot, owner);
+        return item;
+      }
       if (typeof item === "boolean" || item === null)
-        return scan.payload && this.whole(String(item)) ? withheld() : item;
+        return scan.payload && this.smallForms && this.whole(String(item)) ? REDACTED : item;
       if (typeof item !== "object") return item;
-      if (active.has(item) || depth > MAX_WALK_DEPTH) return withheld();
-      const plan = decide(() => this.plan(item, scan));
-      if (plan === WITHHELD) return withheld();
-      if (typeof plan === "string") return leaf(plan, SERIALIZED, item);
+      if (active.has(item) || depth > MAX_WALK_DEPTH) return REDACTED;
       active.add(item);
-      const result = Array.isArray(item) ? elements(item, depth, level) : entries(item, depth, level);
-      active.delete(item);
-      return result;
-    };
-    const elements = (item: unknown[], depth: number, level: number): unknown => {
-      let copy: unknown[] | undefined;
-      for (let index = 0; index < item.length; index++) {
-        const field = item[index];
-        const next = visit(field, depth + 1, level);
-        if (safe && (copy || next !== field)) (copy ??= item.slice(0, index))[index] = next;
+      try {
+        return container(item, frame, slot, depth, level, owner, owned);
+      } catch {
+        return REDACTED; // A proxy trap or a toJSON that threw.
+      } finally {
+        active.delete(item);
       }
-      return copy ?? item;
     };
-    const entries = (item: object, depth: number, level: number): unknown => {
-      const names = Object.getOwnPropertyNames(item);
-      const typed =
-        item instanceof Error || typeof Object.getOwnPropertyDescriptor(item, "retryable")?.value === "boolean";
-      let copy: object | undefined;
-      for (let index = 0; index < names.length; index++) {
-        const key = names[index]!;
-        const descriptor = Object.getOwnPropertyDescriptor(item, key);
-        let field: unknown;
-        let next: unknown = DROP;
-        let name = key;
-        // V8 lazily renders Error.stack through an own accessor: snapshot it. Any other
-        // accessor is downstream-authored and never invoked.
-        if (descriptor && "value" in descriptor) field = descriptor.value;
-        else if (key === "stack" && item instanceof Error) field = item.stack;
-        if (field !== undefined || (descriptor && "value" in descriptor)) {
-          if (!FRAMING_KEYS.has(key)) name = check(0, key);
-          if (
-            (typeof field === "string" && TAGS.has(`${key}:${field}`)) ||
-            (FACTS.has(key) && (typeof field === "boolean" || typeof field === "number"))
-          )
-            next = field;
-          else if (typed && (key === "code" || key === "name") && typeof field === "string") next = check(1, field);
-          else if (typeof field === "string" && binaryField(item, key)) next = check(2, field);
-          else next = visit(field, depth + 1, level);
-        } else changed = true;
-        if (!safe || (!copy && next === field && name === key)) continue;
-        if (!copy) {
-          copy = item instanceof Error ? (Object.create(Object.getPrototypeOf(item)) as object) : {};
-          for (const earlier of names.slice(0, index))
-            define(copy, item, earlier, earlier, (item as Record<string, unknown>)[earlier]);
+    /** A child that changed: written into parsed JSON this walk owns, or recorded as a change
+     * to a caller's container. */
+    const settle = (frame: Frame, slot: PropertyKey, next: unknown, owner: number) => {
+      if (frame.shared) return replace(frame, slot, next, owner);
+      (frame.target as Holder)[slot] = next;
+      touch(owner);
+    };
+    /** Entries that fit the node budget are walked; a larger container is checked as one
+     * serialized leaf, and one that cannot be serialized is withheld. */
+    const fits = (size: number, item: object, frame: Frame, slot: PropertyKey, owner: number) => {
+      if (size <= scan.budget.nodes) {
+        scan.budget.nodes -= size;
+        return true;
+      }
+      let text: string | undefined;
+      try {
+        text = JSON.stringify(item, errorFields);
+      } catch {
+        // A cycle or bigint cannot be serialized.
+      }
+      if (text === undefined) return REDACTED;
+      leaf(text, SERIALIZED, frame, slot, owner);
+      return item;
+    };
+    const container = (
+      item: object,
+      frame: Frame,
+      slot: PropertyKey,
+      depth: number,
+      level: number,
+      owner: number,
+      owned: boolean,
+    ): unknown => {
+      if (Array.isArray(item)) {
+        const length = (item as unknown[]).length;
+        const plan = fits(length, item, frame, slot, owner);
+        if (plan !== true) return plan;
+        const own: Frame = owned
+          ? { target: item, shared: false, parent: frame, slot }
+          : { target: item, shared: true, parent: frame, slot };
+        for (let index = 0; index < length; index++) {
+          const descriptor = Object.getOwnPropertyDescriptor(item, index);
+          if (!descriptor) continue; // A hole stays one.
+          if (!("value" in descriptor)) {
+            replace(own, index, REDACTED, owner);
+            continue;
+          }
+          const next = visit(descriptor.value, own, index, depth + 1, level, owner, owned);
+          if (next !== descriptor.value) settle(own, index, next, owner);
         }
-        if (next !== DROP) define(copy, item, key, name, next);
+        return item;
       }
-      return !copy ? item : item instanceof Error ? carryFailureFacts(item, copy) : copy;
+      const error = item instanceof Error;
+      if (!error && !owned) {
+        // What serialization would read: a toJSON result, checked in place of the object.
+        const toJSON = inherited(item, "toJSON", WITHHELD_ACCESSOR);
+        if (toJSON === WITHHELD_ACCESSOR) return REDACTED;
+        if (typeof toJSON === "function")
+          return visit(toJSON.call(item, String(slot)), frame, slot, depth + 1, level, owner, false);
+      }
+      const names = Object.getOwnPropertyNames(item);
+      const plan = fits(names.length, item, frame, slot, owner);
+      if (plan !== true) return plan;
+      // Every field is read once, and every decision below reads what was read.
+      const keys: string[] = [];
+      const values: unknown[] = [];
+      const visible: boolean[] = [];
+      let plain = true;
+      for (const name of names) {
+        const descriptor = Object.getOwnPropertyDescriptor(item, name);
+        if (!descriptor) continue;
+        // V8 renders Error.stack through an own accessor: snapshot it. Any other own accessor
+        // is never invoked, and its container is copied without it.
+        if ("value" in descriptor) values.push(descriptor.value);
+        else if (error && name === "stack") values.push((item as Error).stack);
+        else {
+          plain = false;
+          continue;
+        }
+        keys.push(name);
+        visible.push(descriptor.enumerable === true);
+      }
+      let accessors: [string, unknown][] | undefined;
+      if (error)
+        // Accessors an error's class defines, such as DOMException's name and message, are read
+        // once and checked; a copy holds them as fields, since their getters cannot read it.
+        for (let at = Object.getPrototypeOf(item) as object | null; at && at !== Error.prototype;) {
+          for (const name of Object.getOwnPropertyNames(at)) {
+            if (!Object.getOwnPropertyDescriptor(at, name)?.get || keys.includes(name)) continue;
+            try {
+              (accessors ??= []).push([name, Reflect.get(item, name)]);
+            } catch {
+              // A getter that throws leaves its field out of any copy.
+            }
+          }
+          at = Object.getPrototypeOf(at) as object | null;
+        }
+      const renamed = keys.map((key) => (FRAMING_KEYS.has(key) ? key : check(0, key)));
+      if (renamed.some((name, index) => name !== keys[index])) plain = false;
+      // A container walked as it stands: a caller's, copied on first write, or parsed JSON this
+      // walk owns, written in place. Any other is copied now, field by field.
+      const own: Frame = !plain
+        ? {
+            target: Object.create(Object.getPrototypeOf(item) as object | null) as object,
+            shared: false,
+            parent: frame,
+            slot,
+          }
+        : { target: item, shared: !owned, parent: frame, slot, ...(accessors && !owned ? { accessors } : {}) };
+      const fresh = own.target !== item;
+      const out = own.target as Holder;
+      const kind = error ? className(item) : undefined;
+      const field = (name: string) => values[keys.indexOf(name)];
+      const count = keys.length + (accessors?.length ?? 0);
+      for (let index = 0; index < count; index++) {
+        const extra = index >= keys.length ? accessors![index - keys.length]! : undefined;
+        const key = extra ? extra[0] : keys[index]!;
+        const value = extra ? extra[1] : values[index];
+        const name = extra ? key : renamed[index]!;
+        // Two keys renamed alike keep the first; the second's leaves write nowhere.
+        const target: Frame =
+          fresh && Object.hasOwn(out, name) ? { target: {}, shared: false, parent: undefined, slot: name } : own;
+        let next: unknown;
+        if (
+          (typeof value === "string" && TAGS.has(`${key}:${value}`)) ||
+          (typeof value === "boolean" && FACTS.has(key)) ||
+          (error &&
+            typeof value === "string" &&
+            ((key === "code" && classificationCode(value) !== undefined) || (key === "name" && value === kind)))
+        )
+          next = value;
+        else if (typeof value === "string" && binaryField(field, key)) next = check(1, value);
+        else next = visit(value, target, name, depth + 1, level, owner, owned);
+        if (target !== own) continue;
+        if (fresh) put(out, name, next, extra ? false : visible[index]);
+        else if (next !== value) settle(own, name, next, owner);
+      }
+      if (!fresh) return item;
+      touch(owner);
+      return redactedCopyOf(item, out);
     };
-    visit(value, 0, 0);
-    safe = this.safeParts(parts, kinds, scan);
-    // Most output holds nothing to replace: the first pass is then the only one.
-    if (!changed && safe.every((next, index) => next === parts[index])) return value;
-    return visit(value, 0, 0);
-  }
-
-  /** Walk a container whose entries fit the node budget; check a larger one as one serialized
-   * leaf, and withhold one that cannot be serialized. */
-  private plan(item: object, scan: Scan): typeof WALK | typeof WITHHELD | string {
-    const size = Array.isArray(item) ? item.length : Object.getOwnPropertyNames(item).length;
-    if (size <= scan.budget.nodes) {
-      scan.budget.nodes -= size;
-      return WALK;
+    const root: Frame = { target: { value: undefined }, shared: false, parent: undefined, slot: "value" };
+    (root.target as Holder)["value"] = visit(value, root, "value", 0, 0, -1, false);
+    const safe = this.safeParts(parts, kinds, scan);
+    this.encodedLeaves(parts, kinds, safe, scan);
+    // Structure first, then the leaves inside it, then nested JSON from the innermost out.
+    for (const [frame, slot, next] of replaced) put(writable(frame), slot, next);
+    for (let index = 0; index < parts.length; index++) {
+      const next = safe[index]!;
+      if (next === parts[index]) continue;
+      const holder = writable(frames[index]!);
+      // A typed number on an error is dropped rather than turned into text.
+      put(holder, slots[index]!, kinds[index] === NUMBER && holder instanceof Error ? undefined : next);
+      touch(owners[index]!);
     }
-    try {
-      return JSON.stringify(item, errorFields) ?? WITHHELD;
-    } catch {
-      return WITHHELD; // A cycle or bigint cannot be serialized.
+    for (let index = nested.length - 1; index >= 0; index--) {
+      const entry = nested[index]!;
+      if (!entry.crossing && !entry.dirty) continue;
+      put(writable(entry.frame as Frame), entry.slot, entry.crossing ? REDACTED : JSON.stringify(entry.json));
+      touch(entry.owner);
     }
+    return { value: (root.target as Holder)["value"], changed };
   }
 }
 
@@ -1566,6 +2057,20 @@ export function requestSentSecrets(ctx: ConnectorContext): SentSecrets {
  * extracted substring may no longer hold the form at all. */
 export function redactBeforeCut<T>(ctx: ConnectorContext, value: T): T {
   return requestSentSecrets(ctx).redact(value);
+}
+
+/** Base64, or base64url with `url`, of bytes or UTF-8 text Connecta returns to an agent: a
+ * download, an attachment, a REST body, a page cursor. Every such encoding goes through here,
+ * since no later pass reads through an encoding the output does not declare: the content is
+ * checked first with the request's set, and content holding a match encodes the placeholder.
+ * A cursor passes `claims`: connecta's own counts and fingerprints beside downstream values it
+ * already redacted (`redactSentSecrets`), checked under the boundary's rules. */
+export function encodeForAgent(
+  ctx: ConnectorContext,
+  content: Uint8Array | string,
+  options?: { url?: boolean; claims?: boolean },
+): string {
+  return requestSentSecrets(ctx).encode(typeof content === "string" ? encoder.encode(content) : content, options);
 }
 
 /** Downstream text read only up to a bound, as a field an agent reads: whole forms are

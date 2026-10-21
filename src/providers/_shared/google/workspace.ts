@@ -51,6 +51,7 @@
  *    admitted identity to a Workspace address in `subject`. Give each pool
  *    agents use an `owner`, the address they act as there.
  */
+import { followRedactedCopies } from "../../../redaction-identity.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
@@ -281,7 +282,7 @@ const REASON_TOKEN = /^[A-Za-z0-9_.]{1,64}$/;
 const MAX_REASONS = 8;
 
 /** Google's reasons for each failure this layer mapped, beside the error. */
-const googleReasons = new WeakMap<ConnectorCallError, readonly string[]>();
+const googleReasons = followRedactedCopies(new WeakMap<ConnectorCallError, readonly string[]>());
 
 /**
  * Google's machine-readable reasons for a failure the shared client mapped:

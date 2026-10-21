@@ -390,13 +390,13 @@ describe("downstream input relay", () => {
     },
   );
   it("INV-5: relayed prompts quoting a short writeOnly argument are redacted while the relay continues", async () => {
-    const flow = setup({ privateArguments: "top-level", message: "Downstream quoted z", failureStatus: 429 });
-    const first = (await flow.rpc({ args: { address: "service.read", args: { id: 1, password: "z" } } })).result;
+    const flow = setup({ privateArguments: "top-level", message: "Downstream quoted z7Qx", failureStatus: 429 });
+    const first = (await flow.rpc({ args: { address: "service.read", args: { id: 1, password: "z7Qx" } } })).result;
     expect(first.resultType).toBe("input_required");
-    // A short private value is matched whole wherever it occurs; the prompt around it stays.
+    // A short private value (four to seven units) is matched wherever it occurs; the prompt around it stays.
     const message = first.inputRequests[Object.keys(first.inputRequests)[0]!].params.message;
     expect(message).toMatch(/Downstream quoted \[redacted\]$/);
-    expect(message.replaceAll("[redacted]", "")).not.toContain("z");
+    expect(message.replaceAll("[redacted]", "")).not.toContain("z7Qx");
     expect(flow.call).toHaveBeenCalledOnce();
   });
   it("INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations", async () => {

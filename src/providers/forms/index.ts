@@ -39,7 +39,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut } from "../../sent-secrets.js";
+import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -168,8 +168,19 @@ async function digestOf(bound: readonly unknown[]): Promise<string> {
   return base64Url(hash.subarray(0, 16));
 }
 
-function encodeCursor(cursor: JsonRecord): string {
-  return base64Url(encoder.encode(JSON.stringify(cursor)));
+/**
+ * A cursor of connecta's claims. An agent decodes it and no later pass reads
+ * through its encoding, so Google's text enters only redacted: a page token
+ * it must send back, redacted ({@link redactSentSecrets}); a value it only
+ * compares, by {@link claimOf}.
+ */
+function encodeCursor(ctx: ConnectorContext, cursor: JsonRecord): string {
+  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
+}
+
+/** A downstream value a cursor only compares: itself, or its digest when it holds a sent value. */
+async function claimOf(ctx: ConnectorContext, value: string): Promise<string> {
+  return redactSentSecrets(ctx, value) === value ? value : `#${await digestOf(["claim", value])}`;
 }
 
 /**
@@ -873,7 +884,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         const { items, ...header } = projectForm(ctx, form);
         const all = asArray(items).map(asRecord);
-        const revision = text(asRecord(form)["revisionId"]) ?? "";
+        const revision = await claimOf(ctx, text(asRecord(form)["revisionId"]) ?? "");
         const digest = await digestOf(["get_form", formId]);
         // A cursor names an item and, inside a grid too large for one page,
         // the first of its questions not yet returned, so every question id
@@ -930,7 +941,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           } else if (lastIndex + 1 < all.length) {
             next = { d: digest, i: lastIndex + 1, q: 0, r: revision };
           }
-          const nextCursor = next ? encodeCursor(next) : null;
+          const nextCursor = next ? encodeCursor(ctx, next) : null;
           return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
         };
         // The estimate above reserved room; the complete result, cursor and
@@ -1134,9 +1145,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const rows = asArray(page["responses"]);
         const idOf = (row: unknown) => text(asRecord(row)["responseId"]);
         const pageHash = await digestOf(["page", ...rows.map((row) => idOf(row) ?? null)]);
+        // Each response id as a cursor names it.
+        const claims = await Promise.all(rows.map((row) => claimOf(ctx, idOf(row) ?? "")));
         let start = 0;
         if (anchor !== null) {
-          const at = rows.findIndex((row) => idOf(row) === anchor);
+          const at = claims.findIndex((claim, index) => idOf(rows[index]) !== undefined && claim === anchor);
           if (fingerprint !== pageHash || at < 0) {
             throw new ConnectorCallError(
               "conflict",
@@ -1158,7 +1171,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           responses.push(response);
           used += jsonBytes(response) + 1;
         }
-        const googleNext = text(page["nextPageToken"]) ?? null;
+        const google = text(page["nextPageToken"]);
+        const googleNext = google === undefined ? null : redactSentSecrets(ctx, google);
         const build = () => {
           const last = start + responses.length - 1;
           // Rows left on Google's page: continue after the last one returned.
@@ -1166,7 +1180,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // response of its own to anchor on, and moves to Google's next page.
           let next: JsonRecord | undefined;
           if (start + responses.length < rows.length && responses.length > 0) {
-            const after = idOf(rows[last]);
+            const after = idOf(rows[last]) === undefined ? undefined : claims[last];
             if (after === undefined) {
               throw new ConnectorCallError(
                 "connector_call_failed",
@@ -1178,7 +1192,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           } else if (googleNext) {
             next = { d: digest, t: googleNext, a: null, h: null, n: limit };
           }
-          const nextCursor = next ? encodeCursor(next) : null;
+          const nextCursor = next ? encodeCursor(ctx, next) : null;
           return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
         };
         let result = build();

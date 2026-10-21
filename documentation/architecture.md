@@ -838,15 +838,22 @@ own leaves, and errors' own fields (non-enumerable diagnostics and causes
 included). The joined projection is matched once, raw and through each JSON
 decoding layer, so a form split across adjacent leaves is found; each match is
 replaced only in the leaves it touches, so public runs, links, annotations and
-container shapes stay. A second pass replays the first, recorded choices
-included, and copies only changed containers; when nothing matched there is no
-second pass. Object keys, typed `code`/`name` facts and declared binary fields
-are checked on their own. Connecta's framing (envelope keys, MCP and JSON-RPC
-member names, tag values, typed outcome facts) is never rewritten, and exact
-relay states and connect links Connecta mints and authenticates are kept whole:
-they hold only sealed state or Connecta's own facts. Serialized JSON whose keys,
-syntax and leaves together hold a run of a form that no single leaf holds is
-withheld whole.
+container shapes stay. The walk reads every field once, from its descriptor, and
+returns what it checked: a caller's container stands only while every field is
+a data property it read and nothing in it changed. A container with an accessor
+(never invoked, left out of its copy), a `toJSON` (called once and replaced by
+its checked result) or a renamed key is copied, and a change copies the
+containers on its path on first write, so a caller's value is never mutated.
+Facts kept beside a value by identity (failure facts, classifications, statuses,
+Google's reasons) register with `redaction-identity.ts` and follow its copies.
+Object keys and declared binary fields are checked on their own. Only fixed
+words are kept whatever was sent: envelope keys, MCP and JSON-RPC member names
+and tag values, booleans under outcome names, and on an error Connecta's code
+constructed, its classification code and class name; a number or string under
+any name is matched like any other. Exact relay states and connect links
+Connecta mints and authenticates are kept whole: they hold only sealed state or
+Connecta's own facts. Serialized JSON whose keys, syntax and leaves together
+hold a run of a form that no single leaf holds is withheld whole.
 
 The guarantee: **no caller-visible text holds a registered form whole, nor any
 run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
@@ -856,10 +863,18 @@ the raw value, its URL/form encodings (either percent hex case), base64 and
 base64url, and the `Bearer `/`token ` framings. The framing words are public, so
 no indexed run starts inside them; a run reaching K units of the value is
 indexed from the value's own forms, and an echo carrying the framing is
-replaced with it. A private value shorter than K is matched whole only:
-anywhere in payload text, and as a whole key, number or boolean. Runs of K-1
-units survive away from a cut. Values derived by an unregistered encoding
-(a date from a timestamp, say) are outside the guarantee.
+replaced with it. A private value of one to three units is matched only as a
+whole field value (a leaf, key, number, boolean or decoded view equal to one of
+its forms); one of four to seven units also as a substring of payload text,
+numbers, keys and decoded views; one of K or more also by every K-unit run.
+Pieces shorter than K are found only where they are adjacent: in the joined
+projection or one provider lane (one Slides shape's text runs, one Notion
+rich-text array, one Docs document). Non-adjacent pieces shorter than K, such as
+two seven-unit halves of a value in two Slides shapes, survive: they are
+indistinguishable from ordinary text without redacting ordinary words. Runs of
+K-1 units survive away from a cut. Values derived by an unregistered encoding
+(a date from a timestamp, say) are outside the guarantee, as is a later read of
+a Proxy, which only in-process code can build.
 
 Payload passes run where downstream or guest data enters: the connector's
 result and errors, the invocation's raw reply, executor outcomes and logs,
@@ -872,9 +887,10 @@ characters, and credential-slot fields named as identifiers (`…Id`, `user`,
 `username`, `login`, `email`, `public…`) — are matched whole only: consent URLs
 and vendor metadata carry their parts by design. Continuation cursors sent as
 query parameters (`pageToken`, `next_token`, `continuationToken`, `syncToken`)
-are public result state and are not registered; content-negotiation headers a
-connector adds to token requests (`Accept`, `Accept-Language`, `User-Agent`)
-are not either.
+are public result state and are not registered. Header values a connector
+adds to token requests are registered under any name, except values equal to
+Connecta's own public ones (`Accept: application/json` and maintained
+providers' media types, in `PUBLIC_TOKEN_REQUEST_HEADERS`).
 
 K = 8 equals the credential floor, so exactly the short private values are
 whole-only. It keeps ordinary words, dates and counts out of the index: a public
@@ -888,9 +904,11 @@ bytes of the value. The index stores two independent 32-bit polynomial hashes
 per run (at most 524,288 distinct runs, a table at most half full), so a false
 match is vanishingly rare and only redacts more; index and scan are linear in
 the registered forms and the scanned text, whatever the number of values. A
-pass over a large body costs about what the per-leaf matcher it replaced did
+64 Ki-bit bitmap of the runs' first hashes rejects nearly every text position
+in one load, so only a candidate computes its second hash. A pass over a large
+body costs about what the per-leaf matcher it replaced did
 (`scripts/bench-sent-secrets.mjs` compares builds); declared binary content
-costs more, since it is decoded and checked as bytes and as UTF-8.
+costs more, since it is decoded and checked as bytes as well as its base64 text.
 
 Unchecked content is withheld rather than weakening the guarantee: past the
 index's capacity, or under a private value too large to register, every leaf of
@@ -902,9 +920,29 @@ between kept leaves is matched 512 units deep on each side. Text that still
 holds escapes after eight decoding layers withholds the leaves holding them.
 
 Declared binary content (Drive `format: "base64"` content, MCP image/audio
-`data`, and resource `blob`) is decoded and checked as bytes, as UTF-8 and as
-its base64 text, so an echo at any byte alignment is found. A match withholds
-the whole field as the base64 of `[redacted]`, never partially scrubbed bytes.
+`data`, resource `blob`, and a REST body's `base64` beside its `contentType`)
+is decoded and checked as bytes, as UTF-8 when a registered form is not ASCII,
+as its base64 text, and through any base64 the bytes carry, so an echo at any
+byte alignment is found. Decoded views take payload text's short-value rules. A
+match withholds the whole field as the base64 of `[redacted]`, never partially
+scrubbed bytes. Any other text leaf that is base64 or base64url (the whole leaf
+of at least six units, or a run of at least sixteen inside it, three encodings
+deep) is decoded too; its decoded views are matched together as one lane, and a
+match only decoding reveals withholds the leaf as `[redacted]`. Content found
+clean at least 4,096 units long is remembered for the request until its set
+changes, so later passes do not decode it again.
+
+Every base64 or base64url encoding Connecta returns goes through
+`encodeForAgent`: Drive and Gmail downloads, REST bodies, and every page
+cursor. It checks the content before encoding and encodes `[redacted]` instead
+on a match. Cursors are built from already-redacted values, not sealed: a
+provider has no deployment key, and a sealed vendor token would still be the
+vendor's text. A vendor page token is redacted where it is placed, so one that
+echoes a sent value fails on the next page instead of carrying it; a revision or
+id the cursor only compares becomes its digest when it holds a sent value
+(Slides states, Forms revisions and anchors). Cursor claims are checked under
+the boundary's rules and remembered, so Connecta's own counts never meet short
+private values.
 
 Text Connecta or a provider cuts short, trims, normalizes or extracts from is
 redacted whole against the request's set, private arguments included, first

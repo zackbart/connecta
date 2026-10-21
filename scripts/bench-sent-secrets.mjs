@@ -81,5 +81,36 @@ const wire = JSON.stringify({
   rows: Array.from({ length: 20_000 }, (_, id) => ({ id, text: `${sentence}"quoted"\\path` })),
 });
 measure("4 MiB-class wire JSON text", wire, wire.length, (value) => boundary.text(value));
+const encode = (binary) => {
+  let out = "";
+  for (let offset = 0; offset < binary.length; offset += 12_288) out += btoa(binary.slice(offset, offset + 12_288));
+  return out;
+};
 const binary = body(1_048_576 - 34) + `x${TOKEN}z`;
-measure("1 MiB declared binary (embedded echo)", { format: "base64", content: btoa(binary) }, binary.length, payload);
+measure("1 MiB declared binary (embedded echo)", { format: "base64", content: encode(binary) }, binary.length, payload);
+// Declared binary under a credential-only set, each run with a fresh set: a first check, before
+// the request remembers clean content. Random bytes hold JSON escapes, so they decode layers too.
+let seed = 1;
+const random = (bytes) => {
+  const chunks = [];
+  for (let at = 0; at < bytes; at += 65_536) {
+    let chunk = "";
+    for (let unit = 0; unit < 65_536; unit++)
+      chunk += String.fromCharCode((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24);
+    chunks.push(chunk);
+  }
+  return chunks.join("");
+};
+const fresh = () => {
+  const secrets = new Boundary();
+  secrets.add(TOKEN);
+  return secrets;
+};
+for (const [label, bytes] of [
+  ["16 MiB declared binary text (embedded echo)", body(16 * 1_048_576 - 34) + `x${TOKEN}z`],
+  ["16 MiB declared binary text (clean)", body(16 * 1_048_576)],
+  ["16 MiB declared binary random bytes", random(16 * 1_048_576)],
+]) {
+  const content = encode(bytes);
+  measure(`${label}, first check`, { format: "base64", content }, bytes.length, (value) => fresh().redact(value));
+}

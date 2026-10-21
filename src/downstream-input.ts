@@ -159,7 +159,7 @@ export async function captureDownstreamInput(
       if (parsed.issues) return invalidInput();
       // A schema controls the accepted answer. Refuse redaction changes rather
       // than asking the host to submit different field names or enum values.
-      if (secrets.redact(parsed.value.requestedSchema) !== parsed.value.requestedSchema) return invalidInput();
+      if (secrets.changes(parsed.value.requestedSchema)) return invalidInput();
       inputRequests[namespace(connector, index)] = inputRequired.elicit({
         message: `Downstream ${connector}: ${parsed.value.message}`,
         requestedSchema: parsed.value.requestedSchema,

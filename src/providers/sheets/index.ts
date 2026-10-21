@@ -45,7 +45,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut } from "../../sent-secrets.js";
+import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -204,8 +204,9 @@ async function readDigest(args: JsonRecord): Promise<string> {
   return base64Url(hash.subarray(0, 16));
 }
 
-function encodeCursor(cursor: ValuesCursor): string {
-  return base64Url(new TextEncoder().encode(JSON.stringify(cursor)));
+/** A cursor of connecta's own digest and counts, encoded as every cursor an agent decodes is. */
+function encodeCursor(ctx: ConnectorContext, cursor: ValuesCursor): string {
+  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
 }
 
 function decodeCursor(value: string, ranges: readonly string[], digest: string): ValuesCursor {
@@ -851,7 +852,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           truncatedCells: MAX_PAGE_CELLS,
           page: {
             hasMore: false,
-            nextCursor: encodeCursor({ d: digest, i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
+            nextCursor: encodeCursor(ctx, { d: digest, i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
           },
         });
         let next: ValuesCursor | undefined;
@@ -926,7 +927,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             next = { d: digest, i: resume.i + index + 1, s: 0 };
           }
         }
-        const nextCursor = next ? encodeCursor(next) : null;
+        const nextCursor = next ? encodeCursor(ctx, next) : null;
         return compact({
           spreadsheetId,
           valueRanges,

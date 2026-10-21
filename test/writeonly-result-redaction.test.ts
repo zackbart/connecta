@@ -126,17 +126,14 @@ it.each(["mcp", "api"] as const)(
       logger: { debug: record, info: record, warn: record, error: record },
     });
     const meta = createMetaTools(registry, BASE, { readOnly: false, activity: activity.activity });
-    for (const value of [SECRET, "q"]) {
+    // A short private value (four to seven units) is replaced wherever it occurs, as a longer one is.
+    for (const value of [SECRET, "q7Zx"]) {
       const args = { config: { password: value } };
       for (const failed of [false, true]) {
         source.fail(failed);
         const check = (result: unknown) => {
           const text = JSON.stringify(result);
-          if (value === SECRET) for (const form of forms(value)) expect(text).not.toContain(form);
-          else if (failed || kind === "mcp") {
-            expect(text).not.toContain("Downstream quoted");
-            expect(text).not.toContain(btoa(value));
-          }
+          for (const form of forms(value)) expect(text).not.toContain(form);
           expect(text).toContain("[redacted]");
         };
         for (const resultMode of ["mcp", "value"] as const) {
@@ -190,7 +187,7 @@ it.each(["mcp", "api"] as const)(
     }
     expect(source.received).toHaveLength(24);
     expect(source.received.slice(0, 12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: SECRET } })));
-    expect(source.received.slice(12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: "q" } })));
+    expect(source.received.slice(12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: "q7Zx" } })));
     expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain(SECRET);
     expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain("Downstream quoted");
   },

@@ -57,7 +57,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
-import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
+import { encodeForAgent, requestSentSecrets, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -399,12 +399,18 @@ const CURSOR_TOOLS: Readonly<Record<Cursor["k"], string>> = {
   comments: "list_comments",
 };
 
-function encodeCursor(cursor: Cursor): string {
-  let binary = "";
-  for (const byte of new TextEncoder().encode(JSON.stringify(compact(cursor)))) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function cursorText(cursor: Cursor): string {
+  return JSON.stringify(compact(cursor));
+}
+
+/**
+ * A cursor of connecta's claims: the presentation and page the caller named
+ * or Slides reported, a state that holds Slides' revision only when it
+ * carries no sent value ({@link stateOf}), and offsets. An agent decodes it
+ * and no later pass reads through its encoding.
+ */
+function encodeCursor(ctx: ConnectorContext, cursor: Cursor): string {
+  return encodeForAgent(ctx, cursorText(cursor), { url: true, claims: true });
 }
 
 /**
@@ -462,8 +468,20 @@ function decodeCursor(
  * secret set can change that text without changing the deck. Viewers without
  * a revision always bind to the content their paging depends on.
  */
-async function stateOf(revisionId: unknown, fingerprint: () => unknown, bindRepresentation = false): Promise<string> {
-  if (!bindRepresentation && typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
+async function stateOf(
+  ctx: ConnectorContext,
+  revisionId: unknown,
+  fingerprint: () => unknown,
+  bindRepresentation = false,
+): Promise<string> {
+  // A revision that holds a sent value is bound by its digest instead: a cursor carries no downstream text.
+  if (
+    !bindRepresentation &&
+    typeof revisionId === "string" &&
+    revisionId !== "" &&
+    redactSentSecrets(ctx, revisionId) === revisionId
+  )
+    return `r:${revisionId}`;
   const digest = new Uint8Array(
     await crypto.subtle.digest(
       "SHA-256",
@@ -699,7 +717,7 @@ async function projectSlide(
   const properties = asRecord(slide["slideProperties"]);
   const leaves = readingOrder(ctx, slide["pageElements"]);
   let state: Promise<string> | undefined;
-  const slideState = () => (state ??= stateOf(deck.revisionId, () => leafFingerprint(leaves), true));
+  const slideState = () => (state ??= stateOf(ctx, deck.revisionId, () => leafFingerprint(leaves), true));
   let budget = maxChars;
   let truncated = false;
   let omitted = 0;
@@ -735,7 +753,7 @@ async function projectSlide(
         truncated = true;
         row["text"] = `${kept}\n[… ${leaf.text.length - kept.length} more characters truncated; ${why}]`;
         row["truncated"] = true;
-        row["textCursor"] = encodeCursor({
+        row["textCursor"] = encodeCursor(ctx, {
           k: "page",
           p: deck.presentationId,
           g: slideId,
@@ -763,11 +781,11 @@ async function projectSlide(
     if (kept.length < notesText.length) {
       truncated = true;
       notes = `${kept}\n[… ${notesText.length - kept.length} more characters truncated; ${why.replace("textCursor", "notesCursor")}]`;
-      notesCursor = encodeCursor({
+      notesCursor = encodeCursor(ctx, {
         k: "page",
         p: deck.presentationId,
         g: notesPageId ?? "",
-        s: await stateOf(deck.revisionId, () => leafFingerprint(notesLeaves), true),
+        s: await stateOf(ctx, deck.revisionId, () => leafFingerprint(notesLeaves), true),
         i: notesAt,
         o: kept.length,
       });
@@ -834,10 +852,10 @@ async function fitSlide(
         ...slide,
         elements: elements.slice(0, count),
         elementsNotShown: elements.length - count,
-        elementsCursor: encodeCursor({
+        elementsCursor: encodeCursor(ctx, {
           k: "page",
           p: deck.presentationId,
-          g: text(asRecord(value)["objectId"]) ?? "",
+          g: redactSentSecrets(ctx, text(asRecord(value)["objectId"]) ?? ""),
           s: state,
           i: count < elements.length ? Number(elements[count]!["position"]) : 0,
         }),
@@ -958,7 +976,8 @@ function dimension(value: unknown): { magnitude: number; unit: string } | undefi
 /** The size of a page object carrying the longest cursor a result may hold. */
 function pageEnvelopeBytes(cursor: Cursor): number {
   const longest = { ...cursor, i: 999_999, o: 99_999_999, j: cursor.j === undefined ? undefined : 999_999 };
-  return jsonBytes({ page: { hasMore: true, nextCursor: encodeCursor(longest) } });
+  const units = Math.ceil((new TextEncoder().encode(cursorText(longest)).length * 4) / 3);
+  return jsonBytes({ page: { hasMore: true, nextCursor: "x".repeat(units) } });
 }
 
 // --- get_page -------------------------------------------------------------------------
@@ -1683,11 +1702,12 @@ function threadRows(
  * that skips, repeats, or places a thread where it no longer is.
  */
 function commentsState(
+  ctx: ConnectorContext,
   revisionId: unknown,
   comments: readonly unknown[],
   pages: readonly JsonRecord[],
 ): Promise<string> {
-  return stateOf(undefined, () => [
+  return stateOf(ctx, undefined, () => [
     text(revisionId) ?? null,
     comments,
     pages.map((page) => [page["objectId"] ?? null, page["commentAnchors"] ?? null]),
@@ -2079,7 +2099,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         );
         const all = asArray(presentation["slides"]);
         const revisionId = presentation["revisionId"];
-        const state = await stateOf(revisionId, () => all.map((slide) => asRecord(slide)["objectId"] ?? null));
+        const state = await stateOf(ctx, revisionId, () => all.map((slide) => asRecord(slide)["objectId"] ?? null));
         assertUnchanged(cursor, state, "deck's slides");
         const start = cursor?.i ?? 0;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_PAGE_SIZE;
@@ -2099,10 +2119,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             layoutsNotShown: shown.next < rows.length ? rows.length - shown.next : undefined,
             layoutsCursor:
               shown.next < rows.length
-                ? encodeCursor({
+                ? encodeCursor(ctx, {
                     k: "layouts",
                     p: presentationId,
-                    s: await stateOf(revisionId, () => layoutFingerprint(rows)),
+                    s: await stateOf(ctx, revisionId, () => layoutFingerprint(rows)),
                     i: shown.next,
                   })
                 : undefined,
@@ -2122,7 +2142,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ...preview,
         });
         const issue = (i: number) =>
-          encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
+          encodeCursor(ctx, { k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
         // A page ends at the slide limit or at the byte budget, whichever is
         // first; the budget counts the header and the longest cursor.
         let used =
@@ -2207,6 +2227,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const items = raw ? rawItems(redactBeforeCut(ctx, protectPageText(ctx, page))) : [];
         const leaves = raw ? [] : readingOrder(ctx, page["pageElements"]);
         const state = await stateOf(
+          ctx,
           page["revisionId"],
           () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)),
           true,
@@ -2235,7 +2256,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const start = { i: cursor?.i ?? 0, o: cursor?.o ?? 0 };
         const rows = raw ? rawRows(ctx, items, start, limit, room) : projectedRows(ctx, leaves, start, limit, room);
         const nextCursor = rows.next
-          ? encodeCursor({
+          ? encodeCursor(ctx, {
               k: "page",
               p: presentationId,
               g: pageObjectId,
@@ -2292,7 +2313,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ),
         );
         const rows = layoutRows(ctx, presentation);
-        const state = await stateOf(presentation["revisionId"], () => layoutFingerprint(rows));
+        const state = await stateOf(ctx, presentation["revisionId"], () => layoutFingerprint(rows));
         assertUnchanged(cursor, state, "deck's layouts");
         const header = compact({
           presentationId,
@@ -2307,7 +2328,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_LAYOUTS;
         const shown = rowsWithin(rows, cursor?.i ?? 0, limit, room);
         const next =
-          shown.next < rows.length ? encodeCursor({ k: "layouts", p: presentationId, s: state, i: shown.next }) : null;
+          shown.next < rows.length
+            ? encodeCursor(ctx, { k: "layouts", p: presentationId, s: state, i: shown.next })
+            : null;
         return deliverable({ ...header, layouts: shown.rows, page: nextPage(next) }, "list_layouts");
       },
     },
@@ -2406,7 +2429,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         const comments = redactBeforeCut(ctx, asArray(source["comments"]));
         const pages = pageObjectId === undefined ? commentPages(source) : [source];
-        const state = await commentsState(source["revisionId"], comments, pages);
+        const state = await commentsState(ctx, source["revisionId"], comments, pages);
         assertUnchanged(cursor, state, pageObjectId === undefined ? "deck's comments" : "page's comments");
         const header = compact({
           presentationId,
@@ -2446,7 +2469,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           shown = threadRows(threads, { i: cursor?.i ?? 0, j: cursor?.j ?? 0, o: cursor?.o ?? 0 }, limit, room);
         }
         const next = shown.next
-          ? encodeCursor({
+          ? encodeCursor(ctx, {
               k: "comments",
               p: presentationId,
               ...scope,

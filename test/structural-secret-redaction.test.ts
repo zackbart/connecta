@@ -190,7 +190,7 @@ it.each(["id", "cat", "2.0", "a"])(
     const request = new SentSecrets();
     request.include(secrets);
     const envelope = { jsonrpc: "2.0", id: 77, result: { identity: "id", categories: ["cat"], value: secret } };
-    expect(request.redact(envelope)).toBe(envelope);
+    expect(request.redact(envelope)).toEqual(envelope);
     expect(request.text(JSON.stringify(envelope))).toBe(JSON.stringify(envelope));
     expect(request.contains("https://identity.test/categories")).toBe(false);
   },

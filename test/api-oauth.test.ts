@@ -12,6 +12,8 @@ import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src
 import { createTestConnecta, makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
+import { PUBLIC_TOKEN_REQUEST_HEADERS } from "../src/auth/static-oauth.js";
+import { CCB_MEDIA_TYPE } from "../src/providers/ccb/index.js";
 
 const BASE = "https://connecta.test";
 const AUTHORIZE = "https://oauth.provider.test/oauth/authorize";
@@ -612,6 +614,39 @@ describe("api() oauth callback exchange", () => {
     expect(token.map((request) => request.accept)).toEqual([accept, accept]);
     // The API requests are the handler's own; the grant adds nothing to them.
     expect(seen.filter((request) => request.url !== TOKEN).every((request) => request.accept === null)).toBe(true);
+  });
+
+  it("INV-5: configured token-request headers are registered unless they are Connecta's own public values", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const agent = "client-agent/K7vQ2xR9mP4tL8wZ";
+    const language = "x-credential-Q8wZ2vR4tN6mL3pK";
+    expect(PUBLIC_TOKEN_REQUEST_HEADERS.get("accept")?.has(CCB_MEDIA_TYPE)).toBe(true);
+    const connector = api("ccb", {
+      oauth: {
+        ...OAUTH,
+        tokenRequestHeaders: { Accept: CCB_MEDIA_TYPE, "User-Agent": agent, "Accept-Language": language },
+      },
+      tools: [
+        {
+          name: "echo",
+          description: "Echo the request headers",
+          annotations: { readOnlyHint: true },
+          async handler(_args, ctx) {
+            await ctx.oauth!.fetch(`${API}/me`);
+            return { echo: `agent ${agent}; language ${language}; media ${CCB_MEDIA_TYPE}` };
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    // The call refreshes its grant, sending the configured headers with the token request.
+    provider.expireAccess();
+    expect(await connector.callTool("echo", {}, ctx())).toEqual({
+      echo: `agent [redacted]; language [redacted]; media ${CCB_MEDIA_TYPE}`,
+    });
   });
 
   it("uses a client_secret_post client", async () => {

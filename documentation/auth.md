@@ -1335,29 +1335,59 @@ valid. Text is reserialized only when something changed; otherwise its original
 bytes remain. Serialized JSON whose keys, syntax, and leaves together hold a run
 that no single leaf holds, as a value spanning tokens does, is withheld whole.
 Matching runs on the raw text and through one more layer of JSON string escapes
-at a time while the last layer could still hold an escape, at most eight layers;
-text still holding escapes past that is withheld. Every match is mapped back to
+at a time while the last layer still decodes an escape, at most eight layers;
+text still holding escapes past that is withheld. Each decoded layer is scanned
+around the escapes it decoded, since every other match was found a layer up. Every match is mapped back to
 the original text, overlapping spans merge, and each merged span is replaced
 once, so one match can never split another. A span wholly inside an existing
 `[redacted]` placeholder is that placeholder; a private value that contains the
-placeholder text is still redacted. Object keys, typed error codes, and declared
-binary fields are checked on their own: a key holding a match is renamed, and
-image, audio, resource-blob, or `format: "base64"` content is decoded and checked
-as bytes and as UTF-8, then withheld whole as the base64 of `[redacted]` on a
-match. Connecta, MCP, and JSON-RPC envelope field names, tag values such as a
-content `type` or result `format`, typed facts such as `isError` and
-`retryable`, and relay states and connect links Connecta minted are copied
-unchanged. The agent boundary around Connecta's own envelopes repeats every
-check except short private values, so envelope identifiers, counts, and
-JSON-RPC ids are never rewritten.
+placeholder text is still redacted. Object keys and declared binary fields are
+checked on their own: a key holding a match is renamed, and image, audio,
+resource-blob, or `format: "base64"` content, or a REST body's `base64` beside
+its `contentType`, is decoded and checked as bytes, as UTF-8 and as its base64
+text, then withheld whole as the base64 of `[redacted]` on a match. Any other
+text field that is base64 or base64url (the whole field, at least six
+characters, or a run of at least sixteen inside it, up to three encodings deep)
+is decoded and checked the same way, and withheld whole as `[redacted]` when
+only its decoding holds a match.
+
+Only fixed words are copied unchanged whatever was sent: Connecta, MCP, and
+JSON-RPC envelope member names, tag values such as a content `type` or result
+`format`, booleans under outcome names (`isError`, `ok`, `retryable`,
+`truncated`, `hasMore`), and, on an error object Connecta's code constructed,
+its classification code and class name. A number or a string under any name,
+such as `retryAfterMs` or a plain object's `code`, is matched like any other
+value; a matching typed number on an error is dropped. Relay states and connect
+links Connecta minted are kept whole. The agent boundary around Connecta's own
+envelopes repeats every check except short private values, so envelope
+identifiers, counts, and JSON-RPC ids are never rewritten.
+
+Every base64 or base64url encoding Connecta itself returns, such as a Drive or
+Gmail download, a REST body's `base64`, or a page cursor, is produced by one
+helper that checks the content first and encodes `[redacted]` instead when it
+holds a match. A cursor holds Connecta's own counts and fingerprints beside
+vendor values redacted when they were placed: a vendor page token is redacted,
+so a token that echoes a sent value fails on the next page instead of carrying
+it; a vendor revision or id the cursor only compares is replaced by its digest
+when it holds a sent value.
+
+What redaction returns is what it checked. A caller's container is returned as
+it stands only while every field is a data property the pass read and nothing
+in it changed. A container with an accessor (never invoked, and left out of its
+copy), with a `toJSON` (called once, as serialization would, and replaced by
+its checked result), or with a renamed key is copied, and a change copies the
+containers on its path; the caller's value is never mutated.
 
 Empty private strings are exempt because they contain nothing to leak. A
-non-empty private value shorter than eight characters is matched whole only:
-every occurrence in payload text is replaced, so `prod-db` becomes
-`[redacted]-db` for `prod`, and a property name, number, or boolean is withheld
-only when it equals the value or a supported encoded form. Its shorter pieces
+private value of one to three characters is matched only as a whole field
+value: a string, property name, number, boolean, or decoded binary view equal
+to it or a supported encoded form is withheld, and text around it stays, so a
+private `1` leaves `row 10` alone. A value of four to seven characters is also
+replaced wherever it occurs in payload text, numbers, property names, and
+decoded views, so `prod-db` becomes `[redacted]-db` for `prod`. Pieces of either
 are not matched. Private values of at least eight characters and credentials
-are matched whole and by every eight-unit run.
+are matched whole and by every eight-unit run. At a cut, an unfinished prefix of
+any registered form is still withheld, however short.
 
 Identifiers sent beside a credential are matched whole only, because consent
 URLs and vendor metadata carry their parts by design: a confidential OAuth
@@ -1367,8 +1397,11 @@ and credential-slot fields named as identifiers (ending in `id`, `user`,
 beside a shorter or empty password is the credential itself and is fully
 matched. Query parameters named as continuation cursors (`pageToken`,
 `nextPageToken`, `next_token`, `continuationToken`, `syncToken`) are public
-result state and are not registered, nor are `Accept`, `Accept-Language`, and
-`User-Agent` values a connector adds to token requests.
+result state and are not registered. Header values a connector adds to token
+requests are registered under any name, except values equal to Connecta's own
+public ones (`Accept: application/json`, and the media types maintained
+providers send): registering a media type would redact a vendor's name wherever
+its fragments recur.
 
 The eight-unit runs are indexed as two independent 32-bit hashes per run, at
 most 512 Ki distinct runs, so a false match is vanishingly rare and only redacts
@@ -1393,8 +1426,8 @@ multi-MiB document and skill-file reads. When the joined projection does not
 fit, leaves are matched alone, in order, and one that does not fit is withheld
 without spending what a smaller one needs; runs crossing two kept leaves are
 then matched 512 units deep on each side of their seam. The same call visits at
-most 512 containers deep and 1 Mi entries in total, and copies only containers
-on a path that changed. A container's entries are counted before it is walked.
+most 512 containers deep and 1 Mi entries in total. A container's entries are
+counted before it is walked.
 One that does not fit the remaining entries is matched as one serialized leaf
 instead: kept unchanged when nothing registered appears, otherwise withheld. A
 cycle or a container past the depth limit is withheld. No limit throws or
@@ -2131,6 +2164,28 @@ is retained across requests, and rejected writes are never replayed. An omitted
 provider skill explains App permissions and installation prerequisites.
 
 ## Contributor reference
+
+### INV-5 output redaction limits
+
+The output boundary's guarantee is K = 8 units, and these are its exact limits:
+
+- A run of eight consecutive UTF-16 units of a registered form is matched
+  wherever it appears, raw, under JSON escapes, or in a decoded base64 view.
+- Pieces shorter than eight units are matched only where they are adjacent:
+  the projection joins neighbouring leaves (array items, text blocks), and
+  provider lanes join one source's runs (one Slides shape's text runs, one
+  Notion rich-text array, one Docs document's text). Pieces shorter than eight
+  units that are not adjacent, such as the two seven-unit halves of a fourteen-
+  unit value in two Slides shapes with other leaves between them, survive: they
+  are indistinguishable from ordinary text without redacting ordinary words.
+- Private values of one to three units match whole field values only; four to
+  seven also as substrings; eight and more also by every eight-unit run.
+- A Proxy, which only in-process code can construct, can answer a later read
+  differently from the one redaction made; the guarantee covers what redaction
+  read. Accessors, `toJSON`, and every changed container are copied.
+
+`test/sent-secret-output-boundary.test.ts` holds the evidence, including its
+`review round 3` block for these limits.
 
 ### Source and tests
 

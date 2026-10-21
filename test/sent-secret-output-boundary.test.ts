@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentOutputOperations,
+  encodeForAgent,
   redactAgentOutput,
   redactBoundedRead,
   requestSentSecrets,
@@ -17,6 +18,7 @@ import { notion } from "../src/providers/notion/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { planningCenter } from "../src/providers/planning-center/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
+import { vercel } from "../src/providers/vercel/index.js";
 import type { ConnectorContext } from "../src/types.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
 import { decodedViews, echoForms, leakedRun, SECRET } from "./helpers/secret-echoes.js";
@@ -46,6 +48,11 @@ function keyed(value = SECRET): ConnectorContext {
 /** Text of every string leaf, object key and number. */
 function shown(value: unknown): string {
   return JSON.stringify(value) ?? "";
+}
+/** Base64 of UTF-8 text, or base64url with `url`. */
+function encoded(text: string, url = false): string {
+  const standard = btoa(Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join(""));
+  return url ? standard.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : standard;
 }
 
 afterEach(() => {
@@ -123,16 +130,12 @@ describe("the output boundary's projection", () => {
     expect(short.redact({ pin: 1, pinCode: 2 })).toEqual({ [MARK]: 1, pinCode: 2 });
   });
 
-  it("INV-5: a normalized number holding a K-unit run is withheld; a short private value matches only a whole number", () => {
+  it("INV-5: a normalized number holding a K-unit run is withheld; a tiny private value matches only a whole number", () => {
     expect(redactAgentOutput(set("012345678900"), { size: 12345678900, count: 3 })).toEqual({ size: MARK, count: 3 });
     expect(set("012345678900").redact({ notice: "A file of 12345678900 bytes." }).notice).toBe(
       `A file of ${MARK} bytes.`,
     );
-    expect(set("5").redact({ id: 5, count: 15, label: "page 5" })).toEqual({
-      id: MARK,
-      count: 15,
-      label: `page ${MARK}`,
-    });
+    expect(set("5").redact({ id: 5, count: 15, label: "page 5" })).toEqual({ id: MARK, count: 15, label: "page 5" });
     // Digits split across a string and a number are one run.
     expect(redactAgentOutput(set("ab12345678cd"), { a: "ab", n: 12345678, b: "cd" })).toEqual({
       a: MARK,
@@ -144,8 +147,8 @@ describe("the output boundary's projection", () => {
   it("INV-5: the envelope pass leaves Connecta's identifiers and counts to the payload pass", () => {
     const secrets = set("5");
     const envelope = { jsonrpc: "2.0", id: 5, result: { resultId: "r-5", totalChars: 1500, hasMore: true } };
-    expect(redactAgentOutput(secrets, envelope)).toBe(envelope);
-    expect(secrets.redact(envelope)).not.toBe(envelope);
+    expect(redactAgentOutput(secrets, envelope)).toEqual(envelope);
+    expect(secrets.redact(envelope)).not.toEqual(envelope);
   });
 
   it.each(["drive", "resource", "image", "audio"])(
@@ -169,7 +172,7 @@ describe("the output boundary's projection", () => {
         }
       }
       const publicFile = { format: "base64", content: btoa("Ordinary public file.") };
-      expect(redactAgentOutput(set(), publicFile)).toBe(publicFile);
+      expect(redactAgentOutput(set(), publicFile)).toEqual(publicFile);
     },
   );
 
@@ -202,12 +205,12 @@ describe("the output boundary's projection", () => {
   });
 
   it("INV-5: only exact Connecta-minted state is framing; vendor state and appended payload are still matched", () => {
-    const secrets = set("z");
-    const minted = secrets.mintedState("v1.authenticated-z-state");
+    const secrets = set("zq7x");
+    const minted = secrets.mintedState("v1.authenticated-zq7x-state");
     expect(secrets.redact({ requestState: minted })).toEqual({ requestState: minted });
     expect(JSON.parse(secrets.redact(JSON.stringify({ requestState: minted })))).toEqual({ requestState: minted });
-    expect(secrets.redact({ requestState: "vendor-z-state" })).toEqual({ requestState: `vendor-${MARK}-state` });
-    expect(secrets.redact({ requestState: `${minted}z` }).requestState).not.toContain("z");
+    expect(secrets.redact({ requestState: "vendor-zq7x-state" })).toEqual({ requestState: `vendor-${MARK}-state` });
+    expect(secrets.redact({ requestState: `${minted}zq7x` }).requestState).not.toContain("zq7x-state");
   });
 
   it("INV-5: identifiers are matched whole only; a Basic username is one only beside a registrable password", () => {
@@ -252,8 +255,8 @@ describe("the output boundary's projection", () => {
     const secrets = set("qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u");
     secrets.add(TOKEN);
     secrets.add("ghp_R4nd0mT0k3nV4lu3XyZ12345678901234");
-    expect(redactAgentOutput(secrets, corpus)).toBe(corpus);
-    expect(secrets.redact(corpus)).toBe(corpus);
+    expect(redactAgentOutput(secrets, corpus)).toEqual(corpus);
+    expect(secrets.redact(corpus)).toEqual(corpus);
     expect(shown(corpus).length).toBeGreaterThan(200_000);
   });
 
@@ -307,7 +310,7 @@ describe("the output boundary's projection", () => {
     rows[123_456]!.name = `echo ${TOKEN}`;
     const result = redactAgentOutput(secrets, rows);
     expect(result[123_456]!.name).toBe(`echo ${MARK}`);
-    expect(result[199_999]).toBe(rows[199_999]);
+    expect(result[199_999]).toEqual(rows[199_999]);
   });
 });
 
@@ -593,7 +596,244 @@ describe("provider sites the boundary cannot cover", () => {
   });
 });
 
+describe("review round 3", () => {
+  it("INV-5: a payload cannot claim framing exemptions: a plain object's code, name and numeric facts are matched", () => {
+    const secrets = set(TOKEN);
+    const claim = { retryable: true, code: TOKEN, name: TOKEN, retryAfterMs: 1, ok: true };
+    const expected = { retryable: true, code: MARK, name: MARK, retryAfterMs: 1, ok: true };
+    expect(secrets.redact(claim)).toEqual(expected);
+    expect(redactAgentOutput(secrets, claim)).toEqual(expected);
+    expect(secrets.redact(Object.assign(new Error("Public."), { code: TOKEN })).code).toBe(MARK);
+    // A numeric credential under outcome names is a number like any other.
+    const numeric = new SentSecrets();
+    numeric.add("73519046");
+    const facts = { retryAfterMs: 73519046, truncated: 73519046, ok: 73519046, hasMore: 73519046, isError: 73519046 };
+    for (const safe of [numeric.redact(facts), redactAgentOutput(numeric, facts)])
+      expect(Object.values(safe as Record<string, unknown>).every((value) => value === MARK)).toBe(true);
+    // A typed number on an error is dropped rather than turned into text.
+    const slow = new ConnectorCallError("rate_limited", "Slow down.", { retryAfterMs: 73519046 });
+    expect(numeric.redact(slow).retryAfterMs).toBeUndefined();
+  });
+
+  it("INV-5: a Connecta error keeps its own code and class name, and an outcome boolean stays, whatever was sent", () => {
+    const named = set("invalid_args");
+    const safe = named.redact(new ConnectorCallError("invalid_args", "Public diagnostic invalid_args."));
+    expect(safe).toBeInstanceOf(ConnectorCallError);
+    expect([safe.code, safe.name, safe.retryable, safe.message]).toEqual([
+      "invalid_args",
+      "ConnectorCallError",
+      false,
+      `Public diagnostic ${MARK}.`,
+    ]);
+    expect(named.redact({ code: "invalid_args", retryable: false }).code).toBe(MARK);
+    const truthy = set("true");
+    expect(truthy.redact({ ok: true, isError: false, retryable: true, active: true })).toEqual({
+      ok: true,
+      isError: false,
+      retryable: true,
+      active: MARK,
+    });
+  });
+
+  it("INV-5: Notion raw output claiming a retryable code keeps no private value", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ object: "page", id: "p1", properties: {}, status: { retryable: true, code: TOKEN } }),
+    );
+    const result = await notion("notes", { purpose: "Notes", auth: { type: "token" } }).callTool(
+      "integration_get_page",
+      { page_id: "p1", raw: true },
+      { ...context(TOKEN), credential: keyed("qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u").credential! },
+    );
+    expect(shown(result)).toContain('"retryable":true');
+    expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: tiny private values match only whole field values, short ones as substrings, K and longer by fragments", () => {
+    // One to three units: a whole leaf, key, number or decoded view only.
+    expect(set("a1Z").redact({ a: "a1Z", b: "xa1Zx", t: "row a1Z", k: { a1Z: 1, xa1Z: 2 } })).toEqual({
+      a: MARK,
+      b: "xa1Zx",
+      t: "row a1Z",
+      k: { [MARK]: 1, xa1Z: 2 },
+    });
+    expect(set("123").redact({ n: 123, m: 1234, t: "row 123" })).toEqual({ n: MARK, m: 1234, t: "row 123" });
+    expect(set("1").redact({ text: "row 10", id: 1, count: 10 })).toEqual({ text: "row 10", id: MARK, count: 10 });
+    expect(set("pin").redact({ format: "base64", content: btoa("pin") }).content).toBe(btoa(MARK));
+    expect(set("pin").redact({ format: "base64", content: btoa("xpinz") }).content).toBe(btoa("xpinz"));
+    // Four to seven: wherever they occur in payload text, numbers and decoded views; pieces never.
+    expect(set("a1Z9").redact({ b: "xa1Z9x", p: "a1Z", n: 1, key: { xa1Z9: 1 } })).toEqual({
+      b: `x${MARK}x`,
+      p: "a1Z",
+      n: 1,
+      key: { [`x${MARK}`]: 1 },
+    });
+    expect(set("1234").redact({ n: 512345 })).toEqual({ n: MARK });
+    expect(set("Q8!wZ2?").redact({ b: "xQ8!wZ2?x", c: "Q8!wZ2" })).toEqual({ b: `x${MARK}x`, c: "Q8!wZ2" });
+    // Eight and more: whole and by every K-unit run; K-1 pieces survive away from a cut.
+    expect(set("Q8!wZ2?A").redact({ c: "xQ8!wZ2?Ax", d: "Q8!wZ2?" })).toEqual({ c: `x${MARK}x`, d: "Q8!wZ2?" });
+    const long = "Q8!wZ2?A7@vR4#";
+    expect(set(long).redact({ c: `x${long.slice(3, 11)}x`, d: long.slice(0, 7) })).toEqual({
+      c: `x${MARK}x`,
+      d: long.slice(0, 7),
+    });
+  });
+
+  it("INV-5: decoded binary views take the same short-value rule as payload text", () => {
+    const short = set("pin42");
+    for (let prefix = 0; prefix < 3; prefix++) {
+      const body = `${"x".repeat(prefix)}pin42z`;
+      expect(atob(short.redact({ format: "base64", content: btoa(body) }).content)).toBe(MARK);
+      expect(short.redact({ uri: "notes://f", blob: btoa(body) }).blob).toBe(btoa(MARK));
+      expect(short.redact({ attachment: btoa(body) }).attachment).toBe(MARK);
+      expect(short.redact(body)).not.toContain("pin42");
+    }
+  });
+
+  it("INV-5: base64 and base64url no field declares is decoded and checked, whole, nested or inside text", () => {
+    const secrets = set(TOKEN);
+    for (let prefix = 0; prefix < 4; prefix++) {
+      const body = `${"x".repeat(prefix)}${TOKEN}z`;
+      for (const url of [false, true]) {
+        const input = {
+          whole: encoded(body, url),
+          nested: encoded(encoded(body, url)),
+          inline: `see token=${encoded(body, url)} and more`,
+          jwt: `${encoded('{"alg":"none"}', true)}.${encoded(JSON.stringify({ sub: body }), true)}.c2ln`,
+          id: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+          file: encoded("Ordinary public content of a file."),
+        };
+        const result = secrets.redact(input);
+        // At the alignment of a registered form, its runs are replaced in place; at any other,
+        // only decoding finds the value, and the whole field is withheld.
+        for (const field of ["whole", "nested", "inline", "jwt"] as const) {
+          expect(result[field], `${prefix} ${url} ${field}`).not.toBe(input[field]);
+          expect(leakedRun(JSON.stringify(result[field]), TOKEN), `${prefix} ${url} ${field}`).toBeUndefined();
+        }
+        if (prefix % 3) expect(result.whole).toBe(MARK);
+        expect([result.id, result.file]).toEqual([input.id, input.file]);
+        expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
+      }
+    }
+  });
+
+  it("INV-5: Connecta's own encodings check what they encode: downloads, REST bodies and attachments", async () => {
+    const ctx = context(TOKEN);
+    const clean = new TextEncoder().encode("Ordinary public bytes.");
+    expect(encodeForAgent(ctx, clean)).toBe(btoa("Ordinary public bytes."));
+    expect(atob(encodeForAgent(ctx, new TextEncoder().encode(`x${TOKEN}z`)))).toBe(MARK);
+    expect(encodeForAgent(ctx, `x${TOKEN.slice(4, 4 + K)}z`, { url: true })).toBe(encoded(MARK, true));
+    // A generic REST read of an octet-stream body, decoded by the agent, holds no private value.
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response(`x${TOKEN}z`, { headers: { "content-type": "application/octet-stream" } }),
+    );
+    const result = await vercel("hosting", { purpose: "Hosting", auth: { type: "token" }, teamId: "team_1" }).callTool(
+      "vercel_api_read",
+      { path: "/v8/deployments/dpl_1/files/f1" },
+      { ...ctx, credential: keyed("qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u").credential! },
+    );
+    expect(shown(result)).toContain(btoa(MARK));
+    expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: a Drive cursor carries Drive's page token only redacted, so decoding it reveals no sent value", async () => {
+    stubGoogle((url) =>
+      url.pathname.endsWith("/files")
+        ? { files: [{ id: "f1", name: "Notes", mimeType: "text/plain" }], nextPageToken: `tok-${TOKEN}-next` }
+        : {},
+    );
+    const result = (await drive("files", await workspaceOptions()).callTool(
+      "search_files",
+      { query: "notes" },
+      context(TOKEN),
+    )) as { page: { hasMore: boolean; nextCursor: string } };
+    expect(result.page.hasMore).toBe(true);
+    const claims = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(atob(result.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) =>
+          unit.charCodeAt(0),
+        ),
+      ),
+    ) as unknown[];
+    expect(claims[0]).toBe(`tok-${MARK}-next`);
+    expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: within one Slides text lane, a value of K or more split into one-unit runs leaves no piece", async () => {
+    const value = "Q8!wZ2?A7@vR4#";
+    stubGoogle(() => ({
+      objectId: "s1",
+      revisionId: "r1",
+      pageElements: [
+        {
+          objectId: "shape",
+          shape: {
+            text: {
+              textElements: Array.from(value, (unit) => ({
+                textRun: { content: unit, style: { fontFamily: "PublicFont" } },
+              })),
+            },
+          },
+        },
+      ],
+    }));
+    const result = await slides("decks", await workspaceOptions()).callTool(
+      "get_page",
+      { presentationId: "p1", pageObjectId: "s1", raw: true },
+      context(value),
+    );
+    const text = shown(result);
+    for (const unit of value) expect(text).not.toContain(`"content":"${unit}"`);
+    expect(text).toContain("PublicFont");
+  });
+
+  it("INV-5: what returns is what was checked: accessors are never invoked and their containers are copied without them", () => {
+    const secrets = set(TOKEN);
+    let reads = 0;
+    const getter = () => (reads++ ? TOKEN : "public text");
+    const rows: unknown[] = ["public"];
+    Object.defineProperty(rows, 1, { enumerable: true, get: getter });
+    const row = Object.defineProperty({ id: "r1" }, "text", { enumerable: true, get: getter });
+    const out = secrets.redact({ rows, row, kept: { id: "r2" } });
+    // Read before any assertion touches the originals, which would invoke the getters itself.
+    expect(reads).toBe(0);
+    expect(out.rows === rows || out.row === row).toBe(false);
+    expect(out.rows).toEqual(["public", MARK]);
+    expect(Object.getOwnPropertyDescriptor(out.row, "text")).toBeUndefined();
+    expect(out.row).toEqual({ id: "r1" });
+    expect(shown(out)).not.toContain(TOKEN);
+    // A container whose every field is a data property this pass read stays the caller's own.
+    const kept = { id: "r2", nested: [{ text: "public" }] };
+    expect(secrets.redact({ kept }).kept).toBe(kept);
+    // A change copies only the containers on its path; the caller's value is never mutated.
+    const input = { a: { text: `echo ${TOKEN}` }, b: { text: "public" } };
+    const safe = secrets.redact(input);
+    expect([safe.a === input.a, safe.b === input.b, input.a.text]).toEqual([false, true, `echo ${TOKEN}`]);
+    // toJSON is called once, as serialization would, and its result is what is checked.
+    expect(secrets.redact({ dated: { toJSON: () => `echo ${TOKEN}` } })).toEqual({ dated: `echo ${MARK}` });
+    expect(secrets.redact({ when: new Date(0) })).toEqual({ when: "1970-01-01T00:00:00.000Z" });
+  });
+
+  it("INV-5: an error class's accessors are read once and checked, so a DOMException keeps name and message", () => {
+    const abort = new DOMException(`Aborted after ${TOKEN}`, "AbortError");
+    const safe = set(TOKEN).redact(abort);
+    expect(safe).not.toBe(abort);
+    expect(safe).toBeInstanceOf(DOMException);
+    expect([safe.name, safe.message]).toEqual(["AbortError", `Aborted after ${MARK}`]);
+    const plain = new DOMException("The operation was aborted.", "AbortError");
+    expect(set(TOKEN).redact(plain)).toBe(plain);
+  });
+});
+
 describe("mutation checks", () => {
+  it("INV-5: without decoding undeclared base64, an encoded echo survives the boundary", () => {
+    vi.spyOn(SentSecrets.prototype as unknown as { encodedLeaves(): void }, "encodedLeaves").mockImplementation(
+      () => {},
+    );
+    const out = set(TOKEN).redact({ whole: encoded(`x${TOKEN}z`) });
+    expect(leakedRun(shown(out), TOKEN)).toBeDefined();
+  });
+
   it("INV-5: without the fragment index, the K-unit checks above find a surviving run", () => {
     const index = (set(TOKEN) as unknown as { fragments(): object })["fragments"]();
     const Empty = index.constructor as new (forms: []) => object;

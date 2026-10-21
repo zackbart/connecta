@@ -36,7 +36,8 @@
     "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. Reported against this baseline, not capped (#899). Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; its former cap stayed at 89,685 B, set from the 29,685 B first measurement.",
     "./providers/stripe remeasures at 232,089 B gzip (#801), from 170,771 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Stripe operation index (638 operations; request details to depth 2, without descriptions or enums over 50 values; 37,918 B gzip as source). Details were shrunk before its former cap moved: the first full index measured 81 KB gzip. Reported against this baseline, not capped (#899).",
     "./providers/vercel remeasures at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. Reported against this baseline, not capped (#899).",
-    "./providers/wispr-flow initial measured baseline is 169,009 B gzip for the hosted-MCP wrapper; reported against this baseline, not capped (#899)."
+    "./providers/wispr-flow initial measured baseline is 169,009 B gzip for the hosted-MCP wrapper; reported against this baseline, not capped (#899).",
+    "The sent-secret output boundary (#911, fix round 3) reads every field from its descriptor and copies on write, decodes base64 fields no field declares, checks every encoding connecta returns through one helper, and scans decoded escape layers in windows. Against main at b07b543c on the same machine: root 380,205 B to 385,968 B gzip (round 2 of the same PR measured 383,221 B) and examples/worker 721,700 B to 726,285 B (round 2: 724,212 B). Main left the Worker example 3,300 B under its cap and round 2 788 B, so its cap moves by the smallest round step that holds this deliberate security change: examples/worker maxGzip 725,000 B to 730,000 B. The root keeps 13,914 B of headroom under its unchanged cap; baselines do not move."
   ],
   "entries": {
     ".": {
@@ -142,7 +143,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 725000
+      "maxGzip": 730000
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

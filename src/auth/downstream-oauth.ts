@@ -1309,7 +1309,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     collect(value);
     if (
       [secrets, this.clientOptions?.secrets].some(
-        (source) => source && (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))),
+        (source) => source && (source.changes(value) || urls.some((url) => source.containsUrl(url))),
       )
     ) {
       throw new ConnectorCallError(

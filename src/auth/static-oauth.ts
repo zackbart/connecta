@@ -23,7 +23,16 @@ import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 
-const PUBLIC_REQUEST_HEADERS = new Set(["accept", "accept-language", "user-agent"]);
+/**
+ * Token-request header values Connecta itself sends, by lowercase name: JSON
+ * content negotiation and the media types maintained providers configure.
+ * Registering one would redact a vendor's name wherever its fragments recur.
+ * Any other configured value, under any name, may carry a credential and is
+ * registered.
+ */
+export const PUBLIC_TOKEN_REQUEST_HEADERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["accept", new Set(["application/json", "application/vnd.ccbchurch.v2+json"])],
+]);
 
 /**
  * Downstream OAuth for a hand-written `api()` connector: the authorization
@@ -373,10 +382,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    // Any other configured value may carry a credential. Content negotiation never does, and
-    // registering a media type would redact the vendor's name wherever its fragments recur.
     for (const [name, value] of settings.tokenRequestHeaders)
-      if (!PUBLIC_REQUEST_HEADERS.has(name.toLowerCase())) sentSecretsFor(ctx).header(value);
+      if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
     return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" }));
   };

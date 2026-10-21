@@ -44,7 +44,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut, redactBoundedRead } from "../../sent-secrets.js";
+import { encodeForAgent, redactBeforeCut, redactBoundedRead, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -373,9 +373,18 @@ async function fingerprint(value: unknown): Promise<string> {
   return base64url(digest.subarray(0, 12));
 }
 
-function encodeCursor(resume: Resume): string {
+function cursorText(resume: Resume): string {
   const { token, skip, size, scope, page, last } = resume;
-  return base64url(encoder.encode(JSON.stringify([token, skip, size, scope, page, last])));
+  return JSON.stringify([token, skip, size, scope, page, last]);
+}
+
+/**
+ * The cursor an agent pages with. Drive's page token is the only downstream
+ * text in it, and it arrives redacted ({@link pageOf}); the rest is
+ * connecta's counts and fingerprints.
+ */
+function encodeCursor(ctx: ConnectorContext, resume: Resume): string {
+  return encodeForAgent(ctx, cursorText(resume), { url: true, claims: true });
 }
 
 const FINGERPRINT = /^[A-Za-z0-9_-]{16}$/;
@@ -423,10 +432,15 @@ function decodeCursor(cursor: string): Resume {
  */
 function issuable(token: string): boolean {
   const widest = "A".repeat(16);
-  return (
-    encodeCursor({ token, skip: MAX_PAGE_SIZE, size: MAX_PAGE_SIZE, scope: widest, page: widest, last: widest })
-      .length <= MAX_CURSOR_CHARS
-  );
+  const text = cursorText({
+    token,
+    skip: MAX_PAGE_SIZE,
+    size: MAX_PAGE_SIZE,
+    scope: widest,
+    page: widest,
+    last: widest,
+  });
+  return Math.ceil((encoder.encode(text).length * 4) / 3) <= MAX_CURSOR_CHARS;
 }
 
 /** One page of rows as Drive returned it. */
@@ -449,6 +463,7 @@ interface Fetched {
  * handler merely returns as unhandled before the handler adopts it.
  */
 async function pageOf(
+  ctx: ConnectorContext,
   key: string,
   args: JsonRecord,
   /** The tool and every argument that decides which rows, in which order. */
@@ -469,6 +484,9 @@ async function pageOf(
     );
   }
   const fetched = await fetch(resume.token ?? undefined, resume.size);
+  // Drive's token goes into a cursor the agent decodes, which no later pass reads through:
+  // it is redacted first, so a token echoing a sent value cannot carry it.
+  if (fetched.next !== undefined) fetched.next = redactSentSecrets(ctx, fetched.next);
   if (fetched.next !== undefined && !issuable(fetched.next)) {
     throw new ConnectorCallError(
       "connector_call_failed",
@@ -490,9 +508,9 @@ async function pageOf(
   const build = (count: number): JsonRecord => {
     const nextCursor =
       count < rows.length
-        ? encodeCursor({ ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
+        ? encodeCursor(ctx, { ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
         : fetched.next
-          ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
+          ? encodeCursor(ctx, { token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
           : null;
     return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
   };
@@ -790,7 +808,7 @@ async function readContent(
   if (size !== undefined && size > limit) return tooLarge(`${size} bytes`);
   const read = await download(client, ctx, filePath, limit);
   if (read.more) return tooLarge(`more than ${limit} bytes`);
-  return { ...base, format: "base64", content: base64(read.bytes), contentTruncated: false };
+  return { ...base, format: "base64", content: encodeForAgent(ctx, read.bytes), contentTruncated: false };
 }
 
 // --- Writes -----------------------------------------------------------------------
@@ -1104,7 +1122,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     query: Record<string, string | number | boolean | undefined>,
   ) =>
     // The Drive query decides the rows: folder, search, corpus, drive, order.
-    pageOf("files", args, { tool, ...query }, async (pageToken, pageSize) => {
+    pageOf(ctx, "files", args, { tool, ...query }, async (pageToken, pageSize) => {
       const listing = asRecord(
         await client.json(
           {
@@ -1335,6 +1353,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       },
       handler: async (args, ctx) =>
         await pageOf(
+          ctx,
           "permissions",
           args,
           { tool: "list_permissions", fileId: args["fileId"] },
@@ -1400,37 +1419,43 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["drives", "page"],
       },
       handler: async (args, ctx) =>
-        await pageOf("drives", args, { tool: "list_shared_drives", q: args["query"] }, async (pageToken, pageSize) => {
-          const listing = asRecord(
-            await client.json(
-              {
-                method: "GET",
-                path: "/drives",
-                query: {
-                  q: args["query"],
-                  fields: "nextPageToken,drives(id,name,hidden)",
-                  pageSize,
-                  pageToken,
+        await pageOf(
+          ctx,
+          "drives",
+          args,
+          { tool: "list_shared_drives", q: args["query"] },
+          async (pageToken, pageSize) => {
+            const listing = asRecord(
+              await client.json(
+                {
+                  method: "GET",
+                  path: "/drives",
+                  query: {
+                    q: args["query"],
+                    fields: "nextPageToken,drives(id,name,hidden)",
+                    pageSize,
+                    pageToken,
+                  },
                 },
-              },
-              ctx,
-            ),
-          );
-          return {
-            ids: asArray(listing["drives"]).map((value) => String(asRecord(value)["id"] ?? "")),
-            rows: asArray(listing["drives"]).map((value) => {
-              const sharedDrive = asRecord(value);
-              const cuts = new Cuts(ctx);
-              return compact({
-                id: cuts.id("id", sharedDrive["id"]),
-                name: cuts.label("name", sharedDrive["name"]),
-                hidden: sharedDrive["hidden"] === true ? true : undefined,
-                truncatedFields: cuts.fields,
-              });
-            }),
-            next: text(listing["nextPageToken"]),
-          };
-        }),
+                ctx,
+              ),
+            );
+            return {
+              ids: asArray(listing["drives"]).map((value) => String(asRecord(value)["id"] ?? "")),
+              rows: asArray(listing["drives"]).map((value) => {
+                const sharedDrive = asRecord(value);
+                const cuts = new Cuts(ctx);
+                return compact({
+                  id: cuts.id("id", sharedDrive["id"]),
+                  name: cuts.label("name", sharedDrive["name"]),
+                  hidden: sharedDrive["hidden"] === true ? true : undefined,
+                  truncatedFields: cuts.fields,
+                });
+              }),
+              next: text(listing["nextPageToken"]),
+            };
+          },
+        ),
     },
     {
       name: "create_folder",

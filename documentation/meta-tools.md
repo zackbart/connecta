@@ -892,10 +892,10 @@ persistence; paging in a later request reads already-redacted bytes. A
 program's `connecta.read` resources, connector usage guides, and downstream
 `connecta.skill` files take the same rules before the program sees them. JSON
 stays valid: a matching number or boolean becomes `"[redacted]"`. Empty private
-strings are exempt. A private value shorter than eight characters is replaced
-wherever it occurs in result and error text, and a property name, number, or
-boolean equal to it is withheld; typed classification, retry facts, and write
-outcome remain.
+strings are exempt. A private value of one to three characters is withheld only
+where a whole string, property name, number, or boolean equals it; one of four
+to seven characters is also replaced wherever it occurs in result and error
+text. Typed classification, retry facts, and write outcome remain.
 Work limits withhold the affected text without failing the call. See
 [output redaction](./auth.md#what-a-servers-errors-may-say)
 for the shared encoding, budget, and argument-filter contract.

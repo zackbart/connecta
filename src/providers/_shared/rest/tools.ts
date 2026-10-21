@@ -38,7 +38,7 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
-import { redactBeforeCut } from "../../../sent-secrets.js";
+import { encodeForAgent, redactBeforeCut } from "../../../sent-secrets.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -231,14 +231,6 @@ async function failureBody(response: Parameters<Parameters<GuardedTransport>[2]>
   }
 }
 
-function base64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
-}
-
 async function successBody(
   vendor: RestVendor,
   response: Parameters<Parameters<GuardedTransport>[2]>[0],
@@ -275,7 +267,8 @@ async function successBody(
       return text === "" ? null : text;
     }
     const bytes = await response.bytes();
-    return bytes.length === 0 ? null : { contentType: type, bytes: bytes.length, base64: base64(bytes) };
+    // Checked before encoding: no later pass reads through base64 a field does not declare.
+    return bytes.length === 0 ? null : { contentType: type, bytes: bytes.length, base64: encodeForAgent(ctx, bytes) };
   } catch (error) {
     if (error instanceof ConnectorCallError) throw error;
     if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
