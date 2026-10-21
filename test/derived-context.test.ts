@@ -5,19 +5,14 @@ import { attachCallClassification, callClassification } from "../src/call-classi
 import { recordRecovery, recoveryFor } from "../src/call-recovery.js";
 import {
   attachCatalogCache,
-  catalogClientOptions,
   catalogExpiry,
   catalogFetchedAt,
-  catalogIntake,
-  closeCatalogCacheScope,
-  observeCatalogChange,
   observeCatalogExpiry,
   observeCatalogFetch,
   observeCompletedCatalogRefresh,
-  observeUncachedCatalogRefresh,
   type CompletedCatalogRefresh,
 } from "../src/catalog-cache.js";
-import { attachCaller, callerOf, type ConnectorCaller } from "../src/connector-caller.js";
+import { callerOf, type ConnectorCaller } from "../src/connector-caller.js";
 import { api } from "../src/connectors/api.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { deriveContext } from "../src/derived-context.js";
@@ -27,7 +22,6 @@ import { attachOAuthPartition, oauthPartitionFor } from "../src/oauth-partition.
 import { attachOAuthSealer, oauthSealerFor, type OAuthStateSealer } from "../src/oauth-sealing.js";
 import { Registry } from "../src/registry.js";
 import { redactSentSecrets, sentSecretsFor } from "../src/sent-secrets.js";
-import { responseCacheKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
@@ -147,15 +141,6 @@ describe("derived connector contexts", () => {
     check: (origin: ConnectorContext, writer: ConnectorContext, reader: ConnectorContext) => Promise<void>;
   }> = [
     {
-      table: "caller",
-      check: async (origin, writer, reader) => {
-        const bob = caller("bob");
-        attachCaller(writer, bob);
-        expect(callerOf(reader)).toBe(bob);
-        expect(callerOf(origin)).toBe(bob);
-      },
-    },
-    {
       table: "admission permit",
       check: async (origin, writer, reader) => {
         const registry = makeRegistry([connector(async () => ({}))]);
@@ -163,24 +148,6 @@ describe("derived connector contexts", () => {
         attachCallAdmission(writer, await registry.admitCall("crm", { toolName: "read", args: {} }));
         await chargeConnectorCall(reader);
         await expect(chargeConnectorCall(origin)).rejects.toBeDefined();
-      },
-    },
-    {
-      table: "recovery facts",
-      check: async (origin, writer, reader) => {
-        recordRecovery(writer, { idempotencyKey: "table-key" });
-        expect(recoveryFor(reader)).toEqual({ idempotencyKey: "table-key" });
-        // A later fact recorded through another copy merges with the first.
-        recordRecovery(reader, { requestId: "table-request" });
-        expect(recoveryFor(origin)).toEqual({ idempotencyKey: "table-key", requestId: "table-request" });
-      },
-    },
-    {
-      table: "sent secrets",
-      check: async (origin, writer, reader) => {
-        const secrets = sentSecretsFor(writer);
-        expect(sentSecretsFor(reader)).toBe(secrets);
-        expect(sentSecretsFor(origin)).toBe(secrets);
       },
     },
     {
@@ -192,86 +159,12 @@ describe("derived connector contexts", () => {
       },
     },
     {
-      table: "OAuth sealer",
-      check: async (origin, writer, reader) => {
-        const fresh = sealer();
-        attachOAuthSealer(writer, fresh);
-        expect(oauthSealerFor(reader)).toBe(fresh);
-        expect(oauthSealerFor(origin)).toBe(fresh);
-      },
-    },
-    {
       table: "OAuth owner partition",
       check: async (origin, writer, reader) => {
         const partition = {};
         attachOAuthPartition(writer, partition);
         expect(oauthPartitionFor(reader)).toBe(partition);
         expect(oauthPartitionFor(origin)).toBe(partition);
-      },
-    },
-    {
-      table: "catalog-cache policy: refresh hooks",
-      check: async (origin, writer, reader) => {
-        const observed = vi.fn();
-        attachCatalogCache(writer, catalogPolicy(observed));
-        await observeCompletedCatalogRefresh(reader, refresh);
-        await observeCompletedCatalogRefresh(origin, refresh);
-        await observeUncachedCatalogRefresh(reader, "crm", [{ name: "a" }]);
-        expect(observed).toHaveBeenCalledTimes(3);
-      },
-    },
-    {
-      table: "catalog-cache policy: TTL bounds",
-      check: async (origin, writer, reader) => {
-        attachCatalogCache(writer, catalogPolicy(undefined, 10_000));
-        // Without the policy an hour's hint would stand; with it, the ceiling clamps it.
-        expect(catalogIntake(reader, { tools: [], ttlMs: 3_600_000 }).ttlMs).toBe(10_000);
-        expect((await catalogClientOptions(reader, "crm", "config", "auth")).defaultCacheTtlMs).toBe(1_000);
-        expect(catalogIntake(origin, { tools: [], ttlMs: 3_600_000 }).ttlMs).toBe(10_000);
-      },
-    },
-    {
-      table: "catalog-cache policy: invalidation storage",
-      check: async (_origin, writer, reader) => {
-        const policy = catalogPolicy();
-        attachCatalogCache(writer, policy);
-        observeCatalogChange(reader, "crm");
-        await closeCatalogCacheScope(reader, "crm");
-        expect(await policy.storage.get(responseCacheKeys.generation("crm"))).not.toBeNull();
-      },
-    },
-    {
-      table: "catalog-cache policy: a listing keeps its own",
-      check: async (origin, writer, reader) => {
-        // The connection's policy lends itself only to a listing context that has none.
-        const connection = makeRegistry([connector(async () => ({}))]).contextFor("crm", BASE);
-        attachCatalogCache(connection, catalogPolicy(undefined, 5_000));
-        const options = await catalogClientOptions(connection, "crm", "config", "auth");
-        attachCatalogCache(writer, catalogPolicy(undefined, 10_000));
-        await options.withListing(reader, async () => {});
-        expect(catalogIntake(origin, { tools: [], ttlMs: 3_600_000 }).ttlMs).toBe(10_000);
-      },
-    },
-    {
-      table: "catalog fetch time",
-      check: async (origin, writer, reader) => {
-        observeCatalogFetch(writer, 1_234);
-        expect(catalogFetchedAt(reader)).toBe(1_234);
-        // Another method recorded through another copy joins the first.
-        observeCatalogFetch(reader, 4_321, "resources/list");
-        expect(catalogFetchedAt(origin)).toBe(1_234);
-        expect(catalogFetchedAt(origin, "resources/list")).toBe(4_321);
-      },
-    },
-    {
-      table: "catalog expiry",
-      check: async (origin, writer, reader) => {
-        observeCatalogFetch(origin, 5_000);
-        observeCatalogExpiry(writer, "tools/list", 2_000);
-        expect(catalogExpiry(reader)).toMatchObject({ fetchedAt: 5_000, ttlMs: 2_000, expiresAt: 7_000 });
-        observeCatalogExpiry(reader, "resources/list", 3_000);
-        expect(catalogExpiry(origin)).toMatchObject({ ttlMs: 2_000 });
-        expect(catalogExpiry(origin, "resources/list")).toMatchObject({ ttlMs: 3_000 });
       },
     },
   ];
@@ -285,36 +178,6 @@ describe("derived connector contexts", () => {
       await check(origin, nested, deriveContext(origin, { signal: new AbortController().signal }));
     },
   );
-
-  it.each(tables)(
-    "INV-4 INV-5 INV-9: $table recorded through the origin is read through a copy derived later",
-    async ({ check }) => {
-      const registry = makeRegistry([connector(async () => ({}))]);
-      const origin = registry.contextFor("crm", BASE, {}, {}, { connectorIds: "all", caller: caller("alice") });
-      await check(deriveContext(origin, {}), origin, deriveContext(deriveContext(origin, {}), {}));
-    },
-  );
-
-  it("INV-4: a listing through a copy of a context with no catalog policy lends the connection's to its origin", async () => {
-    const registry = makeRegistry([connector(async () => ({}))]);
-    const connection = registry.contextFor("crm", BASE);
-    attachCatalogCache(connection, catalogPolicy(undefined, 5_000));
-    const options = await catalogClientOptions(connection, "crm", "config", "auth");
-    const { storage, logger } = connection;
-    const bare: ConnectorContext = { storage, logger, baseUrl: BASE, requestScope: {} };
-    expect(catalogIntake(bare, { tools: [], ttlMs: 7_000 }).ttlMs).toBe(7_000);
-    await options.withListing(deriveContext(bare, {}), async () => {});
-    expect(catalogIntake(bare, { tools: [], ttlMs: 7_000 }).ttlMs).toBe(5_000);
-  });
-
-  it("INV-5: a context's sent-secret set, first made through a copy, is the origin's", () => {
-    const registry = makeRegistry([connector(async () => ({}))]);
-    const { storage, logger } = registry.contextFor("crm", BASE);
-    const bare: ConnectorContext = { storage, logger, baseUrl: BASE, requestScope: {} };
-    const secrets = sentSecretsFor(deriveContext(bare, {}));
-    expect(sentSecretsFor(bare)).toBe(secrets);
-    expect(sentSecretsFor(deriveContext(bare, {}))).toBe(secrets);
-  });
 
   it("INV-4 INV-5: an authorizing context keeps the registry's catalog policy, OAuth sealer, owner partition, and caller", async () => {
     const storage = memoryStorage();

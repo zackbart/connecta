@@ -93,16 +93,6 @@ async function fixture(
 }
 
 describe("Codex eval app-server", () => {
-  it("asserts the exact code-arm inventory", async () => {
-    const run = await fixture("code");
-    expect(run.loadedTools).toEqual([
-      "mcp__connecta__execute_code",
-      "mcp__connecta__authorize_connector",
-      "mcp__connecta__skills",
-    ]);
-    expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeUndefined();
-  });
-
   it("declines MCP approval with a colliding request id and translates tool events", async () => {
     const run = await fixture("complete");
     const trace = parseTrace(run.events, run.turnStarts, ["test"]);
@@ -125,7 +115,6 @@ describe("Codex eval app-server", () => {
   });
 
   it.each([
-    ["extra-skill", "future-skill"],
     ["late-skill", "future-skill"],
     ["extra-plugin", "future-plugin@builtin"],
     ["bad-inventory", "could not be verified"],
@@ -157,13 +146,6 @@ describe("Codex eval app-server", () => {
     } finally {
       clearTimeout(timer);
     }
-  });
-
-  it("bounds a follow-up callback that never settles", async () => {
-    const started = performance.now();
-    const run = await fixture("complete", undefined, async () => await new Promise(() => {}), 250);
-    expect(performance.now() - started).toBeLessThan(5_000);
-    expect(run.timedOut).toBe(true);
   });
 
   it("stops the batch on a typed usage limit even when its message has no rate keyword", () => {

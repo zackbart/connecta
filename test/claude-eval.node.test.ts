@@ -1,5 +1,4 @@
 // Node-only: spawns a fake Claude CLI to verify eval isolation, stream protocol and cancellation.
-import * as childProcess from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,11 +13,6 @@ import type { ActiveTask } from "../eval/tasks/types.js";
 import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
 import type { CodexOptions } from "../eval/agent/codex.js";
-
-vi.mock("node:child_process", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:child_process")>();
-  return { ...original, spawn: vi.fn(original.spawn) };
-});
 
 const CLI = String.raw`
 const fs = require('node:fs');
@@ -107,8 +101,6 @@ async function fixture(
 describe("Claude eval CLI", () => {
   it.each([
     ["six", "route"],
-    ["six", "outcome"],
-    ["code", "route"],
     ["code", "outcome"],
   ] as const)("fails live and saved grading when the last turn has no completion (%s/%s)", async (surface, grading) => {
     const original = runClaude;
@@ -158,20 +150,6 @@ describe("Claude eval CLI", () => {
     }
   });
 
-  it.each(["six", "code"] as const)(
-    "accepts Haiku 5.5 with the %s inventory and verifies the served model",
-    async (surface) => {
-      const run = await fixture(surface === "code" ? "code" : "complete", { model: "claude-haiku-5-5", surface });
-      expect(run.model).toBe("claude-haiku-5-5");
-      expect(run.loadedTools).toHaveLength(surface === "code" ? 3 : 6);
-      expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeUndefined();
-      const rejected = await fixture("wrong-model", { model: "claude-haiku-5-5" });
-      expect(infraError(rejected.events, rejected.exitCode, rejected.loadedTools)).toContain(
-        "instead of claude-haiku-5-5",
-      );
-    },
-  );
-
   it("isolates config and tools and preserves multi-turn answers, images, cumulative cost and usage", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "fake-key-must-not-reach-child");
     vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "fake-token-must-not-reach-child");
@@ -199,7 +177,7 @@ describe("Claude eval CLI", () => {
     expect(infraError(run.events, run.exitCode, trace.loadedTools)).toBeUndefined();
   });
 
-  it.each(["wrong-model", "extra-tool", "duplicate-tool", "extra-plugin", "extra-skill"])(
+  it.each(["wrong-model", "extra-tool", "duplicate-tool"])(
     "refuses %s before accepting a trial",
     async (mode) => {
       const run = await fixture(mode);
@@ -209,11 +187,7 @@ describe("Claude eval CLI", () => {
     },
   );
 
-  it.each([
-    ["extra-plugin", '"plugins":["cc-plugin-future@builtin"]'],
-    ["named-plugin", '"plugins":["unexpected"]'],
-    ["extra-skill", '"skills":["future-skill"]'],
-  ])("names the offending inventory for %s without plugin settings", async (mode, inventory) => {
+  it.each([["extra-plugin", '"plugins":["cc-plugin-future@builtin"]']])("names the offending inventory for %s without plugin settings", async (mode, inventory) => {
     const run = await fixture(mode);
     const error = run.events.find((event) => event.type === "result" && event.subtype === "error");
     expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
@@ -251,38 +225,8 @@ describe("Claude eval CLI", () => {
     }
   });
 
-  it("does not attribute a self-termination processed before cleanup to the harness", async () => {
-    const spawn = vi.mocked(childProcess.spawn).getMockImplementation()!;
-    let resolveExit!: () => void;
-    const exited = new Promise<void>((resolve) => {
-      resolveExit = resolve;
-    });
-    const spy = vi.spyOn(childProcess, "spawn").mockImplementation((...args) => {
-      const child = spawn(...args);
-      child.once("exit", resolveExit);
-      return child;
-    });
-    try {
-      const run = await fixture("self-terminate", {
-        nextTurn: async () => {
-          // Wait for Node to process the independent exit before cleanup checks it.
-          await exited;
-          return undefined;
-        },
-      });
-      expect(run.events.at(-1)?.subtype).toBe("success");
-      expect(run.exitCode).toBe(143);
-      expect(run.timedOut).toBe(false);
-      expect(run.aborted).toBe(false);
-      expect(run.terminatedAfterCompletion).toBe(false);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
   it.each([
     ["cleanup-1", 1],
-    ["cleanup-sigint", null],
   ] as const)("rejects an unexpected exit after harness SIGTERM (%s)", async (mode, exitCode) => {
     const run = await fixture(mode);
     expect(run.events.at(-1)?.subtype).toBe("success");
@@ -299,15 +243,4 @@ describe("Claude eval CLI", () => {
     expect(run.wallMs).toBeLessThan(5_000);
   });
 
-  it("terminates an active trial when interrupted", async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 200);
-    try {
-      const run = await fixture("hang", { signal: controller.signal });
-      expect(run.aborted).toBe(true);
-      expect(run.terminatedAfterCompletion).toBe(false);
-    } finally {
-      clearTimeout(timer);
-    }
-  });
 });

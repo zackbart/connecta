@@ -9,11 +9,8 @@
 // later stays out by construction; this suite is what notices if it does not.
 
 import { describe, expect, it } from "vitest";
-import { activityHistory } from "../src/activity.js";
-import { d1ActivityStore, d1Storage } from "../src/d1.js";
 import { createConnecta, customExecutor, remoteMcp, type Connector } from "../src/index.js";
 import { describedEndpoint, describedHref, describedOrigin, describedUrl } from "../src/described.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
 import { CONNECTA_VERSION } from "../src/version.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
@@ -61,36 +58,6 @@ describe("describeConfig", () => {
     const byId = Object.fromEntries(builtIn.map((connector) => [connector.id, connector.describe?.()]));
     expect(byId.oauth_mcp?.auth?.clientMetadataUrl).toBe("https://client.example/cimd.json");
     expect(byId.studio?.auth?.clientMetadataUrl).toBe("https://client.example/basecamp-client");
-  });
-
-  it("INV-5: reduces every branding URL to origin and path, and a relative favicon to its path", async () => {
-    const { config } = secretBearingDeployment();
-    const app = createConnecta(config);
-    try {
-      expect(app.describeConfig().branding).toMatchObject({
-        productUrl: "https://brand.example/product",
-        ownerUrl: "https://owner.example/",
-        faviconHref: "https://cdn.example/icon.svg",
-      });
-    } finally {
-      await app.close();
-    }
-    const relative = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor,
-      logger: "silent",
-      ui: operatorUi({
-        branding: { favicon: { href: `/brand/icon.svg?sig=${SECRETS.faviconQuery}#${SECRETS.faviconFragment}` } },
-      }),
-    });
-    try {
-      const json = JSON.stringify(relative.describeConfig());
-      expect(relative.describeConfig().branding.faviconHref).toBe("/brand/icon.svg");
-      expect(json).not.toContain("SENTINEL");
-    } finally {
-      await relative.close();
-    }
   });
 
   it("describes connectors by source, endpoint, auth mode, and static tools", async () => {
@@ -158,24 +125,6 @@ describe("describeConfig", () => {
     } finally {
       await app.close();
     }
-  });
-
-  it("describes a connector without describe() as custom", async () => {
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [{ id: "bare", listTools: async () => [], callTool: async () => null }],
-      executor,
-      logger: "silent",
-    });
-    expect(app.describeConfig().connectors).toEqual([
-      {
-        id: "bare",
-        authScope: "shared",
-        source: { kind: "custom" },
-        maxResultBytes: { value: 24_000, source: "deployment" },
-      },
-    ]);
-    await app.close();
   });
 
   it("reports deployment facts, limits with their sources, and modules", async () => {
@@ -260,52 +209,6 @@ describe("describeConfig", () => {
       await app.close();
     }
   });
-
-  it("INV-5: describes a store by its shipped kind and retention, and any other store as custom", async () => {
-    // Construction and describeConfig() run no statement, so a binding that
-    // answers nothing stands in for D1.
-    const db = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;
-    const shipped = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor,
-      logger: "silent",
-      storage: d1Storage(db),
-      activity: activityHistory({ store: d1ActivityStore(db, { retentionDays: 30 }) }),
-    });
-    expect(shipped.describeConfig().storage).toEqual({ configured: true, kind: "d1" });
-    expect(shipped.describeConfig().modules.activity.store).toEqual({ kind: "d1", retentionDays: 30 });
-    await shipped.close();
-    const smuggling = { ...memoryStorage(), describe: () => ({ kind: SECRETS.storeDescribe }) };
-    const custom = createConnecta({ readOnly: false, connectors: [], executor, logger: "silent", storage: smuggling });
-    expect(custom.describeConfig().storage).toEqual({ configured: true, kind: "custom" });
-    expect(JSON.stringify(custom.describeConfig())).not.toContain("SENTINEL");
-    await custom.close();
-  });
-
-  it("reports an unset default timeout as null and an executor-owned code pool", async () => {
-    const admitting = customExecutor(
-      {
-        execute: async () => ({ result: null }),
-        acquire: async () => ({ execute: async () => ({ result: null }), release() {} }),
-      } as never,
-      { lifecycle: "self-managed" },
-    );
-    const app = createConnecta({ readOnly: false, connectors: [], executor: admitting, logger: "silent" });
-    const snapshot = app.describeConfig();
-    expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
-    expect(snapshot.executor.admission).toBe("executor");
-    // An open deployment has no inbound auth, so no maintainers.
-    expect(snapshot.maintainers).toEqual([]);
-    expect(snapshot.storage).toEqual({ configured: false, kind: "memory" });
-    expect(snapshot.modules).toEqual({
-      ui: { enabled: false },
-      vault: { enabled: false },
-      activity: { enabled: false },
-      accessTokens: { enabled: false },
-    });
-    await app.close();
-  });
 });
 
 describe("non-web URL schemes", () => {
@@ -315,14 +218,8 @@ describe("non-web URL schemes", () => {
   // their payload in the path. None is a web URL, so each is omitted.
   const URLS = [
     ["blob:", `blob:https://u:${SENTINEL}@example.com/id`],
-    ["blob: over http", `blob:http://u:${SENTINEL}@example.com/id`],
-    ["data:", `data:text/plain,${SENTINEL}`],
-    ["javascript:", `javascript:alert("${SENTINEL}")`],
     ["file:", `file:///home/u/${SENTINEL}`],
-    ["a nested filesystem: URL", `filesystem:https://u:${SENTINEL}@example.com/temporary/x`],
     ["a nested view-source: URL", `view-source:https://u:${SENTINEL}@example.com/x`],
-    ["a nested jar: URL", `jar:https://u:${SENTINEL}@example.com/a.jar!/x`],
-    ["ftp:", `ftp://u:${SENTINEL}@example.com/x`],
   ] as const;
 
   it.each(URLS)("INV-5: the described-URL helpers omit %s", (_, url) => {

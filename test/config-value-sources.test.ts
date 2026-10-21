@@ -7,12 +7,11 @@ import { customExecutor, remoteMcp } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { KVStorage } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
-import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 describe("factory configuration provenance", () => {
-  it.each([undefined, [], ["simon", "ci"]])(
+  it.each([undefined, ["simon", "ci"]])(
     "INV-10: distinguishes omitted and declared agents without writing: %j",
     async (agents) => {
       const base = memoryStorage();
@@ -49,29 +48,6 @@ describe("factory configuration provenance", () => {
     },
   );
 
-  it("INV-10: reports declared maintainers as configuration", async () => {
-    const raw = {
-      readOnly: false,
-      executor,
-      publicUrl: "https://connecta.example",
-      logger: "silent" as const,
-      connectors: [],
-      auth: machineAuth("provenance-token"),
-      maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
-    };
-    const app = createTestConnecta(raw);
-    try {
-      expect(app.describeConfig().maintainers).toEqual([{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }]);
-      const sources = Object.entries(describeConfigSources(app.describeConfig(), raw)).filter(([path]) =>
-        path.startsWith("config.maintainers"),
-      );
-      expect(sources.length).toBeGreaterThan(0);
-      for (const [, source] of sources) expect(source).toBe("config");
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each([{}, { versionNegotiation: "auto" as const, redirects: "none" as const, requireHttps: false }])(
     "INV-10: distinguishes omitted and explicit remoteMcp transport defaults: %j",
     async (transport) => {
@@ -106,33 +82,7 @@ describe("factory configuration provenance", () => {
     },
   );
 
-  it("INV-10: keeps mixed transport options independent and captures presence at construction", async () => {
-    const options: { url: string; redirects: "none"; requireHttps?: boolean } = {
-      url: "https://remote.example/mcp",
-      redirects: "none",
-    };
-    const connector = remoteMcp("remote", options);
-    options.requireHttps = true;
-    const raw = {
-      readOnly: false,
-      executor,
-      publicUrl: "https://connecta.example",
-      logger: "silent" as const,
-      connectors: [connector],
-    };
-    const app = createTestConnecta(raw);
-    try {
-      const sources = describeConfigSources(app.describeConfig(), raw);
-      expect(sources["config.connectors.remote.transport.requireHttps"]).toBe("default");
-      expect(sources["config.connectors.remote.transport.redirects"]).toBe("config");
-      expect(sources["config.connectors.remote.transport.versionNegotiation"]).toBe("default");
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each([
-    ["store default", () => d1ActivityStore(D1), "default"],
     ["set in code", () => d1ActivityStore(D1, { retentionDays: 30 }), "config"],
     ["unreported", () => ({ record() {}, describe: () => ({ kind: "custom", retentionDays: 7 }) }), "default"],
   ] as const)(

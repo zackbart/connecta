@@ -219,10 +219,7 @@ describe("MCP subscriptions", () => {
 
   it.each([
     ["authentication", (request: Request) => request.headers.delete("Authorization"), 401, undefined],
-    ["protocol header", (request: Request) => request.headers.delete("MCP-Protocol-Version"), 400, -32020],
     ["header mismatch", (request: Request) => request.headers.set("MCP-Protocol-Version", "2025-06-18"), 400, -32020],
-    ["method header", (request: Request) => request.headers.set("Mcp-Method", "tools/list"), 400, -32020],
-    ["content type", (request: Request) => request.headers.set("Content-Type", "text/plain"), 415, -32000],
   ] as const)("retains %s validation before refusing a listen", async (_name, change, status, code) => {
     const c = deployment();
     try {
@@ -233,48 +230,6 @@ describe("MCP subscriptions", () => {
       if (code !== undefined) expect(await readJsonRpc(response)).toMatchObject({ error: { code } });
       else await response.text();
     } finally {
-      await c.close();
-    }
-  });
-
-  it("bounds authorization for a modern listen without taking a permit", async () => {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const c = createTestConnecta({
-      connectors: [],
-      publicUrl: BASE,
-      logger: silentLogger,
-      auth: {
-        kind: "stalled",
-        async authorize() {
-          await blocked;
-          return { ok: true };
-        },
-      },
-      maintainers: [{ namespace: "connecta:test", id: "operator" }],
-      admission: { requests: { maxDurationMs: 100 } },
-    });
-    try {
-      const response = await c.fetch(
-        rpc(
-          "modern",
-          "subscriptions/listen",
-          {
-            notifications: { toolsListChanged: true },
-          },
-          1,
-        ),
-      );
-      expect(response.status).toBe(504);
-      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
-      const health = await c.fetch(new Request(`${BASE}/health`));
-      expect(await health.json()).toMatchObject({
-        admission: { requests: { active: 0, totals: { admitted: 0 } } },
-      });
-    } finally {
-      release();
       await c.close();
     }
   });

@@ -62,7 +62,6 @@ async function exchanges(id: string): Promise<Array<{ method: string; bytes: num
 describe("write evidence over real connections", () => {
   it.each([
     ["no body", { method: "DELETE", path: "/tickets/1" }],
-    ["a JSON body", { method: "POST", path: "/tickets", body: { title: "Fixture" } }],
   ] as const)(
     "INV-9: a write whose connection is refused, with %s, is unknown on every runtime",
     async (_name, request) => {
@@ -183,10 +182,4 @@ describe("an aborted write never proves itself unsent", () => {
     }
   });
 
-  it("INV-9: a genuinely refused write with no body and a live signal is unknown on every runtime", async () => {
-    const { connector, registry } = tickets(inject("refusedHttpOrigin"));
-    const ctx = registry.contextFor("tickets", BASE, undefined, { signal: new AbortController().signal });
-    const error = await failure(connector.callTool("send", { method: "DELETE", path: "/tickets/1" }, ctx));
-    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-  });
 });

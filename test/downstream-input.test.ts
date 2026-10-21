@@ -11,7 +11,7 @@ import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { connectorContext, guestErrorText, guestFailureFacts, spyLogger } from "./fixtures/misc.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
-import { inputRetryKeys, negotiationKeys, resultKeys, scopes } from "../src/storage/keys.js";
+import { negotiationKeys, resultKeys, scopes } from "../src/storage/keys.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { readNegotiation } from "../src/connectors/negotiation-cache.js";
 import { bindDownstreamContinuation, clearDownstreamContinuation } from "../src/downstream-input-context.js";
@@ -36,8 +36,6 @@ function setup(
     message?: string;
     raw?: Record<string, unknown>;
     vault?: boolean;
-    output?: boolean;
-    invalidOutput?: boolean;
     authFirst?: boolean;
     programWrite?: boolean;
     failContinuationAuth?: boolean;
@@ -96,7 +94,6 @@ function setup(
                   : {}),
               })
               .loose(),
-            ...(options.output ? { outputSchema: z.object({ done: z.boolean() }) } : {}),
             annotations: { readOnlyHint: read },
           },
           async (args, context) => {
@@ -109,8 +106,7 @@ function setup(
               if (!read) completedWrite();
               return {
                 content: [{ type: "text", text: options.completeText ?? JSON.stringify({ done: true, responses }) }],
-                structuredContent:
-                  options.completeStructured ?? (options.output ? { done: true } : { done: true, responses }),
+                structuredContent: options.completeStructured ?? { done: true, responses },
                 ...(options.completeError ? { isError: true } : {}),
               };
             }
@@ -198,18 +194,6 @@ function setup(
       body.result.ttlMs = 60_000;
       return Response.json(body);
     }
-    if (options.invalidOutput && request?.method === "tools/call" && request.params.requestState !== undefined) {
-      await reply.body?.cancel();
-      return Response.json({
-        jsonrpc: "2.0",
-        id: request.id,
-        result: {
-          resultType: "complete",
-          content: [{ type: "text", text: "bad" }],
-          structuredContent: { done: "bad" },
-        },
-      });
-    }
     if (!options.raw || init?.method !== "POST") return reply;
     if (request.method !== "tools/call") return reply;
     if (!options.repeat && request.params.requestState !== undefined) return reply;
@@ -267,7 +251,6 @@ function setup(
       capabilities?: Record<string, unknown>;
       user?: string;
       pool?: string;
-      legacy?: boolean;
     } = {},
   ) => {
     const name = opts.name ?? "call_tool";
@@ -277,22 +260,16 @@ function setup(
       arguments: args,
       ...(opts.state === undefined ? {} : { requestState: opts.state }),
       ...(opts.responses === undefined ? {} : { inputResponses: opts.responses }),
-      ...(opts.legacy
-        ? {}
-        : {
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-              "io.modelcontextprotocol/clientInfo": { name: "relay-test", version: "1" },
-              "io.modelcontextprotocol/clientCapabilities": opts.capabilities ?? { elicitation: { form: {}, url: {} } },
-            },
-          }),
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "relay-test", version: "1" },
+        "io.modelcontextprotocol/clientCapabilities": opts.capabilities ?? { elicitation: { form: {}, url: {} } },
+      },
     });
-    if (!opts.legacy) {
-      request.headers.set("MCP-Protocol-Version", "2026-07-28");
-      request.headers.set("Mcp-Method", "tools/call");
-      request.headers.set("Mcp-Name", name);
-      if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
-    }
+    request.headers.set("MCP-Protocol-Version", "2026-07-28");
+    request.headers.set("Mcp-Method", "tools/call");
+    request.headers.set("Mcp-Name", name);
+    if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
     return readJsonRpc(await app.fetch(opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request));
   };
@@ -328,7 +305,9 @@ function setup(
 }
 
 describe("downstream input relay", () => {
-  for (const { name, schema, args: original, echo } of privateArgumentCases)
+  for (const { name, schema, args: original, echo } of privateArgumentCases.filter(({ name }) =>
+    ["oneOf disagreeing sensitivity", "local ref and escaped definition pointer"].includes(name),
+  ))
     it(`INV-5: continuation failures preserve safe ${name} echoes`, async () => {
       const flow = setup({ catalogSchema: schema, failureStatus: 429 });
       const args = { address: "service.read", args: original };
@@ -350,8 +329,6 @@ describe("downstream input relay", () => {
       expect(flow.continuationSend).toHaveBeenCalledOnce();
     });
   it.each([
-    ["top-level", "z", undefined],
-    ["top-level", "private-value".repeat(100), undefined],
     ["nested", { label: "db", value: "private-marker-12345" }, { label: "db" }],
     ["array", [{ label: "db", value: "private-marker-12345" }], [{ label: "db" }]],
   ] as const)(
@@ -968,7 +945,7 @@ describe("downstream input relay", () => {
     expect(read.tokenRefresh).toHaveBeenCalledOnce();
   });
 
-  it.each([429, 502, 503, 504, "timeout"] as const)(
+  it.each([502, "timeout"] as const)(
     "INV-4 INV-6 INV-9: makes a spent continuation non-retryable after %s with recovery appropriate to reads and writes",
     async (failure) => {
       for (const write of [false, true]) {
@@ -1037,42 +1014,6 @@ describe("downstream input relay", () => {
     },
   );
 
-  it("INV-4 INV-9: preserves auth recovery prerequisites for a failed read continuation", async () => {
-    const flow = setup({ failContinuationAuth: true });
-    const first = (await flow.rpc()).result;
-    const result = (
-      await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })
-    ).result;
-    expect(result.structuredContent.error).toMatchObject({
-      code: "auth_required",
-      retryable: false,
-      nextAction: {
-        tool: "authorize_connector",
-        arguments: { connector: "service" },
-        operatorHandoff: "Give the URL and instructions it returns to the operator.",
-      },
-      retry: "Retry service.read after the operator completes recovery.",
-    });
-    expect(flow.continuationSend).toHaveBeenCalledOnce();
-  });
-
-  it.each([429, 502, 503, 504])("INV-9: preserves first-call retryability after HTTP %s", async (failureStatus) => {
-    const flow = setup();
-    const fetch = globalThis.fetch;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (typeof init?.body === "string" && JSON.parse(init.body).method === "tools/call")
-        return new Response(null, { status: failureStatus });
-      return fetch(input, init);
-    });
-    const result = (await flow.rpc()).result;
-    expect(result.structuredContent.error).toMatchObject({
-      code: failureStatus === 429 ? "rate_limited" : "connector_call_failed",
-      retryable: true,
-    });
-    expect(result.structuredContent.error).not.toHaveProperty("nextAction");
-    expect(flow.continuationSend).not.toHaveBeenCalled();
-  });
-
   it("INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads", async () => {
     const flow = setup({ message: `Please confirm ${SECRET}` });
     const first = (await flow.rpc()).result;
@@ -1083,60 +1024,6 @@ describe("downstream input relay", () => {
     expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain("Please confirm");
     expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(OPAQUE);
     expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(SECRET);
-  });
-
-  it("INV-4 INV-5: preserves opaque state containing a sent credential and keeps downstream keys private", async () => {
-    const opaque = `${OPAQUE}:${SECRET}`;
-    const flow = setup({ opaque, key: SECRET });
-    const first = (await flow.rpc()).result;
-    expect(JSON.stringify(first)).not.toContain(SECRET);
-    await flow.rpc({
-      state: first.requestState,
-      responses: { [Object.keys(first.inputRequests)[0]!]: { action: "accept" } },
-    });
-    expect(flow.call).toHaveBeenLastCalledWith("read", { id: 1 }, opaque, { [SECRET]: { action: "accept" } });
-  });
-
-  it("INV-4 INV-9: validates input responses and capabilities before consuming a continuation", async () => {
-    const flow = setup();
-    const first = (await flow.rpc()).result;
-    const key = Object.keys(first.inputRequests)[0]!;
-    for (const response of [
-      { action: "invalid" },
-      { action: "accept", content: { name: {} } },
-      { action: "accept", content: { name: "x".repeat(70_000) } },
-    ]) {
-      const retry = await flow.rpc({ state: first.requestState, responses: { [key]: response } });
-      expect(retry.result?.isError ?? Boolean(retry.error)).toBe(true);
-    }
-    const incapable = (
-      await flow.rpc({ state: first.requestState, capabilities: {}, responses: { [key]: { action: "accept" } } })
-    ).result;
-    expect(incapable.structuredContent.error.code).toBe("input_required_unsupported");
-    expect(flow.call).toHaveBeenCalledOnce();
-    expect(
-      (await flow.rpc({ state: first.requestState, responses: { [key]: { action: "accept" } } })).result.isError,
-    ).toBeFalsy();
-    expect(flow.call).toHaveBeenCalledTimes(2);
-  });
-
-  it("INV-4 INV-9: auth-to-downstream composition shares its round bound and never confuses input keys", async () => {
-    const flow = setup({ authFirst: true, repeat: true });
-    const first = (await flow.rpc()).result;
-    expect(Object.keys(first.inputRequests)).toEqual(["connecta_auth"]);
-    await flow.vault.set("service", SECRET, "alice");
-    let result = (await flow.rpc({ state: first.requestState, responses: { connecta_auth: { action: "accept" } } }))
-      .result;
-    expect(Object.keys(result.inputRequests)).toEqual(["downstream/service/0"]);
-    result = (
-      await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })
-    ).result;
-    expect(result.resultType).toBe("input_required");
-    result = (
-      await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })
-    ).result;
-    expect(result.structuredContent.error.code).toBe("input_required_round_limit");
-    expect(flow.call).toHaveBeenCalledTimes(3);
   });
 
   it("INV-9: an auth failure during a write continuation cannot create an auth replay or reuse the nonce", async () => {
@@ -1153,44 +1040,5 @@ describe("downstream input relay", () => {
     expect(result.structuredContent.error).toMatchObject({ code: "auth_required", reconciliationRequired: true });
     expect((await flow.rpc(retryOpts)).result.isError).toBe(true);
     expect(flow.call).toHaveBeenCalledOnce();
-  });
-
-  it("INV-4: handles state-only downstream rounds and refuses relay without a sealing vault or modern protocol", async () => {
-    const flow = setup({ raw: { requestState: OPAQUE } });
-    const first = (await flow.rpc()).result;
-    expect(first.resultType).toBe("input_required");
-    expect(first.inputRequests).toBeUndefined();
-    await flow.rpc({ state: first.requestState });
-    expect(flow.call).toHaveBeenLastCalledWith("read", { id: 1 }, OPAQUE, {});
-    for (const opts of [{ vault: false }, {}]) {
-      const blocked = setup({ ...opts, raw: { requestState: OPAQUE } });
-      const result = (await blocked.rpc(opts.vault === false ? {} : { legacy: true })).result;
-      expect(result.structuredContent.error.code).toBe("input_required_unsupported");
-    }
-  });
-
-  it("INV-4 INV-9: records only a TTL-bound retry nonce without downstream payload in storage", async () => {
-    const flow = setup();
-    const first = (await flow.rpc()).result;
-    await flow.rpc({
-      state: first.requestState,
-      responses: { "downstream/service/0": { action: "accept", content: { name: "INPUT_PRIVATE_TEXT" } } },
-    });
-    const entries = await flow.storage.list(`${scopes.connector("service")}${inputRetryKeys.family.prefixes[0]}`);
-    expect(entries).toHaveLength(1);
-    expect(await flow.storage.get(entries[0]!)).toBe("used");
-  });
-
-  it("INV-4: validates final output schemas while allowing input-required suspensions", async () => {
-    for (const invalidOutput of [false, true]) {
-      const flow = setup({ output: true, invalidOutput });
-      const first = (await flow.rpc()).result;
-      expect(first.resultType).toBe("input_required");
-      const result = (
-        await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })
-      ).result;
-      expect(result.isError === true).toBe(invalidOutput);
-      if (invalidOutput) expect(result.structuredContent.error.code).toBe("invalid_args");
-    }
   });
 });

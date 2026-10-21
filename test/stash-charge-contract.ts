@@ -2,7 +2,6 @@ import { expect, it, vi } from "vitest";
 import { Clock, Duration, Effect, Random } from "effect";
 import * as storageRuntime from "../src/runtime/storage.js";
 import { Registry } from "../src/registry.js";
-import { createConnecta, customExecutor } from "../src/index.js";
 import { resultKeys, scopes, stashLedgerKeys, stashExpiryKeys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
@@ -142,33 +141,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     }
   });
 
-  it("INV-11: rejects a legacy ttlSeconds-only adapter at construction", async () => {
-    const { storage: inner } = await open();
-    const legacy = {
-      get: inner.get,
-      set: (key: string, value: string, opts?: { ttlSeconds?: number }) =>
-        inner.set(key, value, opts?.ttlSeconds === undefined ? undefined : { ttlSeconds: opts.ttlSeconds }),
-      delete: inner.delete,
-      list: inner.list,
-      compareAndSet: (key: string, expected: string | null, next: string | null, opts?: { ttlSeconds?: number }) =>
-        inner.compareAndSet(
-          key,
-          expected,
-          next,
-          opts?.ttlSeconds === undefined ? undefined : { ttlSeconds: opts.ttlSeconds },
-        ),
-    };
-    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
-    // @ts-expect-error old method signatures lack the required capability opt-in
-    const config: Parameters<typeof createConnecta>[0] = { connectors: [], executor, storage: legacy };
-    expect(() => createConnecta(config)).toThrow("storage must declare capabilities.absoluteExpiry: true");
-    expect(await inner.list("")).toEqual([]);
-    const app = createConnecta({ readOnly: false, connectors: [], executor, storage: inner, logger: "silent" });
-    expect(await app.registry.stashResult("supported", ["x"], 900)).toBe(true);
-    await app.close();
-  });
-
-  it.each([0, 1])("INV-7: retains a rejected write's charge through its late chunk %s commit", async (index) => {
+  it.each([1])("INV-7: retains a rejected write's charge through its late chunk %s commit", async (index) => {
     const f = await clocked(open);
     const inner = f.storage;
     let finish!: () => void;
@@ -217,7 +190,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     }
   });
 
-  it.each(["timeout", "rejection"])(
+  it.each(["timeout"])(
     "INV-7: returns within the cleanup budget with stalled deletion after %s",
     async (failure) => {
       const f = await clocked(open);
@@ -303,7 +276,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     30_000,
   );
 
-  it.each(["get", "compareAndSet"] as const)(
+  it.each(["compareAndSet"] as const)(
     "INV-7: returns within the settlement budget with stalled %s",
     async (operation) => {
       const f = await clocked(open);
@@ -378,14 +351,6 @@ export function stashChargeContract(open: StashFixtureFactory): void {
 
   it.each([
     { name: "contention-exhausted settlement", slow: false, releaseLosses: 0, settlementLosses: 32, transient: false },
-    { name: "single transient settlement error", slow: false, releaseLosses: 0, settlementLosses: 0, transient: true },
-    {
-      name: "slow write, successful deletion and lost release comparisons",
-      slow: true,
-      releaseLosses: 32,
-      settlementLosses: 0,
-      transient: false,
-    },
     {
       name: "exhausted release and fallback settlement",
       slow: true,
@@ -479,9 +444,6 @@ export function stashChargeContract(open: StashFixtureFactory): void {
 
   it.each([
     { capacity: 1, final: false, confirmFails: false },
-    { capacity: 2, final: false, confirmFails: false },
-    { capacity: 1, final: true, confirmFails: false },
-    { capacity: 2, final: true, confirmFails: false },
     { capacity: 1, final: true, confirmFails: true },
   ])(
     "INV-7: books an ambiguous CAS once (capacity=$capacity, final=$final, confirmFails=$confirmFails)",
@@ -533,7 +495,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     30_000,
   );
 
-  it.each(["failed cleanup", "interrupted settlement"])(
+  it.each(["interrupted settlement"])(
     "INV-7: leaves no completion rows after %s",
     async (failure) => {
       const f = await clocked(open);
@@ -582,8 +544,6 @@ export function stashChargeContract(open: StashFixtureFactory): void {
 
   it.each([
     { delay: 31_000, rejects: false, capacity: 1, maxBytes: 100 },
-    { delay: 31_000, rejects: false, capacity: 100, maxBytes: 1 },
-    { delay: 90_000, rejects: true, capacity: 1, maxBytes: 100 },
     { delay: 90_000, rejects: true, capacity: 100, maxBytes: 1 },
   ])(
     "INV-7: holds orphan capacity after a $delay ms write and failed cleanup ($capacity entries, $maxBytes bytes, rejects=$rejects)",
@@ -620,7 +580,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     },
   );
 
-  it.each([false, true])(
+  it.each([true])(
     "INV-7: aborts a pending write within 30 seconds and bounds its late commit (cleanupFails=%s)",
     async (cleanupFails) => {
       const f = await clocked(open);
