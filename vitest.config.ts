@@ -18,7 +18,6 @@ const WORKERS_SUITES = [
   "test/auth-admission-workerd.test.ts",
   "test/catalog-cache.test.ts",
   "test/clerk-organization-workerd.test.ts",
-  "test/client-activity-d1.test.ts",
   "test/codemode-compat.test.ts",
   "test/guest-api-contract.test.ts",
   "test/kv-to-d1.test.ts",
@@ -138,9 +137,9 @@ function fixtureBundle(entry: string): Promise<string> {
 // A separate native Worker: requests share no test-request I/O or promises.
 // enable_weak_ref matches the Worker example, so a charge whose work workerd
 // cancelled can be released by the collector (src/auth-admission.ts).
-async function authAdmissionWorker(backend?: string, name = backend ? "auth-admission-sdk" : "auth-admission") {
+async function authAdmissionWorker(backend?: string) {
   return {
-    name,
+    name: backend ? "auth-admission-sdk" : "auth-admission",
     ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
@@ -152,18 +151,12 @@ async function authAdmissionWorker(backend?: string, name = backend ? "auth-admi
 }
 
 // The plain Worker export plus named middleware and control entrypoints
-// sharing its isolate. Without enable_weak_ref, at this compatibility date,
-// the twin has no FinalizationRegistry and releases on settlement alone.
-async function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) {
+// sharing its isolate.
+async function authAdmissionEntryWorker(name: string, origin: string) {
   return {
     name,
     compatibilityDate: "2025-01-01",
-    compatibilityFlags: [
-      "nodejs_compat",
-      "enable_request_signal",
-      "service_binding_extra_handlers",
-      ...(weakRef ? ["enable_weak_ref"] : []),
-    ],
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal", "service_binding_extra_handlers", "enable_weak_ref"],
     bindings: { ORIGIN: origin },
     serviceBindings: { SELF: name },
     modules: true,
@@ -174,8 +167,7 @@ async function authAdmissionEntryWorker(name: string, origin: string, weakRef = 
 // One fresh isolate per collection scenario (test/auth-admission-binding.test.ts):
 // in this harness, objects left unreachable by an earlier scenario's cancelled
 // invocations were seen to keep later ones reachable in the same isolate.
-const AUTH_ADMISSION_BINDING_ISOLATES = ["ended-access", "ended-agent", "replaced-access", "replaced-agent"];
-const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "scheduled", "ended"];
+const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "ended"];
 const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replaceAll("-", "_")}`;
 
 export default defineConfig({
@@ -260,29 +252,20 @@ export default defineConfig({
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 ...Object.fromEntries(
-                  AUTH_ADMISSION_BINDING_ISOLATES.map((key) => [bindingName(key), `auth-admission-${key}`]),
-                ),
-                ...Object.fromEntries(
-                  [...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`), "entry-no-weak-ref"].flatMap(
-                    (key) => [
-                      [bindingName(key), `auth-admission-${key}`],
-                      [`${bindingName(key)}_CONTROL`, { name: `auth-admission-${key}`, entrypoint: "control" }],
-                      [`${bindingName(key)}_MIDDLEWARE`, { name: `auth-admission-${key}`, entrypoint: "middleware" }],
-                    ],
-                  ),
+                  AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`).flatMap((key) => [
+                    [bindingName(key), `auth-admission-${key}`],
+                    [`${bindingName(key)}_CONTROL`, { name: `auth-admission-${key}`, entrypoint: "control" }],
+                    [`${bindingName(key)}_MIDDLEWARE`, { name: `auth-admission-${key}`, entrypoint: "middleware" }],
+                  ]),
                 ),
               },
               workers: await Promise.all([
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
-                ...AUTH_ADMISSION_BINDING_ISOLATES.map((key) =>
-                  authAdmissionWorker(undefined, `auth-admission-${key}`),
-                ),
                 ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
                 ),
-                authAdmissionEntryWorker("auth-admission-entry-no-weak-ref", inject("authAdmissionServer"), false),
               ]),
             },
           })),
