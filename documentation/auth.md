@@ -2460,8 +2460,9 @@ The encoding lattice is exactly this, and anything outside it is out of scope:
   separator, such as a path segment after `/`, which decodes misaligned; HTML
   entities; compression; custom alphabets; encryption; bytes written as a
   JSON array of numbers; and one encoding split across separate leaves, such as
-  the base64 of a value cut into array items. Raw text is matched across
-  adjacent leaves, but an encoding is decoded only within one string.
+  the base64 of a value cut into array items. Raw text and JSON escapes are
+  matched across adjacent leaves, but base64 and base64url decoding operates
+  within each string.
 - The boundary removes echoes of values Connecta sent. A downstream already
   holds what it was sent and can always return it in a form outside this
   lattice, so redaction is not a defense against a downstream that reshapes a
