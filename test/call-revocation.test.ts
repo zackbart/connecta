@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   Budget,
   Credentials,
+  Ledger,
+  Recovery,
   Signal,
+  callMemo,
   contextView,
   openCall,
   openRequest,
@@ -54,6 +57,43 @@ function trackedSignal(failure?: Error) {
 }
 
 describe("call revocation cleanup", () => {
+  it("INV-7 INV-9: retained synchronous recovery drops facts after call closure", () => {
+    const records: Readonly<Record<string, string>>[] = [];
+    const lease = openCall({ ...inputs(), record: (facts) => records.push(facts) });
+    const record = Context.get(lease.services, Recovery).recordNow!;
+    lease.close();
+    record({ idempotencyKey: "late-write-key" });
+    expect(records).toEqual([]);
+  });
+
+  it("INV-7 INV-9: a retained ledger cannot open an entry after call closure", () => {
+    const lease = openCall(inputs());
+    const ledger = Context.get(lease.services, Ledger);
+    lease.close();
+    expect(() => ledger.open({ auxiliary: false, provider: "tickets", method: "POST" })).toThrow(/call has ended/);
+  });
+
+  it("INV-7 INV-9: a retained ledger cannot dispatch its open entry after call closure", () => {
+    const lease = openCall(inputs());
+    const ledger = Context.get(lease.services, Ledger);
+    const entry = ledger.open({ auxiliary: false, provider: "tickets", method: "POST" });
+    lease.close();
+    expect(() => ledger.dispatch(entry)).toThrow(/call has ended/);
+  });
+
+  it("INV-7: call memo refuses a retained cached capability after call closure", () => {
+    const lease = openCall(inputs());
+    const view = contextView(lease, {
+      storage: memoryStorage(),
+      logger: silentLogger,
+      baseUrl: "https://connecta.example",
+    });
+    const key = {};
+    callMemo(view, key, () => ({}));
+    lease.close();
+    expect(() => callMemo(view, key, () => ({}))).toThrow(/call has ended/);
+  });
+
   it.each(["call", "request"] as const)(
     "INV-7: a retained use after %s closure never starts its credential or budget callback",
     async (boundary) => {
