@@ -190,6 +190,14 @@ export interface ResultIdentity {
   origin: string | null;
 }
 
+export interface ProgramResultDependency {
+  /** Catalog metadata needs visibility, not permission to invoke a write. */
+  access?: "catalog";
+  connector: string;
+  tool?: string;
+  classification: "read" | "write";
+}
+
 export interface RegistryView {
   credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
@@ -217,12 +225,11 @@ export interface RegistryView {
   admitCall(id: string, input: { toolName: string; args: unknown; signal?: AbortSignal }): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
   resultIdentity(): ResultIdentity;
-  /** Recheck live auth/grants and pool admission before exposing stored data. */
+  /** One validation pass: admit once, then check every dependency under that scope. */
   recheckResultAccess(
-    address: string | undefined,
+    dependencies: readonly ProgramResultDependency[],
     classification: "read" | "write",
     signal?: AbortSignal,
-    access?: "catalog",
   ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
@@ -261,12 +268,7 @@ export interface RegistryScope {
   principalKey?: string;
   endpoint?: string;
   origin?: string | null;
-  currentResultAccess?: (
-    address: string | undefined,
-    classification: "read" | "write",
-    signal?: AbortSignal,
-    access?: "catalog",
-  ) => Promise<boolean>;
+  currentResultAccess?: RegistryView["recheckResultAccess"];
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
 }
@@ -967,10 +969,9 @@ export class Registry implements RegistryView {
   }
 
   recheckResultAccess(
-    _address: string | undefined,
+    _dependencies: readonly ProgramResultDependency[],
     _classification: "read" | "write",
     _signal?: AbortSignal,
-    _access?: "catalog",
   ): Promise<boolean> {
     return Promise.resolve(true);
   }
@@ -1457,12 +1458,11 @@ class ScopedRegistryView implements RegistryView {
   }
 
   recheckResultAccess(
-    address: string | undefined,
+    dependencies: readonly ProgramResultDependency[],
     classification: "read" | "write",
     signal?: AbortSignal,
-    access?: "catalog",
   ): Promise<boolean> {
-    return this.scope.currentResultAccess?.(address, classification, signal, access) ?? Promise.resolve(true);
+    return this.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true);
   }
 
   resultsStorage(): KVStorage {
