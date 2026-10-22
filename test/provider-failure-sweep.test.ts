@@ -1026,7 +1026,9 @@ describe("round-6 write evidence sweep", () => {
     expect(pulled).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     const bodiless = await send({ method: "POST", path: "/t" }, ctx, (r) => r.json()).catch((e: unknown) => e);
     expect(bodiless).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    const read = await send({ method: "GET", path: "/t" }, ctx, (r) => r.json()).catch((e: unknown) => e);
+    const read = await send({ method: "GET", path: "/t", classification: "read" }, ctx, (r) => r.json()).catch(
+      (e: unknown) => e,
+    );
     expect(read).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
     expect((read as ConnectorCallError).writeOutcome).toBeUndefined();
   });

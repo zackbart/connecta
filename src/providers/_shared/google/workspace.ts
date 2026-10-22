@@ -963,7 +963,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         rejected = { facts, token };
         // A write is never sent again (INV-9). The next call mints the fresh
         // token, so a deliberate repeat finds it.
-        if (isWrite(headed.method, ctx)) {
+        if (isWrite(headed.method, ctx) || facts.request?.classification !== "read") {
           const refusal =
             failed instanceof ConnectorCallError && failed.code === "auth_required"
               ? failed

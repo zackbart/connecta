@@ -407,7 +407,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // write once: the registry's classification of this call decides, else
       // the rule the registry would apply to the tool (INV-1).
       const write = (callClassification(ctx) ?? classifyTool(tool)) === "write";
-      const callCtx = providerCallContext(ctx);
+      const callCtx = providerCallContext(ctx, providerRequests(ctx) ? classifyTool(tool) : write ? "write" : "read");
       const handlerCtx = deriveContext<ApiHandlerContext>(callCtx, {
         fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
         ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),

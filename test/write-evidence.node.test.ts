@@ -337,7 +337,11 @@ describe("a direct write that times out after dispatch", () => {
       });
       const ctx = makeRegistry([]).contextFor("tickets", "https://connecta.example");
       const failure = (method: "GET" | "POST") =>
-        send({ method, path: "/tickets", ...(method === "POST" ? { body: {} } : {}) }, ctx, (r) => r.json()).then(
+        send(
+          { method, path: "/tickets", ...(method === "POST" ? { body: {} } : { classification: "read" }) },
+          ctx,
+          (r) => r.json(),
+        ).then(
           () => {
             throw new Error("expected the call to fail");
           },

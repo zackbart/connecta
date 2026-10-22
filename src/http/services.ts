@@ -131,7 +131,7 @@ export class Ledger extends Context.Service<
       readonly method: string;
       readonly key?: string;
     }) => ProviderRequest;
-    readonly dispatch: (request: ProviderRequest) => void;
+    readonly dispatch: (request: ProviderRequest, headers?: HeadersInit) => void;
   }
 >()("connecta/http/Ledger") {}
 
@@ -490,9 +490,15 @@ export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "
     requestSecrets: requestSentSecrets(ctx),
     signal: request ? (ctx.signal ? AbortSignal.any([ctx.signal, request.signal]) : request.signal) : ctx.signal,
     ledger: {
-      open: ({ auxiliary, provider, method, key }) =>
-        providerRequest(ctx, auxiliary, provider, { method, ...(key === undefined ? {} : { key }) }),
-      dispatch: (entry) => dispatchProviderRequest(ctx, entry),
+      open: ({ auxiliary, provider, method, key }) => {
+        const entry = providerRequest(ctx, auxiliary, provider, {
+          method,
+          ...(key === undefined ? {} : { key }),
+        });
+        entry.classification ??= fallback;
+        return entry;
+      },
+      dispatch: (entry, headers) => dispatchProviderRequest(ctx, entry, headers),
     },
   });
   request?.own(lease.close);

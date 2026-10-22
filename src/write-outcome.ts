@@ -24,7 +24,7 @@ import {
   nestedProviderCall,
   nestedProviderRequests,
   providerRequests,
-  readMethod,
+  readRequest,
   refusalRequest,
   refusedStatus,
   unauthorizedAnswer,
@@ -324,12 +324,12 @@ export function settleWrite(requests: readonly ProviderRequest[], error: unknown
 
 /**
  * The same decision for a call that returned a result: any undeclared write
- * 401 blocks success, even after renewal. A read's 401 (recorded GET/HEAD)
+ * 401 blocks success, even after renewal. A positively classified read's 401
  * and a declared refusal do not invalidate the handler's successful result.
  */
 export function settleWriteResult(requests: readonly ProviderRequest[]): ConnectorCallError | undefined {
   return settleWrite(
-    requests.filter((request) => !readMethod(request.method) && request.authBeforeExecution !== true),
+    requests.filter((request) => !readRequest(request) && request.authBeforeExecution !== true),
     undefined,
     false,
   ) as ConnectorCallError | undefined;

@@ -1204,7 +1204,7 @@ describe("the in-memory token cache", () => {
             await tickets({ method: "POST", path: "/items" }, ctx, () => {
               throw new ConnectorCallError("auth_required", "Tickets rejected its token.");
             }).catch(() => undefined);
-            await drive.json({ method: "GET", path: "/files" }, ctx);
+            await drive.json({ method: "GET", path: "/files", classification: "read" }, ctx);
             throw new ConnectorCallError("unavailable", "A later failure.");
           },
         },
@@ -1731,7 +1731,7 @@ describe("the shared client reads bytes and text for the products that need them
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     const write = { method: "POST" as const, path: "/files", body: { name: "Plan" } };
-    const read = { method: "GET" as const, path: "/files/f1" };
+    const read = { method: "GET" as const, path: "/files/f1", classification: "read" as const };
     const failing = (promise: Promise<unknown>) =>
       promise.then(
         () => expect.unreachable(),
@@ -1967,7 +1967,7 @@ describe("the shared client reads bytes and text for the products that need them
       it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", NODE, async () => {
         apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
-        const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
+        const read = await failing(drive.json({ method: "GET", path: "/files/f1", classification: "read" }, context()));
         expect(read.code).toBe("rate_limited");
         expect(googleOutcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
         // No operation hint makes a write repeatable: only a key would.
@@ -2178,6 +2178,24 @@ describe("the shared client reads bytes and text for the products that need them
       expect(apiCalls).toEqual([]);
       expect(tokenCalls).toEqual([]);
     });
+  });
+
+  it("INV-9: a method override on a positive Google read is never replayed", NODE, async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ id: "unexpected-replay" }),
+    );
+    const ctx = context();
+    attachCallClassification(ctx, "read");
+    const error = await client()
+      .json(
+        { method: "GET", path: "/files/f1", classification: "read", headers: { "X-HTTP-Method-Override": "POST" } },
+        ctx,
+      )
+      .catch((failure) => failure);
+    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(apiCalls).toHaveLength(1);
+    expect(tokenCalls).toHaveLength(1);
   });
 
   it("INV-9: replays a read's byte body intact after a 401, and never a write's", NODE, async () => {

@@ -1,6 +1,7 @@
 import {
   assertProviderCallOpen,
   boundProviderRequest,
+  hasMethodOverride,
   dispatchProviderRequest,
   providerRequest,
   renewedAfterUnauthorized,
@@ -502,7 +503,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
-      dispatchProviderRequest(ctx, dispatch);
+      dispatchProviderRequest(ctx, dispatch, sent);
       const response = await sentSecretsFetch(ctx)(url, {
         ...init,
         headers: sent,
@@ -529,7 +530,11 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       const first = await send(tokens.access_token);
       if (first.status !== 401) return first;
       void first.body?.cancel().catch(() => {});
-      if (write) {
+      if (
+        write ||
+        hasMethodOverride(headers) ||
+        (dispatch.classification === "write" && ["GET", "HEAD"].includes((dispatch.method ?? "GET").toUpperCase()))
+      ) {
         let renewal: unknown;
         try {
           const fresh = await renewedToken(provider, ctx, tokens.access_token);

@@ -1423,6 +1423,23 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     },
   );
 
+  it("INV-9: a method override prevents the kit from replaying a positive read", async () => {
+    const { layer, state } = grant();
+    const guarded = refreshOnce(guardedClient({ ...OPTIONS, authenticate: bearer }));
+    answers.push(
+      () => new Response(null, { status: 401 }),
+      () => Response.json({ ok: true }),
+    );
+    const response = await runEdge(
+      guarded.client
+        .execute(HttpClientRequest.get("/items", { headers: { "X-HTTP-Method-Override": "POST" } }))
+        .pipe(Effect.provideContext(layer), Effect.provideContext(services("read"))),
+    );
+    expect(response.status).toBe(401);
+    expect(state.refreshes).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it("INV-9: replays a read once after one refresh, whatever its method", async () => {
     const { state, layer } = grant();
     answers.push(

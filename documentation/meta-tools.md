@@ -1064,7 +1064,11 @@ key-reuse advice. Once every such 401 is renewed
 the handoff goes, but the call stays unknown, even if its handler caught
 the failure and returned a result: renewal does not prove whether the write
 took effect. A caught read 401, or a declared refusal followed by a successful
-write, does not prevent the call from succeeding.
+write, does not prevent the call from succeeding. A read needs positive
+operation or tool classification and a recorded GET or HEAD; the method
+alone is insufficient. Breeze GET writes and requests carrying
+`X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` remain writes,
+even when a handler catches their 401 and returns.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after

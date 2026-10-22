@@ -29,7 +29,7 @@ import { Context, Effect } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { renewedAfterUnauthorized } from "../provider-call.js";
+import { hasMethodOverride, renewedAfterUnauthorized } from "../provider-call.js";
 import type { GuardedClient } from "./client.js";
 import type { HttpFailure } from "./errors.js";
 import { Classification, RequestFacts, duringCall, type CallServices } from "./services.js";
@@ -68,7 +68,12 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
       const grant = yield* Grant;
       const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
       const facts = yield* RequestFacts;
-      if ((yield* Classification) === "write" && facts.effect === "call") {
+      if (
+        facts.effect === "call" &&
+        ((yield* Classification) === "write" ||
+          facts.sent?.dispatch?.request?.classification === "write" ||
+          hasMethodOverride(response.request.headers))
+      ) {
         // Whatever renewal meets is the authorization server's, not the
         // write's. The ledger keeps only whether it succeeded, which decides
         // whether the agent still needs the handoff, never the outcome.

@@ -273,7 +273,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         try: (interrupted) => {
           // Synchronous with the send: from here the core counts it as left,
           // and it refuses a request whose call has already ended.
-          core.dispatch(entry);
+          core.dispatch(entry, headers);
           dispatch.state = "pending";
           return globalThis.fetch(url, {
             method: request.method,

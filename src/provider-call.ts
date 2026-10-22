@@ -3,6 +3,7 @@
 // if a direct caller reuses its context concurrently. No request facts escape
 // into the agent envelope or operator records.
 import { contextKey, deriveContext } from "./derived-context.js";
+import { callClassification } from "./call-classification.js";
 import { carryResendAdvice, ConnectorCallError } from "./errors.js";
 import { followRedactedCopies } from "./redaction-identity.js";
 import type { Connector, ConnectorContext } from "./types.js";
@@ -14,6 +15,8 @@ export interface ProviderRequest {
   provider: string;
   /** The HTTP method it was sent with, when its channel knows it. */
   method?: string;
+  /** Positive operation/tool evidence; an HTTP method alone proves no read. */
+  classification?: "read" | "write" | undefined;
   /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
   key?: string;
   /**
@@ -32,6 +35,7 @@ export interface ProviderRequest {
 }
 interface ProviderCall {
   requests: ProviderRequest[];
+  classification?: "read" | "write" | undefined;
   /** The handler settled: its outcome may be reported, so nothing more leaves. */
   closed: boolean;
   /** The calls of api() boundaries entered beneath this one's handler. */
@@ -82,9 +86,9 @@ interface LogicalCall {
 }
 const logicalCalls = new WeakMap<object, LogicalCall>();
 
-export function providerCallContext(ctx: ConnectorContext): ConnectorContext {
+export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
   const parent = (ctx as CallContext)[CALL];
-  const call: ProviderCall = { requests: [], closed: false, nested: [], ...(parent ? { parent } : {}) };
+  const call: ProviderCall = { requests: [], classification, closed: false, nested: [], ...(parent ? { parent } : {}) };
   parent?.nested.push(call);
   return deriveContext<CallContext>(ctx, { [CALL]: call });
 }
@@ -142,19 +146,33 @@ export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, 
 }
 
 /** Record that a request leaves now; synchronous with the send that follows it. */
-export function dispatchProviderRequest(ctx: ConnectorContext, request: ProviderRequest): void {
+export function dispatchProviderRequest(ctx: ConnectorContext, request: ProviderRequest, headers?: HeadersInit): void {
   assertProviderCallOpen(ctx, request.provider, request.auxiliary);
+  if (hasMethodOverride(headers)) request.classification = "write";
   request.dispatched = true;
-  if (!request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
+  const call = logicalCalls.get(contextKey(ctx));
+  if (!request.auxiliary && !call?.sent.includes(request)) call?.sent.push(request);
+}
+
+/** Override presence invalidates read evidence, whatever value the header carries. */
+export function hasMethodOverride(headers: HeadersInit | undefined): boolean {
+  const sent = new Headers(headers);
+  return ["x-http-method-override", "x-http-method", "x-method-override"].some((name) => sent.has(name));
 }
 
 export function providerRequest(
   ctx: ConnectorContext,
   auxiliary: boolean,
   provider: string,
-  sent: { method?: string; key?: string } = {},
+  sent: { method?: string; key?: string; classification?: "read" | "write" } = {},
 ): ProviderRequest {
-  const request: ProviderRequest = { dispatched: false, auxiliary, provider, ...sent };
+  const request: ProviderRequest = {
+    dispatched: false,
+    auxiliary,
+    provider,
+    classification: (ctx as CallContext)[CALL]?.classification ?? callClassification(ctx),
+    ...sent,
+  };
   (ctx as CallContext)[CALL]?.requests.push(request);
   return request;
 }
@@ -241,8 +259,8 @@ export function knownForLogicalCall(ctx: object, error: unknown): boolean {
  * write of `ctx`'s logical call, the one basis for key-reuse advice (INV-9).
  * It holds only when the call entered exactly one boundary, which owned it
  * and tracks every request, and sent exactly one write, carrying `key`. A
- * request counts as a read only by its recorded GET or HEAD
- * ({@link readMethod}). An inner request's key never speaks for a composite,
+ * request counts as a read only with positive classification and a recorded
+ * GET or HEAD ({@link readRequest}). An inner request's key never speaks for a composite,
  * a wrapper, a second write, or an earlier unrelated request.
  */
 export function keyProtectsLogicalCall(ctx: object | undefined, key: string | undefined): boolean {
@@ -250,7 +268,7 @@ export function keyProtectsLogicalCall(ctx: object | undefined, key: string | un
   const [boundary, ...others] = call?.boundaries ?? [];
   if (!call || key === undefined || boundary === undefined || others.length > 0 || !tracksRequests(boundary))
     return false;
-  const writes = call.sent.filter((request) => !readMethod(request.method));
+  const writes = call.sent.filter((request) => !readRequest(request));
   return ownsLogicalCall(call) && writes.length === 1 && writes[0]?.key === key;
 }
 
@@ -270,10 +288,10 @@ function ownsLogicalCall(call: LogicalCall): boolean {
   );
 }
 
-/** The shared read classification of an HTTP method: GET or HEAD, nothing unrecorded. */
-export function readMethod(method: string | undefined): boolean {
-  const normalized = method?.toUpperCase();
-  return normalized === "GET" || normalized === "HEAD";
+/** Positive read evidence, with GET/HEAD as #902's additional conservative bound. */
+export function readRequest(request: ProviderRequest): boolean {
+  const method = request.method?.toUpperCase();
+  return request.classification === "read" && (method === "GET" || method === "HEAD");
 }
 
 // OAuth does credential checks before the actual send. Associate a guarded
@@ -295,8 +313,11 @@ export function providerFetch(
 ): typeof fetch {
   return async (input, init) => {
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    const request = providerRequest(ctx, auxiliary, provider, { method });
-    dispatchProviderRequest(ctx, request);
+    const request = (init && boundProviderRequest(init)) ?? providerRequest(ctx, auxiliary, provider, { method });
+    // Link only this delegated send. Reusing init for another physical fetch
+    // must create another entry, not inherit this request's refusal proof.
+    if (init) requestInits.delete(init);
+    dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const response = await send(input, init);
     request.status = response.status;
     return response;

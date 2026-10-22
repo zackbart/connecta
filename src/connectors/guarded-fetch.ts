@@ -20,7 +20,6 @@ import {
   bindProviderRequest,
   dispatchProviderRequest,
   providerRequest,
-  readMethod,
   vendorRefusal,
   type ProviderRequest,
 } from "../provider-call.js";
@@ -81,7 +80,7 @@ export interface GuardedRequest {
    * up front: the ceiling still bounds what is read, never what is sent.
    */
   prefixOnly?: boolean;
-  /** Fallback only without a served verdict (e.g. Breeze writes use GET). */
+  /** Trusted per-operation evidence (e.g. Breeze writes use GET); otherwise the tool's verdict applies. */
   classification?: "read" | "write";
   /** Provider-declared request that cannot perform the logical resource write. */
   auxiliary?: boolean;
@@ -563,12 +562,12 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     assertProviderCallOpen(ctx, provider, auxiliary);
     const dispatch = providerRequest(ctx, auxiliary, provider, {
       method: request.method,
+      ...(request.classification ? { classification: request.classification } : {}),
       ...(request.idempotencyKey === undefined ? {} : { key: request.idempotencyKey }),
     });
     let dispatched = false;
     let response: Response | undefined;
     let result: T;
-    const fallback = request.classification ?? (readMethod(request.method) ? "read" : "write");
     try {
       result = await requestOnce(request, ctx, map);
     } catch (error) {
@@ -578,13 +577,13 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && !auxiliary,
         ...(response ? { status: response.status } : {}),
-        fallback,
+        fallback: dispatch.classification ?? "write",
         repeatable: request.idempotencyKey !== undefined,
         authBeforeExecution: dispatch.authBeforeExecution === true,
         ...(auxiliary ? {} : { request: dispatch }),
       });
     }
-    const unknown = providerCallResult(ctx, fallback, dispatch);
+    const unknown = providerCallResult(ctx, dispatch.classification ?? "write", dispatch);
     if (unknown) throw unknown;
     return result;
 
@@ -642,7 +641,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           headers[name] = value;
         }
         bindProviderRequest(init, dispatch);
-        dispatchProviderRequest(ctx, dispatch);
+        dispatchProviderRequest(ctx, dispatch, headers);
         dispatched = true;
         response = await send(url.toString(), init, ctx);
         dispatch.status = response.status;

@@ -300,7 +300,9 @@ describe("a write answered 401", () => {
       writeOutcome: "unknown",
       message: `Tickets rejected the configured token. ${SENTENCE}`,
     });
-    const read = await undeclared({ method: "GET", path: "/tickets/t-1" }, ctx, refusal).catch((e: unknown) => e);
+    const read = await undeclared({ method: "GET", path: "/tickets/t-1", classification: "read" }, ctx, refusal).catch(
+      (e: unknown) => e,
+    );
     expect(read).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: undefined });
     const reviewed = tickets(
       { "/tickets": 401 },

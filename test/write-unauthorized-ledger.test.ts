@@ -4,7 +4,7 @@
 // (dispatch, status, a reviewed authBeforeExecution match, a 401's mapped
 // verdict, a renewal of that request's own credential); `settleWrite` decides,
 // in the invocation for a served call and at the outermost boundary otherwise.
-// Each case here is a review repro of PR #917, rounds 3 to 6.
+// Each case here is a review repro of PR #917, rounds 3 to 7.
 import { Context, Effect, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordRecovery } from "../src/call-recovery.js";
@@ -808,7 +808,7 @@ describe("Q8's verdict is final, for every outcome a write call can end in", () 
           {
             method: kind === "GET" || kind === "HEAD" ? kind : "POST",
             path: "/items",
-            ...(kind === "read POST" ? { classification: "read" as const } : {}),
+            ...(read ? { classification: "read" as const } : {}),
           },
           ctx,
           (response) => {

@@ -2226,8 +2226,17 @@ compiling and configuring the real thing.
   outermost direct boundary, including a guarded transport outside any ledger):
   any undeclared write 401 blocks success, even after renewal. Renewal drops
   only the handoff; a program still counts the write in `writes.unknown`.
-  A caught read 401 (only a recorded GET or HEAD counts as a read) or a
-  declared refusal followed by a successful write does not block success.
+  A caught read 401 needs positive operation or tool classification, plus a
+  recorded GET or HEAD, to leave success intact; a method alone proves no
+  read. The guarded transport records its operation classification, otherwise
+  its own `api()` tool supplies it (including nested read tools).
+  `ctx.fetch`, OAuth and the kit record the same evidence. The final outgoing
+  `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header
+  makes the request a write regardless of its classification or method. A
+  declared refusal followed by a successful write also leaves success intact.
+  A guarded transport delegating through `ctx.fetch` reuses its bound ledger
+  entry, preserving the declaration, status and classification, and the
+  logical call counts that same request once.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the
@@ -2296,7 +2305,8 @@ compiling and configuring the real thing.
   exactly one boundary was entered, the invocation's object owns it as for
   `knownForLogicalCall`, that boundary tracks every request, and exactly one
   dispatched request was a write, carrying the named key; a request counts as
-  a read only by its recorded GET or HEAD (`readMethod`). A composite, a
+  a read only with positive operation/tool classification and a recorded
+  GET or HEAD (`readRequest`); method-override headers make it a write. A composite, a
   wrapper, a second write, an earlier unrelated key, or a call interrupted
   after two dispatches gets no such advice; the key stays a diagnostic, in
   the message and `uncertainCall.recovery`. The REST write tool's
