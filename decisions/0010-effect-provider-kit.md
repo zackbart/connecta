@@ -492,14 +492,25 @@ What a call owns and what its request owns are kept apart:
   a fenced claim without completing its token exchange. No rollback or
   cancellation-triggered re-consent exception is needed.
   Authorization-code exchange submits no refresh claim; its auxiliary token
-  fetch retains request-revocation guarding, including callback operations
-  with a `requestScope` and no external signal.
+  fetch and its pending wait abort on explicit request revocation, including
+  operations with a `requestScope` and no external signal. A token reply that
+  arrives after revocation cannot persist access or refresh tokens. The
+  callback route retains its existing uninterruptible ownership and does not
+  revoke its scope midway through exchange; explicit revocation is a separate
+  boundary. An aborted code exchange requires another authorization, not
+  recovery of a durable refresh claim.
 - **Request-owned:** a `remoteMcp()` session or transport, a request-token
   flight, the request's sent-secret set, invocation auth and handoffs. They
   outlive the call that opened them and close when the request scope closes.
   A session that needs a credential after the call that opened it reads it
   through the operation's credential access under the request signal, never
   through a call's `Credentials`, which is closed by then.
+  Operation preparation and I/O resolve the request signal even when no
+  caller signal was supplied. Request-owned auxiliary work ignores call
+  closure while retaining request revocation and external cancellation.
+  A shared remote MCP session does not lend its connection lifetime to
+  renewal preparation: each challenged response binds that preparation to
+  its initiating call until claim submission transfers coordinator ownership.
 - **Closing a request cannot be cut short.** Revocation comes first and
   cannot throw: the request's operation and call views stop resolving, and
   every call lease reached through them closes, so no caller, credential or

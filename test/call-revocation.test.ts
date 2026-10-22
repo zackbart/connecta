@@ -111,11 +111,11 @@ describe("call revocation cleanup", () => {
         lease.close();
       };
       try {
-        const effect =
+        const pending =
           capability === "credentials"
-            ? Context.get(lease.services, Credentials).values
-            : Context.get(lease.services, Budget).charge;
-        await expect(runEdge(effect)).rejects.toThrow(/call has ended/);
+            ? runEdge(Context.get(lease.services, Credentials).values)
+            : runEdge(Context.get(lease.services, Budget).charge);
+        await expect(pending).rejects.toThrow(/call has ended/);
         expect(lease.closed()).toBe(true);
       } finally {
         signal.removeEventListener = remove;

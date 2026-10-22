@@ -68,9 +68,18 @@ storage CAS lease prevents independent isolates from redeeming the same
 refresh token concurrently. The holder commits an accepted rotation by CAS
 before releasing waiters, even after caller closure. Closing a call or request
 still promptly ends that caller's wait.
+For a shared remote MCP connection, the challenged response identifies the
+call that owns renewal preparation. The connection and OAuth provider remain
+request-owned; their longer lifetime cannot keep pre-claim renewal alive
+after its initiating call closes.
 Authorization-code exchange transfers no refresh ownership: its auxiliary
-token POST checks request revocation even when the callback operation has
-only a `requestScope` and no external signal.
+token POST and pending wait abort on explicit request revocation even when
+the operation has only a `requestScope` and no external signal. A response
+that arrives afterward cannot persist tokens. The callback route keeps its
+existing uninterruptible ownership and does not revoke its own scope during
+exchange; explicit operation revocation is a separate boundary. An aborted
+code exchange can be authorized again without stranding a durable refresh
+claim.
 The closed call consumes no renewal result, marks no ledger entry renewed,
 and sends or resends no resource request. This preserves a rotation after its
 refresh token has been spent while keeping call capabilities revoked.
@@ -2142,13 +2151,20 @@ compiling and configuring the real thing.
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
-  request; their credential access comes from the operation. OAuth renewal
+  request; their credential access comes from the operation. Operation views
+  resolve request cancellation even without an external signal; auxiliary
+  authentication, sends and response handling all use that signal. Shared
+  MCP sessions bind renewal preparation to the challenged call's signal,
+  rather than the connection's longer lifetime. OAuth renewal
   is call-owned until its first durable claim CAS is submitted. Submission
   transfers preparation, token exchange and fenced rotation commit to the
   storage coordinator under its own deadlines and deferred-work hook; only
   the caller's wait still closes with the call. That completion
   cannot resume a closed call or resend its resource request
-  (`test/call-renewal-lifetime.test.ts`). Request closure
+  (`test/call-renewal-lifetime.test.ts`,
+  `test/remote-mcp-renewal-lifetime.test.ts`). Explicit request revocation also
+  aborts pending authorization-code exchange and refuses late token writes
+  (`test/operation-cancellation.test.ts`). Request closure
   revokes views and calls first, then runs every finalizer in reverse order,
   collecting failures. The caller's original cancellation signal is retained
   separately from the lease signal, so normal teardown never looks like caller
