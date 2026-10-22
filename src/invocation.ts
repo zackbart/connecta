@@ -44,7 +44,7 @@ import {
   knownProviderFailure,
   openLogicalCall,
 } from "./provider-call.js";
-import { classifyWriteOutcome } from "./write-outcome.js";
+import { classifyWriteOutcome, departedWriteVerdict } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -572,6 +572,20 @@ export class InvocationService {
       };
       let stage = "catalog";
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
+        // Q8: this invocation's deadline or its caller cut off a write the
+        // downstream had answered 401. No connector failure arrives, so the
+        // logical call's recorded 401 gives the verdict: unknown, its auth
+        // code and handoff, and no wait, resend or key-reuse advice.
+        const departed =
+          dispatchedToConnector &&
+          resolved?.definition.classification !== "read" &&
+          (error.code === "cancelled" || isTimeoutFailure(error))
+            ? departedWriteVerdict(dispatchContext)
+            : undefined;
+        if (departed) {
+          failureAdvice = failureKeyAdvice = undefined;
+          error = carryFailureFacts(departed, classifyWithoutAdvice(sentSecrets.redact(departed)));
+        }
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
         if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {

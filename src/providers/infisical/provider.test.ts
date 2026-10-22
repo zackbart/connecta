@@ -40,7 +40,8 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
-const login = () => json({ accessToken: "tok", expiresIn: 3600, accessTokenMaxTTL: 0, tokenType: "Bearer" });
+const login = (accessToken = "tok") =>
+  json({ accessToken, expiresIn: 3600, accessTokenMaxTTL: 0, tokenType: "Bearer" });
 
 function mockFetch(...responses: Response[]) {
   const fetch = vi.fn<typeof globalThis.fetch>();
@@ -273,7 +274,7 @@ describe("Infisical connector", () => {
   });
 
   it("INV-9: the served classification decides 401 replay before the Infisical request method", async () => {
-    let fetch = mockFetch(login(), json({}, 401), login(), json({ projects: [] }));
+    let fetch = mockFetch(login(), json({}, 401), login("tok-2"), json({ projects: [] }));
     const write = context();
     attachCallClassification(write, "write");
     await expect(connector.callTool("list_projects", {}, write)).rejects.toMatchObject({
@@ -958,8 +959,18 @@ describe("maintained Infisical contract", () => {
       message: `Infisical answered this write with HTTP 401. ${renewal} was not sent again, so whether it took effect is unknown: check the target before repeating it.`,
     });
     // Login renews the token, and the write still is not sent again.
-    let fetch = mockFetch(login(), json({ message: "expired" }, 401), login());
+    let fetch = mockFetch(login(), json({ message: "expired" }, 401), login("tok-2"));
     await expect(write()).rejects.toMatchObject(unknown("The credential is renewed for the next call, but the write"));
+    expect(fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"))).toHaveLength(1);
+    // A login that hands back the token the write sent renewed nothing, so
+    // the write's own 401 keeps its operator recovery (Q8).
+    fetch = mockFetch(login(), json({ message: "expired" }, 401), login());
+    await expect(write()).rejects.toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      message: expect.stringContaining("The write was sent before Infisical rejected its credential"),
+    });
     expect(fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"))).toHaveLength(1);
     // The recovery login answers 503: no retryable `unavailable` for a write
     // that was sent, and the 401's verdict keeps its operator recovery.

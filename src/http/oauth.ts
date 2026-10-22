@@ -29,6 +29,7 @@ import { Context, Effect } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { renewedAfterUnauthorized } from "../provider-call.js";
 import type { GuardedClient } from "./client.js";
 import type { HttpFailure } from "./errors.js";
 import { Classification, RequestFacts, duringCall, type CallServices } from "./services.js";
@@ -72,10 +73,11 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
         // write's. The ledger keeps only whether it succeeded, which decides
         // whether the agent still needs the handoff, never the outcome.
         const renewal = yield* Effect.exit(grant.refresh(stale));
-        if (renewal._tag === "Success" && facts.sent?.dispatch) {
+        // Only a different token renews: one handed back as it was sent did not.
+        if (renewal._tag === "Success" && renewal.value !== stale && facts.sent?.dispatch) {
           facts.sent.dispatch.renewed = true;
-          // The core reads the same fact from its ledger entry (Q8).
-          if (facts.sent.dispatch.request) facts.sent.dispatch.request.renewed = true;
+          // The core reads the same fact from this request's own ledger entry (Q8).
+          renewedAfterUnauthorized(facts.sent.dispatch.request, stale, renewal.value);
         }
         return HttpClientResponse.fromWeb(
           request,

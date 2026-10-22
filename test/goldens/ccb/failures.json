@@ -470,10 +470,22 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "Connector \"church\"'s API answered this write with HTTP 401. The credential is renewed for the next call, but the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+            "code": "downstream_oauth_required",
+            "message": "Connector \"church\" requires authorization — call authorize_connector({ connector: \"church\" }) and open the returned URL.",
             "retryable": false,
-            "writeOutcome": "unknown"
+            "writeOutcome": "unknown",
+            "connector": "church",
+            "operation": "church.ccb_api_mutate",
+            "recovery": "oauth",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
           }
         }
       },
@@ -716,10 +728,22 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "Connector \"church\"'s API answered this write with HTTP 401. The credential is renewed for the next call, but the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+            "code": "downstream_oauth_required",
+            "message": "Connector \"church\" requires authorization — call authorize_connector({ connector: \"church\" }) and open the returned URL.",
             "retryable": false,
-            "writeOutcome": "unknown"
+            "writeOutcome": "unknown",
+            "connector": "church",
+            "operation": "church.ccb_api_mutate",
+            "recovery": "oauth",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
           }
         }
       },

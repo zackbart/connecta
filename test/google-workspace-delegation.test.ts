@@ -26,6 +26,8 @@ import {
   workspaceConnection,
 } from "../src/providers/_shared/google/workspace.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { api } from "../src/connectors/api.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
@@ -1316,6 +1318,63 @@ describe("the in-memory token cache", () => {
       code: "auth_required",
     });
     expect(apiCalls).toHaveLength(2);
+  });
+
+  it("INV-9: the fresh token for a read's replay never clears another request's 401", NODE, async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ files: [] }),
+    );
+    const drive = googleWorkspaceClient({
+      provider: "Google Drive",
+      api: "Google Drive API",
+      baseUrl: "https://www.googleapis.com/drive/v3",
+      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+      maxResponseBytes: 1024,
+      notFound: "ambiguous",
+      connection: workspaceConnection("drive", {
+        purpose: "Shared files",
+        serviceAccount: account(),
+        subject: "alice@org.example",
+      }),
+    });
+    const tickets = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => new Response(null, { status: 401 }),
+    });
+    // A direct write that sends a Tickets POST, then reads Drive, then fails.
+    const mixed = api("mixed", {
+      tools: [
+        {
+          name: "create",
+          description: "Create a ticket and look up its file",
+          annotations: { readOnlyHint: false },
+          handler: async (_args, ctx) => {
+            await tickets({ method: "POST", path: "/items" }, ctx, () => {
+              throw new ConnectorCallError("auth_required", "Tickets rejected its token.");
+            }).catch(() => undefined);
+            await drive.json({ method: "GET", path: "/files" }, ctx);
+            throw new ConnectorCallError("unavailable", "A later failure.");
+          },
+        },
+      ],
+    });
+    const failure = await mixed.callTool("create", {}, context(identity("alice"))).catch((error: unknown) => error);
+    expect(classifyCallError(failure)).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      message:
+        "Tickets rejected its token. The write was sent before Tickets rejected its credential, so whether it took " +
+        "effect is unknown: check the target before repeating it.",
+    });
+    expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual([
+      "GET Bearer token-1",
+      "GET Bearer token-2",
+    ]);
   });
 
   it(

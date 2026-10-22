@@ -6,12 +6,13 @@
 // the status the ledger recorded, before any key or untracked exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { answeredRequest, guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
+import { infisical } from "../src/providers/infisical/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -145,11 +146,12 @@ const retryingRefusal = (): never => {
 /**
  * A Tickets write answered 401 inside a larger handler: after an accepted
  * write (`composite`), before a failure of the handler's own (`later`), or
- * after a renewal the handler reports (`renewed`, a read replayed with the
- * new token and then a write the vendor fails). `tracked: false` is a
- * handler the ledger cannot vouch for.
+ * around a renewal the handler reports for its read's 401 before a write the
+ * vendor fails: a fresh token (`renewed`), the token the read already sent
+ * (`reused`), or after a different write's 401 (`unrelated`).
+ * `tracked: false` is a handler the ledger cannot vouch for.
  */
-function ticketsAround(kind: "sole" | "composite" | "later" | "renewed", tracked = true) {
+function ticketsAround(kind: "sole" | "composite" | "later" | "renewed" | "reused" | "unrelated", tracked = true) {
   const sent: string[] = [];
   const send = guardedFetch({
     provider: "Tickets",
@@ -158,10 +160,11 @@ function ticketsAround(kind: "sole" | "composite" | "later" | "renewed", tracked
     maxResponseBytes: 1024,
     fetch: async (url, init) => {
       const path = new URL(url).pathname;
+      const read = `${init.method} ${path}` === "GET /tickets/t-1";
+      const replay = read && sent.includes("GET /tickets/t-1");
       sent.push(`${init.method} ${path}`);
-      if (path === "/accepted") return Response.json({ id: "t-1" });
+      if (path === "/accepted" || replay) return Response.json({ id: "t-1" });
       if (path === "/failing") return new Response(null, { status: 503 });
-      if (kind === "renewed" && sent.length > 1) return Response.json({ id: "t-1" });
       return new Response(null, { status: 401 });
     },
   });
@@ -173,9 +176,13 @@ function ticketsAround(kind: "sole" | "composite" | "later" | "renewed", tracked
         description: "Create a ticket",
         annotations: { readOnlyHint: false },
         handler: async (_args, ctx) => {
-          if (kind === "renewed") {
-            const rejected = await send({ method: "GET", path: "/tickets/t-1" }, ctx, (response) => response.status);
-            if (rejected === 401) renewedAfterUnauthorized(ctx);
+          if (kind === "renewed" || kind === "reused" || kind === "unrelated") {
+            if (kind === "unrelated")
+              await send({ method: "POST", path: "/tickets" }, ctx, retryingRefusal).catch(() => undefined);
+            const rejected = await send({ method: "GET", path: "/tickets/t-1" }, ctx, (response) =>
+              answeredRequest(response),
+            );
+            renewedAfterUnauthorized(rejected, "token-1", kind === "reused" ? "token-1" : "token-2");
             await send({ method: "GET", path: "/tickets/t-1" }, ctx, (response) => response.json());
             return send({ method: "POST", path: "/failing" }, ctx, () => {
               throw new ConnectorCallError("unavailable", "Tickets is unavailable.", { retryAfterMs: 30_000 });
@@ -468,6 +475,276 @@ describe("a write answered 401 is decided before every other exception", () => {
     expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     expect(error).not.toHaveProperty("nextAction");
     expect(sent).toEqual(["GET /tickets/t-1", "GET /tickets/t-1", "POST /failing"]);
+  });
+
+  it("INV-9: a renewal that hands back the token the request sent renews nothing; its 401 decides", async () => {
+    const { connector, sent } = ticketsAround("reused");
+    const error = await call(connector, "create", true);
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message: `Tickets answered this write with HTTP 401. ${SENTENCE}`,
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+    expect(sent).toEqual(["GET /tickets/t-1", "GET /tickets/t-1", "POST /failing"]);
+  });
+
+  it("INV-9: renewing one request's credential never clears another request's 401", async () => {
+    const { connector, sent } = ticketsAround("unrelated");
+    const error = await call(connector, "create", true);
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message: `Tickets rejected the configured token. ${SENTENCE}`,
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+    expect(sent).toEqual(["POST /tickets", "GET /tickets/t-1", "GET /tickets/t-1", "POST /failing"]);
+  });
+});
+
+describe("Q8 across nested boundaries, the invocation's deadline and repeated recovery", () => {
+  const STRIPE_SENTENCE =
+    "The write was sent before Stripe rejected its credential, so whether it took effect is unknown: check the target before repeating it.";
+  const REFUND = { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } };
+
+  /** An inner api() write answered 401, its verdict asking for a wait and a resend. */
+  function inner(declaredProof: boolean) {
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      maxResponseBytes: 1024,
+      authenticate: () => ({}),
+      ...(declaredProof ? { authBeforeExecution: declared(() => true)! } : {}),
+      fetch: async () => new Response(null, { status: 401 }),
+    });
+    return tracksEveryRequest(
+      api("inner", {
+        tools: [
+          {
+            name: "create",
+            description: "Create a ticket",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) => send({ method: "POST", path: "/tickets" }, ctx, retryingRefusal),
+          },
+        ],
+      }),
+    );
+  }
+
+  /** An outer api() write whose handler calls `inner`, and then propagates, fails later, or succeeds. */
+  function outer(child: Connector, behavior: "propagate" | "later" | "success", tracked = false) {
+    const connector = api("outer", {
+      tools: [
+        {
+          name: "create",
+          description: "Create a ticket through the inner connector",
+          annotations: { readOnlyHint: false },
+          handler: async (_args, ctx) => {
+            if (behavior === "propagate") return child.callTool("create", {}, ctx);
+            await child.callTool("create", {}, ctx).catch(() => undefined);
+            if (behavior === "success") return { ok: true };
+            throw new ConnectorCallError("unavailable", "A later request failed.", { retryAfterMs: 30_000 });
+          },
+        },
+      ],
+    });
+    return tracked ? tracksEveryRequest(connector) : connector;
+  }
+
+  it.each([
+    [false, "propagate"],
+    [false, "later"],
+    [true, "propagate"],
+    [true, "later"],
+  ] as const)(
+    "INV-9: an inner api() write's 401 (declared: %s) decides the outer write that does %s",
+    async (declaredProof, behavior) => {
+      const error = await call(outer(inner(declaredProof), behavior), "create", true);
+      expect(error).toMatchObject({
+        code: "auth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        reconciliationRequired: true,
+        nextAction: { tool: "authorize_connector", arguments: { connector: "outer" } },
+        message: `Tickets rejected the configured token. ${SENTENCE}`,
+      });
+      expect(error).not.toHaveProperty("retryAfterMs");
+    },
+  );
+
+  it("INV-9: an inner api() write's 401 decides a direct outer call, and an outer that recovers succeeds", async () => {
+    const ctx = (await registryFor(outer(inner(false), "later"))).contextFor("outer", BASE);
+    const direct = classifyCallError(
+      await outer(inner(false), "later")
+        .callTool("create", {}, ctx)
+        .catch((e: unknown) => e),
+    );
+    expect(direct).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      message: `Tickets rejected the configured token. ${SENTENCE}`,
+    });
+    expect(direct).not.toHaveProperty("retryAfterMs");
+    const meta = createMetaTools(await registryFor(outer(inner(false), "success")), BASE);
+    expect((await meta.callDestructiveTool({ address: "outer.create" })).isError).toBeFalsy();
+  });
+
+  it("INV-9: a tracked outer whose nested api() sent a write is never a known failure on its own empty ledger", async () => {
+    const connector = outer(inner(true), "propagate", true);
+    const ctx = (await registryFor(connector)).contextFor("outer", BASE);
+    const failure = await connector.callTool("create", {}, ctx).catch((e: unknown) => e);
+    // The inner declared refusal does not stand for the outer write that wrapped it.
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: failure as CallErrorDetails })).toBe("unknown");
+    const error = classifyCallError(failure);
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      message: `Tickets rejected the configured token. ${SENTENCE}`,
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+  });
+
+  /** A Stripe 401 whose body stalls until `release`, so the invocation's deadline or caller ends the call. */
+  function stalledStripe(headers: Record<string, string>) {
+    const bodies: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const answered = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        answered();
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(body) {
+              bodies.push(body);
+              body.enqueue(new TextEncoder().encode('{"error":'));
+            },
+          }),
+          { status: 401, headers },
+        );
+      }),
+    );
+    return {
+      answered,
+      release: () => {
+        for (const body of bodies) body.close();
+      },
+    };
+  }
+
+  const billing = () => stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
+
+  it("INV-9: a served write the invocation's deadline cuts off after an undeclared 401 keeps Q8, with no key advice", async () => {
+    const stalled = stalledStripe({});
+    const connector = billing();
+    const meta = createMetaTools(await registryFor(connector, { value: "sk_test_fixture" }), BASE, {
+      credentialHandoffUrl: `${BASE}/connections`,
+    });
+    const result = await meta.callDestructiveTool({
+      address: "billing.stripe_api_write",
+      args: REFUND,
+      timeoutMs: 100,
+    });
+    stalled.release();
+    const error = (result.structuredContent as { error: CallErrorDetails }).error;
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      reconciliationRequired: true,
+      nextAction: { tool: "authorize_connector", arguments: { connector: "billing" } },
+      message: `Stripe answered this write with HTTP 401. ${STRIPE_SENTENCE}`,
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+    expect(error.retry).not.toContain("idempotencyKey");
+    expect(error.message).not.toContain("Reusing it");
+    expect(error.instructions).toContain(RECONCILE);
+    expect(stalled.answered).toHaveBeenCalledTimes(1);
+  });
+
+  it("INV-9: the reviewed exception stands at the deadline: a declared Stripe 401 stays the invocation's timeout", async () => {
+    const stalled = stalledStripe({ "request-id": "req_1" });
+    const meta = createMetaTools(await registryFor(billing(), { value: "sk_test_fixture" }), BASE);
+    const result = await meta.callDestructiveTool({
+      address: "billing.stripe_api_write",
+      args: REFUND,
+      timeoutMs: 100,
+    });
+    stalled.release();
+    expect((result.structuredContent as { error: CallErrorDetails }).error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+    });
+  });
+
+  it("INV-9: a served write its caller cancels after an undeclared 401 keeps Q8", async () => {
+    const stalled = stalledStripe({});
+    const caller = new AbortController();
+    stalled.answered.mockImplementation(() => setTimeout(() => caller.abort(new Error("caller left")), 20));
+    const meta = createMetaTools(await registryFor(billing(), { value: "sk_test_fixture" }), BASE, {
+      credentialHandoffUrl: `${BASE}/connections`,
+      requestSignal: caller.signal,
+    });
+    const result = await meta.callDestructiveTool({ address: "billing.stripe_api_write", args: REFUND });
+    stalled.release();
+    const error = (result.structuredContent as { error: CallErrorDetails }).error;
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message: `Stripe answered this write with HTTP 401. ${STRIPE_SENTENCE}`,
+    });
+    expect(error.retry).not.toContain("idempotencyKey");
+  });
+
+  it("INV-9: Infisical marks a write renewed only when a fresh login replaced the token it sent", async () => {
+    let logins = 0;
+    const sent: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown, init: RequestInit = {}) => {
+        if (String(input).endsWith("/login"))
+          return Response.json({ accessToken: `token-${++logins}`, expiresIn: 3600 });
+        sent.push(new Headers(init.headers).get("authorization"));
+        return Response.json({ message: "rejected" }, { status: 401 });
+      }),
+    );
+    const secrets = infisical("secrets", { purpose: "Review" });
+    const values = { clientId: "id", clientSecret: "secret" };
+    const ctx = {
+      storage: memoryStorage(),
+      logger: silentLogger,
+      baseUrl: BASE,
+      requestScope: {},
+      credential: {
+        get: async (field?: string) => (field ? values[field as keyof typeof values] : null),
+        getAll: async () => values,
+      },
+    };
+    const args = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      environment: "dev",
+      secretName: "X",
+      secretValue: "value",
+    };
+    const write = async () =>
+      classifyCallError(await secrets.callTool("create_secret", args, ctx).catch((e: unknown) => e));
+    // The first write's 401 earned a fresh login: renewed, so no handoff.
+    expect(await write()).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    // The second sent that fresh token, and recovery handed it back: nothing renewed.
+    const second = await write();
+    expect(second).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect(second.message).toContain(
+      "The write was sent before Infisical rejected its credential, so whether it took effect is unknown",
+    );
+    expect(sent).toEqual(["Bearer token-1", "Bearer token-2"]);
+    expect(logins).toBe(2);
   });
 });
 

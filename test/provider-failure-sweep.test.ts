@@ -328,6 +328,9 @@ async function sweepCall(
       return fail(new Request(request.url, { method: request.method }));
     });
   } else {
+    // Each login and refresh mints a token the vendor has not seen, as real
+    // ones do: only a different credential renews a 401 (Q8).
+    let minted = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -341,13 +344,13 @@ async function sweepCall(
           });
         if (url.pathname.endsWith("/auth/universal-auth/login"))
           return Response.json({
-            accessToken: "fixture-machine-token",
+            accessToken: `fixture-machine-token-${++minted}`,
             expiresIn: 3600,
             tokenType: "Bearer",
           });
         if (url.pathname === "/oauth/token")
           return Response.json({
-            access_token: "fixture-oauth-token",
+            access_token: `fixture-oauth-token-${++minted}`,
             refresh_token: "fixture-refresh-token",
             token_type: "bearer",
             expires_in: 7200,

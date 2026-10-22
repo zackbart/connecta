@@ -22,6 +22,7 @@ import {
   providerRequest,
   readMethod,
   vendorRefusal,
+  type ProviderRequest,
 } from "../provider-call.js";
 import { providerCallFailure } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
@@ -509,6 +510,18 @@ async function jsonResult(read: () => Promise<unknown>): Promise<{ value: unknow
   }
 }
 
+// Each response a mapper reads, and the ledger entry of the request it answered.
+const answeredRequests = new WeakMap<object, ProviderRequest>();
+
+/**
+ * The ledger entry of the request `response` answered, so a provider that
+ * renews its credential after a 401 can name exactly that request
+ * (`renewedAfterUnauthorized`). Undefined for anything else.
+ */
+export function answeredRequest(response: object): ProviderRequest | undefined {
+  return answeredRequests.get(response);
+}
+
 /**
  * Build the transport a connector sends every request through. `maxResponseBytes`
  * is required rather than defaulted: what counts as an absurd response is a fact
@@ -654,7 +667,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         await response.body?.cancel().catch(() => {});
         throw oversized(provider, limit, `a declared ${declared} bytes`);
       }
-      return await map(boundedResponse(provider, response, limit), ctx);
+      const answer = boundedResponse(provider, response, limit);
+      answeredRequests.set(answer, dispatch);
+      return await map(answer, ctx);
     }
   };
 }

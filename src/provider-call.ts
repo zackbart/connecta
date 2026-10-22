@@ -23,9 +23,10 @@ export interface ProviderRequest {
    */
   authBeforeExecution?: true;
   /**
-   * Its answer was a 401, and a renewal then replaced the credential it
-   * rejected ({@link renewedAfterUnauthorized}). The 401 no longer needs the
-   * operator's recovery, so it no longer decides the call's verdict (Q8).
+   * Its answer was a 401, and a renewal then replaced the credential it sent
+   * with a different one ({@link renewedAfterUnauthorized}). The 401 no
+   * longer needs the operator's recovery, so it no longer decides the call's
+   * verdict (Q8).
    */
   renewed?: true;
 }
@@ -33,6 +34,8 @@ interface ProviderCall {
   requests: ProviderRequest[];
   /** The handler settled: its outcome may be reported, so nothing more leaves. */
   closed: boolean;
+  /** The calls of api() boundaries entered beneath this one's handler. */
+  nested: ProviderCall[];
 }
 const CALL = Symbol("provider call");
 type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
@@ -72,11 +75,31 @@ interface LogicalCall {
 const logicalCalls = new WeakMap<object, LogicalCall>();
 
 export function providerCallContext(ctx: ConnectorContext): ConnectorContext {
-  return deriveContext<CallContext>(ctx, { [CALL]: { requests: [], closed: false } });
+  const call: ProviderCall = { requests: [], closed: false, nested: [] };
+  (ctx as CallContext)[CALL]?.nested.push(call);
+  return deriveContext<CallContext>(ctx, { [CALL]: call });
 }
 
 export function providerRequests(ctx: ConnectorContext): readonly ProviderRequest[] | undefined {
   return (ctx as CallContext)[CALL]?.requests;
+}
+
+/**
+ * Every request the ledgers of api() boundaries nested beneath `ctx`'s call
+ * recorded, at any depth: an inner call's 401 still decides the outer's
+ * write (Q8), whatever the outer handler made of the inner's failure.
+ */
+export function nestedProviderRequests(ctx: ConnectorContext): ProviderRequest[] {
+  const found: ProviderRequest[] = [];
+  const visit = (call: ProviderCall) => {
+    for (const inner of call.nested) {
+      found.push(...inner.requests);
+      visit(inner);
+    }
+  };
+  const call = (ctx as CallContext)[CALL];
+  if (call) visit(call);
+  return found;
 }
 
 /**
@@ -308,14 +331,23 @@ export function unauthorizedAnswer(request: ProviderRequest): ConnectorCallError
 }
 
 /**
- * A renewal succeeded after a 401 in `ctx`'s call (a fresh token minted, a
- * login, a refresh): the credential every 401 recorded so far rejected is
- * replaced, so none of them needs the operator's recovery any longer (Q8).
- * A write such a 401 answered is reported in renewal's words
- * (`unsentAfterUnauthorized`), still an unknown outcome.
+ * A renewal answered `request`'s own 401 (a refresh, a login, a fresh token
+ * minted) with `fresh`, a credential other than `sent`, the one the request
+ * carried: that 401 no longer needs the operator's recovery (Q8). It names
+ * the one request it answered and never marks another. A renewal that hands
+ * back the credential the request already sent (an earlier recovery reused)
+ * renewed nothing.
  */
-export function renewedAfterUnauthorized(ctx: ConnectorContext): void {
-  for (const request of providerRequests(ctx) ?? []) if (request.status === 401) request.renewed = true;
+export function renewedAfterUnauthorized(request: ProviderRequest | undefined, sent: string, fresh: string): void {
+  if (request?.status === 401 && fresh !== sent) request.renewed = true;
+}
+
+/**
+ * Every resource request dispatched under `ctx`'s logical call, from any
+ * ledger, nested ones included; undefined outside one.
+ */
+export function logicalCallRequests(ctx: object | undefined): readonly ProviderRequest[] | undefined {
+  return ctx ? logicalCalls.get(contextKey(ctx))?.sent : undefined;
 }
 
 export function refusalRequest(error: unknown): ProviderRequest | undefined {

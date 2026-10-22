@@ -3,6 +3,7 @@ import {
   boundProviderRequest,
   dispatchProviderRequest,
   providerRequest,
+  renewedAfterUnauthorized,
   vendorRefusal,
 } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
@@ -531,14 +532,16 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       if (write) {
         let renewal: unknown;
         try {
-          await renewedToken(provider, ctx, tokens.access_token);
+          const fresh = await renewedToken(provider, ctx, tokens.access_token);
+          // The call's ledger keeps this 401's verdict, or that renewal
+          // replaced the token this request sent (Q8). The same token back
+          // renewed nothing.
+          renewedAfterUnauthorized(dispatch, tokens.access_token, fresh);
+          if (fresh === tokens.access_token) renewal = authRequiredError();
         } catch (error) {
           if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
           renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
         }
-        // The call's ledger keeps this 401's verdict, or that renewal
-        // replaced the credential it rejected (Q8).
-        if (renewal === undefined) dispatch.renewed = true;
         throw vendorRefusal(
           unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required"),
           dispatch,
