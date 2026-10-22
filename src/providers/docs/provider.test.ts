@@ -593,6 +593,15 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(unguarded.code).toBe("connector_call_failed");
   });
 
+  it("calls an edit applied after a 2xx body breaks, and never invites a repeat", async () => {
+    route = () => ({ brokenBody: true });
+    const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("so it was applied");
+    expect(failure.message).toContain("Do not repeat it");
+    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+  });
+
   it.each([
     ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
     [
@@ -854,8 +863,8 @@ describe("every inline element renders as something, or is named (H9)", () => {
   });
 });
 
-// Cases here push 9 MiB fields and a five-hundred-call sweep of replies near
-// the 192 KiB budget through whole calls: CPU-bound, with no timing behavior,
+// Cases here push 9 MiB fields and replies near the 192 KiB budget through
+// whole calls: CPU-bound, with no timing behavior,
 // and seconds long even on an idle machine. A loaded one ran them past
 // vitest's 5s default, so this is a hang guard, not a speed assertion.
 describe("round-3 review: outcomes by observed status, bounded copies, one final guard", { timeout: 60_000 }, () => {
@@ -953,6 +962,32 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     const create = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
     expect(create.message).toContain("created the document (HTTP 2xx)");
     expect(bytes(create.message)).toBeLessThan(2_000);
+  });
+
+  it.each([
+    [20, 2],
+    [21, 2],
+    [22, 1],
+  ])("measures the reply notice at the boundary with a %i-byte tail", async (tail, shown) => {
+    // Two replies, including their notice, are one byte under, at, and one
+    // byte over the budget. Dropping every reply is not a valid way to fit.
+    const big = {
+      createNamedRange: {
+        ...Object.fromEntries(Array.from({ length: 385 }, (_, key) => [`k${key}`, "n".repeat(500)])),
+        tail: "t".repeat(tail),
+      },
+    };
+    const small = Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }));
+    route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
+    const result = await call(connection(), "batch_update_document", {
+      documentId: "d",
+      requests: [{ insertText: {} }],
+      requiredRevisionId: "r",
+    });
+    expect(bytes(result)).toBeLessThanOrEqual(BUDGET);
+    if (tail <= 21) expect(bytes(result)).toBe(BUDGET + tail - 21);
+    expect(result.replies).toEqual([big, ...small.slice(0, shown - 1)]);
+    expect(result.notice).toContain(`${shown} of 100 replies`);
   });
 
   it("refuses a default read past the bridge budget, and lets an explicit one through", async () => {
