@@ -1888,7 +1888,7 @@ flight's deadline, never touching the owner's signal or response.
 
 Nothing reachable from `src/index.ts` may import a `node:` builtin, so the same
 core runs unchanged in workerd and in Node. The Node-touching paths — `src/node.ts`
-(the `node:http` adapter), `src/sqlite.ts` (`node:sqlite`), and the QuickJS process pool
+(the `node:http` adapter and its owned `http/node-transport.ts` undici dispatcher), `src/sqlite.ts` (`node:sqlite`), and the QuickJS process pool
 (`src/executors/quickjs.ts` plus its child) — each sit behind an explicit subpath
 and must stay unreachable from the root. `./auth/clerk` is separate because
 `@clerk/backend` is an optional peer rather than a dependency, and

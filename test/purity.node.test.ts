@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest";
 // behind explicit package subpaths and must NOT be reachable from index.ts.
 //
 // Kept dependency-free on purpose: it statically walks the relative-import graph
-// with regex + fs, no bundler or TS API. node:fs / node:path here in the test
+// with the TypeScript syntax tree, so imports in embedded Worker source strings
+// are not mistaken for real module edges. node:fs / node:path here in the test
 // are fine — the rule applies to src/, not to this file.
 
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
@@ -31,17 +32,18 @@ const FORBIDDEN_NODE_DYNAMIC_IMPORT = /\bimport\(\s*["']node:/;
 /** Extract relative import/export specifiers (the `"./x.js"` in `from "./x.js"`). */
 function relativeSpecifiers(source: string): string[] {
   const specs: string[] = [];
-  const patterns = [
-    /\bfrom\s+["']([^"']+)["']/g, // import ... from "x"; export ... from "x"
-    /\bimport\s+["']([^"']+)["']/g, // bare side-effect import "x"
-    /\bimport\(\s*["']([^"']+)["']\s*\)/g, // dynamic import("x")
-  ];
-  for (const re of patterns) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
-      if (required(m[1]).startsWith(".")) specs.push(required(m[1]));
-    }
-  }
+  const parsed = ts.createSourceFile("imports.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const visit = (node: ts.Node) => {
+    const specifier =
+      ts.isImportDeclaration(node) || ts.isExportDeclaration(node)
+        ? node.moduleSpecifier
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+          ? node.arguments[0]
+          : undefined;
+    if (specifier && ts.isStringLiteral(specifier) && specifier.text.startsWith(".")) specs.push(specifier.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
   return specs;
 }
 
@@ -112,6 +114,9 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     const workerExecutor = join(SRC, "worker.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
+    const nodeTransport = join(SRC, "http", "node-transport.ts");
+    expect(graph.has(nodeTransport)).toBe(false);
+    expect(importGraph(join(SRC, "worker.ts")).has(nodeTransport)).toBe(false);
     // Storage adapters are subpaths: SQLite is Node-only, and neither the D1
     // adapter nor the SQL core it shares rides the root entry.
     expect(graph.has(sqliteStorage)).toBe(false);

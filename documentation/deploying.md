@@ -51,6 +51,11 @@ Follow the [template README](../templates/node/README.md) for storage paths,
 backups, Docker provisioning, secrets, and optional modules. Run the deployment's
 `npm run typecheck` after configuration changes.
 
+Retain the Node template's `undici` dependency and serve with `listen` from
+`@zackbart/connecta/node`. That entry configures the owned transport for
+guarded provider writes. A Node deployment using only the root entry refuses
+those writes before sending them. Workers use their native fetch transport.
+
 ## Start on Workers
 
 Deploy the Worker with [Alchemy](https://alchemy.run) from the example's

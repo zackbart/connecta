@@ -764,6 +764,53 @@ separate decision taken with the core contract, never by a kit rule. Round 9
 adds the other half: repeatability comes only from a genuine key the vendor
 receives (`ProviderRequest.key`), never from a method or an operation hint.
 
+**B.2 runtime decision and attempt evidence (2026-10-22).** Node sends
+through `src/http/node-transport.ts`, installed in the plain runtime slot by
+`listen` from `/node`. The root and Worker graphs import neither that module
+nor undici. Undici 6.29.1 (the Node 22-supported 6.x line) is an exact optional
+peer and dev dependency, and the Node template installs that exact version.
+The owned client uses low-level `Client.request`, `allowH2: false`,
+`idempotent: false`, `pipelining: 0`, no interceptors and no redirects. Every
+send gets its own client, closed with the response body or cancellation; it
+never obtains the operator's global dispatcher. A Node write without this
+slot fails before dispatch, naming `@zackbart/connecta/node`; a read may use
+native fetch. Importing the root alone does not configure a Node sender.
+The configured slot is deployment code, never request data.
+
+The Node 26.12.0 socket repro answered a POST 421 with the listener kept
+open: native fetch delivered twice; the owned client delivered once. A
+global RetryAgent configured for POST/503 delivered twice (both undici 6's
+Node 22-compatible fetch and Node 26's native fetch using undici 8's global
+dispatcher protocol); the owned client delivered once under the hostile
+global dispatcher. HTTP/2 did **not** reproduce a hidden resend: native Node
+26 with HTTP/2 explicitly enabled delivered one stream, then rejected on
+`REFUSED_STREAM` with `ERR_HTTP2_STREAM_ERROR`; the default HTTP/1.1 probe
+delivered once. The owned sender disables HTTP/2 entirely. These observations
+are evidence for those probes, not a claim that native fetch never retries.
+
+Workers uses native fetch with manual redirects, the call/fiber abort signal,
+and a bounded response reader. The
+[Workers Request contract](https://developers.cloudflare.com/workers/runtime-apis/request/)
+defines manual redirect handling; its
+[fetch contract](https://developers.cloudflare.com/workers/runtime-apis/fetch/)
+does not expose an undici dispatcher or promise one physical network attempt.
+There is no application replay or configurable retry middleware on this path;
+platform-internal recovery is not evidence of non-dispatch. In both runtimes
+all transport rejections remain `lost`, and the core never infers an unsent
+write from an errno.
+
+**Phase C transport decision.** `guarded-fetch.ts` keeps native fetch and its
+existing provider overrides for this PR; it does not receive the owned
+Node-dispatcher change. Changing those OAuth/delegated sends is a separate
+migration. No provider changes transport here. Both transports share
+`src/http-policy.ts`; `guarded-transport-parity.test.ts` compares one fixture
+table's exact requests, sent-secret registration, core ledger entries and
+mapped failures, on Node and workerd. Its table replaces the superseded
+transport tests in `http-kit.test.ts`. Production Grant/facade parity also
+replaces its synthetic renewal/accounting cases; generic Grant interruption,
+direct-client overrides and vendor authentication proof remain distinct.
+Fixed-capacity tests retain their existing generated cases.
+
 **Refresh-once** (`src/http/oauth.ts`). `Grant` is any renewable token. The
 rule replaces four per-provider renewals after a 401: the static OAuth grant,
 Google's service-account mint, Infisical's login, and GitHub's App
@@ -818,6 +865,11 @@ class Grant extends Context.Service<Grant, {
    read built tool served as a write is not resent; a write built tool served
    as a read is replayed), for a renewal that succeeds, for each renewal
    failure, and for a cancellation.
+
+The static OAuth facade bounds each discarded 401 challenge at 1 MiB before
+renewing; an oversized challenge does not start renewal. Broken bounded body
+reads retain the 401, and Q8 remains the core's decision. The kit uses its
+provider's declared response ceiling.
 
 `ctx.oauth.fetch` keeps its published contract for custom handlers. It returns
 a `Response` and allows every `apiOrigins` origin, so it shares this decision,

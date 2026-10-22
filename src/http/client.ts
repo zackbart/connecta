@@ -1,4 +1,6 @@
-// Internal prototype for decision 0010 (B.2). Unreachable from src/index.ts.
+import { confinementBase, REDIRECT_STATUSES, BODILESS_STATUSES } from "../http-policy.js";
+import { guardedTransport } from "../guarded-transport.js";
+// Guarded HTTP transport (decision 0010, B.2). Unreachable from src/index.ts.
 //
 // The guarded transport as an Effect `HttpClient`, with the behaviour of
 // src/connectors/guarded-fetch.ts: requests confined beneath one base URL,
@@ -23,7 +25,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
 import { ConnectorCallError } from "../errors.js";
-import { recordProviderResponse } from "../provider-call.js";
+import { recordProviderResponse, type ProviderRequest } from "../provider-call.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
@@ -83,28 +85,7 @@ export interface GuardedClient<R = CallServices> {
   readonly read: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<Reply, HttpFailure>;
 }
 
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const decoder = new TextDecoder();
-const BODILESS_STATUSES = new Set([204, 205, 304]);
-
-/** A bad base URL is deployment configuration, so it throws at construction (INV-11). */
-function confinementBase(provider: string, baseUrl: string): URL {
-  let base: URL;
-  try {
-    base = new URL(baseUrl);
-  } catch {
-    throw new Error(`${provider} baseUrl must be an absolute URL.`);
-  }
-  const loopback = base.hostname === "localhost" || base.hostname === "127.0.0.1" || base.hostname === "[::1]";
-  if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
-    throw new Error(`${provider} baseUrl must be https (http is allowed only for a loopback proxy or test double).`);
-  }
-  if (base.username || base.password) {
-    throw new Error(`${provider} baseUrl must not embed URL credentials; authentication belongs in headers.`);
-  }
-  if (base.search || base.hash) throw new Error(`${provider} baseUrl must not carry a query or fragment.`);
-  return base;
-}
 
 export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedClient<R | CallServices> {
   const { provider, maxResponseBytes: limit } = options;
@@ -113,12 +94,22 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   }
   const base = confinementBase(provider, options.baseUrl);
   const basePath = base.pathname.replace(/\/+$/, "");
-  const constant = options.headers ?? {};
+  const constant = { ...options.headers };
   const refuse = (message: string) => Effect.fail(new RequestRefused({ message }));
+
+  const preparedEntries = new WeakMap<HttpClientRequest.HttpClientRequest, ProviderRequest>();
 
   // Confine, then authenticate last, then register what will be sent.
   const preprocess = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
+      const facts = yield* RequestFacts;
+      const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
+      const entry = (yield* Ledger).open({
+        auxiliary: facts.effect === "read",
+        provider,
+        method: request.method,
+        ...(idempotency ? { key: idempotency.key } : {}),
+      });
       const path = request.url;
       if (!path.startsWith("/")) {
         return yield* refuse(`A ${provider} request path is provider-relative and must begin with "/".`);
@@ -160,6 +151,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         headers: Object.fromEntries(Object.entries(confined.headers)),
         ...(text === undefined ? {} : { body: text }),
       });
+      preparedEntries.set(confined, entry);
       return confined;
     });
 
@@ -186,132 +178,144 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         return reserved;
       });
       if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
-      const preparation = callSignal
-        ? Effect.raceFirst(
-            prepared,
-            fromSignal(callSignal).pipe(
-              Effect.mapError(
-                () => new RequestRefused({ message: "This call has ended; no transport work may continue." }),
+      return yield* Effect.gen(function* () {
+        const preparation = callSignal
+          ? Effect.raceFirst(
+              prepared,
+              fromSignal(callSignal).pipe(
+                Effect.mapError(
+                  () => new RequestRefused({ message: "This call has ended; no transport work may continue." }),
+                ),
               ),
-            ),
-          )
-        : prepared;
-      const request = yield* preparation.pipe(
+            )
+          : prepared;
+        const request = yield* preparation;
+        const url = wireUrl(request);
+        yield* live();
+        const expected = slot ? capacity.get(slot.step!)?.get(slot.item) : undefined;
+        if (expected) {
+          const text = bodyText(request);
+          const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
+          if (
+            request.body._tag !== "Empty" &&
+            (text === undefined ||
+              !["application/x-www-form-urlencoded", "application/json"].includes(contentType ?? ""))
+          ) {
+            return yield* refuse("A bulk item request must use its declared form or JSON body.");
+          }
+          const actual = yield* Effect.try({
+            try: () =>
+              writeRequestKey({
+                method: request.method as typeof expected.method,
+                path: url.pathname.slice(basePath.length),
+                template: expected.template,
+                query: [...url.searchParams],
+                ...(text === undefined
+                  ? {}
+                  : contentType === "application/json"
+                    ? { json: text }
+                    : { form: [...new URLSearchParams(text)] }),
+                ...(expected.multiValue ? { multiValue: expected.multiValue } : {}),
+              }),
+            catch: () =>
+              new RequestRefused({ message: "Duplicate or invalid identifying content in this write item's request." }),
+          });
+          if (actual !== writeRequestKey(expected))
+            return yield* refuse("This write item's request differs from its declared identifying content.");
+        }
+        const headers = Object.fromEntries(
+          Object.entries(request.headers).filter(([name]) => name !== "content-length"),
+        );
+        // A genuine key the vendor honors rides only on the tool's own request,
+        // added after sent-secret registration like guarded-fetch's visible
+        // headers. Only a key sent here is recorded, so only it can make the
+        // write repeatable or earn key-reuse advice (`keyProtectsCall`).
+        const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
+        if (idempotency) {
+          const name = idempotency.header.toLowerCase();
+          if (Object.keys(headers).some((header) => header.toLowerCase() === name)) {
+            return yield* refuse(`A ${provider} request sets the ${name} header twice.`);
+          }
+          headers[idempotency.header] = idempotency.key;
+        }
+        // Resolve the runtime-owned sender before recording a physical dispatch.
+        const transport = yield* Effect.try({
+          try: () => guardedTransport(write),
+          catch: (error) => new Refusal({ error: error as ConnectorCallError }),
+        });
+        const body = bodyInit(request);
+        // A reservation is never released, including preparation failures and
+        // failures to connect. Only a new deliberate call gets capacity.
+        const dispatch: Dispatch = slot ?? {
+          write: false,
+          ...(facts.operation ? { operation: facts.operation } : {}),
+          state: "pending",
+        };
+        if (!slot) ledger.push(dispatch);
+        const core = yield* Ledger;
+        const entry =
+          preparedEntries.get(request) ??
+          core.open({
+            auxiliary: facts.effect === "read",
+            provider,
+            method: request.method,
+            ...(idempotency ? { key: idempotency.key } : {}),
+          });
+        dispatch.request = entry;
+        if (facts.sent) facts.sent.dispatch = dispatch;
+        const refused = (failure: HttpFailure) => {
+          dispatch.failure = failure;
+          return Effect.fail(failure);
+        };
+        const response = yield* Effect.tryPromise({
+          try: (interrupted) => {
+            // Synchronous with the send: from here the core counts it as left,
+            // and it refuses a request whose call has already ended.
+            core.dispatch(entry, headers, request.method);
+            dispatch.state = "pending";
+            return transport.send(url, {
+              method: request.method,
+              headers,
+              ...body,
+              // A redirect re-sends the credential wherever `Location` points.
+              redirect: "manual",
+              signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
+            });
+          },
+          catch: (failure): HttpFailure => {
+            if (!entry.dispatched) {
+              return failure instanceof ConnectorCallError
+                ? new Refusal({ error: failure })
+                : new RequestRefused({ message: "This call has ended; no transport work may continue." });
+            }
+            // No rejection proves a write unsent: one fetch can hide several
+            // attempts (a 421 or HTTP/2 refused-stream resend, a retrying
+            // dispatcher), whatever the last one reports (#902 round 8).
+            dispatch.state = "lost";
+            return (dispatch.failure = new TransportFailure({ failure, host: url.href }));
+          },
+        });
+        dispatch.state = "answered";
+        dispatch.status = response.status;
+        recordProviderResponse(entry, response.status);
+        dispatch.headers = response.headers;
+        if (REDIRECT_STATUSES.has(response.status)) {
+          yield* cancel(response);
+          return yield* refused(new RedirectRefused({ status: response.status }));
+        }
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > limit && request.method !== "HEAD") {
+          yield* cancel(response);
+          return yield* refused(tooLarge(provider, limit, `a declared ${declared} bytes`));
+        }
+        return HttpClientResponse.fromWeb(request, response);
+      }).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
-            if (slot) slot.failure = failure;
+            if (slot && slot.failure === undefined && failure._tag !== "ResendRefused") slot.failure = failure;
           }),
         ),
       );
-      const url = wireUrl(request);
-      yield* live();
-      const expected = slot ? capacity.get(slot.step!)?.get(slot.item) : undefined;
-      if (expected) {
-        const text = bodyText(request);
-        const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
-        if (
-          request.body._tag !== "Empty" &&
-          (text === undefined || !["application/x-www-form-urlencoded", "application/json"].includes(contentType ?? ""))
-        ) {
-          return yield* refuse("A bulk item request must use its declared form or JSON body.");
-        }
-        const actual = yield* Effect.try({
-          try: () =>
-            writeRequestKey({
-              method: request.method as typeof expected.method,
-              path: url.pathname.slice(basePath.length),
-              template: expected.template,
-              query: [...url.searchParams],
-              ...(text === undefined
-                ? {}
-                : contentType === "application/json"
-                  ? { json: text }
-                  : { form: [...new URLSearchParams(text)] }),
-              ...(expected.multiValue ? { multiValue: expected.multiValue } : {}),
-            }),
-          catch: () =>
-            new RequestRefused({ message: "Duplicate or invalid identifying content in this write item's request." }),
-        });
-        if (actual !== writeRequestKey(expected))
-          return yield* refuse("This write item's request differs from its declared identifying content.");
-      }
-      const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
-      // A genuine key the vendor honors rides only on the tool's own request,
-      // added after sent-secret registration like guarded-fetch's visible
-      // headers. Only a key sent here is recorded, so only it can make the
-      // write repeatable or earn key-reuse advice (`keyProtectsCall`).
-      const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
-      if (idempotency) {
-        const name = idempotency.header.toLowerCase();
-        if (Object.keys(headers).some((header) => header.toLowerCase() === name)) {
-          return yield* refuse(`A ${provider} request sets the ${name} header twice.`);
-        }
-        headers[idempotency.header] = idempotency.key;
-      }
-      const body = bodyInit(request);
-      // A reservation is never released, including preparation failures and
-      // failures to connect. Only a new deliberate call gets capacity.
-      const dispatch: Dispatch = slot ?? {
-        write: false,
-        ...(facts.operation ? { operation: facts.operation } : {}),
-        state: "pending",
-      };
-      if (!slot) ledger.push(dispatch);
-      const core = yield* Ledger;
-      const entry = core.open({
-        auxiliary: facts.effect === "read",
-        provider,
-        method: request.method,
-        ...(idempotency ? { key: idempotency.key } : {}),
-      });
-      dispatch.request = entry;
-      if (facts.sent) facts.sent.dispatch = dispatch;
-      const refused = (failure: HttpFailure) => {
-        dispatch.failure = failure;
-        return Effect.fail(failure);
-      };
-      const response = yield* Effect.tryPromise({
-        try: (interrupted) => {
-          // Synchronous with the send: from here the core counts it as left,
-          // and it refuses a request whose call has already ended.
-          core.dispatch(entry, headers, request.method);
-          dispatch.state = "pending";
-          return globalThis.fetch(url, {
-            method: request.method,
-            headers,
-            ...body,
-            // A redirect re-sends the credential wherever `Location` points.
-            redirect: "manual",
-            signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
-          });
-        },
-        catch: (failure): HttpFailure => {
-          if (!entry.dispatched) {
-            return failure instanceof ConnectorCallError
-              ? new Refusal({ error: failure })
-              : new RequestRefused({ message: "This call has ended; no transport work may continue." });
-          }
-          // No rejection proves a write unsent: one fetch can hide several
-          // attempts (a 421 or HTTP/2 refused-stream resend, a retrying
-          // dispatcher), whatever the last one reports (#902 round 8).
-          dispatch.state = "lost";
-          return (dispatch.failure = new TransportFailure({ failure, host: url.href }));
-        },
-      });
-      dispatch.state = "answered";
-      dispatch.status = response.status;
-      recordProviderResponse(entry, response.status);
-      dispatch.headers = response.headers;
-      if (REDIRECT_STATUSES.has(response.status)) {
-        yield* cancel(response);
-        return yield* refused(new RedirectRefused({ status: response.status }));
-      }
-      const declared = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > limit && request.method !== "HEAD") {
-        yield* cancel(response);
-        return yield* refused(tooLarge(provider, limit, `a declared ${declared} bytes`));
-      }
-      return HttpClientResponse.fromWeb(request, response);
     });
 
   return {

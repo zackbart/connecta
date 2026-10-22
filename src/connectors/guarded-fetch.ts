@@ -1,3 +1,5 @@
+import { confinementBase, REDIRECT_STATUSES, BODILESS_STATUSES } from "../http-policy.js";
+export { retryAfterMs } from "../http-policy.js";
 import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
@@ -133,21 +135,6 @@ interface GuardedResponse {
   prefix(maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }>;
 }
 
-/** Parse delta-seconds or an HTTP-date into a non-negative wait window. */
-export function retryAfterMs(headers: Headers): number | undefined {
-  const raw = headers.get("retry-after");
-  if (!raw) return undefined;
-  const seconds = Number(raw.trim());
-  if (Number.isFinite(seconds)) {
-    return seconds < 0 ? undefined : Math.trunc(seconds * 1000);
-  }
-  // Require the HTTP-date shape, so Date.parse cannot reinterpret "-1" as
-  // a calendar date on runtimes that accept loose date strings.
-  if (!/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(raw.trim())) return undefined;
-  const date = Date.parse(raw);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
-}
-
 /**
  * Turn one response into the provider's own result, or throw the provider's
  * own typed failure. This is where status codes acquire meaning, and it is
@@ -268,37 +255,7 @@ export type GuardedTransport = <T>(
   map: GuardedResponseMapper<T>,
 ) => Promise<T>;
 
-/** Statuses that instruct a client to re-send somewhere else. Never followed. */
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-
-/** Statuses the HTTP spec defines as carrying no body at all. */
-const BODILESS_STATUSES = new Set([204, 205, 304]);
-
 const decoder = new TextDecoder();
-
-/**
- * A base URL is deployment configuration, so a bad one is a structural mistake
- * and throws where it is written rather than on the first call that uses it.
- */
-function confinementBase(provider: string, baseUrl: string): URL {
-  let base: URL;
-  try {
-    base = new URL(baseUrl);
-  } catch {
-    throw new Error(`${provider} baseUrl must be an absolute URL.`);
-  }
-  const loopback = base.hostname === "localhost" || base.hostname === "127.0.0.1" || base.hostname === "[::1]";
-  if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
-    throw new Error(`${provider} baseUrl must be https (http is allowed only for a loopback proxy or test double).`);
-  }
-  if (base.username || base.password) {
-    throw new Error(`${provider} baseUrl must not embed URL credentials; authentication belongs in headers.`);
-  }
-  if (base.search || base.hash) {
-    throw new Error(`${provider} baseUrl must not carry a query or fragment.`);
-  }
-  return base;
-}
 
 /**
  * Resolve a provider-relative path beneath the base and prove it stayed there.

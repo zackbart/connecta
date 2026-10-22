@@ -1,7 +1,6 @@
 import {
   assertProviderCallOpen,
   bindProviderResponse,
-  hasMethodOverride,
   dispatchProviderRequest,
   recordProviderResponse,
   recordingFetch,
@@ -40,6 +39,12 @@ import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 import { deriveContext } from "../derived-context.js";
 import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
+import {
+  bindRenewableGrant,
+  OAUTH_CHALLENGE_MAX_BYTES,
+  replayAfterUnauthorized,
+  type RenewableGrant,
+} from "./renewable-grant.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -370,6 +375,51 @@ class StaticOAuthProvider extends KvOAuthProvider {
 
 const AUTH_REQUIRED_MESSAGE = "Authorization required — open the URL to connect.";
 
+/** Release the resource body before renewal, bounding even the facade's discarded challenge. */
+async function readChallenge(response: Response, signal: AbortSignal, method: string | undefined): Promise<void> {
+  if (method?.toUpperCase() === "HEAD") {
+    void response.body?.cancel().catch(() => {});
+    return;
+  }
+  const oversized = () =>
+    new ConnectorCallError("connector_call_failed", "The OAuth challenge exceeded its response ceiling.", {
+      retryable: false,
+    });
+  if (Number(response.headers.get("content-length")) > OAUTH_CHALLENGE_MAX_BYTES) {
+    void response.body?.cancel().catch(() => {});
+    throw oversized();
+  }
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  if (signal.aborted) cancel();
+  let total = 0;
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch {
+        // Like the guarded client, a broken challenge body cannot replace its 401.
+        break;
+      }
+      if (signal.aborted) throw signal.reason;
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > OAUTH_CHALLENGE_MAX_BYTES) {
+        cancel();
+        throw oversized();
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
+
 /** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
 export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const settings = settingsFor(id, config);
@@ -508,6 +558,64 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return refreshed.access_token;
   };
 
+  /** One call's grant use; submitted refresh work keeps the coordinator's owner. */
+  const grantFor = (ctx: ConnectorContext, requestOwned = false): RenewableGrant => {
+    let provider: Promise<StaticOAuthProvider> | undefined;
+    const use = <A>(work: (provider: StaticOAuthProvider, live: ConnectorContext) => Promise<A>): Promise<A> =>
+      settleOnClose(
+        ctx,
+        async (signal) => {
+          assertProviderCallOpen(ctx, id, requestOwned);
+          if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
+          const live = deriveContext(ctx, { signal });
+          const release = retainOAuthPartition(oauthPartitionFor(live));
+          try {
+            provider ??= duringViewCall(
+              live,
+              async () => {
+                const value = providerFor(live);
+                const epoch = await value.beginFlow();
+                if (value.isOperatorDisconnectedEpoch(epoch)) {
+                  throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
+                }
+                return value;
+              },
+              requestOwned,
+            );
+            return await work(await provider, live);
+          } catch (error) {
+            if (signal.aborted) throw signal.reason;
+            if (error instanceof UnauthorizedError) {
+              rejectedScopes.add(scopeOf(ctx));
+              throw authRequiredError();
+            }
+            throw error;
+          } finally {
+            release();
+          }
+        },
+        requestOwned,
+      );
+    return {
+      token: () =>
+        use(async (provider) => {
+          const tokens = await provider.tokens(issuerContext);
+          if (!tokens) throw authRequiredError();
+          return tokens.access_token;
+        }),
+      refresh: (stale) => use((provider, live) => renewedToken(provider, live, stale, requestOwned)),
+      rejected: () =>
+        settleOnClose(
+          ctx,
+          async () => {
+            rejectedScopes.add(scopeOf(ctx));
+            throw authRequiredError();
+          },
+          requestOwned,
+        ),
+    };
+  };
+
   /**
    * One request through the owner's grant. A 401 earns exactly one recovery
    * ({@link renewedToken}). A read is then sent once more; a write never is
@@ -608,36 +716,35 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           return { response: answer, dispatch };
         };
 
-        if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
         const release = retainOAuthPartition(oauthPartitionFor(ctx));
         try {
           if (signal?.aborted) throw signal.reason;
-          const provider = providerFor(ctx);
-          // Bind this call's reads and writes to the live epoch: a reset landing
-          // meanwhile fails the call rather than handing it another flow's grant.
-          const epoch = await provider.beginFlow();
-          if (provider.isOperatorDisconnectedEpoch(epoch)) {
-            throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
-          }
-          const tokens = await provider.tokens(issuerContext);
-          if (!tokens) throw authRequiredError();
-          const { response: first, dispatch } = await send(tokens.access_token);
+          const grant = grantFor(ctx, auxiliary);
+          const stale = await grant.token();
+          const { response: first, dispatch } = await send(stale);
           if (first.status !== 401) return first;
-          void first.body?.cancel().catch(() => {});
-          if (
-            write ||
-            hasMethodOverride(headers) ||
-            (dispatch.classification === "write" && ["GET", "HEAD"].includes((dispatch.method ?? "GET").toUpperCase()))
-          ) {
+          try {
+            await readChallenge(first, signal, init.method);
+          } catch (error) {
+            if (signal.aborted) throw signal.reason;
+            if (!replayAfterUnauthorized(write ? "write" : "read", auxiliary ? "read" : "call", headers)) {
+              throw vendorRefusal(
+                unsentAfterUnauthorized(`Connector "${id}"'s API`, error, "downstream_oauth_required"),
+                dispatch,
+              );
+            }
+            throw error;
+          }
+          if (!replayAfterUnauthorized(write ? "write" : "read", auxiliary ? "read" : "call", headers)) {
             let renewal: unknown;
             try {
-              const fresh = await renewedToken(provider, ctx, tokens.access_token, auxiliary);
+              const fresh = await grant.refresh(stale);
               if (signal?.aborted) throw signal.reason;
               // The call's ledger keeps this 401's verdict, or that renewal
               // replaced the token this request sent (Q8). The same token back
               // renewed nothing.
-              renewedAfterUnauthorized(dispatch, tokens.access_token, fresh);
-              if (fresh === tokens.access_token) renewal = authRequiredError();
+              renewedAfterUnauthorized(dispatch, stale, fresh);
+              if (fresh === stale) renewal = authRequiredError();
             } catch (error) {
               if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
               renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
@@ -647,14 +754,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               dispatch,
             );
           }
-          const accessToken = await renewedToken(provider, ctx, tokens.access_token, auxiliary);
+          const accessToken = await grant.refresh(stale);
           if (signal?.aborted) throw signal.reason;
-          renewedAfterUnauthorized(dispatch, tokens.access_token, accessToken);
+          renewedAfterUnauthorized(dispatch, stale, accessToken);
           const { response: second } = await send(accessToken);
           if (second.status !== 401) return second;
           void second.body?.cancel().catch(() => {});
-          rejectedScopes.add(scopeOf(ctx));
-          throw authRequiredError();
+          return await grant.rejected();
         } catch (error) {
           // The SDK can replace cancellation with its passive-consent refusal,
           // and write recovery normally replaces errors with a 401 verdict. A
@@ -815,8 +921,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       await provider.consumeAuthError();
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
-    access: (ctx, call) => ({
-      fetch: recordingFetch((input: string | URL, init?: RequestInit) => authorizedFetch(ctx, call.write, input, init)),
-    }),
+    access: (ctx, call) =>
+      bindRenewableGrant(
+        {
+          fetch: recordingFetch((input: string | URL, init?: RequestInit) =>
+            authorizedFetch(ctx, call.write, input, init),
+          ),
+        },
+        grantFor(ctx),
+      ),
   };
 }

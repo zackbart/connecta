@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.2). Unreachable from src/index.ts.
+// Refresh-once middleware (decision 0010, B.2). Unreachable from src/index.ts.
 //
 // Refresh-once for a connection that authenticates with a token it can
 // renew: a downstream OAuth grant, a service-account assertion, a machine
@@ -29,10 +29,13 @@ import { Context, Effect } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { hasMethodOverride, renewedAfterUnauthorized } from "../provider-call.js";
+import { renewedAfterUnauthorized } from "../provider-call.js";
+import { renewableGrantFor, replayAfterUnauthorized } from "../auth/renewable-grant.js";
+import type { ApiOAuthAccess } from "../connectors/api-connector.js";
+import { ConnectorCallError } from "../errors.js";
 import type { GuardedClient } from "./client.js";
-import type { HttpFailure } from "./errors.js";
-import { Classification, RequestFacts, duringCall, type CallServices } from "./services.js";
+import { Refusal, RequestRefused, type HttpFailure } from "./errors.js";
+import { Classification, RequestFacts, Signal, duringCall, type CallServices } from "./services.js";
 
 /** The calling owner's renewable token, as the operations a transport needs from it. */
 export class Grant extends Context.Service<
@@ -52,6 +55,31 @@ export class Grant extends Context.Service<
   }
 >()("connecta/http/Grant") {}
 
+/** Bridge a production static OAuth facade without adding anything to its public interface. */
+export function grantFromOAuth(oauth: ApiOAuthAccess): Context.Service.Shape<typeof Grant> {
+  const grant = renewableGrantFor(oauth);
+  const use = <A>(work: () => Promise<A>): Effect.Effect<A, HttpFailure> =>
+    Effect.tryPromise({
+      try: work,
+      catch: (error) =>
+        new Refusal({
+          error:
+            error instanceof ConnectorCallError
+              ? error
+              : new ConnectorCallError("connector_call_failed", "The OAuth grant could not be used.", {
+                  retryable: false,
+                }),
+        }),
+    });
+  const missing = () =>
+    Promise.reject(new ConnectorCallError("connector_call_failed", "This OAuth facade has no renewable grant."));
+  return {
+    token: use(grant ? () => grant.token() : missing),
+    refresh: (stale) => use(grant ? () => grant.refresh(stale) : missing),
+    rejected: use(grant ? () => grant.rejected() : missing),
+  };
+}
+
 /** Headers for `GuardedOptions.authenticate`: the grant's bearer token. */
 export const bearer: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, Grant> = Grant.use((grant) =>
   Effect.map(grant.token, (token) => ({ Authorization: `Bearer ${token}` })),
@@ -69,31 +97,48 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
       const grant = yield* Grant;
       const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
       const facts = yield* RequestFacts;
-      if (
-        facts.effect === "call" &&
-        ((yield* Classification) === "write" ||
-          facts.sent?.dispatch?.request?.classification === "write" ||
-          hasMethodOverride(response.request.headers))
-      ) {
+      if (!replayAfterUnauthorized(yield* Classification, facts.effect, response.request.headers)) {
         // Whatever renewal meets is the authorization server's, not the
         // write's. The ledger keeps only whether it succeeded, which decides
         // whether the agent still needs the handoff, never the outcome.
         const renewal = yield* Effect.exit(grant.refresh(stale));
         // Recorded on this request's own ledger entry, and only for a token
         // other than the one it sent; the core decides from it (Q8).
-        if (renewal._tag === "Success") renewedAfterUnauthorized(facts.sent?.dispatch?.request, stale, renewal.value);
+        if (renewal._tag === "Success" && !(yield* Signal)?.aborted)
+          renewedAfterUnauthorized(facts.sent?.dispatch?.request, stale, renewal.value);
         return HttpClientResponse.fromWeb(
           request,
           new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),
         );
       }
-      yield* grant.refresh(stale);
+      const fresh = yield* grant.refresh(stale);
+      if ((yield* Signal)?.aborted)
+        return yield* Effect.fail(
+          new RequestRefused({ message: "This call has ended; no renewal work may continue." }),
+        );
+      renewedAfterUnauthorized(facts.sent?.dispatch?.request, stale, fresh);
       // `authenticate` runs again on the replay and reads the renewed token.
       const replay = yield* inner.execute(request);
       if (replay.status !== 401) return replay;
       yield* Effect.ignore(guarded.read(replay));
       return yield* grant.rejected;
-    }).pipe(duringCall);
+    }).pipe(
+      duringCall,
+      Effect.catchTag("RequestRefused", (failure) =>
+        Signal.use((signal) =>
+          Effect.fail(
+            signal?.aborted
+              ? new Refusal({
+                  error: new ConnectorCallError(
+                    "connector_call_failed",
+                    "This call has ended; no renewal work may continue.",
+                  ),
+                })
+              : failure,
+          ),
+        ),
+      ),
+    );
   return {
     provider: guarded.provider,
     client: HttpClient.makeWith(

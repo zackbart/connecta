@@ -1,5 +1,5 @@
 import { auth } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -18,6 +18,8 @@ import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { oauthTransports, staticOAuthRequest } from "./fixtures/static-oauth-transport.js";
 
 const BASE = "https://connecta.example";
 const ORIGIN = "https://tickets.example";
@@ -158,7 +160,12 @@ async function downstreamFlow(storage: KVStorage, scope: object, coordinator = n
   return { lease, view, provider, coordinator };
 }
 
+let previousTransport: ReturnType<typeof configureGuardedTransport>;
+beforeEach(() => {
+  previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
 afterEach(() => {
+  configureGuardedTransport(previousTransport);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -220,142 +227,150 @@ describe("production OAuth renewal ownership", () => {
   });
 
   for (const boundary of ["call", "request"] as const) {
-    for (const method of ["GET", "POST"] as const) {
-      it.each(phases)(
-        `INV-7 INV-9: api OAuth ${method} closed at the ${boundary} during %s refuses without consuming renewal`,
-        async (phase) => {
-          const backing = memoryStorage();
-          await seedGrant(backing, { issuer: TOKEN, tokens: old }, "v3:seeded", namespace);
-          let unauthorized = false;
-          const store = observedStore(backing, phase, () => unauthorized, namespace);
-          const dispatched = deferred<void>();
-          const response = deferred<Response>();
-          const tails: Promise<unknown>[] = [];
-          const resources: string[] = [];
-          let tokenSignal: AbortSignal | undefined;
-          let tokens = 0;
-          vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
-            if (String(input) === TOKEN) {
-              tokens++;
-              tokenSignal = init?.signal ?? undefined;
-              dispatched.resolve();
-              return response.promise;
-            }
-            resources.push(new Headers(init?.headers).get("authorization")!);
-            if (new Headers(init?.headers).get("authorization") === `Bearer ${fresh.access_token}`)
-              return Response.json({ ok: true });
-            unauthorized = true;
-            return new Response(null, { status: 401 });
-          });
-          let view!: ConnectorContext;
-          let renewal!: Promise<unknown>;
-          const connector = tracksEveryRequest(
-            api("tickets", {
-              oauth: {
-                authorizationEndpoint: `${ORIGIN}/authorize`,
-                tokenEndpoint: TOKEN,
-                clientId: "fixture-client",
-                apiOrigins: [ORIGIN],
-              },
-              tools: [
-                {
-                  name: "run",
-                  description: "Read or write tickets.",
-                  annotations: { readOnlyHint: method === "GET" },
-                  handler: async (_, ctx) => {
-                    view = ctx;
-                    const pending = ctx.oauth!.fetch(`${ORIGIN}/notes`, { method });
-                    renewal = pending.catch((error: unknown) => error);
-                    await pending;
-                    return { ok: true };
-                  },
-                },
-              ],
-            }),
-          );
-          const scope = {};
-          const registry = makeRegistry([connector], { storage: store.storage });
-          const tools = createMetaTools(registry, BASE, {
-            requestScope: scope,
-            defer: (tail) => tails.push(tail),
-          });
-          const call =
-            method === "GET"
-              ? tools.callTool({ address: "tickets.run" })
-              : tools.callDestructiveTool({ address: "tickets.run" });
-          try {
-            await (phase === "dispatched" ? dispatched.promise : store.entered);
-            if (!coordinatorOwned(phase)) expect(store.writes).toEqual([]);
-            const before = await snapshot(backing);
-            const writesAtClose = store.writes.length;
-            const requests = providerRequests(view)!;
-            const resource = requests.find((entry) => !entry.auxiliary)!;
-            (boundary === "call" ? viewLease(view)! : openRequest(scope)).close();
-            const ended = await promptly(renewal);
-            expect(ended).toMatchObject({
-              code: "connector_call_failed",
-              message: expect.stringContaining("This call has ended"),
+    for (const transport of oauthTransports) {
+      for (const method of ["GET", "POST"] as const) {
+        it.each(phases)(
+          `INV-7 INV-9: api OAuth ${transport} ${method} closed at the ${boundary} during %s refuses without consuming renewal`,
+          async (phase) => {
+            const backing = memoryStorage();
+            await seedGrant(backing, { issuer: TOKEN, tokens: old }, "v3:seeded", namespace);
+            let unauthorized = false;
+            const store = observedStore(backing, phase, () => unauthorized, namespace);
+            const dispatched = deferred<void>();
+            const response = deferred<Response>();
+            const tails: Promise<unknown>[] = [];
+            const resources: string[] = [];
+            let tokenSignal: AbortSignal | undefined;
+            let tokens = 0;
+            vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+              if (String(input) === TOKEN) {
+                tokens++;
+                tokenSignal = init?.signal ?? undefined;
+                dispatched.resolve();
+                return response.promise;
+              }
+              resources.push(new Headers(init?.headers).get("authorization")!);
+              if (new Headers(init?.headers).get("authorization") === `Bearer ${fresh.access_token}`)
+                return Response.json({ ok: true });
+              unauthorized = true;
+              return new Response(null, { status: 401 });
             });
-            expect(resources).toEqual([`Bearer ${old.access_token}`]);
-            expect((await storedGrant(backing, namespace))!.body!.tokens).toEqual(old);
-            if (phase === "dispatched") {
-              expect(tokenSignal).toBeDefined();
-              expect(tokenSignal!.aborted).toBe(false);
-            } else expect(tokens).toBe(0);
-            if (!coordinatorOwned(phase)) {
-              expect(store.writes).toHaveLength(writesAtClose);
-              expect(await snapshot(backing)).toEqual(before);
-            }
-            // Claim submission already committed the coordinator to finish.
-            // Release only after the caller refused; no caller result or
-            // resource resend may follow the eventual grant commit.
-            store.release();
-            response.resolve(Response.json(fresh));
-            await Promise.all(tails);
-            await pause();
-            const result = await call;
-            expect(result.isError).toBe(true);
-            if (method === "POST") {
-              expect(result.structuredContent).toMatchObject({
-                error: {
-                  code: "downstream_oauth_required",
-                  retryable: false,
-                  writeOutcome: "unknown",
-                  nextAction: { tool: "authorize_connector" },
+            let view!: ConnectorContext;
+            let renewal!: Promise<unknown>;
+            const connector = tracksEveryRequest(
+              api("tickets", {
+                oauth: {
+                  authorizationEndpoint: `${ORIGIN}/authorize`,
+                  tokenEndpoint: TOKEN,
+                  clientId: "fixture-client",
+                  apiOrigins: [ORIGIN],
                 },
+                tools: [
+                  {
+                    name: "run",
+                    description: "Read or write tickets.",
+                    annotations: { readOnlyHint: method === "GET" },
+                    handler: async (_, ctx) => {
+                      view = ctx;
+                      const pending = staticOAuthRequest(
+                        transport,
+                        ctx,
+                        ORIGIN,
+                        { method, path: "/notes", template: "/notes" },
+                        method === "GET" ? "read" : "write",
+                      );
+                      renewal = pending.catch((error: unknown) => error);
+                      await pending;
+                      return { ok: true };
+                    },
+                  },
+                ],
+              }),
+            );
+            const scope = {};
+            const registry = makeRegistry([connector], { storage: store.storage });
+            const tools = createMetaTools(registry, BASE, {
+              requestScope: scope,
+              defer: (tail) => tails.push(tail),
+            });
+            const call =
+              method === "GET"
+                ? tools.callTool({ address: "tickets.run" })
+                : tools.callDestructiveTool({ address: "tickets.run" });
+            try {
+              await (phase === "dispatched" ? dispatched.promise : store.entered);
+              if (!coordinatorOwned(phase)) expect(store.writes).toEqual([]);
+              const before = await snapshot(backing);
+              const writesAtClose = store.writes.length;
+              const requests = providerRequests(view)!;
+              const resource = requests.find((entry) => !entry.auxiliary)!;
+              (boundary === "call" ? viewLease(view)! : openRequest(scope)).close();
+              const ended = await promptly(renewal);
+              expect(ended).toMatchObject({
+                code: "connector_call_failed",
+                message: expect.stringContaining("This call has ended"),
               });
-            }
-            expect(resource.renewed).not.toBe(true);
-            expect(resources).toEqual([`Bearer ${old.access_token}`]);
-            expect(tokens).toBe(coordinatorOwned(phase) ? 1 : 0);
-            if (coordinatorOwned(phase)) {
-              expect(tokenSignal!.aborted).toBe(false);
-              expect((await storedGrant(backing, namespace))!.body!.tokens).toMatchObject(fresh);
-              const spent = await backing.list(`${namespace}${oauthRefreshSpentKeys.family.prefixes[0]}`);
-              expect(spent).toHaveLength(1);
-              expect(JSON.parse((await backing.get(spent[0]!))!)).toMatchObject({ state: "resolved" });
-              // A fresh deliberate call needs no consent or second refresh.
-              const nextTools = createMetaTools(registry, BASE);
-              const next = await (method === "GET"
-                ? nextTools.callTool({ address: "tickets.run" })
-                : nextTools.callDestructiveTool({ address: "tickets.run" }));
-              expect(next.isError).not.toBe(true);
-              expect(resources).toEqual([`Bearer ${old.access_token}`, `Bearer ${fresh.access_token}`]);
-              expect(tokens).toBe(1);
-            } else {
+              expect(resources).toEqual([`Bearer ${old.access_token}`]);
               expect((await storedGrant(backing, namespace))!.body!.tokens).toEqual(old);
-              expect(store.writes).toHaveLength(writesAtClose);
-              expect(await snapshot(backing)).toEqual(before);
+              if (phase === "dispatched") {
+                expect(tokenSignal).toBeDefined();
+                expect(tokenSignal!.aborted).toBe(false);
+              } else expect(tokens).toBe(0);
+              if (!coordinatorOwned(phase)) {
+                expect(store.writes).toHaveLength(writesAtClose);
+                expect(await snapshot(backing)).toEqual(before);
+              }
+              // Claim submission already committed the coordinator to finish.
+              // Release only after the caller refused; no caller result or
+              // resource resend may follow the eventual grant commit.
+              store.release();
+              response.resolve(Response.json(fresh));
+              await Promise.all(tails);
+              await pause();
+              const result = await call;
+              expect(result.isError).toBe(true);
+              if (method === "POST") {
+                expect(result.structuredContent).toMatchObject({
+                  error: {
+                    code: "downstream_oauth_required",
+                    retryable: false,
+                    writeOutcome: "unknown",
+                    nextAction: { tool: "authorize_connector" },
+                  },
+                });
+              }
+              expect(resource.renewed).not.toBe(true);
+              expect(resources).toEqual([`Bearer ${old.access_token}`]);
+              expect(tokens).toBe(coordinatorOwned(phase) ? 1 : 0);
+              if (coordinatorOwned(phase)) {
+                expect(tokenSignal!.aborted).toBe(false);
+                expect((await storedGrant(backing, namespace))!.body!.tokens).toMatchObject(fresh);
+                const spent = await backing.list(`${namespace}${oauthRefreshSpentKeys.family.prefixes[0]}`);
+                expect(spent).toHaveLength(1);
+                expect(JSON.parse((await backing.get(spent[0]!))!)).toMatchObject({ state: "resolved" });
+                // A fresh deliberate call needs no consent or second refresh.
+                const nextTools = createMetaTools(registry, BASE);
+                const next = await (method === "GET"
+                  ? nextTools.callTool({ address: "tickets.run" })
+                  : nextTools.callDestructiveTool({ address: "tickets.run" }));
+                expect(next.isError).not.toBe(true);
+                expect(resources).toEqual([`Bearer ${old.access_token}`, `Bearer ${fresh.access_token}`]);
+                expect(tokens).toBe(1);
+              } else {
+                expect((await storedGrant(backing, namespace))!.body!.tokens).toEqual(old);
+                expect(store.writes).toHaveLength(writesAtClose);
+                expect(await snapshot(backing)).toEqual(before);
+              }
+            } finally {
+              store.release();
+              response.resolve(Response.json(fresh));
+              await call;
+              await Promise.all(tails);
+              openRequest(scope).close();
             }
-          } finally {
-            store.release();
-            response.resolve(Response.json(fresh));
-            await call;
-            await Promise.all(tails);
-            openRequest(scope).close();
-          }
-        },
-      );
+          },
+        );
+      }
     }
 
     it.each(phases)(

@@ -30,7 +30,7 @@
 // only a reviewed authentication-before-execution declaration proves refusal.
 
 import { Data } from "effect";
-import { retryAfterMs } from "../connectors/guarded-fetch.js";
+import { retryAfterMs } from "../http-policy.js";
 import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
 import { vendorRefusal } from "../provider-call.js";
 import { providerFailureMessage } from "../write-outcome.js";

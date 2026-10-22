@@ -1,3 +1,4 @@
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 // Decision 0010's shared case table: the provider kit prototype and today's
 // api() core run the same cases, served by the invocation and called
 // directly, and must reach the same verdict on every row: the write's outcome
@@ -10,7 +11,7 @@
 // verdict as every other: unknown, keeping its auth code and handoff, unless
 // the vendor declares `authBeforeExecution` (#917 made it the core's rule).
 import { Effect, Schema } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
@@ -37,7 +38,12 @@ import { silentLogger } from "./helpers.js";
 const BASE = "https://connecta.example";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
