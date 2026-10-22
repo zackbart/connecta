@@ -1295,7 +1295,7 @@ export class Registry implements RegistryView {
       } catch (err) {
         return withObservations(failureStatus(id, err));
       }
-    });
+    }).catch((error) => this.withCatalogObservations(id, baseUrl, failureStatus(id, error), scope));
   }
 
   /** Rotate the storage generation; in-flight old readers cannot republish it. */

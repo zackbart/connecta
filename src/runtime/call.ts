@@ -50,9 +50,13 @@ export class Recovery extends Context.Service<
 >()("connecta/call/Recovery") {}
 
 /** The call's cancellation, handed to `fetch` as guarded-fetch handed `ctx.signal`. */
-class SourceSignal extends Context.Service<SourceSignal, { readonly signal: AbortSignal | undefined }>()(
-  "connecta/call/SourceSignal",
-) {}
+class SourceSignal extends Context.Service<
+  SourceSignal,
+  {
+    readonly signal: AbortSignal | undefined;
+    readonly requestSignal: AbortSignal | undefined;
+  }
+>()("connecta/call/SourceSignal") {}
 export class Signal extends Context.Service<Signal, AbortSignal | undefined>()("connecta/call/Signal") {}
 
 /**
@@ -156,6 +160,8 @@ export interface CallInputs {
   readonly requestSecrets?: SentSecrets;
   readonly signal: AbortSignal | undefined;
   readonly requestSignal?: AbortSignal;
+  /** Original request cancellation, distinct from an invocation deadline's cleanup. */
+  readonly requestSourceSignal?: AbortSignal | undefined;
   /** The core ledger the boundary reads; a detached one when no context is behind the call. */
   readonly ledger?: Context.Service.Shape<typeof Ledger>;
   readonly parent?: CallLease;
@@ -253,6 +259,11 @@ export function openCall(inputs: CallInputs): CallLease {
     Context.add(Signal, controller.signal),
     Context.add(SourceSignal, {
       signal: inputs.operation ? callerSignal(inputs.operation) : inputs.signal,
+      requestSignal: Object.hasOwn(inputs, "requestSourceSignal")
+        ? inputs.requestSourceSignal
+        : inputs.operation
+          ? requestCallerSignal(inputs.operation)
+          : inputs.signal,
     }),
     Context.add(Classification, inputs.classification),
     Context.add(ServedClassification, inputs.served),
@@ -468,17 +479,25 @@ export function wrapViewCredentials(view: ConnectorContext): void {
   const access = view.credential;
   view.credential = {
     get: (field) =>
-      settleOnClose(view, async () => {
-        const value = await access.get(field);
-        registerCredentialValues(viewSecrets(view), value === null ? null : { [field ?? "value"]: value });
-        return value;
-      }),
+      settleOnClose(
+        view,
+        async () => {
+          const value = await access.get(field);
+          registerCredentialValues(viewSecrets(view), value === null ? null : { [field ?? "value"]: value });
+          return value;
+        },
+        true,
+      ),
     getAll: () =>
-      settleOnClose(view, async () => {
-        const values = await access.getAll();
-        registerCredentialValues(viewSecrets(view), values);
-        return values;
-      }),
+      settleOnClose(
+        view,
+        async () => {
+          const values = await access.getAll();
+          registerCredentialValues(viewSecrets(view), values);
+          return values;
+        },
+        true,
+      ),
   };
 }
 /** Credentials for request-owned transports use the operation, never a closed call. */
@@ -539,6 +558,14 @@ export function callFromContext(
   // entry was registered before admission or the admitted call already ended.
   if (scope.admitted && !recordedService(ctx, Budget) && !admitted && !anonymous) throw ended();
   if (admitted) scope.admitted = true;
+  if (Object.hasOwn(callOverrides, "requestSourceSignal")) {
+    // The operation's credentials also serve request-owned transports. Keep
+    // their request source separate from the attempt's expiring deadline.
+    entry.services = Context.add(entry.services, SourceSignal, {
+      signal: callerSignal(ctx),
+      requestSignal: callOverrides.requestSourceSignal,
+    });
+  }
   const request = openRequest(entry.request);
   const credential = ctx.credential;
   const secrets = new SentSecrets();
@@ -576,7 +603,7 @@ export function viewSignal(ctx: CloseOwner, requestOwned = false): AbortSignal {
   const request = state.controller.signal;
   // The original caller signal is distinct from the revocable call signal:
   // ending a call must not stop its request's session or auxiliary work.
-  const source = requestOwned ? callerSignal(ctx) : ctx.signal;
+  const source = requestOwned ? requestCallerSignal(ctx) : ctx.signal;
   const leaseSignal = requestOwned ? undefined : recordedService(ctx, Signal);
   // A derived transport signal can add cancellation, never replace the lease
   // that owns this wait. Both inputs here are native, even for source facades.
@@ -672,4 +699,9 @@ export function duringViewCall<A>(
 export function callerSignal(view: CloseOwner): AbortSignal | undefined {
   const source = recordedService(view, SourceSignal);
   return source ? source.signal : view.signal;
+}
+
+function requestCallerSignal(view: CloseOwner): AbortSignal | undefined {
+  const source = recordedService(view, SourceSignal);
+  return source ? source.requestSignal : view.signal;
 }
