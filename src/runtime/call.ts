@@ -623,8 +623,14 @@ export function viewSignal(ctx: ConnectorContext, requestOwned = false): AbortSi
   return binding.signal;
 }
 
-/** Interrupt the wait and abort owned preparation when its call/request ends. */
-export async function duringViewCall<A>(
+/**
+ * Settle an entire Promise boundary when its owner closes, regardless of the
+ * internal seam currently awaiting. Interruption observes late rejections;
+ * detached work still has to pass the transport and lease guards before any
+ * dispatch or call-owned commit. Refresh coordinator ownership is independent
+ * of this caller's wait once its claim has been submitted.
+ */
+export async function settleOnClose<A>(
   ctx: ConnectorContext,
   work: (signal: AbortSignal) => Promise<A>,
   requestOwned = false,
@@ -635,6 +641,15 @@ export async function duringViewCall<A>(
   const current = viewSignal(ctx, requestOwned);
   if (current.aborted) throw current.reason;
   return value;
+}
+
+/** Also pass the resolved owner to I/O that can release resources on abort. */
+export function duringViewCall<A>(
+  ctx: ConnectorContext,
+  work: (signal: AbortSignal) => Promise<A>,
+  requestOwned = false,
+): Promise<A> {
+  return settleOnClose(ctx, work, requestOwned);
 }
 
 export function callerSignal(view: ConnectorContext): AbortSignal | undefined {
