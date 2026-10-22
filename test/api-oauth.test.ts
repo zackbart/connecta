@@ -946,27 +946,31 @@ describe("api() oauth replay is for reads only", () => {
 
   it.each([
     ["post_note", "POST"],
+    ["search", "POST"],
     ["trigger", "GET"],
     ["purge", "POST"],
-  ])("INV-1 INV-9: never resends %s, a write sent with %s, after a 401, and renews the grant", async (tool) => {
-    const provider = fakeProvider();
-    install(provider);
-    const connector = ccb({ tools });
-    const registry = makeRegistry([connector]);
-    const ctx = () => registry.contextFor("ccb", BASE);
-    await authorize(connector, ctx, provider);
-    provider.expireAccess();
+  ])(
+    "INV-1 INV-9: never resends %s, classified by the core as a write sent with %s, after a 401, and renews the grant",
+    async (tool) => {
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector]);
+      const ctx = () => registry.contextFor("ccb", BASE);
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
 
-    const { classified } = await failure(connector.callTool(tool, {}, ctx()));
-    expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(classified.message).toContain("was not sent again");
-    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
-    expect(refreshes(provider)).toBe(1);
+      const { classified } = await failure(connector.callTool(tool, {}, ctx()));
+      expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(classified.message).toContain("was not sent again");
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+      expect(refreshes(provider)).toBe(1);
 
-    // A deliberate repeat is one new call, on the renewed grant.
-    expect(await connector.callTool(tool, {}, ctx())).toEqual({ owner: "alice" });
-    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
-  });
+      // A deliberate repeat is one new call, on the renewed grant.
+      expect(await connector.callTool(tool, {}, ctx())).toEqual({ owner: "alice" });
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
+    },
+  );
 
   it.each(["dead grant", "token endpoint outage", "token endpoint unreachable", "operator disconnect"] as const)(
     "INV-9: a write's 401 stays an unknown outcome, never retryable, when recovery meets a %s",
@@ -1278,24 +1282,11 @@ describe("api() oauth replay is for reads only", () => {
     },
   );
 
-  it("INV-9: refreshes and replays a read sent with POST once", async () => {
+  it("INV-1 INV-9: deployment classification and GET/HEAD evidence jointly decide whether a call may be resent", async () => {
     const provider = fakeProvider();
     install(provider);
     const connector = ccb({ tools });
-    const registry = makeRegistry([connector]);
-    const ctx = () => registry.contextFor("ccb", BASE);
-    await authorize(connector, ctx, provider);
-    provider.expireAccess();
-
-    expect(await connector.callTool("search", {}, ctx())).toEqual({ owner: "alice" });
-    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
-  });
-
-  it("INV-1 INV-9: deployment classification, not the annotation, decides whether a call may be resent", async () => {
-    const provider = fakeProvider();
-    install(provider);
-    const connector = ccb({ tools });
-    const registry = makeRegistry([connector], { classification: { ccb: { search: "write", post_note: "read" } } });
+    const registry = makeRegistry([connector], { classification: { ccb: { search: "write", trigger: "read" } } });
     await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
     const mt = createMetaTools(registry, BASE);
 
@@ -1308,7 +1299,7 @@ describe("api() oauth replay is for reads only", () => {
     expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
 
     provider.expireAccess();
-    const replayed = JSON.parse((await mt.callTool({ address: "ccb.post_note" })).content[0]!.text) as unknown;
+    const replayed = JSON.parse((await mt.callTool({ address: "ccb.trigger" })).content[0]!.text) as unknown;
     expect(replayed).toMatchObject({ owner: "alice" });
     expect(provider.apiAuthorizations).toEqual([
       "Bearer access-alice-1",

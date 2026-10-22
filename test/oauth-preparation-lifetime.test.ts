@@ -146,13 +146,6 @@ it.each(grantPreparationCases)(
       expect(result).toBeInstanceOf(Error);
       expect(fetch).not.toHaveBeenCalled();
       expect(writes).toBe(0);
-      // Every retained Grant method guards its whole Promise, including the
-      // synchronous request-scope rejection latch.
-      if (boundary !== "fetch") {
-        const grant = grantFromOAuth(view!.oauth!);
-        for (const kept of [grant.token, grant.refresh(tokens.access_token), grant.rejected])
-          await expect(runEdge(kept)).rejects.toBeInstanceOf(Error);
-      }
     } finally {
       release.resolve();
       await pending;

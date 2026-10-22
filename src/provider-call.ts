@@ -184,7 +184,7 @@ export function responseProviderRequest(response: object, owner: ProviderRequest
 }
 
 /** Override presence invalidates read evidence, whatever value the header carries. */
-export function hasMethodOverride(headers: HeadersInit | undefined): boolean {
+function hasMethodOverride(headers: HeadersInit | undefined): boolean {
   const sent = new Headers(headers);
   return ["x-http-method-override", "x-http-method", "x-method-override"].some((name) => sent.has(name));
 }
@@ -273,9 +273,16 @@ function ownsLogicalCall(call: LogicalCall): boolean {
 }
 
 /** Positive read evidence, with GET/HEAD as #902's additional conservative bound. */
-export function readRequest(request: ProviderRequest): boolean {
+export function readRequest(
+  request: Pick<ProviderRequest, "classification" | "method">,
+  headers?: HeadersInit,
+): boolean {
   const method = request.method?.toUpperCase();
-  return request.classification === "read" && (method === "GET" || method === "HEAD");
+  return (
+    request.classification === "read" &&
+    (method === "GET" || method === "HEAD") &&
+    (headers === undefined || !hasMethodOverride(headers))
+  );
 }
 
 // A guarded send's identity, for its transport to identify the one request

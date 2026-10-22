@@ -25,7 +25,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
 import { ConnectorCallError } from "../errors.js";
-import { hasMethodOverride, recordProviderResponse, type ProviderRequest } from "../provider-call.js";
+import { readRequest, recordProviderResponse, type ProviderRequest } from "../provider-call.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
@@ -86,6 +86,12 @@ export interface GuardedClient<R = CallServices> {
 }
 
 const decoder = new TextDecoder();
+const responseEntries = new WeakMap<HttpClientResponse.HttpClientResponse, ProviderRequest>();
+
+/** The core's physical request, also available to direct HttpClient middleware. */
+export function responseRequest(response: HttpClientResponse.HttpClientResponse): ProviderRequest | undefined {
+  return responseEntries.get(response);
+}
 
 export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedClient<R | CallServices> {
   const { provider, maxResponseBytes: limit } = options;
@@ -165,19 +171,20 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       const ledger = yield* Dispatches;
       // A new attempt: until it is handed to `fetch`, no failure is its answer.
       if (facts.sent) delete facts.sent.dispatch;
-      const write = (yield* Classification) === "write" && facts.effect === "call";
+      const earlyWrite = (yield* Classification) === "write";
       const capacity = yield* WriteCapacity;
       // Claim the early Send reservation (or reserve a direct HttpClient call)
       // atomically, before evaluating `prepared`. A wrapper cannot reuse it.
-      const slot = yield* Effect.sync(() => {
-        if (!write) return undefined;
+      const claim = () => {
         const reserved = facts.sent?.reservation ?? reserveWrite(ledger, capacity, facts);
         if (reserved instanceof RequestRefused || reserved instanceof ResendRefused) return reserved;
         if (reserved.state !== "reserved") return new ResendRefused({ first: reserved });
         reserved.state = "preparing";
         return reserved;
-      });
-      if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
+      };
+      const initial = yield* Effect.sync(() => (earlyWrite ? claim() : undefined));
+      if (initial instanceof RequestRefused || initial instanceof ResendRefused) return yield* Effect.fail(initial);
+      let slot: Dispatch | undefined = initial;
       return yield* Effect.gen(function* () {
         const preparation = callSignal
           ? Effect.raceFirst(
@@ -192,6 +199,39 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         const request = yield* preparation;
         const url = wireUrl(request);
         yield* live();
+        const headers = Object.fromEntries(
+          Object.entries(request.headers).filter(([name]) => name !== "content-length"),
+        );
+        // A genuine key the vendor honors rides only on the tool's own request,
+        // added after sent-secret registration like guarded-fetch's visible
+        // headers. Only a key sent here is recorded, so only it can make the
+        // write repeatable or earn key-reuse advice (`keyProtectsCall`).
+        const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
+        if (idempotency) {
+          const name = idempotency.header.toLowerCase();
+          if (Object.keys(headers).some((header) => header.toLowerCase() === name)) {
+            return yield* refuse(`A ${provider} request sets the ${name} header twice.`);
+          }
+          headers[idempotency.header] = idempotency.key;
+        }
+        const core = yield* Ledger;
+        const entry =
+          preparedEntries.get(request) ??
+          core.open({
+            auxiliary: facts.effect === "read",
+            provider,
+            method: request.method,
+            ...(idempotency ? { key: idempotency.key } : {}),
+          });
+        const write = !readRequest({ classification: entry.classification, method: request.method }, headers);
+        // Preparation can reveal a write in a served read or auxiliary request.
+        // The core's actual facts and final headers decide before any dispatch.
+        if (write && !slot) {
+          const reserved = yield* Effect.sync(claim);
+          if (reserved instanceof RequestRefused || reserved instanceof ResendRefused)
+            return yield* Effect.fail(reserved);
+          slot = reserved;
+        }
         const expected = slot ? capacity.get(slot.step!)?.get(slot.item) : undefined;
         if (expected) {
           const text = bodyText(request);
@@ -223,24 +263,9 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           if (actual !== writeRequestKey(expected))
             return yield* refuse("This write item's request differs from its declared identifying content.");
         }
-        const headers = Object.fromEntries(
-          Object.entries(request.headers).filter(([name]) => name !== "content-length"),
-        );
-        // A genuine key the vendor honors rides only on the tool's own request,
-        // added after sent-secret registration like guarded-fetch's visible
-        // headers. Only a key sent here is recorded, so only it can make the
-        // write repeatable or earn key-reuse advice (`keyProtectsCall`).
-        const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
-        if (idempotency) {
-          const name = idempotency.header.toLowerCase();
-          if (Object.keys(headers).some((header) => header.toLowerCase() === name)) {
-            return yield* refuse(`A ${provider} request sets the ${name} header twice.`);
-          }
-          headers[idempotency.header] = idempotency.key;
-        }
         // Resolve the runtime-owned sender before recording a physical dispatch.
         const transport = yield* Effect.try({
-          try: () => guardedTransport(write || hasMethodOverride(request.headers)),
+          try: () => guardedTransport(write),
           catch: (error) => new Refusal({ error: error as ConnectorCallError }),
         });
         const body = bodyInit(request);
@@ -252,15 +277,6 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           state: "pending",
         };
         if (!slot) ledger.push(dispatch);
-        const core = yield* Ledger;
-        const entry =
-          preparedEntries.get(request) ??
-          core.open({
-            auxiliary: facts.effect === "read",
-            provider,
-            method: request.method,
-            ...(idempotency ? { key: idempotency.key } : {}),
-          });
         dispatch.request = entry;
         if (facts.sent) facts.sent.dispatch = dispatch;
         const refused = (failure: HttpFailure) => {
@@ -308,7 +324,9 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           yield* cancel(response);
           return yield* refused(tooLarge(provider, limit, `a declared ${declared} bytes`));
         }
-        return HttpClientResponse.fromWeb(request, response);
+        const answer = HttpClientResponse.fromWeb(request, response);
+        responseEntries.set(answer, entry);
+        return answer;
       }).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {

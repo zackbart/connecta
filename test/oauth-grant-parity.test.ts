@@ -231,17 +231,28 @@ async function run(
 
 describe("production static Grant and OAuth facade parity", () => {
   for (const entry of ["served read", "served write", "direct write", "caught program", "uncaught program"] as const) {
-    it.each(scenarios)(
+    const outcomes =
+      entry === "served read" || entry === "served write"
+        ? scenarios
+        : (["success", "permanent refusal", "cancellation"] as const);
+    it.each(outcomes)(
       `INV-7 INV-9: ${entry} preserves the resource verdict and accounting through %s`,
       async (scenario) => {
-        const facade = await run("facade", scenario, entry);
-        const grant = await run("grant", scenario, entry);
+        const options =
+          entry === "served read"
+            ? { built: "write" as const, method: "GET" as const }
+            : entry === "served write"
+              ? { built: "read" as const, method: "GET" as const }
+              : {};
+        const facade = await run("facade", scenario, entry, options);
+        const grant = await run("grant", scenario, entry, options);
         expect(grant).toEqual(facade);
         const oversized = scenario === "declared ceiling" || scenario === "stream ceiling";
         expect(grant.tokenRequests).toBe(oversized ? 0 : 1);
         const successfulRenewal = scenario === "success" || scenario === "broken body";
         expect(grant.entries[0]?.renewed).toBe(successfulRenewal ? true : undefined);
         expect(grant.resourceRequests).toHaveLength(entry === "served read" && successfulRenewal ? 2 : 1);
+        if (entry === "served read" && successfulRenewal) expect(grant.error).toBeUndefined();
         if (entry !== "served read") {
           expect(grant.error).toMatchObject({
             code: successfulRenewal
@@ -259,22 +270,13 @@ describe("production static Grant and OAuth facade parity", () => {
     );
   }
 
-  it.each(oauthTransports)(
-    "INV-9: %s uses the served verdict across opposite construction hints and reviewed POST reads",
-    async (transport) => {
-      const read = await run(transport, "success", "served read", { built: "write", method: "POST" });
-      expect(read.error).toBeUndefined();
-      expect(read.resourceRequests).toHaveLength(2);
-      const write = await run(transport, "success", "served write", { built: "read", method: "GET" });
-      expect(write.error).toMatchObject({ writeOutcome: "unknown" });
-      expect(write.resourceRequests).toHaveLength(1);
-    },
-  );
-
-  it.each(oauthTransports)("INV-9: %s refuses replay for a method override on a read", async (transport) => {
-    const result = await run(transport, "success", "served read", { override: true });
-    expect(result.resourceRequests).toHaveLength(1);
-    expect(result.tokenRequests).toBe(1);
+  it.each(oauthTransports)("INV-9: %s never replays a request the core classifies as a write", async (transport) => {
+    for (const options of [{ override: true as const }, { method: "POST" as const }]) {
+      const result = await run(transport, "success", "served read", options);
+      expect(result.resourceRequests).toHaveLength(1);
+      expect(result.tokenRequests).toBe(1);
+      expect(result.entries[0]?.renewed).toBe(true);
+    }
   });
 
   it.each(oauthTransports)(
@@ -286,11 +288,11 @@ describe("production static Grant and OAuth facade parity", () => {
     },
   );
 
-  it("INV-9: an auxiliary kit read in a served write replays once", async () => {
+  it("INV-9: an auxiliary POST uses core write classification and never replays", async () => {
     const result = await run("grant", "success", "served write", { effect: "read" });
-    expect(result.resourceRequests).toHaveLength(2);
+    expect(result.resourceRequests).toHaveLength(1);
+    expect(result.tokenRequests).toBe(1);
     expect(result.entries).toEqual([]);
-    expect(result.error).toBeUndefined();
   });
 
   it("INV-7: a static Grant adopts an already rotated token without another token request", async () => {

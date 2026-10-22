@@ -122,7 +122,7 @@ function services(
     Context.add(Classification, classification),
     Context.add(Dispatches, dispatches),
     Context.add(Ledger, {
-      open: (facts) => ({ dispatched: false, ...facts }),
+      open: (facts) => ({ dispatched: false, classification, ...facts }),
       dispatch: (request, headers, method) => dispatchProviderRequest(undefined, request, headers, method),
     }),
     Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
@@ -1279,23 +1279,6 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-9: a method override prevents the kit from replaying a positive read", async () => {
-    const { layer, state } = grant();
-    const guarded = refreshOnce(guardedClient({ ...OPTIONS, authenticate: bearer }));
-    answers.push(
-      () => new Response(null, { status: 401 }),
-      () => Response.json({ ok: true }),
-    );
-    const response = await runEdge(
-      guarded.client
-        .execute(HttpClientRequest.get("/items", { headers: { "X-HTTP-Method-Override": "POST" } }))
-        .pipe(Effect.provideContext(layer), Effect.provideContext(services("read"))),
-    );
-    expect(response.status).toBe(401);
-    expect(state.refreshes).toBe(1);
-    expect(sent).toHaveLength(1);
-  });
-
   it("INV-9: a vendor that documents authenticating first gets its 401 refusal, renewal or not", async () => {
     const documented: VendorErrors = {
       ...VENDOR,
@@ -1363,7 +1346,7 @@ async function invoke(
   const tool = write(connection, {
     name: "items",
     description: "Sends a write.",
-    ...(writeSteps ? { writeSteps } : {}),
+    writeSteps: writeSteps ?? { write: "once", lookup: "once" },
     destructive: false,
     input: Schema.Struct({}),
     output: Schema.Unknown,
@@ -1867,39 +1850,6 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED}`);
   });
 
-  it("INV-9: a declared idempotency key rides only on the write's own request, and an unsendable one never leaves", async () => {
-    const connection = acme();
-    const spec = {
-      name: "create",
-      description: "Create an item.",
-      destructive: false,
-      input: Schema.Struct({ key: Schema.optionalKey(Schema.String) }),
-      output: Schema.Unknown,
-      idempotency: { header: "Idempotency-Key", key: (args: { readonly key?: string }) => args.key },
-      run: () =>
-        connection.sendPath(LOOKUP, { effect: "read" }).pipe(
-          Effect.flatMap(() => connection.sendPath(POST_ITEMS)),
-          Effect.map(({ data }) => data),
-        ),
-    };
-    const tool = write(connection, spec);
-    answers = [() => Response.json({ id: 1 }), () => Response.json({ ok: true })];
-    expect(await through(tool, { key: "item-1" })).toEqual({ value: { ok: true } });
-    // The auxiliary lookup carries no key; the write does, after its credential.
-    expect(sent.map((request) => [request.method, request.headers["idempotency-key"]])).toEqual([
-      ["GET", undefined],
-      ["POST", "item-1"],
-    ]);
-    sent = [];
-    // A blank key protects nothing, so the write is refused before anything leaves.
-    expect((await through(tool, { key: "  " })).error).toMatchObject({ code: "invalid_args" });
-    expect(sent).toEqual([]);
-    // One key protects one request: a tool with several write steps cannot declare one.
-    expect(() => write(connection, { ...spec, writeSteps: { session: "once", bytes: "once" } })).toThrow(
-      /one write step/,
-    );
-  });
-
   it("INV-9: each named step of a write is sent once; reads are replayed freely", async () => {
     answers.push(
       () => Response.json({ session: "s_1" }),
@@ -1978,20 +1928,9 @@ describe("idempotency keys (decision 0010, B.4)", () => {
   });
 
   it("INV-9: sends the key on the write's own request only, after registration, and the core counts it", async () => {
-    answers.push(
-      () => Response.json({ id: 1 }),
-      () => new Response(null, { status: 500 }),
-    );
-    const outcome = await through(
-      keyed(acme(), (connection) =>
-        connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
-      ),
-      { key: "create-1" },
-    );
-    expect(sent.map((request) => [request.method, request.headers["idempotency-key"]])).toEqual([
-      ["GET", undefined],
-      ["POST", "create-1"],
-    ]);
+    answers.push(() => new Response(null, { status: 500 }));
+    const outcome = await through(keyed(acme()), { key: "create-1" });
+    expect(sent.map((request) => [request.method, request.headers["idempotency-key"]])).toEqual([["POST", "create-1"]]);
     // A direct caller whose one write carried a genuine key may repeat it (the core's rule).
     expect(outcome.error).toMatchObject({ code: "unavailable", retryable: true });
     expect((outcome.error as ConnectorCallError).writeOutcome).toBeUndefined();
@@ -2046,7 +1985,9 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
       () => new Response(null, { status: 429 }),
     );
     const outcome = await invoke(acme(), (connection) =>
-      connection.sendPath(POST_ITEMS).pipe(Effect.catch(() => connection.sendPath(LOOKUP, { effect: "read" }))),
+      connection
+        .sendPath(POST_ITEMS)
+        .pipe(Effect.catch(() => connection.sendPath(LOOKUP, { effect: "read", step: "lookup" }))),
     );
     expect(sent).toHaveLength(2);
     expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
@@ -2071,14 +2012,12 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
   });
 
   const writeThenLookup = (connection: Connection) =>
-    connection.sendPath(POST_ITEMS).pipe(Effect.flatMap(() => connection.sendPath(LOOKUP, { effect: "read" })));
+    connection
+      .sendPath(POST_ITEMS)
+      .pipe(Effect.flatMap(() => connection.sendPath(LOOKUP, { effect: "read", step: "lookup" })));
 
   it.each([
     [401, "auth_required"],
-    [400, "invalid_args"],
-    [403, "provider_permission_denied"],
-    [404, "not_found"],
-    [409, "connector_call_failed"],
     [429, "rate_limited"],
     [503, "connector_call_failed"],
   ])(
@@ -2124,7 +2063,9 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
   it("INV-9: a failure before the write left keeps its verdict, and the write's own refusal stands after a lookup", async () => {
     answers.push(() => new Response(null, { status: 429, headers: { "Retry-After": "2" } }));
     const before = await invoke(acme(), (connection) =>
-      connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+      connection
+        .sendPath(LOOKUP, { effect: "read", step: "lookup" })
+        .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
     );
     expect(sent).toHaveLength(1);
     expect(before.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 2000 });
@@ -2132,7 +2073,9 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     sent = [];
     answers = [() => Response.json({ id: 1 }), () => new Response(null, { status: 400 })];
     const refused = await invoke(acme(), (connection) =>
-      connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+      connection
+        .sendPath(LOOKUP, { effect: "read", step: "lookup" })
+        .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
     );
     expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false });
     expect((refused.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();

@@ -4,6 +4,7 @@ import {
   dispatchProviderRequest,
   recordProviderResponse,
   recordingFetch,
+  readRequest,
   providerRequest,
   renewedAfterUnauthorized,
   takeProviderHandoff,
@@ -39,12 +40,7 @@ import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 import { deriveContext } from "../derived-context.js";
 import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
-import {
-  bindRenewableGrant,
-  OAUTH_CHALLENGE_MAX_BYTES,
-  replayAfterUnauthorized,
-  type RenewableGrant,
-} from "./renewable-grant.js";
+import { bindRenewableGrant, OAUTH_CHALLENGE_MAX_BYTES, type RenewableGrant } from "./renewable-grant.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -629,7 +625,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    */
   const authorizedFetch = async (
     ctx: ConnectorContext,
-    write: boolean,
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
@@ -728,7 +723,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             await readChallenge(first, signal, init.method);
           } catch (error) {
             if (signal.aborted) throw signal.reason;
-            if (!replayAfterUnauthorized(write ? "write" : "read", auxiliary ? "read" : "call", headers)) {
+            if (!readRequest(dispatch)) {
               throw vendorRefusal(
                 unsentAfterUnauthorized(`Connector "${id}"'s API`, error, "downstream_oauth_required"),
                 dispatch,
@@ -736,7 +731,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             }
             throw error;
           }
-          if (!replayAfterUnauthorized(write ? "write" : "read", auxiliary ? "read" : "call", headers)) {
+          if (!readRequest(dispatch)) {
             let renewal: unknown;
             try {
               const fresh = await grant.refresh(stale);
@@ -922,12 +917,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       await provider.consumeAuthError();
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
-    access: (ctx, call) =>
+    access: (ctx) =>
       bindRenewableGrant(
         {
-          fetch: recordingFetch((input: string | URL, init?: RequestInit) =>
-            authorizedFetch(ctx, call.write, input, init),
-          ),
+          fetch: recordingFetch((input: string | URL, init?: RequestInit) => authorizedFetch(ctx, input, init)),
         },
         grantFor(ctx),
       ),

@@ -701,6 +701,15 @@ gets fresh capacity, and a failure the ledger proves unsent (provenance (a))
 may still be advertised retryable. No request id, body, URL, retry counter or
 new step name can mint capacity.
 
+Reservation and replay share the core's `readRequest` classifier. Only
+positive read classification together with the method actually sent being
+GET/HEAD proves a read; any recognized method-override header forces a write.
+A reviewed POST read, missing classification, or an auxiliary label does not
+prove a read. Known writes keep their early claim before preparation; after
+preparation, the transport checks the core entry and final outgoing headers
+(including authentication) and atomically claims capacity for any additional
+physical write before dispatch. An undeclared step/item is refused there.
+
 `reserved` and `preparing` have not dispatched. Immediately before `fetch`,
 in the same synchronous step, the transport enters the request in the core
 ledger (`dispatchProviderRequest`, which refuses a request whose call has
@@ -724,8 +733,9 @@ A recorded 401 keeps its auth handoff until renewal succeeds (Q8).
 
 This holds below Effect retries, program retries, 307/308 followers, replaying
 renewals, reconnects and new request ids. It also holds when a retry tries fresh
-step names or item ids. Auxiliary `{ effect: "read" }` requests and all requests
-in calls served as reads may still be replayed. Tests cover async-auth
+step names or item ids. Only requests the core positively classifies as reads
+may be replayed; `{ effect: "read" }` does not bypass capacity. Auxiliary
+requests the core classifies as writes need their own declared steps. Tests cover async-auth
 concurrency through both entry paths, preparation failure, the reviewer's
 `Effect.suspend` counter repro, fixed upload steps, bounded bulk concurrency,
 whole-loop retries, duplicate/unselected ids and construction bounds.
@@ -849,8 +859,13 @@ class Grant extends Context.Service<Grant, {
    request-owned fiber shared across requests. Other grant implementations
    forward cancellation to their call-owned I/O. The 401's body is read under
    the ceiling first, so nothing stays open while renewing.
-2. A request that is a read (the call's served classification is `read`, or
-   the provider sent it with `{ effect: "read" }`) is replayed once.
+2. A request the core's shared `readRequest` classifier proves read is
+   replayed once: positive read classification, an actual GET/HEAD method,
+   and no recognized method-override header. This supersedes the earlier
+   wording that reviewed POST reads or `{ effect: "read" }` alone earn a
+   replay. Reviewed POST reads and auxiliary POSTs instead reserve write
+   capacity (or are refused) and receive no 401 replay. Kit and Promise OAuth
+   middleware consult the actual core entry; neither keeps a second classifier.
    `authenticate` runs again and reads the renewed token. A second 401 runs
    `rejected`, which keeps `static-oauth`'s request-scope latch and its
    `downstream_oauth_required` wording.
@@ -870,7 +885,7 @@ class Grant extends Context.Service<Grant, {
    be stopped by the one-dispatch guard.
 4. Refresh-once decides no verdict. The tests prove the rule both ways (a
    read built tool served as a write is not resent; a write built tool served
-   as a read is replayed), for a renewal that succeeds, for each renewal
+   as a read is replayed only for a positive GET/HEAD), for a renewal that succeeds, for each renewal
    failure, and for a cancellation.
 
 The static OAuth facade bounds each discarded 401 challenge at 1 MiB before

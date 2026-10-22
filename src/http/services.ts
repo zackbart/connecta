@@ -34,7 +34,7 @@ export type CallServices = import("../runtime/call.js").CallServices | Dispatche
  * the core ledger entry (`request`), never from here.
  */
 export interface Dispatch {
-  /** It counts as the call's write: every request of a write call except one sent with `{ effect: "read" }`. */
+  /** Physical write according to the core's positive-read method/header rule. */
   readonly write: boolean;
   /** Which construction-declared logical write it is; the implicit default is `write`. */
   readonly step?: string;
@@ -93,7 +93,8 @@ export function reserveWrite(
 
 /**
  * What one request inside a call is: the call's own effect, or an auxiliary
- * read inside a write tool, and which logical write. Set by `Send`, read by
+ * request inside a write tool, and which logical write. Auxiliary ownership
+ * does not itself prove a physical read. Set by `Send`, read by
  * the transport and the OAuth middleware. `sent` is filled by the transport
  * with the request it handed to `fetch`, so `Send` can record that request's
  * own failure in the ledger.

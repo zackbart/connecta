@@ -82,7 +82,7 @@ interface Answer {
 }
 
 interface SendOptions {
-  /** An auxiliary lookup inside a write tool: it is not the write, and may be replayed after a 401. Never inferred. */
+  /** Auxiliary ownership; replay and capacity still follow the core's physical-request classification. */
   readonly effect?: "read";
   /**
    * A name in the tool's construction-declared writeSteps, never fresh capacity.

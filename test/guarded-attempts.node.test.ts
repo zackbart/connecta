@@ -2,13 +2,28 @@
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { Agent, RetryAgent, fetch as dispatcherFetch, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { Context, Effect } from "effect";
+import { Context, Effect, Schema } from "effect";
 import * as Request from "effect/http/HttpClientRequest";
 import { afterEach, expect, it, vi } from "vitest";
 import { guardedClient } from "../src/http/client.js";
 import { nodeGuardedTransport } from "../src/http/node-transport.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
-import { Dispatches, openCall } from "../src/http/services.js";
+import { Dispatches, RequestFacts, openCall, type CallServices } from "../src/http/services.js";
+import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
+import { StatusFailure, type HttpFailure } from "../src/http/errors.js";
+import { read } from "../src/http/tools.js";
+import { connect, get, vendor } from "../src/http/vendor.js";
+import { resultSafety } from "../src/http/safety.js";
+import { api } from "../src/connectors/api.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import {
+  dispatchProviderRequest,
+  providerRequests,
+  readRequest,
+  tracksEveryRequest,
+  type ProviderRequest,
+} from "../src/provider-call.js";
+import { makeRegistry } from "./helpers.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { listen } from "../src/node.js";
@@ -27,6 +42,10 @@ async function call(baseUrl: string, classification: "write" | "read" = "write",
   const lease = openCall({
     caller: undefined,
     classification,
+    ledger: {
+      open: (facts) => ({ dispatched: false, classification, ...facts }),
+      dispatch: (entry, headers, method) => dispatchProviderRequest(undefined, entry, headers, method),
+    },
     credentials: async () => null,
     charge: async () => {},
     record() {},
@@ -43,8 +62,9 @@ async function call(baseUrl: string, classification: "write" | "read" = "write",
     const result = await runEdge(
       guarded.client
         .execute(
-          Request.post("/items", override ? { headers: { "X-HTTP-Method-Override": "POST" } } : {}).pipe(
-            Request.bodyJsonUnsafe({ id: 1 }),
+          Request.make(classification === "read" ? "GET" : "POST")(
+            "/items",
+            override ? { headers: { "X-HTTP-Method-Override": "POST" } } : {},
           ),
         )
         .pipe(Effect.flatMap(guarded.read), Effect.result, Effect.provideContext(lease.services)),
@@ -57,6 +77,158 @@ async function call(baseUrl: string, classification: "write" | "read" = "write",
 afterEach(() => {
   configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
+});
+
+it("INV-9: core-classified writes reserve across Send, direct-client retries and 401 replay", async () => {
+  configureGuardedTransport(nodeGuardedTransport);
+  const cases = [
+    ...["X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"].flatMap((header) =>
+      (["call", "read"] as const).map((effect) => ({
+        method: "GET" as const,
+        header,
+        effect,
+        served: "read" as const,
+      })),
+    ),
+    { method: "GET" as const, header: "X-HTTP-Method-Override", effect: "read" as const, served: "write" as const },
+    { method: "POST" as const, effect: "call" as const, served: "read" as const },
+    { method: "POST" as const, effect: "read" as const, served: "write" as const },
+    { method: "POST" as const, effect: "call" as const, served: "write" as const },
+    {
+      method: "GET" as const,
+      header: "X-Method-Override",
+      effect: "call" as const,
+      served: "read" as const,
+      authenticated: true,
+    },
+    {
+      method: "GET" as const,
+      header: "X-HTTP-Method",
+      effect: "read" as const,
+      served: "read" as const,
+      noCapacity: true,
+    },
+  ];
+  for (const path of ["Send", "direct"] as const)
+    for (const challenge of ["reset", "401"] as const)
+      for (const scenario of cases) {
+        let hits = 0;
+        let renewals = 0;
+        let ledger: readonly ProviderRequest[] = [];
+        const server = createServer((request, response) => {
+          request.resume();
+          if (++hits === 1 && challenge === "reset") return request.socket.destroy();
+          response.writeHead(hits === 1 ? 401 : 200, { "content-type": "application/json" });
+          response.end("{}");
+        });
+        const baseUrl = await listening(server);
+        const header = "header" in scenario ? scenario.header : undefined;
+        const authenticated = "authenticated" in scenario;
+        const guarded = refreshOnce(
+          guardedClient({
+            provider: "tickets",
+            baseUrl,
+            maxResponseBytes: 1024,
+            headers: header && !authenticated ? { [header]: "POST" } : {},
+            authenticate: bearer.pipe(
+              Effect.map((headers) => ({ ...headers, ...(header && authenticated ? { [header]: "POST" } : {}) })),
+            ),
+          }),
+        );
+        const connection = connect(vendor("tickets", get("unused", "/unused")), guarded, {
+          errors: {
+            provider: "tickets",
+            facts: () => ({}),
+            detail: () => "",
+            statuses: {
+              401: () => ({ code: "downstream_oauth_required", retryable: false }),
+              403: () => ({ code: "provider_permission_denied" }),
+              404: () => ({ code: "not_found" }),
+            },
+            unreadable: "unreadable",
+          },
+          safety: resultSafety({ review: "Only an ok flag.", sensitiveFields: { names: [], choice: "drop" } }),
+        });
+        const tool = read(connection, {
+          name: "run",
+          description: "Read tickets.",
+          input: Schema.Struct({}),
+          output: Schema.Unknown,
+          ...("noCapacity" in scenario ? { writeSteps: {} } : {}),
+          run: () => {
+            const send: Effect.Effect<unknown, HttpFailure, CallServices | Grant> =
+              path === "Send"
+                ? connection.sendPath(
+                    { method: scenario.method, path: "/items", template: "/items" },
+                    scenario.effect === "read" ? { effect: "read" } : {},
+                  )
+                : guarded.client.execute(Request.make(scenario.method)("/items")).pipe(
+                    Effect.flatMap(guarded.read),
+                    Effect.flatMap((reply) =>
+                      reply.status === 401
+                        ? Effect.fail(
+                            new StatusFailure({
+                              status: reply.status,
+                              headers: reply.headers,
+                              body: {},
+                              operation: { method: scenario.method, template: "/items" },
+                            }),
+                          )
+                        : Effect.succeed(reply),
+                    ),
+                    Effect.provideService(RequestFacts, { effect: scenario.effect }),
+                  );
+            return send.pipe(
+              Effect.retry({ times: 1 }),
+              Effect.as({}),
+              Effect.provideService(Grant, {
+                token: Effect.succeed("old"),
+                refresh: () =>
+                  Effect.sync(() => {
+                    renewals++;
+                    return "fresh";
+                  }),
+                rejected: Effect.die("Unexpected second 401"),
+              }),
+            );
+          },
+        });
+        const connector = tracksEveryRequest(
+          api("tickets", {
+            tools: [
+              {
+                ...tool,
+                handler: (args, ctx) => {
+                  ledger = providerRequests(ctx)!;
+                  return tool.handler(args, ctx);
+                },
+              },
+            ],
+          }),
+        );
+        try {
+          const tools = createMetaTools(
+            makeRegistry([connector], { classification: { tickets: { run: scenario.served } } }),
+            "https://connecta.example",
+          );
+          const result = await (scenario.served === "read"
+            ? tools.callTool({ address: "tickets.run" })
+            : tools.callDestructiveTool({ address: "tickets.run" }));
+          const label = `${path} ${challenge} ${JSON.stringify(scenario)}`;
+          const count = "noCapacity" in scenario ? 0 : 1;
+          expect(hits, label).toBe(count);
+          expect(result.isError, label).toBe(true);
+          const sent = ledger.filter((entry) => entry.dispatched);
+          expect(sent, label).toHaveLength(count);
+          if (count) {
+            expect(readRequest(sent[0]!), label).toBe(false);
+            expect(sent[0]?.renewed, label).toBe(challenge === "401" ? true : undefined);
+          }
+          expect(renewals, label).toBe(challenge === "401" ? count : 0);
+        } finally {
+          await close(server);
+        }
+      }
 });
 
 it("INV-9: one guarded send owns one attempt under 421 and a global RetryAgent, unlike native fetch", async () => {
