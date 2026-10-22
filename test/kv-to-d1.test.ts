@@ -1,5 +1,10 @@
 import { stashClockSkewContract } from "./stash-charge-contract.js";
-import { sqlBatchRollbackContract, sqlStashFixture } from "./sql-storage-contract.js";
+import {
+  sqlActivityRollbackContract,
+  sqlBatchRollbackContract,
+  sqlStashFixture,
+  type SqlFixture,
+} from "./sql-storage-contract.js";
 // The one-shot Workers KV → D1 copy, against a real local KV namespace and D1
 // database: the workers vitest project binds both (vitest.config.ts). The
 // test module is imported indirectly so this file still loads in the Node
@@ -12,6 +17,7 @@ import {
   type KvToD1CopyOptions,
   type D1DatabaseBinding,
   d1Storage,
+  d1ActivityStore,
   type KvToD1Counts,
   KvToD1CopyError,
   type KVNamespaceBinding,
@@ -98,11 +104,13 @@ async function copyAll(kv: KVNamespaceBinding, db: D1DatabaseBinding, options: P
 vi.setConfig({ testTimeout: 60_000 });
 
 describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
-  sqlBatchRollbackContract(async () => {
+  async function open(): Promise<SqlFixture> {
     const db = bindings!.db;
     await db.prepare("DROP TABLE IF EXISTS connecta_kv").run();
+    await db.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
     return {
       storage: () => d1Storage(db),
+      activity: (options?: { retentionDays?: number }) => d1ActivityStore(db, options),
       async exec(sql, ...params) {
         await db
           .prepare(sql)
@@ -118,7 +126,9 @@ describe.skipIf(!bindings)("SQL batch rollback over native Workers D1", () => {
         ).results;
       },
     };
-  });
+  }
+  sqlBatchRollbackContract(open);
+  sqlActivityRollbackContract(open);
 });
 
 describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
