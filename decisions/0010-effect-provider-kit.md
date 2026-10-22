@@ -1393,16 +1393,19 @@ provider cannot reach a body any earlier:
 1. confinement, `admit`, then authentication, before anything is sent;
 2. the bounded read;
 3. JSON parse, then the request's whole sent-secret set (`RequestSecrets`)
-   redacts the parsed body before anything can cut, trim or extract from it
-   (#911's `redactBeforeCut`), on a failure's body and a success's alike;
+   redacts the parsed body and response headers before anything can cut,
+   trim or extract from them (#911's `redactBeforeCut`), on a failure's
+   body and a success's alike;
 4. a non-2xx becomes `StatusFailure` with its operation, and B.3 asks
    `withholdsErrors(operation)` before it builds any detail; a 2xx that did
    not parse is `UnreadableBody`;
 5. the vendor's `result` hook: unwrap an envelope, or fail an in-band refusal.
-   It receives `withheld`; a vendor whose review withholds any operation's
-   text raises its in-band refusals as `StatusFailure`, so the same check
-   applies (Cloudflare does), and only a vendor that withholds nothing, such
-   as Tithe.ly, may quote its own reason in a `Refusal`;
+   It receives `withheld`. When true, its only admitted failures are
+   `StatusFailure`, pinned to the answering operation, and `UnreadableBody`.
+   Any other failure becomes a defect whose text the API boundary withholds;
+   this includes free-text sibling tags such as `RequestRefused` and
+   `ResponseTooLarge`. Only an operation whose review withholds nothing,
+   such as Tithe.ly's, may quote its own reason in a `Refusal`;
 6. `ResultSafety.redact(data, operation)`: the vendor's reviewed redaction
    (the REST family's `ValueSafety`, by operation), then A.2's
    `sensitiveFields` drop at any depth unless deployment code chose
@@ -1418,6 +1421,13 @@ unwraps; the data itself is redacted before any strategy reads it.
 table nor a written reason for having none (INV-11), and a `sensitiveFields`
 value other than `"drop"` or `"return"`. Sent-secret registration stays as a
 separate layer, because a stored downstream secret may never have been sent.
+
+A reviewed `sendPath` resolves the actual method and path through an indexed
+canonical resolver before dispatch; the caller's `template` cannot select its
+value-safety policy. An absent resolver or unknown operation fails closed.
+An explicit nonempty global review may permit unindexed paths, preserving
+Tithe.ly's legacy hatches. Typed `send` keeps its declared operation. The REST
+adapter uses `OperationIndex.resolve` for both redaction and error withholding.
 
 **Tool builders (`src/http/tools.ts`).** Each builder returns an ordinary
 `ApiTool`. Kit tools therefore sit in `api()` beside hand-written ones and keep

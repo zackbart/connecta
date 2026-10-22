@@ -2094,6 +2094,13 @@ the guarded transport reserves it before preparation and the shared core
 decides the whole call's write outcome. Upload builders and byte-body request
 shapes wait for the Google Drive migration in C.7.
 
+Reviewed path calls resolve their actual method and path through an indexed
+safety adapter; a provider-supplied template cannot bypass the policy.
+Unindexed paths require an explicit global review. Sent-secret redaction
+covers response headers before result hooks can extract fragments. Withheld
+hooks admit only operation-bound status failures or unreadable bodies; other
+failures become defects whose text the API boundary withholds.
+
 ### Why not Schema or HttpApi for core routes
 
 Both were measured and both lost. `effect` is imported through its barrel,

@@ -34,6 +34,11 @@ See AGENTS.md Verification.
   The kit remains internal; deployment factories return ordinary Connectors
   and published declarations must name no Effect type. B.5's Tithe.ly gate
   must pass before Phase C migrations begin.
+  Reviewed path calls need an indexed safety resolver; a caller-supplied
+  template never establishes the operation's policy. Use an explicit global
+  review only when the provider permits unindexed paths. Step-1 migrations
+  may return their complete legacy usage guide from the helper, preserving
+  fragments and option-dependent lines without changing `SKILL.md`.
 - **A migration PR** is step 1 or step 2 for one provider, never both. See
   [Migrating a provider](#migrating-a-provider).
 - **A change to a provider still in `PENDING`** keeps its current shape. See
