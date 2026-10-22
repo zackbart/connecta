@@ -294,6 +294,7 @@ interface Entry {
 const views = new WeakMap<object, Entry>();
 interface RequestState {
   open: boolean;
+  admitted: boolean;
   readonly controller: AbortController;
   readonly finalizers: Array<() => void>;
   readonly entries: Set<Entry>;
@@ -303,7 +304,14 @@ const requests = new WeakMap<object, RequestState>();
 function requestOf(scope: object): RequestState {
   let state = requests.get(scope);
   if (!state) {
-    state = { open: true, controller: new AbortController(), finalizers: [], entries: new Set(), calls: new Set() };
+    state = {
+      open: true,
+      admitted: false,
+      controller: new AbortController(),
+      finalizers: [],
+      entries: new Set(),
+      calls: new Set(),
+    };
     requests.set(scope, state);
   }
   return state;
@@ -440,10 +448,10 @@ export function chargeView(view: ConnectorContext): Promise<void> {
   const budget = recordedService(view, Budget);
   return budget ? runEdge(budget.charge) : Promise.reject(ended());
 }
-/** A missing view inside an admitted call must not silently bypass its budget. */
+/** Admission is sticky until request close; ending a call never makes its copies standalone. */
 export function callScopeKnown(view: ConnectorContext): boolean {
-  const scope = requests.get(view.requestScope ?? view);
-  return scope !== undefined && (!scope.open || scope.calls.size > 0);
+  const scope = requests.get(views.get(view)?.request ?? view.requestScope ?? view);
+  return scope !== undefined && (!scope.open || scope.admitted);
 }
 export function viewSecrets(view: ConnectorContext): SentSecrets {
   const entry = ensureOperation(view);
@@ -518,9 +526,17 @@ export function openRequest(scope: object): {
 export function callFromContext(
   ctx: ConnectorContext,
   classification: "read" | "write",
-  overrides: Partial<CallInputs> = {},
+  overrides: Partial<CallInputs> & { readonly admitted?: true; readonly anonymous?: true } = {},
 ): CallLease {
+  const { admitted, anonymous, ...callOverrides } = overrides;
   const entry = ensureOperation(ctx);
+  const scope = requestOf(entry.request);
+  // Direct api() calls on an unadmitted scope and explicit anonymous probes
+  // have no served invocation to charge. Once a permit has existed, however,
+  // no missing Budget may become a standalone call, even if an anonymous
+  // entry was registered before admission or the admitted call already ended.
+  if (scope.admitted && !recordedService(ctx, Budget) && !admitted && !anonymous) throw ended();
+  if (admitted) scope.admitted = true;
   const request = openRequest(entry.request);
   const credential = ctx.credential;
   const secrets = new SentSecrets();
@@ -539,7 +555,7 @@ export function callFromContext(
     requestSignal: request.signal,
     ...(entry.call ? { parent: entry.call } : {}),
     operation: ctx,
-    ...overrides,
+    ...callOverrides,
   });
   requestOf(entry.request).calls.add(lease);
   if (!requestOf(entry.request).open) lease.close();

@@ -414,6 +414,16 @@ partition, on contexts no invocation built. So B.1 has two layers:
 - **The call layer** adds the call services to an operation entry. A call
   never changes its operation's caller.
 
+An invocation's first admission permit marks its request scope as admitted.
+That mark is sticky for the scope's whole lifetime: closing the admitted call
+never lets a copied view enter a standalone path. An unregistered copy in that
+scope fails closed, and even a copy whose anonymous entry was registered before
+admission cannot mint a call without its own `Budget`. Explicit anonymous
+credential probes remain uncharged. Independent direct `api()` calls may share
+an unadmitted scope: standalone calls and probes have no served invocation to
+charge. Request membership detects missing authority; it never recovers the
+original view's caller, permit or ledger.
+
 **Provision (calls).** Invocation builds the call layer once per dispatch, in
 the scoped attempt that already owns the permit (the `call(permit)` closure in
 `invocation.ts`). It takes each service from code, never from arguments

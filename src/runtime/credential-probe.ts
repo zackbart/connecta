@@ -20,6 +20,7 @@ export function credentialProbeContext(ctx: ConnectorContext, values: ConnectorC
   );
   const parent = viewLease(ctx);
   const lease = callFromContext(operation, "read", {
+    anonymous: true,
     charge: async () => {},
     record: () => {},
     ...(parent ? { parent } : {}),

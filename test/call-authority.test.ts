@@ -5,8 +5,10 @@ import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { deriveContext } from "../src/derived-context.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
-import { makeRegistry } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
 
@@ -145,6 +147,89 @@ describe("call authority at nested api boundaries", () => {
     expect((await createMetaTools(makeRegistry([outer]), BASE).callTool({ address: "crm.read" })).isError).not.toBe(
       true,
     );
+  });
+
+  it.each(["during", "after"] as const)(
+    "INV-4 INV-10: a spread of a served call used %s closure cannot enter the standalone api path",
+    async (phase) => {
+      const entered = vi.fn(async () => ({}));
+      const inner = api("tickets", {
+        tools: [{ name: "read", description: "Read.", annotations: { readOnlyHint: true }, handler: entered }],
+      });
+      let retained!: ConnectorContext;
+      const refuse = async (copy: ConnectorContext) => {
+        await expect(inner.callTool("read", {}, copy)).rejects.toMatchObject({ code: "connector_call_failed" });
+      };
+      const outer = api("crm", {
+        tools: [
+          {
+            name: "read",
+            description: "Read.",
+            annotations: { readOnlyHint: true },
+            handler: async (_, ctx) => {
+              retained = ctx;
+              if (phase === "during") await refuse({ ...ctx });
+              return {};
+            },
+          },
+        ],
+      });
+      const scope = {};
+      const tools = createMetaTools(makeRegistry([outer]), BASE, { requestScope: scope });
+      expect((await tools.callTool({ address: "crm.read" })).isError).not.toBe(true);
+      if (phase === "after") await refuse({ ...retained });
+      expect(entered).not.toHaveBeenCalled();
+    },
+  );
+
+  it("INV-4 INV-10: a spread's secret entry registered before admission cannot mint call authority afterward", async () => {
+    const entered = vi.fn(async () => ({}));
+    const inner = api("tickets", {
+      tools: [{ name: "read", description: "Read.", annotations: { readOnlyHint: true }, handler: entered }],
+    });
+    let copy!: ConnectorContext;
+    const outer = api("crm", {
+      tools: [
+        {
+          name: "read",
+          description: "Read.",
+          annotations: { readOnlyHint: true },
+          handler: async () => {
+            await expect(inner.callTool("read", {}, copy)).rejects.toMatchObject({ code: "connector_call_failed" });
+            return {};
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([outer]);
+    const scope = {};
+    copy = { ...registry.contextFor("crm", BASE, scope) };
+    sentSecretsFor(copy);
+    expect(
+      (await createMetaTools(registry, BASE, { requestScope: scope }).callTool({ address: "crm.read" })).isError,
+    ).not.toBe(true);
+    expect(entered).not.toHaveBeenCalled();
+  });
+
+  it("INV-4 INV-10: independent standalone contexts can share an unadmitted request scope", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = vi.fn(async () => {
+      await gate;
+      return { ok: true };
+    });
+    const connector = api("crm", {
+      tools: [{ name: "read", description: "Read.", annotations: { readOnlyHint: true }, handler: entered }],
+    });
+    const first: ConnectorContext = { storage: memoryStorage(), logger: silentLogger, baseUrl: BASE, requestScope: {} };
+    const a = connector.callTool("read", {}, first);
+    const b = connector.callTool("read", {}, { ...first });
+    const results = Promise.all([a, b]);
+    release();
+    await expect(results).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(entered).toHaveBeenCalledTimes(2);
   });
 
   it("INV-4 INV-10: standalone direct calls and anonymous credential probes retain their explicit authority", async () => {

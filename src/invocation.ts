@@ -779,6 +779,7 @@ export class InvocationService {
                 defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
               );
               const lease = callFromContext(operationContext, write ? "write" : "read", {
+                admitted: true,
                 served: write ? "write" : "read",
                 charge: (signal) => runEdge(chargeCallBudget(permit, signal)),
                 chargeClosed: () =>
