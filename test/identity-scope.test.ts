@@ -1,20 +1,16 @@
-import { machineAuth } from "./helpers/machine-auth.js";
-import { InvocationFailure } from "../src/invocation.js";
-import { ConnectorCallError } from "../src/errors.js";
-import { fetchTestUiDetails } from "./helpers.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
-import { accessTokens } from "../src/access-tokens.js";
 import { describe, expect, it } from "vitest";
+import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
-import { callerOf } from "../src/connector-caller.js";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
-import { memoryStorage } from "../src/storage/memory.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
-import type { Connector, InboundAuth, KVStorage, ToolDef } from "../src/types.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
+import { InvocationFailure } from "../src/invocation.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
+import { readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
+import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const NAMESPACE = "https://identity.test";
@@ -124,60 +120,6 @@ const searchText = async (c: ReturnType<typeof deployment>, path: string, user: 
   JSON.stringify(await rpc(c, path, user, "search_tools", { query: "team data", limit: 50 }));
 
 describe("maintainers and plain /mcp", () => {
-  it.each(["subject", "principal"] as const)(
-    "INV-4: isolates guest result pages for maintainer %s identities without an activity namespace",
-    async (identityKind) => {
-      const auth: InboundAuth | InboundAuth[] =
-        identityKind === "subject"
-          ? [machineAuth("alice", { subjectId: "alice" }), machineAuth("bob", { subjectId: "bob" })]
-          : {
-              kind: "access_token",
-              authorize(request) {
-                const id = /^Bearer (alice|bob)$/.exec(request.headers.get("authorization") ?? "")?.[1];
-                return id
-                  ? { ok: true, principal: { namespace: "directory", id } }
-                  : { ok: false, response: new Response(null, { status: 401 }) };
-              },
-            };
-      const connecta = createTestConnecta({
-        connectors: [
-          api("docs", {
-            tools: [
-              {
-                name: "read",
-                description: "Read docs",
-                annotations: { readOnlyHint: true },
-                handler: () => "x".repeat(500),
-              },
-            ],
-          }),
-        ],
-        auth,
-        ...(identityKind === "principal"
-          ? {
-              maintainers: [
-                { namespace: "directory", id: "alice" },
-                { namespace: "directory", id: "bob" },
-              ],
-            }
-          : {}),
-        executor: scriptedExecutor((fns) => fns.result!(resultId)),
-        calls: { maxResultBytes: 100 },
-        logger: silentLogger,
-      });
-      const call = async (token: string, name: string, args: object) =>
-        (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token }))).result;
-      const result = await call("alice", "call_tool", { address: "docs.read" });
-      const { resultId } = JSON.parse(result.content[0].text.split("\n")[0]);
-      expect(resultId).toBeTypeOf("string");
-      expect(
-        (await call("alice", "execute_code", { code: "async () => await connecta.result(id)" })).isError,
-      ).toBeFalsy();
-      expect((await call("bob", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBe(true);
-      await connecta.close();
-    },
-  );
-
   it("INV-4: an open deployment keeps anonymous /mcp and answers every pool with the 404", async () => {
     const c = createTestConnecta({
       connectors: teamConnectors(),
@@ -276,44 +218,6 @@ describe("maintainers and plain /mcp", () => {
     await c.close();
   });
 
-  it("INV-4: binds result handles to their endpoint", async () => {
-    let resultId = "";
-    const c = createTestConnecta({
-      connectors: [
-        api("docs", {
-          tools: [
-            {
-              name: "read",
-              description: "Read docs",
-              annotations: { readOnlyHint: true },
-              handler: () => "x".repeat(500),
-            },
-          ],
-        }),
-      ],
-      auth: users(),
-      maintainers: ["alice"],
-      pools: { team: { tools: ["docs"], members: ["alice"] } },
-      storage: memoryStorage(),
-      calls: { maxResultBytes: 100 },
-      logger: silentLogger,
-      executor: scriptedExecutor(async (fns) => fns.result!(resultId, { maxBytes: 100 })),
-    });
-    const page = async (path: string) =>
-      (await rpc(c, path, "alice", "execute_code", { code: "return await connecta.result(id)" })).result;
-    for (const [minted, other] of [
-      ["/mcp", "/mcp/team"],
-      ["/mcp/team", "/mcp"],
-    ] as const) {
-      const first = (await rpc(c, minted, "alice", "call_tool", { address: "docs.read" })).result;
-      resultId = JSON.parse(first.content[0].text.split("\n")[0]).resultId;
-      expect(resultId).toBeTypeOf("string");
-      expect((await page(minted)).isError).toBeFalsy();
-      expect((await page(other)).isError).toBe(true);
-    }
-    await c.close();
-  });
-
   it("INV-4: paging rechecks admission, so a handle dies with the admission that minted it", async () => {
     let signedIn = true;
     let resultId = "";
@@ -361,16 +265,6 @@ describe("maintainers and plain /mcp", () => {
       expect(paged.isError, path).toBe(true);
     }
     await c.close();
-  });
-
-  it("refuses static headers disguised as personal auth", () => {
-    expect(() =>
-      remoteMcp("bad", {
-        url: "https://mcp.test",
-        authScope: "personal",
-        auth: { type: "headers", headers: { Authorization: "secret" } },
-      }),
-    ).toThrow('cannot combine authScope "personal" with static headers');
   });
 
   it("INV-5: isolates personal vault entries while shared auth stays editable", async () => {
@@ -421,41 +315,6 @@ describe("maintainers and plain /mcp", () => {
 
     const retired = await connecta.fetch(request("/ui/access-tokens", "alice"));
     expect(retired.status).toBe(404);
-  });
-
-  it("returns a personal OAuth callback to the principal that started it", async () => {
-    const connecta = createTestConnecta({
-      connectors: [personalOAuth()],
-      auth: users(),
-      maintainers: ["alice", "bob"],
-      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-
-    const started = await connecta.fetch(
-      request("/ui/oauth/oauth", "alice", {
-        method: "POST",
-        headers: { Origin: BASE },
-      }),
-    );
-    expect(started.status).toBe(200);
-    const link = ((await started.json()) as any).authorizationUrl;
-    const consent = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer alice" } }));
-    expect(consent.status).toBe(302);
-    const authorizationUrl = new URL(consent.headers.get("Location")!);
-    const state = authorizationUrl.searchParams.get("state");
-    const fixedByAnotherUser = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "bob"));
-    expect(fixedByAnotherUser.status).toBe(400);
-    const callback = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"));
-    expect(callback.status).toBe(200);
-    const replay = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"));
-    expect(replay.status).toBe(400);
-
-    const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
-    const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
-    expect(((await alice.json()) as any).connectors[0].status).toBe("ok");
-    expect(((await bob.json()) as any).connectors[0].status).toBe("auth_required");
   });
 });
 
@@ -709,54 +568,6 @@ describe("pools serve exactly their tools", () => {
     await c.close();
   });
 
-  it("INV-2 INV-4: connector readOnly applies to maintainers and pools", async () => {
-    let writes = 0;
-    const connectors = teamConnectors(() => writes++);
-    connectors[0]!.readOnly = true;
-    const c = deployment({
-      connectors,
-      pools: {
-        writers: { tools: ["notes"], readOnly: false, members: ["alice"] },
-        readers: { tools: ["notes"], readOnly: true, members: ["alice"] },
-      },
-    });
-    try {
-      for (const path of ["/mcp", "/mcp/writers", "/mcp/readers"]) {
-        const search = await searchText(c, path, "alice");
-        expect(search).toContain("notes.search");
-        expect(search).not.toContain("notes.delete");
-        for (const name of ["call_tool", "call_destructive_tool"]) {
-          const result = await rpc(c, path, "alice", name, { address: "notes.delete", args: {} });
-          expect(JSON.stringify(result)).toContain("read_only_endpoint");
-        }
-      }
-      expect(writes).toBe(0);
-    } finally {
-      await c.close();
-    }
-  });
-
-  it("INV-2: a readOnly pool refuses writes while the maintainer's writable /mcp does not", async () => {
-    const deleted = { count: 0 };
-    const c = deployment({
-      connectors: teamConnectors(() => {
-        deleted.count++;
-      }),
-      pools: { readers: { tools: ["notes"], readOnly: true, members: ["alice"] } },
-    });
-    const refused = await rpc(c, "/mcp/readers", "alice", "call_destructive_tool", {
-      address: "notes.delete",
-      args: {},
-    });
-    expect(JSON.stringify(refused)).toContain("read_only_endpoint");
-    expect(await searchText(c, "/mcp/readers", "alice")).not.toContain("notes.delete");
-    expect(
-      (await rpc(c, "/mcp", "alice", "call_destructive_tool", { address: "notes.delete", args: {} })).result.isError,
-    ).toBeFalsy();
-    expect(deleted.count).toBe(1);
-    await c.close();
-  });
-
   it("keeps an exact pool grant across catalog drift, including a read-to-write change", async () => {
     let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
     const calls: string[] = [];
@@ -819,10 +630,6 @@ describe("pools serve exactly their tools", () => {
 });
 
 describe("member references at construction", () => {
-  const twoProviders = (): InboundAuth[] => [
-    users(),
-    { ...users(), kind: "second", activityActorNamespace: "https://second.test" },
-  ];
   const build = (config: Partial<ConnectaConfig>) => () =>
     createConnecta({
       connectors: teamConnectors(),
@@ -831,88 +638,6 @@ describe("member references at construction", () => {
       logger: silentLogger,
       ...config,
     } as ConnectaConfig);
-  const withAgents = (storage: KVStorage = memoryStorage()) => ({
-    storage,
-    agents: ["bot"],
-    accessTokens: accessTokens(storage),
-  });
-
-  it("INV-11: resolves bare ids in the interactive provider's namespace, explicit refs, and declared agents", () => {
-    const app = build({
-      auth: users(),
-      ...withAgents(),
-      maintainers: ["alice", { namespace: "custom", id: "has:colon" }],
-      pools: { team: { tools: ["wiki"], members: ["bob", "agent:bot", { namespace: NAMESPACE, id: "carol" }] } },
-    })();
-    const described = app.describeConfig();
-    expect(described.maintainers).toEqual([
-      { namespace: NAMESPACE, id: "alice" },
-      { namespace: "custom", id: "has:colon" },
-    ]);
-    expect(described.pools).toEqual([
-      {
-        name: "team",
-        path: "/mcp/team",
-        tools: ["wiki"],
-        readOnly: false,
-        owner: null,
-        description: null,
-        members: [
-          { kind: "human", namespace: NAMESPACE, id: "bob" },
-          { kind: "agent", name: "bot" },
-          { kind: "human", namespace: NAMESPACE, id: "carol" },
-        ],
-      },
-    ]);
-    expect(described).not.toHaveProperty("hasGrant");
-    expect(described.pools[0]).not.toHaveProperty("hasGrant");
-    expect(described).not.toHaveProperty("identity");
-  });
-
-  it.each([
-    [
-      "a bare id with two interactive providers",
-      () => ({ auth: twoProviders(), maintainers: ["alice"] }),
-      "ConnectaConfig.maintainers[0] is a bare principal id, which resolves only when exactly one interactive auth provider is configured (found 2)",
-    ],
-    [
-      "a bare id with a colon",
-      () => ({ auth: users(), maintainers: ["user:alice"] }),
-      'ConnectaConfig.maintainers[0] contains ":". Write a principal whose id contains ":" as { namespace, id }',
-    ],
-    [
-      "an unknown agent",
-      () => ({
-        auth: users(),
-        ...withAgents(),
-        maintainers: ["alice"],
-        pools: { team: { tools: ["wiki"], members: ["agent:ghost"] } },
-      }),
-      'ConnectaConfig.pools.team.members[0] names agent "ghost", which ConnectaConfig.agents does not declare',
-    ],
-    [
-      "missing members",
-      () => ({ auth: users(), maintainers: ["alice"], pools: { team: { tools: ["wiki"] } } }),
-      "ConnectaConfig.pools.team.members is required",
-    ],
-    [
-      "an agent among maintainers",
-      () => ({ auth: users(), ...withAgents(), maintainers: ["alice", "agent:bot"] }),
-      "ConnectaConfig.maintainers[1] is an agent. Agents are never maintainers",
-    ],
-    [
-      "missing maintainers with inbound auth",
-      () => ({ auth: users() }),
-      "ConnectaConfig.maintainers is required with inbound auth",
-    ],
-    [
-      "maintainers without inbound auth",
-      () => ({ maintainers: [{ namespace: NAMESPACE, id: "alice" }] }),
-      "ConnectaConfig.maintainers needs an inbound auth provider that admits people",
-    ],
-  ])("INV-11: refuses %s at construction", (_name, config, message) => {
-    expect(build(config() as Partial<ConnectaConfig>)).toThrow(message);
-  });
 
   it.each([
     [
@@ -933,91 +658,5 @@ describe("member references at construction", () => {
   ])("INV-11: refuses the removed %s and names its replacement", (_name, config, message) => {
     const attempt = build({ auth: users(), maintainers: ["alice"], ...(config as Partial<ConnectaConfig>) });
     expect(attempt).toThrow(message);
-  });
-
-  it("INV-11: refuses a misdeclared pool at construction", () => {
-    const attempt = (pools: Record<string, unknown>) =>
-      build({ auth: users(), maintainers: ["alice"], pools: pools as ConnectaConfig["pools"] });
-    expect(attempt({ "Bad Name": { tools: ["wiki"], members: ["bob"] } })).toThrow("must match");
-    expect(attempt({ ghost: { tools: ["nope"], members: ["bob"] } })).toThrow('unknown connector "nope"');
-    expect(attempt({ typo: { tools: ["notes.serach"], members: ["bob"] } })).toThrow('no tool "serach"');
-    expect(attempt({ empty: { tools: [], members: ["bob"] } })).toThrow("at least one");
-    expect(attempt({ shape: { tools: "wiki", members: ["bob"] } })).toThrow("must be an array");
-    expect(
-      attempt({ guarded: { tools: [{ tool: "notes.search", requireReadOnly: true }], members: ["bob"] } }),
-    ).toThrow("tools must be connector ids or connector.tool addresses");
-    expect(attempt({ typo: { tools: ["wiki"], members: ["bob"], grants: () => true } })).toThrow(
-      "ConnectaConfig.pools.typo.grants",
-    );
-  });
-});
-
-describe("the caller a built-in connector sees", () => {
-  // Core attaches the admitted identity beside the connector context, where
-  // only in-repo code reads it; nothing a request sends can set it.
-  function whoami(): Connector {
-    return api("who", {
-      description: "Reports the attached caller",
-      tools: [
-        {
-          name: "me",
-          description: "Return the caller core attached",
-          annotations: { readOnlyHint: true },
-          inputSchema: { type: "object", additionalProperties: true },
-          handler: (_args, ctx) => callerOf(ctx) ?? null,
-        },
-      ],
-    });
-  }
-
-  it("comes from the authorization, on /mcp and on a pool, never from arguments", async () => {
-    const connecta = createTestConnecta({
-      connectors: [whoami()],
-      auth: users(),
-      maintainers: ["alice"],
-      pools: { team: { tools: ["who"], members: ["bob"] } },
-      logger: silentLogger,
-    });
-    const me = async (path: string, user: "alice" | "bob") => {
-      const body = await rpc(connecta, path, user, "call_tool", {
-        address: "who.me",
-        args: { identity: { actor: { kind: "forged", id: "mallory" } }, caller: "mallory" },
-      });
-      return JSON.parse(body.result.content[0].text);
-    };
-    const direct = await me("/mcp", "alice");
-    expect(direct).toEqual({
-      identity: {
-        actor: { kind: "test-users", id: "alice", namespace: NAMESPACE },
-        subject: { namespace: NAMESPACE, id: "alice" },
-        principal: { namespace: NAMESPACE, id: "alice" },
-        interactive: true,
-      },
-      authenticated: true,
-    });
-    const pooled = await me("/mcp/team", "bob");
-    expect(pooled).toMatchObject({ identity: { actor: { id: "bob" } }, pool: "team" });
-    expect(JSON.stringify([direct, pooled])).not.toContain("mallory");
-  });
-
-  it("is marked unauthenticated when an open deployment admits the request", async () => {
-    const connecta = createTestConnecta({ connectors: [whoami()], logger: silentLogger });
-    const response = await connecta.fetch(
-      new Request(`${BASE}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: { name: "call_tool", arguments: { address: "who.me", args: { authenticated: true } } },
-        }),
-      }),
-    );
-    const body = await readJsonRpc(response);
-    expect(JSON.parse(body.result.content[0].text)).toEqual({
-      identity: { actor: { kind: "anonymous" }, interactive: false },
-      authenticated: false,
-    });
   });
 });

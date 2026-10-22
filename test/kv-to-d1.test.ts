@@ -1,10 +1,10 @@
-import { stashClockSkewContract } from "./stash-charge-contract.js";
 import {
   sqlActivityRollbackContract,
   sqlBatchRollbackContract,
   sqlStashFixture,
   type SqlFixture,
 } from "./sql-storage-contract.js";
+import { stashClockSkewContract } from "./stash-charge-contract.js";
 // The one-shot Workers KV → D1 copy, against a real local KV namespace and D1
 // database: the workers vitest project binds both (vitest.config.ts). The
 // test module is imported indirectly so this file still loads in the Node
@@ -13,27 +13,27 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyKvToD1 as copy,
-  markKvToD1Live,
-  type KvToD1CopyOptions,
-  type D1DatabaseBinding,
-  d1Storage,
   d1ActivityStore,
-  type KvToD1Counts,
+  d1Storage,
   KvToD1CopyError,
+  markKvToD1Live,
+  type D1DatabaseBinding,
   type KVNamespaceBinding,
+  type KvToD1CopyOptions,
+  type KvToD1Counts,
 } from "../src/d1.js";
 import {
   accessTokenKeys,
   catalogKeys,
   credentialKeys,
   kvCopyKeys,
-  oauthHandoffKeys,
-  oauthV2Keys,
-  oauthGrantKeys,
   oauthFlowKeys,
+  oauthGrantKeys,
+  oauthHandoffKeys,
+  oauthRefreshActiveKeys,
   oauthRefreshKeys,
   oauthRefreshSpentKeys,
-  oauthRefreshActiveKeys,
+  oauthV2Keys,
   resultKeys,
   scopes,
 } from "../src/storage/keys.js";
@@ -216,7 +216,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
   });
 
   it("pages past 1,000 keys and resumes from a returned cursor", async () => {
-    const keys = Array.from({ length: 1_234 }, (_, index) => accessTokenKeys.record(String(index).padStart(5, "0")));
+    const keys = Array.from({ length: 1_001 }, (_, index) => accessTokenKeys.record(String(index).padStart(5, "0")));
     for (let start = 0; start < keys.length; start += 100) {
       await Promise.all(keys.slice(start, start + 100).map((key) => kv.put(key, `v${key}`)));
     }

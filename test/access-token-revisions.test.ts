@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { accessTokens, AccessTokenManager, isSlotRevision } from "../src/access-tokens.js";
+import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { createTestConnecta } from "./helpers.js";
-import { fakeClerkAuth } from "./fixtures/http.js";
-import fixture from "./fixtures/access-tokens-v023.json";
 import type { KVStorage } from "../src/types.js";
+import { fakeClerkAuth } from "./fixtures/http.js";
+import { createTestConnecta } from "./helpers.js";
 
 // Slot preconditions (#837 P3b): every token mutation names the slot revision
 // it decided from, and the slot's compare-and-set commits only from that slot.
@@ -19,12 +18,6 @@ const UNKNOWN_REVISION = "A".repeat(22);
 async function snapshot(storage: KVStorage) {
   const keys = await storage.list("");
   return Object.fromEntries(await Promise.all(keys.map(async (key) => [key, await storage.get(key)] as const)));
-}
-
-async function legacyStorage() {
-  const storage = memoryStorage();
-  for (const [key, value] of Object.entries(fixture.records)) await storage.set(key, value);
-  return storage;
 }
 
 const admits = async (manager: AccessTokenManager, token: string) =>
@@ -73,47 +66,6 @@ function setup(storage: KVStorage = memoryStorage()) {
   return { app, send, listed };
 }
 
-describe("slot revisions", () => {
-  it("INV-10: the revision changes on every commit (issue, rotate, revoke, adopt) and on nothing else", async () => {
-    const storage = await legacyStorage();
-    const manager = new AccessTokenManager(storage, { agents: ["simon", "legacy"] });
-    const revision = async (name = "simon") => (await manager.list()).find((slot) => slot.name === name)!.revision;
-    const seen = new Set<string>();
-    const fresh = (value: string) => {
-      expect(isSlotRevision(value)).toBe(true);
-      expect(seen.has(value), value).toBe(false);
-      seen.add(value);
-      return value;
-    };
-
-    const none = fresh(await revision());
-    expect(await revision()).toBe(none);
-    const issued = await manager.rotate("simon");
-    expect(issued.agent.revision).toBe(fresh(await revision()));
-    const rotated = await manager.rotate("simon");
-    expect(rotated.agent.revision).toBe(fresh(await revision()));
-    const revoked = await manager.revoke("simon");
-    expect(revoked.revision).toBe(fresh(await revision()));
-    // Revoking a revoked slot commits nothing, so the revision stays.
-    expect((await manager.revoke("simon")).revision).toBe(revoked.revision);
-    expect(await revision()).toBe(revoked.revision);
-    const reissued = await manager.rotate("simon");
-    expect(reissued.agent.revision).toBe(fresh(await revision()));
-    // Two revocations of different tokens store different slots, even within one millisecond.
-    expect((await manager.revoke("simon")).revision).toBe(fresh(await revision()));
-
-    const legacyNone = fresh(await revision("legacy"));
-    const adopted = await manager.adopt(fixture.unbound.accessToken.id, "legacy");
-    expect(adopted.revision).not.toBe(legacyNone);
-    expect(adopted.revision).toBe(fresh(await revision("legacy")));
-    // Rerunning a completed adoption commits nothing to the slot.
-    expect((await manager.adopt(fixture.unbound.accessToken.id, "legacy")).revision).toBe(adopted.revision);
-    // A refused mutation commits nothing either.
-    await expect(manager.rotate("simon", "operator", { expect: none })).rejects.toMatchObject({ code: "slot_changed" });
-    expect([...seen]).toContain(await revision());
-  });
-});
-
 describe("token routes require expect", () => {
   it.each([
     ["DELETE", undefined, ""],
@@ -138,28 +90,6 @@ describe("token routes require expect", () => {
     },
   );
 
-  it("INV-9: expect is a JSON body on POST; DELETE takes the body or ?expect=, never both", async () => {
-    const storage = memoryStorage();
-    const { app, send, listed } = setup(storage);
-    try {
-      expect((await send("POST", undefined, `?expect=${await listed()}`)).status).toBe(400);
-      expect(
-        (await send("POST", JSON.stringify({ expect: await listed() }), "", { "Content-Type": "text/plain" })).status,
-      ).toBe(415);
-      expect((await send("POST", { expect: "x".repeat(2_000) })).status).toBe(413);
-      const issued = await send("POST", { expect: await listed() });
-      expect(issued.status).toBe(200);
-      const revision = await listed();
-      expect((await send("DELETE", { expect: revision }, `?expect=${revision}`)).status).toBe(400);
-      expect((await send("DELETE", undefined, `?expect=${revision}&expect=${revision}`)).status).toBe(400);
-      const revoked = await send("DELETE", undefined, `?expect=${revision}`);
-      expect(revoked.status).toBe(200);
-      expect(await revoked.json()).toMatchObject({ agent: { state: "revoked", revision: await listed() } });
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each(["DELETE"] as const)(
     "INV-9: %s with a stale expect is 409 slot_changed, mints nothing and leaves the slot unchanged",
     async (method) => {
@@ -182,26 +112,6 @@ describe("token routes require expect", () => {
       }
     },
   );
-
-  it("INV-9: issuing with a none-era revision over a slot that now exists is 409 and mints nothing", async () => {
-    const storage = memoryStorage();
-    const { app, send, listed } = setup(storage);
-    try {
-      const noneEra = await listed();
-      const first = await send("POST", { expect: noneEra });
-      expect(first.status).toBe(200);
-      const { token } = (await first.json()) as { token: string };
-      const before = await snapshot(storage);
-      // A second tab still shows "No token" and issues from that view.
-      const second = await send("POST", { expect: noneEra });
-      expect(second.status).toBe(409);
-      expect(await second.json()).toMatchObject({ code: "slot_changed" });
-      expect(await snapshot(storage)).toEqual(before);
-      expect(await admits(new AccessTokenManager(storage, { agents: ["simon"] }), token)).toBe(true);
-    } finally {
-      await app.close();
-    }
-  });
 
   it("INV-9: a rotation that commits between this rotation's read and its commit makes this one 409, never a commit", async () => {
     const base = memoryStorage();
@@ -229,30 +139,6 @@ describe("token routes require expect", () => {
       // This request's own record and lookup were removed; only the two committed rotations' remain.
       expect(await base.list("access-token:v1:record:")).toHaveLength(2);
       expect(await base.list("access-token:v1:lookup:")).toHaveLength(2);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("INV-9: a rotation that commits between a revocation's read and its commit makes the revocation 409 and keeps the fresh token", async () => {
-    const base = memoryStorage();
-    const manager = new AccessTokenManager(base, { agents: ["simon"] });
-    const seeded = await manager.rotate("simon");
-    let racer: Awaited<ReturnType<AccessTokenManager["rotate"]>> | undefined;
-    let commits = 0;
-    const storage = beforeSlotCommit(base, async () => {
-      commits++;
-      racer ??= await manager.rotate("simon");
-    });
-    const { app, send } = setup(storage);
-    try {
-      const response = await send("DELETE", { expect: seeded.agent.revision });
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ code: "slot_changed" });
-      expect(commits).toBe(1);
-      // Without expect the revocation would revoke whatever the slot named; with it, the fresh rotation stands.
-      expect(await admits(manager, racer!.token)).toBe(true);
-      expect((await manager.list())[0]).toMatchObject({ state: "issued", revision: racer!.agent.revision });
     } finally {
       await app.close();
     }

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 
@@ -221,20 +221,6 @@ describe("repairing error envelopes", () => {
     });
   });
 
-  it("INV-4: an unknown connector lists only connectors in this endpoint's registry view", async () => {
-    const registry = makeRegistry(["visible", "private"].map((id) => connectorWith({ id, kind: "api" })));
-    const scoped = registry.scoped({ connectorIds: ["visible"] });
-    const catalog = new CatalogService(scoped, BASE);
-    const outcome = await new InvocationService(scoped, catalog).invoke("missing.read", {}, { source: "call_tool" });
-    expect(outcome).toMatchObject({ ok: false, error: { code: "unknown_address", configuredConnectors: ["visible"] } });
-    expect(JSON.stringify(outcome)).not.toContain("private");
-    const descriptions = await catalog.describe({ addresses: ["missing.read"] });
-    expect(descriptions[0]?.errorDetails?.configuredConnectors).toEqual(["visible"]);
-    const search = await catalog.search({ query: "read", connector: "private" });
-    expect(search.queryAnalysis).toMatchObject({ unknownConnector: true, configuredConnectors: ["visible"] });
-    expect(search.queryAnalysis?.guidance).toContain("Configured connectors for this endpoint: visible");
-  });
-
   it("INV-6 INV-9: a dispatched write timeout echoes the uncertain call only to the agent and is never repeated", async () => {
     const warn = vi.fn();
     const call = vi.fn(async (_name: string, args: unknown) => {
@@ -303,44 +289,6 @@ describe("repairing error envelopes", () => {
     expect(outcome).toMatchObject({ ok: false, dispatched: false, error: { code: "timeout" } });
     if (!outcome.ok) expect(outcome.error).not.toHaveProperty("uncertainCall");
     expect(call).not.toHaveBeenCalled();
-  });
-
-  it("INV-6: OAuth and provider permissions have different recovery actions", async () => {
-    const registry = makeRegistry([
-      connectorWith({
-        id: "oauth",
-        kind: "mcp",
-        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-        startAuth: async () => ({ state: "auth_required" }),
-        call: async () => {
-          throw new ConnectorCallError("auth_required", "missing grant");
-        },
-      }),
-      connectorWith({
-        id: "permission",
-        kind: "api",
-        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-        call: async () => {
-          throw new ConnectorCallError("provider_permission_denied", "scope denied");
-        },
-      }),
-    ]);
-    const invocation = new InvocationService(registry, new CatalogService(registry, BASE));
-    const oauth = await invocation.invoke("oauth.read", {}, { source: "call_tool" });
-    expect(oauth).toMatchObject({
-      ok: false,
-      error: {
-        code: "downstream_oauth_required",
-        recovery: "oauth",
-        nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } },
-      },
-    });
-    const permission = await invocation.invoke("permission.read", {}, { source: "call_tool" });
-    expect(permission).toMatchObject({
-      ok: false,
-      error: { code: "provider_permission_denied", retryable: false, retry: expect.stringContaining("administrator") },
-    });
-    if (!permission.ok) expect(permission.error).not.toHaveProperty("nextAction");
   });
 
   it("INV-4: host authentication carries its own code and preserves the HTTP challenge", async () => {

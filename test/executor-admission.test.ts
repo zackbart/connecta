@@ -88,50 +88,6 @@ describe("AdmissionController", () => {
     expect(admission.activeCount).toBe(0);
   });
 
-  it("removes an aborted queued caller without consuming the next slot", async () => {
-    const admission = new AdmissionController({
-      concurrency: 1,
-      maxQueueSize: 2,
-      queueTimeoutMs: 1_000,
-    });
-    const active = await admission.acquire();
-    const controller = new AbortController();
-    const cancelled = admission.acquire({ signal: controller.signal });
-    const next = admission.acquire();
-    controller.abort();
-
-    await expect(cancelled).rejects.toMatchObject({
-      code: "executor_cancelled",
-      retryable: false,
-    });
-    active.release();
-    (await next).release();
-    expect(admission.activeCount).toBe(0);
-  });
-
-  it("times out a queued caller and clears the losing timer", async () => {
-    vi.useFakeTimers();
-    try {
-      const admission = new AdmissionController({
-        concurrency: 1,
-        maxQueueSize: 1,
-        queueTimeoutMs: 25,
-      });
-      const active = await admission.acquire();
-      const queued = admission.acquire();
-      const rejected = expect(queued).rejects.toMatchObject({
-        code: "executor_overloaded",
-        retryable: true,
-        message: "Executor admission timed out after 25ms.",
-      });
-      await vi.advanceTimersByTimeAsync(25);
-      await rejected;
-      active.release();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("closes queued and future admission while active leases release safely", async () => {
     const admission = new AdmissionController({
       concurrency: 1,

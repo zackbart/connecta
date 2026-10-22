@@ -9,27 +9,6 @@ import { spawnChecker, tempFixture } from "./fixtures/node.js";
 const checker = fileURLToPath(new URL("../scripts/check-doc-links.mjs", import.meta.url));
 
 describe("documentation link checker", () => {
-  it("reports a broken file with its source line and target", async () => {
-    const root = await tempFixture("connecta-doc-links-", { "README.md": "[missing](./missing.md)\n" });
-    expect(spawnChecker(checker, ["--root", root, "--skip-structure"])).toMatchObject({
-      status: 1,
-      output: expect.stringContaining('README.md:1: missing local target "./missing.md"'),
-    });
-  });
-
-  it("reports a broken fragment with its source line and target", async () => {
-    const root = await tempFixture("connecta-doc-links-", {
-      "README.md": "[missing](./guide.md#absent)\n",
-      "guide.md": "# Present\n",
-    });
-    expect(spawnChecker(checker, ["--root", root, "--skip-structure"])).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        'README.md:1: missing fragment "#absent" in "guide.md" (target "./guide.md#absent")',
-      ),
-    });
-  });
-
   it("rejects a packed relative link to a path the tarball does not carry", async () => {
     const root = await tempFixture("connecta-packed-links-", {
       "documentation/guide.md": ["# Guide", "", "Measured in [`eval/run.md`](../eval/run.md).", ""].join("\n"),

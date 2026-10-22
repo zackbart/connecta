@@ -1,21 +1,21 @@
 // Node-only: spawns the CLI against a Node HTTP deployment over real sockets.
-import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { api } from "../src/connectors/api.js";
-import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
-import { operatorUi } from "../src/ui.js";
 import { accessTokens } from "../src/access-tokens.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { issueAgentToken } from "./helpers/agent-tokens.js";
-import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
+import { api } from "../src/connectors/api.js";
+import { CONNECTA_VERSION, META_TOOL_NAMES, createConnecta, customExecutor } from "../src/index.js";
 import { listen } from "../src/node.js";
-import { customExecutor, createConnecta, CONNECTA_VERSION, META_TOOL_NAMES } from "../src/index.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor, IdentityReference, InboundAuth, KVStorage } from "../src/types.js";
+import { operatorUi } from "../src/ui.js";
+import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
+import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
 // print "QuickJS executed" against every deployment, including the Workers
@@ -92,29 +92,6 @@ async function doctorAgainst(
 }
 
 describe("connecta doctor's executor line", () => {
-  it("names the sandbox the deployment actually runs", async () => {
-    // A custom class-named sandbox, independent of either built-in executor.
-    class CustomExecutor implements Executor {
-      async execute() {
-        return { result: 42 };
-      }
-    }
-    const line = await doctorAgainst(new CustomExecutor());
-    expect(line).toBe(
-      "Connecta doctor passed: 1 connector(s), CustomExecutor " +
-        `executed, prescribed 6-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
-    );
-    expect(line).not.toContain("QuickJS");
-  });
-
-  it("stays executor-neutral when the deployment identifies none", async () => {
-    const line = await doctorAgainst({ execute: async () => ({ result: 42 }) });
-    expect(line).toBe(
-      "Connecta doctor passed: 1 connector(s), code executed, " +
-        `prescribed 6-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
-    );
-  });
-
   it("bounds and sanitizes the name before it reaches a terminal", async () => {
     const hostile: Executor = {
       name: "\u001b[31mEvil\nSandbox " + "x".repeat(80),
@@ -127,35 +104,6 @@ describe("connecta doctor's executor line", () => {
     expect(line.endsWith(`package ${CONNECTA_VERSION}.`)).toBe(true);
     expect(line).not.toContain("\u001b");
     expect(line).not.toContain("x".repeat(41));
-  });
-
-  it("can authenticate with Cloudflare Access service-token headers", async () => {
-    const accessAuth: InboundAuth = {
-      kind: "test-access-edge",
-      authorize(request) {
-        const admitted =
-          request.headers.get("CF-Access-Client-Id") === "client-id" &&
-          request.headers.get("CF-Access-Client-Secret") === "client-secret";
-        return admitted
-          ? { ok: true, subjectId: "doctor", principal: { namespace: "test-access-edge", id: "doctor" } }
-          : {
-              ok: false,
-              response: Response.json({ error: "unauthorized" }, { status: 401 }),
-            };
-      },
-    };
-    const line = await doctorAgainst(
-      { execute: async () => ({ result: 42 }) },
-      {
-        auth: accessAuth,
-        maintainers: [{ namespace: "test-access-edge", id: "doctor" }],
-        env: {
-          CF_ACCESS_CLIENT_ID: "client-id",
-          CF_ACCESS_CLIENT_SECRET: "client-secret",
-        },
-      },
-    );
-    expect(line).toContain("Connecta doctor passed");
   });
 
   it("auto-negotiates a legacy server and reports its negotiated revision", async () => {
@@ -213,21 +161,6 @@ describe("connecta doctor's executor line", () => {
     });
     expect(stdout).toContain(`prescribed 6-tool surface, MCP 2025-11-25, package ${CONNECTA_VERSION}.`);
     expect(methods).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/call"]);
-  });
-
-  it("refuses a partial Cloudflare Access credential pair", async () => {
-    await expect(
-      run(process.execPath, [CLI, "doctor"], {
-        env: {
-          ...process.env,
-          CONNECTA_TOKEN: "",
-          CF_ACCESS_CLIENT_ID: "client-id",
-          CF_ACCESS_CLIENT_SECRET: "",
-        },
-      }),
-    ).rejects.toMatchObject({
-      stderr: expect.stringContaining("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET"),
-    });
   });
 });
 

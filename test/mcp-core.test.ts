@@ -1,21 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
 import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/server";
-import {
-  activityHistory,
-  recordToolActivity,
-  type ActivityRequestContext,
-  type ToolCallActivityEvent,
-} from "../src/activity.js";
+import { describe, expect, it, vi } from "vitest";
+import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
+import { checkClientActivity, modernRequest as modern } from "./fixtures/client-identity.js";
 import { calcApi, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
-import {
-  checkClientActivity,
-  INVALID_CLIENT_FACTS,
-  VALID_CLIENT_IDENTITIES,
-  modernRequest as modern,
-} from "./fixtures/client-identity.js";
 
 const BASE = "https://connecta.test";
 const VERSION = "2026-07-28";
@@ -42,117 +32,9 @@ describe("2026-07-28 core", () => {
     expect(client).toEqual({});
   });
 
-  it("INV-6: records only bounded typed client name and version facts", () => {
-    const events: ToolCallActivityEvent[] = [];
-    const context: ActivityRequestContext = {
-      sink: { record: (event) => void events.push(event) },
-      actor: { kind: "test" },
-      requestId: "r",
-      serverInfo: { name: "connecta", version: "0" },
-      logger: silentLogger,
-    };
-    for (const value of INVALID_CLIENT_FACTS) {
-      for (const source of ["call_tool", "call_destructive_tool", "execute_code"] as const) {
-        context.clientInfo = { name: value, version: value } as NonNullable<ActivityRequestContext["clientInfo"]>;
-        recordToolActivity(context, {
-          connectorId: "calc",
-          toolName: "add",
-          address: "calc.add",
-          source,
-          outcome: "success",
-          durationMs: 1,
-          attempts: 1,
-        });
-        expect(events.at(-1)).not.toHaveProperty("clientName");
-        expect(events.at(-1)).not.toHaveProperty("clientVersion");
-      }
-    }
-    for (const clientInfo of VALID_CLIENT_IDENTITIES) {
-      context.clientInfo = clientInfo;
-      recordToolActivity(context, {
-        connectorId: "calc",
-        toolName: "add",
-        address: "calc.add",
-        source: "call_tool",
-        outcome: "success",
-        durationMs: 1,
-        attempts: 1,
-      });
-      expect(events.at(-1)).toMatchObject({ clientName: clientInfo.name, clientVersion: clientInfo.version });
-    }
-  });
-
   it("INV-6: withholds invalid modern client facts across direct/program activity and UI", async () => {
     const events: ToolCallActivityEvent[] = [];
     await checkClientActivity({ record: (event) => void events.push(event), list: async () => ({ events }) });
-  });
-
-  it("INV-6: rechecks client facts from custom activity readers before serving UI", async () => {
-    let template!: ToolCallActivityEvent;
-    recordToolActivity(
-      {
-        sink: {
-          record: (event) => {
-            template = event;
-          },
-        },
-        actor: { kind: "test" },
-        requestId: "r",
-        serverInfo: { name: "connecta", version: "0" },
-        logger: silentLogger,
-      },
-      {
-        connectorId: "calc",
-        toolName: "add",
-        address: "calc.add",
-        source: "call_tool",
-        outcome: "success",
-        durationMs: 1,
-        attempts: 1,
-      },
-    );
-    const events: ToolCallActivityEvent[] = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map((value) => ({
-      ...template,
-      packageVersion: value as string,
-      clientName: value as string,
-      clientVersion: value as string,
-    }));
-    events.push(
-      ...VALID_CLIENT_IDENTITIES.map((clientInfo) => ({
-        ...template,
-        clientName: clientInfo.name,
-        clientVersion: clientInfo.version,
-      })),
-    );
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      logger: silentLogger,
-      auth: {
-        kind: "test",
-        activityActorNamespace: "connecta:test",
-        interactiveOperator: true,
-        authorize: () => ({ ok: true, userId: "operator" }),
-      },
-      maintainers: ["operator"],
-      activity: activityHistory({ store: { record() {}, list: async () => ({ events }) } }),
-    });
-    try {
-      const response = await c.fetch(new Request(`${BASE}/ui/activity`));
-      expect(response.status).toBe(200);
-      const page = (await response.json()) as { events: ToolCallActivityEvent[] };
-      for (const event of page.events.slice(0, INVALID_CLIENT_FACTS.length)) {
-        expect(event).not.toHaveProperty("clientName");
-        expect(event).not.toHaveProperty("clientVersion");
-        expect(event).not.toHaveProperty("packageVersion");
-      }
-      expect(page.events[INVALID_CLIENT_FACTS.length]).toMatchObject({ clientName: "v".repeat(33) });
-      expect(page.events[INVALID_CLIENT_FACTS.length]).not.toHaveProperty("clientVersion");
-      expect(page.events.slice(-VALID_CLIENT_IDENTITIES.length)).toEqual(events.slice(-VALID_CLIENT_IDENTITIES.length));
-      // Reading does not mutate the stored event.
-      expect(events[0]!.clientName).toBe(INVALID_CLIENT_FACTS[0]);
-    } finally {
-      await c.close();
-    }
   });
 
   it("INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities", async () => {

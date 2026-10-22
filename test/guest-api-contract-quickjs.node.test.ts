@@ -2,34 +2,34 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
-import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
-import {
-  checkProgramReturnPaging,
-  checkProgramReturnWriteWarning,
-  checkProgramReturnFallback,
-  checkLargeProgramRead,
-  checkLargeProgramWrite,
-  checkProgramPagingFailure,
-  checkProgramResultBom,
-  checkProgramResultSurrogates,
-} from "./program-result-cases.js";
+import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
   checkNativeSnapshots,
+  checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
-  checkProgramReadDependencies,
-  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
+import {
+  checkLargeProgramRead,
+  checkLargeProgramWrite,
+  checkProgramPagingFailure,
+  checkProgramResultBom,
+  checkProgramResultSurrogates,
+  checkProgramReturnFallback,
+  checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
+} from "./program-result-cases.js";
 
 // Every case here drives a real QuickJS child process, whose startup and IPC
 // are wall-clock nothing here can fake: on a loaded host they outran vitest's
@@ -120,7 +120,40 @@ describe("guest API contract (QuickJS executor)", () => {
       await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
   }
-  for (const contractCase of CONTRACT_CASES) {
+  const duplicateCases = new Set([
+    "INV-3: Luna's exact p5-direct-rich-output program emits the badge and caption",
+    "INV-3: object and positional calls declare JSON versus text",
+    "INV-3: malformed calls fail with the exact supported signatures",
+    "INV-6: rethrown required-field validation messages keep plain JavaScript guidance",
+    "INV-3: plain downstream text declares its format",
+    "TypeScript syntax is not JavaScript and does not run",
+    "a trailing semicolon after the arrow expression is accepted",
+    "one fenced program surrounded by prose runs on both executors",
+    "a named async declaration keeps recursion and its arguments binding",
+    "canonical addresses preserve punctuation",
+    "unknown addresses and unknown tools are distinguishable",
+    "a conflict carries where things stand, bounded, into the program",
+    "program discovery defaults to JSON and labels compact schemas as text",
+    "search returns guide and code-mode key metadata on flat rows",
+    "an unfiltered browse enumerates the deployment's connectors",
+    "describe answers per address and reports bad ones inline",
+    "a small result reaches the model byte-identical and unadorned",
+    "an oversized result truncates once, successfully, and honestly",
+    "console output is captured in order",
+    "logs survive a failing program",
+    "a policy refusal stays non-retryable however the address reads",
+    "every refusal is an event, including one at an address nothing owns",
+    "emitted blocks are delivered after the envelope, in order",
+    "an invalid emit throws catchably and accepts nothing",
+    "utility validation and budget failures use distinct codes",
+    "pins the portable ambient-authority boundary",
+    "INV-6: program errors repair fs.readFile('secret')",
+    "INV-6: program errors repair callTool('reader.read')",
+    "INV-6: program errors repair mixpanel.query()",
+    "INV-6: program errors repair skills()",
+    "INV-6: program errors repair await connecta.guide('usage')",
+  ]);
+  for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
       const base = contractCase.deadline ? deadlineExecutor : executor;

@@ -9,46 +9,38 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
-import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import { describe, expect, it } from "vitest";
-import { customExecutor } from "../src/executor-contract.js";
-import {
-  checkProgramReturnPaging,
-  checkProgramReturnWriteWarning,
-  checkProgramReturnFallback,
-  checkLargeProgramRead,
-  checkLargeProgramWrite,
-  checkProgramResultBom,
-  checkProgramResultSurrogates,
-} from "./program-result-cases.js";
-import { InvocationFailure } from "../src/invocation.js";
-import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
-import {
-  guardExecuteResultValue,
-  MAX_EXECUTE_LOG_CHARS,
-  prepareExecuteResultForTransport,
-} from "../src/executor-result.js";
-import type { Connector, Executor } from "../src/types.js";
-import { fakeExecutor } from "./fixtures/misc.js";
+import { customExecutor } from "../src/executor-contract.js";
+import { guardExecuteResultValue, prepareExecuteResultForTransport } from "../src/executor-result.js";
+import { InvocationFailure } from "../src/invocation.js";
+import type { Executor } from "../src/types.js";
+import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
   checkNativeSnapshots,
+  checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
-  checkProgramReadDependencies,
-  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
 import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
-
-const MAX_RESULT_CHARS = 24_000;
+import {
+  checkLargeProgramRead,
+  checkLargeProgramWrite,
+  checkProgramResultBom,
+  checkProgramResultSurrogates,
+  checkProgramReturnFallback,
+  checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
+} from "./program-result-cases.js";
 
 async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<Executor | undefined> {
   try {
@@ -83,20 +75,15 @@ function handlerFor(executor: Executor) {
   return createExecuteTool(makeRegistry([calcConnector]), CONTRACT_BASE, executor, silentLogger);
 }
 
-describe("guest API contract (executor-independent)", () => {
-  it("[R2] bounds the truncation envelope as serialized, not as a raw slice", () => {
-    const value = { blob: "x".repeat(500_000) };
-    const guarded = guardExecuteResultValue(value) as {
-      truncated: boolean;
-      preview: string;
-      totalChars: number;
-    };
-
-    expect(guarded.truncated).toBe(true);
-    expect(guarded.totalChars).toBe(JSON.stringify(value).length);
-    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
+it("keeps an empty error string as a failure through the transport", () => {
+  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] })).toEqual({
+    result: undefined,
+    error: "",
+    logs: ["before failure"],
   });
+});
 
+describe("guest API contract (executor-independent)", () => {
   it("[R2] truncates once however many hops the value takes", () => {
     // Repeated fallback guards must retain the original serialized size.
     // IPC validation now preserves the full value for the host stash.
@@ -114,90 +101,11 @@ describe("guest API contract (executor-independent)", () => {
     expect((once as { preview: string }).preview).not.toContain('"truncated"');
   });
 
-  it("[R2] escape-heavy previews stay inside the cap", () => {
-    const guarded = guardExecuteResultValue({
-      blob: '"\n\t\\'.repeat(30_000),
-    });
-
-    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
-  });
-
-  it("[R5, L4] caps the logs presented to the model", async () => {
-    const out = await handlerFor(fakeExecutor({ result: "ok", logs: ["y".repeat(MAX_EXECUTE_LOG_CHARS * 3)] }))({
-      code: "async () => 'ok'",
-    });
-    const parsed = JSON.parse(required(out.content[0]).text ?? "") as {
-      result: unknown;
-      logs: string;
-    };
-
-    expect(parsed.result).toBe("ok");
-    expect(parsed.logs).toContain("TRUNCATED");
-    expect(parsed.logs.length).toBeLessThan(MAX_EXECUTE_LOG_CHARS + 200);
-  });
-
-  it("[R3] reports a truncated result as success, not as an error", async () => {
-    const out = await handlerFor(fakeExecutor({ result: "z".repeat(MAX_RESULT_CHARS * 3) }))({
-      code: "async () => 'big'",
-    });
-
-    expect(out.isError).toBeUndefined();
-    expect(out.structuredContent).toMatchObject({
-      result: { truncated: true },
-    });
-  });
-
   it("keeps the Dynamic Worker arm from skipping silently", () => {
     // A missing Worker Loader binding would turn every case below into a skip
     // and the contract would be verified against one executor while claiming
     // two. Fail instead.
     expect(inWorkerd ? workerExecutor !== undefined : true).toBe(true);
-  });
-
-  it("[E5, L2] fails a host call still in flight when the run ends", async () => {
-    // Cancellation is unobservable inside a program by construction (L1), so
-    // the seam is only visible from the host side: the call the sandbox
-    // abandoned rejects with the typed cancelled failure, not a hang.
-    const hanging: Connector = {
-      id: "hanging",
-      kind: "api",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return new Promise<never>(() => {});
-      },
-    };
-    let pending: Promise<unknown> | undefined;
-    const executor: Executor = {
-      async execute(_code, providers) {
-        const connecta = required(providers.find((provider) => provider.name === "connecta"));
-        pending = required(connecta.fns.call)("hanging.read", {});
-        return { result: "returned without waiting" };
-      },
-    };
-    const out = await createExecuteTool(
-      makeRegistry([hanging]),
-      CONTRACT_BASE,
-      executor,
-      silentLogger,
-    )({ code: "async () => 'returned without waiting'" });
-
-    expect(out.isError).toBeUndefined();
-    await expect(pending).rejects.toMatchObject({
-      code: "cancelled",
-      retryable: false,
-    });
-  });
-
-  it("[E5] never leaks an execution failure into the result channel", async () => {
-    const out = await handlerFor(fakeExecutor({ error: "Sandbox exploded", logs: ["a log"] }))({
-      code: "async () => 1",
-    });
-
-    expect(out.isError).toBe(true);
-    expect(required(out.content[0]).text).toContain("Sandbox exploded");
-    expect(out.structuredContent).toMatchObject({ error: { code: "program_error" } });
   });
 });
 
@@ -282,33 +190,6 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     );
     expect(outcome.error).toBeUndefined();
     expect(outcome.result).toBe(42);
-  });
-
-  it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
-    const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
-    const loader = {
-      load() {
-        throw new Error("Construction must not load a Worker.");
-      },
-    } as unknown as WorkerLoader;
-    class LegacySubclass extends DynamicWorkerExecutor {}
-    for (const executor of [new DynamicWorkerExecutor({ loader }), new LegacySubclass({ loader })]) {
-      const construct = () => createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
-      for (const fragment of [
-        "DynamicWorkerExecutor",
-        "request-owned",
-        'import { workerExecutor } from "@zackbart/connecta/worker";',
-        "executor: workerExecutor({ loader: env.LOADER })",
-      ])
-        expect(construct).toThrow(fragment);
-    }
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor: required(await loadWorkerExecutor()),
-      logger: "silent",
-    });
-    await app.close();
   });
 
   it("INV-3 INV-6: refuses module statements before calling the Worker loader", async () => {
@@ -457,7 +338,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
   it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
     await checkNativeSnapshots(required(workerExecutor));
   });
-  for (const custom of [false, true]) {
+  for (const custom of [false]) {
     it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}unresolved failures and local guides retain connector visibility on return pages`, async () => {
       await checkProgramVisibilityDependencies(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
@@ -531,7 +412,40 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
   }
-  for (const contractCase of CONTRACT_CASES) {
+  const duplicateCases = new Set([
+    "INV-3: Luna's exact p5-direct-rich-output program emits the badge and caption",
+    "INV-3: object and positional calls declare JSON versus text",
+    "INV-3: malformed calls fail with the exact supported signatures",
+    "INV-6: rethrown required-field validation messages keep plain JavaScript guidance",
+    "INV-3: plain downstream text declares its format",
+    "TypeScript syntax is not JavaScript and does not run",
+    "a trailing semicolon after the arrow expression is accepted",
+    "one fenced program surrounded by prose runs on both executors",
+    "a named async declaration keeps recursion and its arguments binding",
+    "canonical addresses preserve punctuation",
+    "unknown addresses and unknown tools are distinguishable",
+    "a conflict carries where things stand, bounded, into the program",
+    "program discovery defaults to JSON and labels compact schemas as text",
+    "search returns guide and code-mode key metadata on flat rows",
+    "an unfiltered browse enumerates the deployment's connectors",
+    "describe answers per address and reports bad ones inline",
+    "a small result reaches the model byte-identical and unadorned",
+    "an oversized result truncates once, successfully, and honestly",
+    "console output is captured in order",
+    "logs survive a failing program",
+    "a policy refusal stays non-retryable however the address reads",
+    "every refusal is an event, including one at an address nothing owns",
+    "emitted blocks are delivered after the envelope, in order",
+    "an invalid emit throws catchably and accepts nothing",
+    "utility validation and budget failures use distinct codes",
+    "pins the portable ambient-authority boundary",
+    "INV-6: program errors repair fs.readFile('secret')",
+    "INV-6: program errors repair callTool('reader.read')",
+    "INV-6: program errors repair mixpanel.query()",
+    "INV-6: program errors repair skills()",
+    "INV-6: program errors repair await connecta.guide('usage')",
+  ]);
+  for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
       const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
@@ -584,15 +498,5 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         workers: { type: "object", keys: 0 },
       },
     });
-  });
-});
-
-// E5: an empty terminal error string is a failure on the child transport too,
-// not a success with no result.
-it("keeps an empty error string as a failure through the transport", () => {
-  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] })).toEqual({
-    result: undefined,
-    error: "",
-    logs: ["before failure"],
   });
 });

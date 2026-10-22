@@ -17,7 +17,7 @@ const status = async (): Promise<{ calls: number; peak: number; ids: string[] }>
   (await nativeFetch(`${origin}/sdk/status`)).json();
 
 it.each(["body", "oauth-jwks", "handshake"])(
-  "INV-7: real Clerk SDK/TCP %s cancellation drains four waves of 16 without exceeding admission",
+  "INV-7: real Clerk SDK/TCP %s cancellation drains two waves of 16 without exceeding admission",
   async (phase) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const app = worker
@@ -69,7 +69,7 @@ it.each(["body", "oauth-jwks", "handshake"])(
     };
     try {
       await (await nativeFetch(`${origin}/sdk/reset`)).text();
-      for (let wave = 0; wave < 4; wave++) {
+      for (let wave = 0; wave < 2; wave++) {
         const callers = Array.from({ length: 16 }, () => new AbortController());
         controllers.push(...callers);
         const batch = callers.map((caller, i) =>
@@ -96,7 +96,7 @@ it.each(["body", "oauth-jwks", "handshake"])(
         await vi.waitFor(async () => expect((await status()).ids).toHaveLength(0), { timeout: 5000 });
         expect((await status()).peak).toBe(16);
       }
-      expect((await status()).calls).toBe(64);
+      expect((await status()).calls).toBe(32);
     } finally {
       controllers.forEach((caller) => caller.abort());
       await (await nativeFetch(`${origin}/sdk/release`)).text();

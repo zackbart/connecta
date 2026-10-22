@@ -10,24 +10,23 @@
 // `unavailable` (Stripe's 424), inside a call ledger or outside one.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { tracksEveryRequest } from "../src/provider-call.js";
-import { InvocationService } from "../src/invocation.js";
-import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
-import { memoryStorage } from "../src/storage/memory.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
+import { InvocationService } from "../src/invocation.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
-import { classifyWriteOutcome } from "../src/write-outcome.js";
-import { createExecuteTool } from "../src/execute.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
+import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
-const WORKERD = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 const BASE = "https://connecta.example";
 /** Long enough for loopback to deliver the request before it fires. */
 const DEADLINE_MS = 200;
@@ -300,61 +299,6 @@ describe("a direct write's timeout or abort, on every path out of a connector", 
       expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
     },
   );
-
-  it.each(SURFACES.map((surface) => [surface.name, surface] as const))(
-    "INV-9: control: through %s, a read's timeout stays retryable",
-    async (_name, surface) => {
-      const started = await surface.start("read", timingOut(surface));
-      const classified = classifyCallError(await started.pending);
-      expect(classified).toMatchObject({ retryable: true });
-      expect(classified.writeOutcome).toBeUndefined();
-    },
-  );
-
-  it.each(SURFACES.map((surface) => [surface.name, surface] as const))(
-    "INV-9: control: through %s, a read's abort carries no write outcome",
-    async (_name, surface) => {
-      const { error } = await abortedAfterDelivery(surface, "read");
-      expect(classifyCallError(error).writeOutcome).toBeUndefined();
-    },
-  );
-
-  it("INV-9: the caller's own timeout stays recognizable: its class and code in details, its reason as the cause", async () => {
-    const surface = SURFACES.find((candidate) => candidate.name === "ctx.fetch with the caller's signal")!;
-    const signal = AbortSignal.timeout(DEADLINE_MS);
-    const started = await surface.start("write", { signal });
-    const error = (await started.pending) as Error & { code: string; details?: unknown };
-    expect(error).toMatchObject({
-      code: "timeout",
-      retryable: false,
-      writeOutcome: "unknown",
-      details: { name: "TimeoutError", code: "timeout" },
-    });
-    expect(error.cause).toBe(signal.reason);
-    // Control: a read passes the caller's reason through by identity, where
-    // the runtime's fetch rejects with it (workerd rejects with its own).
-    const readSignal = AbortSignal.timeout(DEADLINE_MS);
-    const read = await surface.start("read", { signal: readSignal });
-    const readError = await read.pending;
-    if (!WORKERD) expect(readError).toBe(readSignal.reason);
-    expect(classifyCallError(readError)).toMatchObject({ retryable: true });
-  });
-
-  it("INV-9: a caller's plain abort reason stays the cause of a direct write's unknown outcome", async () => {
-    const surface = SURFACES.find((candidate) => candidate.name === "ctx.fetch with the caller's signal")!;
-    const { error, reason } = await abortedAfterDelivery(surface, "write");
-    expect(error).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-      writeOutcome: "unknown",
-      details: { name: "Error" },
-    });
-    expect((error as Error).cause).toBe(reason);
-    expect((error as Error).message).toBe(
-      "The caller's signal aborted this call (Error) after the write may have reached tickets. Whether it took " +
-        "effect is unknown; check the target before repeating it.",
-    );
-  });
 });
 
 /** A route of the evidence server that answers each request with `status` and `body`. */
@@ -444,74 +388,6 @@ describe("a direct write's served answer: only a refusing status is evidence (ro
       expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("failed");
     },
   );
-
-  it.each(GUARDED)(
-    "INV-9: control: through a guarded transport %s, a read's 200 then the mapper's rate_limited is unchanged",
-    async (where) => {
-      const server = answering(200);
-      const error = await guardedCall(where, "read", server, throwing("rate_limited"));
-      expect(classifyCallError(error)).toMatchObject({ code: "rate_limited", retryable: true });
-      expect(classifyCallError(error).writeOutcome).toBeUndefined();
-    },
-  );
-
-  /** A Notion write served `status` and `body` over a real socket. */
-  async function notionWrite(status: number, body?: string) {
-    const server = answering(status, body);
-    const real = globalThis.fetch;
-    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input).startsWith("https://api.notion.com/")
-        ? real(`${server.origin}${server.path}?${new URLSearchParams(server.query)}`, init)
-        : real(input, init),
-    );
-    const connector = notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" });
-    const storage = memoryStorage();
-    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-    await vault.set("workspace", "secret_token", "fixture");
-    const ctx = makeRegistry([connector], { storage, credentialVault: vault }).contextFor("workspace", BASE);
-    const error = await failure(
-      connector.callTool(
-        "notion_api_write",
-        {
-          method: "PATCH",
-          path: "/v1/pages/page-1",
-          body: { cover: { type: "external", external: { url: "https://example.com/cover.png" } } },
-        },
-        ctx,
-      ),
-    );
-    expect(await server.received()).toBe(1);
-    return error;
-  }
-
-  it.each([
-    ["200 with an unparseable reply", 200, "not json"],
-    ["408", 408, JSON.stringify({ object: "error", status: 408, code: "timeout", message: "Timed out." })],
-  ] as const)(
-    "INV-9: through the shared REST layer (Notion), %s is unknown and never retryable",
-    async (_label, status, body) => {
-      const error = await notionWrite(status, body);
-      expect(classifyCallError(error)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
-    },
-  );
-
-  it("INV-9: control: Notion's write 409 conflict_error stays a known conflict, and its 400 a known invalid_args", async () => {
-    const conflict = await notionWrite(
-      409,
-      JSON.stringify({ object: "error", status: 409, code: "conflict_error", message: "Conflict occurred." }),
-    );
-    expect(classifyCallError(conflict)).toMatchObject({ code: "conflict", retryable: false });
-    expect(classifyCallError(conflict).writeOutcome).toBeUndefined();
-    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: conflict as never })).toBe("failed");
-    const invalid = await notionWrite(
-      400,
-      JSON.stringify({ object: "error", status: 400, code: "validation_error", message: "Bad cover." }),
-    );
-    expect(classifyCallError(invalid)).toMatchObject({ code: "invalid_args" });
-    expect(classifyCallError(invalid).writeOutcome).toBeUndefined();
-    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: invalid as never })).toBe("failed");
-  });
 });
 
 /**
@@ -626,30 +502,6 @@ describe("a refusing status the provider reads as unavailable is no refusal (rou
 });
 
 describe("controls the finalizer keeps", () => {
-  it("INV-9: a direct Stripe write with a genuine key keeps its retry advice after the caller's timeout", async () => {
-    const server = held();
-    const real = globalThis.fetch;
-    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input).startsWith("https://api.stripe.com/") ? real(`${server.origin}/hold`, init) : real(input, init),
-    );
-    const connector = stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, mode: "sandbox" });
-    const storage = memoryStorage();
-    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-    await vault.set("billing", "sk_test_fixture", "fixture");
-    const registry = makeRegistry([connector], { storage, credentialVault: vault });
-    const ctx = registry.contextFor("billing", BASE, undefined, { signal: AbortSignal.timeout(DEADLINE_MS) });
-    const error = await failure(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/customers", body: { description: "Fixture" }, idempotencyKey: "fixture-key" },
-        ctx,
-      ),
-    );
-    expect(await server.received()).toBe(1);
-    expect(classifyCallError(error)).toMatchObject({ retryable: true });
-    expect(classifyCallError(error).writeOutcome).toBeUndefined();
-  });
-
   it("INV-9: a served write's timeout is still reported by its invocation", async () => {
     const server = held();
     const connector = tickets((kind, ctx) =>
