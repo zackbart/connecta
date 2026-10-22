@@ -1,4 +1,4 @@
-import { operationContext, openRequest } from "../../runtime/call.js";
+import { operationContext, openRequest, settleOnClose } from "../../runtime/call.js";
 /** In-memory tokens and credential-bound login flights shared only inside one request. */
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -77,32 +77,33 @@ export function requestTokenCache(source: (ctx: ConnectorContext) => Promise<Tok
   }
 
   return {
-    async token(ctx: ConnectorContext, rejected?: string): Promise<string> {
-      ctx.signal?.throwIfAborted();
-      const auth = await source(ctx);
-      ctx.signal?.throwIfAborted();
-      const cached = tokens.get(auth.key);
-      if (cached && cached.accessToken !== rejected && cached.expiresAt > Date.now()) return cached.accessToken;
-      const scope = ctx.requestScope ?? ctx;
-      let perCredential = requests.get(scope);
-      if (!perCredential) {
-        perCredential = new Map();
-        requests.set(scope, perCredential);
-      }
-      let request = perCredential.get(auth.key);
-      if (!request) {
-        request = {};
-        perCredential.set(auth.key, request);
-      }
-      if (rejected !== undefined) {
-        // Keep the recovery outcome for the request, including failures. Later
-        // 401s can never turn this into a fresh-login loop.
-        request.recovery ??= start(auth, ctx);
-        return await follow(request.recovery, ctx.signal);
-      }
-      if (!request.initial || request.initial.settled || request.initial.controller.signal.aborted)
-        request.initial = start(auth, ctx);
-      return await follow(request.initial, ctx.signal);
+    token(ctx: ConnectorContext, rejected?: string): Promise<string> {
+      return settleOnClose(ctx, async (signal) => {
+        const auth = await source(deriveContext(ctx, { signal }));
+        signal.throwIfAborted();
+        const cached = tokens.get(auth.key);
+        if (cached && cached.accessToken !== rejected && cached.expiresAt > Date.now()) return cached.accessToken;
+        const scope = ctx.requestScope ?? ctx;
+        let perCredential = requests.get(scope);
+        if (!perCredential) {
+          perCredential = new Map();
+          requests.set(scope, perCredential);
+        }
+        let request = perCredential.get(auth.key);
+        if (!request) {
+          request = {};
+          perCredential.set(auth.key, request);
+        }
+        if (rejected !== undefined) {
+          // Keep the recovery outcome for the request, including failures. Later
+          // 401s can never turn this into a fresh-login loop.
+          request.recovery ??= start(auth, ctx);
+          return await follow(request.recovery, signal);
+        }
+        if (!request.initial || request.initial.settled || request.initial.controller.signal.aborted)
+          request.initial = start(auth, ctx);
+        return await follow(request.initial, signal);
+      });
     },
   };
 }

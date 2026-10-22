@@ -421,11 +421,12 @@ export function contextView(lease: CallLease, operation: ConnectorContext): Conn
     ...(operation.credential
       ? {
           credential: {
-            getAll: () => runEdge(values),
-            get: async (field = "value") => {
-              const all = await runEdge(values);
-              return all && Object.hasOwn(all, field) ? all[field]! : null;
-            },
+            getAll: () => settleOnClose(view, () => runEdge(values)),
+            get: (field = "value") =>
+              settleOnClose(view, async () => {
+                const all = await runEdge(values);
+                return all && Object.hasOwn(all, field) ? all[field]! : null;
+              }),
           },
         }
       : {}),
@@ -465,20 +466,19 @@ export function wrapViewCredentials(view: ConnectorContext): void {
   if (!view.credential || entry.credentialWrapped) return;
   entry.credentialWrapped = true;
   const access = view.credential;
-  const requestSignal = openRequest(entry.request).signal;
-  const read = <A>(work: () => Promise<A>): Promise<A> =>
-    runEdge(Effect.tryPromise({ try: work, catch: (error) => error }), { signal: requestSignal });
   view.credential = {
-    get: async (field) => {
-      const value = await read(() => access.get(field));
-      registerCredentialValues(viewSecrets(view), value === null ? null : { [field ?? "value"]: value });
-      return value;
-    },
-    getAll: async () => {
-      const values = await read(() => access.getAll());
-      registerCredentialValues(viewSecrets(view), values);
-      return values;
-    },
+    get: (field) =>
+      settleOnClose(view, async () => {
+        const value = await access.get(field);
+        registerCredentialValues(viewSecrets(view), value === null ? null : { [field ?? "value"]: value });
+        return value;
+      }),
+    getAll: () =>
+      settleOnClose(view, async () => {
+        const values = await access.getAll();
+        registerCredentialValues(viewSecrets(view), values);
+        return values;
+      }),
   };
 }
 /** Credentials for request-owned transports use the operation, never a closed call. */
@@ -564,8 +564,14 @@ export function callFromContext(
   return lease;
 }
 
+// An owner can revoke a wait without granting access to any context service.
+type CloseOwner = {
+  readonly requestScope?: object | undefined;
+  readonly signal?: AbortSignal | undefined;
+};
+
 /** Cancellation is request-owned for operations and auxiliaries, call-owned otherwise. */
-export function viewSignal(ctx: ConnectorContext, requestOwned = false): AbortSignal {
+export function viewSignal(ctx: CloseOwner, requestOwned = false): AbortSignal {
   const state = requestOf(views.get(ctx)?.request ?? ctx.requestScope ?? ctx);
   const request = state.controller.signal;
   // The original caller signal is distinct from the revocable call signal:
@@ -631,13 +637,19 @@ export function viewSignal(ctx: ConnectorContext, requestOwned = false): AbortSi
  * of this caller's wait once its claim has been submitted.
  */
 export async function settleOnClose<A>(
-  ctx: ConnectorContext,
+  ctx: CloseOwner,
   work: (signal: AbortSignal) => Promise<A>,
   requestOwned = false,
 ): Promise<A> {
+  const lease = views.get(ctx)?.call;
+  if (!requestOwned && lease?.closed()) throw Context.get(lease.services, Signal)?.reason ?? ended();
   const signal = viewSignal(ctx, requestOwned);
   if (signal.aborted) throw signal.reason;
-  const value = await runEdge(Effect.tryPromise({ try: () => work(signal), catch: (error) => error }), { signal });
+  // Enter synchronously after the guard, as the original Promise method did:
+  // shared-session waiter accounting and claim ownership precede cancellation.
+  const pending = work(signal);
+  void pending.catch(() => {});
+  const value = await runEdge(Effect.tryPromise({ try: () => pending, catch: (error) => error }), { signal });
   const current = viewSignal(ctx, requestOwned);
   if (current.aborted) throw current.reason;
   return value;
@@ -652,7 +664,7 @@ export function duringViewCall<A>(
   return settleOnClose(ctx, work, requestOwned);
 }
 
-export function callerSignal(view: ConnectorContext): AbortSignal | undefined {
+export function callerSignal(view: CloseOwner): AbortSignal | undefined {
   const source = recordedService(view, SourceSignal);
   return source ? source.signal : view.signal;
 }

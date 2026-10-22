@@ -23,6 +23,7 @@ import {
   callFromContext,
   contextView,
   viewLease,
+  settleOnClose,
 } from "./runtime/call.js";
 import { callClassification } from "./call-classification.js";
 import { ConnectorCallError } from "./errors.js";
@@ -293,18 +294,27 @@ export function providerFetch(
   auxiliary: boolean,
   send: typeof fetch,
 ): typeof fetch {
-  return async (input, init) => {
-    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    const request = providerRequest(ctx, auxiliary, provider, { method });
-    dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    const signals = [ctx.signal, init?.signal ?? (input instanceof Request ? input.signal : undefined)].filter(
-      (signal): signal is AbortSignal => signal !== undefined && signal !== null,
+  return (input, init) =>
+    settleOnClose(
+      ctx,
+      async (signal) => {
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        const request = providerRequest(ctx, auxiliary, provider, { method });
+        dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        const signals = [signal, init?.signal ?? (input instanceof Request ? input.signal : undefined)].filter(
+          (signal): signal is AbortSignal => signal !== undefined && signal !== null,
+        );
+        const sent = signals.length ? { ...init, signal: AbortSignal.any(signals) } : init;
+        const response = await send(input, sent);
+        recordProviderResponse(request, response.status);
+        if (signal.aborted) {
+          void response.body?.cancel().catch(() => {});
+          throw signal.reason;
+        }
+        return response;
+      },
+      auxiliary,
     );
-    const sent = signals.length ? { ...init, signal: AbortSignal.any(signals) } : init;
-    const response = await send(input, sent);
-    recordProviderResponse(request, response.status);
-    return response;
-  };
 }
 
 /** Whether an invocation opened the logical call `ctx` belongs to; it then settles Q8 itself. */

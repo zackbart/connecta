@@ -1,6 +1,6 @@
 import { originalCallIdentity } from "../provider-call-facts.js";
 import { Effect } from "effect";
-import { ActiveCall, Operation, contextView, type CallServices } from "./call.js";
+import { ActiveCall, Operation, contextView, settleOnClose, type CallServices } from "./call.js";
 import type { Connector } from "../types.js";
 type CallTool = Connector["callTool"];
 type Entry = (
@@ -20,7 +20,7 @@ export function registerCallEntry(connector: Connector, core: CallTool): void {
         const services = yield* Effect.context<CallServices | ActiveCall | Operation>();
         const view = contextView({ ...lease, services }, operation);
         return yield* Effect.tryPromise({
-          try: () => Promise.resolve(core(name, args, view, options)),
+          try: () => settleOnClose(view, () => Promise.resolve(core(name, args, view, options))),
           catch: (error) => error,
         });
       }),
