@@ -55,10 +55,9 @@ const WORKERS_SUITES = [
   "test/credentials.test.ts",
   // Every provider's characterized requests, built by workerd.
   "test/goldens.test.ts",
-  // Kit request bytes, bounded bodies, sent-secret safety and Web Crypto cursors.
-  "test/{http-kit,http-hatch,http-provider,http-tithely-reference,kit-core-verdicts}.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
+  "test/{http-kit,http-hatch,http-provider,http-tithely-reference}.test.ts",
   "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
 ];
 

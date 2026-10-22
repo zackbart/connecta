@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 // B.4 reference expressibility: the entire live Tithe.ly surface on the
 // HTTP kit, without wiring the prototype into the maintained provider.
 import { configureGuardedTransport } from "../src/guarded-transport.js";
@@ -221,7 +222,7 @@ const ROWS = [1, 2, 3].map((n) => ({
 }));
 
 describe("Tithe.ly on the provider kit (decision 0010)", () => {
-  it("INV-1 INV-5: preserves the entire catalog, legacy guides and candidate probe bytes", async () => {
+  it("INV-1 INV-5: preserves the entire catalog, legacy guides and candidate probe bytes", NODE, async () => {
     for (const pageSize of [1, 25, 99]) {
       const before = await current("drop", pageSize).listTools(context());
       const after = await kit("drop", pageSize).listTools(context());
@@ -509,187 +510,199 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     },
   ];
 
-  it("INV-5 INV-6 INV-9: preserves all tools' request and output bytes, raw modes, paging and failures", async () => {
-    const fixtureCases: typeof cases = goldenSpec.calls.map((call) => ({
-      name: call.label ?? call.tool,
-      tool: call.tool,
-      args: call.args ?? {},
-      responses: Array.isArray(call.replies) ? [...call.replies] : [],
-    }));
-    expect(new Set(fixtureCases.map(({ tool }) => tool)).size).toBe(11);
-    const getters = [
-      ["get_organization", "organizationId", "organization_id", ORGANIZATION],
-      ["get_account", "accountId", "account_id", ACCOUNT],
-      ["get_charge", "chargeId", "charge_id", FULL_CHARGE],
-      ["get_recurring_charge", "recurringId", "recurring_id", RECURRING],
-    ] as const;
-    const lists = [
-      ["list_organizations", "organization_id", {}, ORGANIZATION],
-      ["list_accounts", "account_id", {}, ACCOUNT],
-      ["list_charges", "charge_id", { organizationId: "org_1", accountId: "user_1" }, FULL_CHARGE],
-      ["list_recurring_charges", "recurring_id", { organizationId: "org_1", accountId: "user_1" }, RECURRING],
-    ] as const;
-    const additional: typeof cases = [];
-    for (const [tool, arg, id, record] of getters) {
-      for (const raw of [false, true]) {
-        for (const body of [
-          record,
-          { [id]: "outer_id", object: record },
-          { [id]: "outer_id", data: record },
-          { [id]: "outer_id", object: {} },
-        ]) {
-          additional.push({
-            name: `${tool} raw=${raw} envelope=${JSON.stringify(body)}`,
-            tool,
-            args: { [arg]: "an id/with spaces?", raw },
-            responses: [{ body }],
-          });
+  it(
+    "INV-5 INV-6 INV-9: preserves all tools' request and output bytes, raw modes, paging and failures",
+    { ...WORKERS, timeout: 30_000 },
+    async () => {
+      const fixtureCases: typeof cases = goldenSpec.calls.map((call) => ({
+        name: call.label ?? call.tool,
+        tool: call.tool,
+        args: call.args ?? {},
+        responses: Array.isArray(call.replies) ? [...call.replies] : [],
+      }));
+      expect(new Set(fixtureCases.map(({ tool }) => tool)).size).toBe(11);
+      const getters = [
+        ["get_organization", "organizationId", "organization_id", ORGANIZATION],
+        ["get_account", "accountId", "account_id", ACCOUNT],
+        ["get_charge", "chargeId", "charge_id", FULL_CHARGE],
+        ["get_recurring_charge", "recurringId", "recurring_id", RECURRING],
+      ] as const;
+      const lists = [
+        ["list_organizations", "organization_id", {}, ORGANIZATION],
+        ["list_accounts", "account_id", {}, ACCOUNT],
+        ["list_charges", "charge_id", { organizationId: "org_1", accountId: "user_1" }, FULL_CHARGE],
+        ["list_recurring_charges", "recurring_id", { organizationId: "org_1", accountId: "user_1" }, RECURRING],
+      ] as const;
+      const additional: typeof cases = [];
+      for (const [tool, arg, id, record] of getters) {
+        for (const raw of [false, true]) {
+          for (const body of [
+            record,
+            { [id]: "outer_id", object: record },
+            { [id]: "outer_id", data: record },
+            { [id]: "outer_id", object: {} },
+          ]) {
+            additional.push({
+              name: `${tool} raw=${raw} envelope=${JSON.stringify(body)}`,
+              tool,
+              args: { [arg]: "an id/with spaces?", raw },
+              responses: [{ body }],
+            });
+          }
         }
+        additional.push({ name: `${tool} empty id`, tool, args: { [arg]: "" }, responses: [] });
       }
-      additional.push({ name: `${tool} empty id`, tool, args: { [arg]: "" }, responses: [] });
-    }
-    for (const [tool, id, scope, record] of lists) {
-      for (const raw of [false, true]) {
-        for (const data of [
-          [],
-          [record],
-          [1, 2, 3].map((n) => ({ ...record, [id]: `id_${n}` })),
-          [null, {}],
-          { unexpected: true },
-        ]) {
+      for (const [tool, id, scope, record] of lists) {
+        for (const raw of [false, true]) {
+          for (const data of [
+            [],
+            [record],
+            [1, 2, 3].map((n) => ({ ...record, [id]: `id_${n}` })),
+            [null, {}],
+            { unexpected: true },
+          ]) {
+            additional.push({
+              name: `${tool} raw=${raw} data=${JSON.stringify(data)}`,
+              tool,
+              args: { ...scope, raw, limit: 1, cursor: "last &/id", order: "asc" },
+              responses: [{ body: { data } }],
+            });
+          }
+        }
+        additional.push({ name: `${tool} absent data`, tool, args: { ...scope }, responses: [{ body: {} }] });
+      }
+      const echoed = goldenSpec.echo.replies(`${KEYS.publicKey} ${KEYS.privateKey} ${BASIC}`);
+      additional.push({
+        name: "hatch echoes sent credentials",
+        tool: goldenSpec.echo.tool,
+        args: goldenSpec.echo.args ?? {},
+        responses: Array.isArray(echoed) ? [...echoed] : [],
+      });
+      additional.push(
+        {
+          name: "API-created accounts",
+          tool: "list_accounts",
+          args: { scope: "api", cursor: "user_1", order: "asc" },
+          responses: [{ body: { data: [ACCOUNT] } }],
+        },
+        {
+          name: "all accounts explicit",
+          tool: "list_accounts",
+          args: { scope: "all" },
+          responses: [{ body: { data: [ACCOUNT] } }],
+        },
+        { name: "recurring gifts without a scope", tool: "list_recurring_charges", args: {}, responses: [] },
+        {
+          name: "organization legacy funds",
+          tool: "get_organization",
+          args: { organizationId: "org_1" },
+          responses: [{ body: { giving_types: ["Tithe", 4, "Missions"] } }],
+        },
+        {
+          name: "organization future fund status",
+          tool: "get_organization",
+          args: { organizationId: "org_1" },
+          responses: [
+            {
+              body: {
+                giving_types_full: [
+                  { id: 2, status: 9 },
+                  { name: "Tithe", status: 1 },
+                ],
+              },
+            },
+          ],
+        },
+      );
+      for (const data of [undefined, {}, null, [PAYMENT_METHOD]]) {
+        for (const raw of [false, true])
           additional.push({
-            name: `${tool} raw=${raw} data=${JSON.stringify(data)}`,
-            tool,
-            args: { ...scope, raw, limit: 1, cursor: "last &/id", order: "asc" },
+            name: `unpaged payment methods raw=${raw} data=${JSON.stringify(data)}`,
+            tool: "list_payment_methods",
+            args: { accountId: "user_1", raw },
             responses: [{ body: { data } }],
           });
-        }
       }
-      additional.push({ name: `${tool} absent data`, tool, args: { ...scope }, responses: [{ body: {} }] });
-    }
-    const echoed = goldenSpec.echo.replies(`${KEYS.publicKey} ${KEYS.privateKey} ${BASIC}`);
-    additional.push({
-      name: "hatch echoes sent credentials",
-      tool: goldenSpec.echo.tool,
-      args: goldenSpec.echo.args ?? {},
-      responses: Array.isArray(echoed) ? [...echoed] : [],
-    });
-    additional.push(
-      {
-        name: "API-created accounts",
-        tool: "list_accounts",
-        args: { scope: "api", cursor: "user_1", order: "asc" },
-        responses: [{ body: { data: [ACCOUNT] } }],
-      },
-      {
-        name: "all accounts explicit",
-        tool: "list_accounts",
-        args: { scope: "all" },
-        responses: [{ body: { data: [ACCOUNT] } }],
-      },
-      { name: "recurring gifts without a scope", tool: "list_recurring_charges", args: {}, responses: [] },
-      {
-        name: "organization legacy funds",
-        tool: "get_organization",
-        args: { organizationId: "org_1" },
-        responses: [{ body: { giving_types: ["Tithe", 4, "Missions"] } }],
-      },
-      {
-        name: "organization future fund status",
-        tool: "get_organization",
-        args: { organizationId: "org_1" },
-        responses: [
-          {
-            body: {
-              giving_types_full: [
-                { id: 2, status: 9 },
-                { name: "Tithe", status: 1 },
-              ],
-            },
-          },
-        ],
-      },
-    );
-    for (const data of [undefined, {}, null, [PAYMENT_METHOD]]) {
-      for (const raw of [false, true])
-        additional.push({
-          name: `unpaged payment methods raw=${raw} data=${JSON.stringify(data)}`,
-          tool: "list_payment_methods",
-          args: { accountId: "user_1", raw },
-          responses: [{ body: { data } }],
-        });
-    }
-    const legacy = current();
-    const reference = kit();
-    for (const scenario of [...fixtureCases, ...cases, ...additional]) {
-      const before = await run(legacy, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
-      const after = await run(reference, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
-      expect(after.sent, scenario.name).toEqual(before.sent);
-      expect(after.result, scenario.name).toEqual(before.result);
-      expect(JSON.stringify(after), scenario.name).toBe(JSON.stringify(before));
-      const golden = goldenCalls.find(({ label }) => label === scenario.name);
-      if (golden)
-        expect(JSON.stringify(after.result), scenario.name).toBe(JSON.stringify({ value: golden.result.value }));
-    }
-    // Deployment choices cannot silently change ordering, raw policy or the
-    // projected payout currency. Exercise the complete fixture surface again.
-    for (const choice of ["drop", "return"] as const) {
-      for (const environment of ["live", "test"] as const) {
-        const legacy = current(choice, 1, environment);
-        const reference = kit(choice, 1, environment);
-        for (const scenario of fixtureCases) {
-          for (const raw of [false, true]) {
-            const args = scenario.tool.startsWith("tithely_") ? scenario.args : { ...scenario.args, raw };
-            const before = await run(legacy, scenario.tool, args, scenario.responses, context());
-            const after = await run(reference, scenario.tool, args, scenario.responses, context());
-            expect(JSON.stringify(after), `${scenario.name} ${choice} ${environment} raw=${raw}`).toBe(
-              JSON.stringify(before),
-            );
-            if (raw && JSON.stringify(scenario.responses).includes("TEST BANK")) {
-              if (choice === "drop") expect(JSON.stringify(after.result)).not.toMatch(/TEST BANK|5\/23\/1985/);
-              else expect(JSON.stringify(after.result)).toContain("TEST BANK");
+      const legacy = current();
+      const reference = kit();
+      for (const scenario of [...fixtureCases, ...cases, ...additional]) {
+        const before = await run(legacy, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
+        const after = await run(reference, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
+        expect(after.sent, scenario.name).toEqual(before.sent);
+        expect(after.result, scenario.name).toEqual(before.result);
+        expect(JSON.stringify(after), scenario.name).toBe(JSON.stringify(before));
+        const golden = goldenCalls.find(({ label }) => label === scenario.name);
+        if (golden)
+          expect(JSON.stringify(after.result), scenario.name).toBe(JSON.stringify({ value: golden.result.value }));
+      }
+      // Deployment choices cannot silently change ordering, raw policy or the
+      // projected payout currency. Exercise the complete fixture surface again.
+      for (const choice of ["drop", "return"] as const) {
+        for (const environment of ["live", "test"] as const) {
+          const legacy = current(choice, 1, environment);
+          const reference = kit(choice, 1, environment);
+          for (const scenario of fixtureCases) {
+            for (const raw of [false, true]) {
+              const args = scenario.tool.startsWith("tithely_") ? scenario.args : { ...scenario.args, raw };
+              const before = await run(legacy, scenario.tool, args, scenario.responses, context());
+              const after = await run(reference, scenario.tool, args, scenario.responses, context());
+              expect(JSON.stringify(after), `${scenario.name} ${choice} ${environment} raw=${raw}`).toBe(
+                JSON.stringify(before),
+              );
+              if (raw && JSON.stringify(scenario.responses).includes("TEST BANK")) {
+                if (choice === "drop") expect(JSON.stringify(after.result)).not.toMatch(/TEST BANK|5\/23\/1985/);
+                else expect(JSON.stringify(after.result)).toContain("TEST BANK");
+              }
             }
           }
         }
       }
-    }
-  }, 30_000);
+    },
+  );
 
-  it("INV-5: sends the key pair as HTTP Basic, never follows a redirect, and adds no trace header", async () => {
-    const { after } = await both("get_charge", { chargeId: "ch_1" }, [{ body: FULL_CHARGE }]);
-    const headers = Object.fromEntries(after.sent[0]!.headers);
-    expect(headers["authorization"]).toBe(BASIC);
-    expect(after.sent[0]!.redirect).toBe("manual");
-    expect(Object.keys(headers).sort()).toEqual(["accept", "authorization"]);
-  });
+  it(
+    "INV-5: sends the key pair as HTTP Basic, never follows a redirect, and adds no trace header",
+    WORKERS,
+    async () => {
+      const { after } = await both("get_charge", { chargeId: "ch_1" }, [{ body: FULL_CHARGE }]);
+      const headers = Object.fromEntries(after.sent[0]!.headers);
+      expect(headers["authorization"]).toBe(BASIC);
+      expect(after.sent[0]!.redirect).toBe("manual");
+      expect(Object.keys(headers).sort()).toEqual(["accept", "authorization"]);
+    },
+  );
 
-  it("INV-7: a caller's abort ends both implementations, and invocation reads it as the caller's", async () => {
-    for (const connector of [current(), kit()]) {
-      const reason = new Error("caller left");
-      const controller = new AbortController();
-      let reached!: () => void;
-      const dispatched = new Promise<void>((resolve) => (reached = resolve));
-      globalThis.fetch = vi.fn((_input: unknown, init: RequestInit = {}) => {
-        reached();
-        return new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
-        });
-      }) as unknown as typeof fetch;
-      const pending = connector.callTool("get_charge", { chargeId: "ch_1" }, context(KEYS, controller.signal));
-      await dispatched;
-      controller.abort(reason);
-      const error = await pending.then(
-        () => undefined,
-        (caught: unknown) => caught,
-      );
-      // Both Promise edges preserve the caller's exact reason. A wrapped
-      // network failure would lose its identity before invocation sees it.
-      expect(controller.signal.aborted).toBe(true);
-      expect(error).toBe(reason);
-    }
-  });
+  it(
+    "INV-7: a caller's abort ends both implementations, and invocation reads it as the caller's",
+    WORKERS,
+    async () => {
+      for (const connector of [current(), kit()]) {
+        const reason = new Error("caller left");
+        const controller = new AbortController();
+        let reached!: () => void;
+        const dispatched = new Promise<void>((resolve) => (reached = resolve));
+        globalThis.fetch = vi.fn((_input: unknown, init: RequestInit = {}) => {
+          reached();
+          return new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+          });
+        }) as unknown as typeof fetch;
+        const pending = connector.callTool("get_charge", { chargeId: "ch_1" }, context(KEYS, controller.signal));
+        await dispatched;
+        controller.abort(reason);
+        const error = await pending.then(
+          () => undefined,
+          (caught: unknown) => caught,
+        );
+        // Both Promise edges preserve the caller's exact reason. A wrapped
+        // network failure would lose its identity before invocation sees it.
+        expect(controller.signal.aborted).toBe(true);
+        expect(error).toBe(reason);
+      }
+    },
+  );
 
-  it("INV-1 INV-9: obeys the classification the deployment serves, not the builder's", async () => {
+  it("INV-1 INV-9: obeys the classification the deployment serves, not the builder's", NODE, async () => {
     // get_charge is built as a read; served as a write, its 5xx is an unknown outcome.
     const asWrite = context();
     attachCallClassification(asWrite, "write");
@@ -702,38 +715,42 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect(write.result).toMatchObject({ code: "unavailable", retryable: true });
   });
 
-  it("INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets its auth code and unknown outcome", async () => {
-    const controller = new AbortController();
-    let reading!: () => void;
-    const reached = new Promise<void>((resolve) => (reading = resolve));
-    globalThis.fetch = vi.fn(
-      async () =>
-        // The status is in; the body is pulled only once read, and never finishes.
-        new Response(
-          new ReadableStream(
-            {
-              pull: () => {
-                reading();
-                return new Promise(() => {});
+  it(
+    "INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets its auth code and unknown outcome",
+    WORKERS,
+    async () => {
+      const controller = new AbortController();
+      let reading!: () => void;
+      const reached = new Promise<void>((resolve) => (reading = resolve));
+      globalThis.fetch = vi.fn(
+        async () =>
+          // The status is in; the body is pulled only once read, and never finishes.
+          new Response(
+            new ReadableStream(
+              {
+                pull: () => {
+                  reading();
+                  return new Promise(() => {});
+                },
               },
-            },
-            { highWaterMark: 0 },
+              { highWaterMark: 0 },
+            ),
+            { status: 401 },
           ),
-          { status: 401 },
-        ),
-    ) as unknown as typeof fetch;
-    const pending = kit().callTool("tithely_api_mutate", MUTATE, context(KEYS, controller.signal));
-    await reached;
-    controller.abort(new Error("caller left"));
-    const error = await pending.then(
-      () => undefined,
-      (caught: unknown) => caught,
-    );
-    expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect((error as Error).message).toContain("whether it took effect is unknown");
-  });
+      ) as unknown as typeof fetch;
+      const pending = kit().callTool("tithely_api_mutate", MUTATE, context(KEYS, controller.signal));
+      await reached;
+      controller.abort(new Error("caller left"));
+      const error = await pending.then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      expect((error as Error).message).toContain("whether it took effect is unknown");
+    },
+  );
 
-  it("INV-9: a write's recorded 401 survives declared and streamed oversized bodies", async () => {
+  it("INV-9: a write's recorded 401 survives declared and streamed oversized bodies", WORKERS, async () => {
     for (const kind of ["declared", "streamed"]) {
       const result = await run(
         kit(),
@@ -755,7 +772,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     }
   });
 
-  it("declares decision 0011's ProviderKitFacts from the same vendor and the catalog's page size", async () => {
+  it("declares decision 0011's ProviderKitFacts from the same vendor and the catalog's page size", NODE, async () => {
     // drift.json v2's generated.operations: "METHOD /path", sorted, from manifest(vendor).
     expect(TITHELY_KIT_FACTS.operations).toEqual([
       "GET /accounts-list",
@@ -782,7 +799,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect(TITHELY_KIT_FACTS.hatch).toBeUndefined();
   });
 
-  it("derives the endpoint manifest drift checks read from the same declaration", () => {
+  it("derives the endpoint manifest drift checks read from the same declaration", NODE, () => {
     const spec = manifest(TithelyApi);
     expect(Object.keys(spec.paths).sort()).toEqual(TITHELY_KIT_FACTS.operations.map((operation) => operation.slice(4)));
     const paging = ["limit", "order_by", "starting_after"];

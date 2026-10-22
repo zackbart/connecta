@@ -2085,6 +2085,9 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. No live provider migrates in B.4;
 the complete Tithe.ly reference remains separate until B.5 proves its goldens.
+The helper derives connection metadata and probe messages from validated
+options and accepts complete legacy usage guides. Candidate checks can refuse
+before authentication while preserving the provider's exact diagnostic.
 
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection

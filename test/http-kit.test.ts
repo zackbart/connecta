@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 // The Effect provider kit (decision 0010, src/http/): the guarded
 // client's confinement and ceilings, the error contract and its bounded
@@ -641,11 +642,11 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
   ],
 ];
 
-describe("failure mapping (decision 0010, B.3)", () => {
+describe("failure mapping (decision 0010, B.3)", NODE, () => {
   it.each(MAPPING_RULES)("%s", (_name, check) => check());
 });
 
-describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
+describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
   it("renders closed inputs and open outputs in the hand-written spelling", () => {
     const input = Schema.Struct({
       when: Schema.optionalKey(
@@ -778,7 +779,7 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
 });
 
 describe("paging (decision 0010, B.4)", () => {
-  it("binds a cursor to its tool and arguments and refuses one from another call", async () => {
+  it("binds a cursor to its tool and arguments and refuses one from another call", WORKERS, async () => {
     const args = { organizationId: "org_1", order: "asc", limit: 5 };
     const token = await runEdge(boundCursor.encode("list_charges", args, "ch_2"));
     expect(await runEdge(boundCursor.decode("list_charges", { ...args, limit: 9, cursor: token }, token))).toBe("ch_2");
@@ -788,7 +789,7 @@ describe("paging (decision 0010, B.4)", () => {
     expect(junk._tag).toBe("Failure");
   });
 
-  it("streams every row across pages with one cursor rule", async () => {
+  it("streams every row across pages with one cursor rule", NODE, async () => {
     const pages: Record<string, { rows: number[]; next: string | null }> = {
       start: { rows: [1, 2], next: "a" },
       a: { rows: [3], next: "b" },
@@ -877,90 +878,94 @@ describe("paging (decision 0010, B.4)", () => {
 });
 
 describe("kit construction (decision 0010, B.4)", () => {
-  it("INV-1 INV-9 INV-11: declares every method and builder, requires read reviews, and binds list cursors", async () => {
-    const declared = vendor(
-      "Methods",
-      get("get", "/get"),
-      head("head", "/head"),
-      post("post", "/post"),
-      put("put", "/put"),
-      patch("patch", "/patch"),
-      del("delete", "/delete"),
-    );
-    expect(operations(declared)).toEqual([
-      "DELETE /delete",
-      "GET /get",
-      "HEAD /head",
-      "PATCH /patch",
-      "POST /post",
-      "PUT /put",
-    ]);
-    expect(Object.keys(manifest(declared).paths)).toHaveLength(6);
-    expect(() => vendor("duplicate", get("same", "/a"), post("same", "/b"))).toThrow(/unique/);
-    const connection = acme();
-    const spec = {
-      name: "sample",
-      description: "Sample",
-      input: Schema.Struct({}),
-      output: Schema.Unknown,
-      run: () => Effect.succeed(null),
-    };
-    for (const [build, annotations] of [
-      [() => read(connection, spec), { readOnlyHint: true }],
-      [() => getTool(connection, spec), { readOnlyHint: true }],
-      [() => write(connection, { ...spec, destructive: false }), { readOnlyHint: false }],
-      [() => write(connection, { ...spec, destructive: true }), { readOnlyHint: false, destructiveHint: true }],
-      [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
-    ] as const)
-      expect(build().annotations).toEqual(annotations);
-    for (const review of [undefined, "A documented read-only POST."]) {
-      const tool = read(connection, {
-        ...spec,
-        ...(review ? { review } : {}),
-        run: () =>
-          connection
-            .sendPath({ method: "POST", path: "/query", template: "/query" })
-            .pipe(Effect.map(({ data }) => data)),
-      });
-      const connector = tracksEveryRequest(apiConnector("acme", { tools: [tool] }));
-      sent = [];
-      const result = await connector.callTool("sample", {}, context()).then(
-        (value) => ({ value }),
-        (error) => ({ error }),
+  it(
+    "INV-1 INV-9 INV-11: declares every method and builder, requires read reviews, and binds list cursors",
+    WORKERS,
+    async () => {
+      const declared = vendor(
+        "Methods",
+        get("get", "/get"),
+        head("head", "/head"),
+        post("post", "/post"),
+        put("put", "/put"),
+        patch("patch", "/patch"),
+        del("delete", "/delete"),
       );
-      expect(sent).toHaveLength(review ? 1 : 0);
-      if (!review) {
-        expect(result).toHaveProperty("error");
-        expect(String((result as { error: unknown }).error)).not.toMatch(/requires a review/);
-      }
-    }
-    for (const mode of ["plain", "bound"] as const) {
-      const cursors: Array<string | undefined> = [];
-      const tool = list(connection, {
-        name: "list_items",
-        description: "Items",
-        key: "items",
-        row: Schema.String,
-        cursor: mode,
-        input: Schema.Struct({ owner: Schema.String, cursor: Schema.optionalKey(Schema.String) }),
-        page: (_args, cursor) => {
-          cursors.push(cursor);
-          return Effect.succeed({ rows: ["safe"], page: { hasMore: true, nextCursor: "next" } });
-        },
-      });
-      const connector = apiConnector("acme", { tools: [tool] });
-      const first = (await connector.callTool("list_items", { owner: "alice" }, context())) as {
-        page: { nextCursor: string };
+      expect(operations(declared)).toEqual([
+        "DELETE /delete",
+        "GET /get",
+        "HEAD /head",
+        "PATCH /patch",
+        "POST /post",
+        "PUT /put",
+      ]);
+      expect(Object.keys(manifest(declared).paths)).toHaveLength(6);
+      expect(() => vendor("duplicate", get("same", "/a"), post("same", "/b"))).toThrow(/unique/);
+      const connection = acme();
+      const spec = {
+        name: "sample",
+        description: "Sample",
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        run: () => Effect.succeed(null),
       };
-      await connector.callTool("list_items", { owner: "alice", cursor: first.page.nextCursor }, context());
-      expect(cursors).toEqual([undefined, "next"]);
-      if (mode === "bound")
-        await expect(
-          connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, context()),
-        ).rejects.toMatchObject({ code: "invalid_args" });
-      else expect(first.page.nextCursor).toBe("next");
-    }
-  });
+      for (const [build, annotations] of [
+        [() => read(connection, spec), { readOnlyHint: true }],
+        [() => getTool(connection, spec), { readOnlyHint: true }],
+        [() => write(connection, { ...spec, destructive: false }), { readOnlyHint: false }],
+        [() => write(connection, { ...spec, destructive: true }), { readOnlyHint: false, destructiveHint: true }],
+        [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
+      ] as const)
+        expect(build().annotations).toEqual(annotations);
+      for (const review of [undefined, "A documented read-only POST."]) {
+        const tool = read(connection, {
+          ...spec,
+          ...(review ? { review } : {}),
+          run: () =>
+            connection
+              .sendPath({ method: "POST", path: "/query", template: "/query" })
+              .pipe(Effect.map(({ data }) => data)),
+        });
+        const connector = tracksEveryRequest(apiConnector("acme", { tools: [tool] }));
+        sent = [];
+        const result = await connector.callTool("sample", {}, context()).then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        );
+        expect(sent).toHaveLength(review ? 1 : 0);
+        if (!review) {
+          expect(result).toHaveProperty("error");
+          expect(String((result as { error: unknown }).error)).not.toMatch(/requires a review/);
+        }
+      }
+      for (const mode of ["plain", "bound"] as const) {
+        const cursors: Array<string | undefined> = [];
+        const tool = list(connection, {
+          name: "list_items",
+          description: "Items",
+          key: "items",
+          row: Schema.String,
+          cursor: mode,
+          input: Schema.Struct({ owner: Schema.String, cursor: Schema.optionalKey(Schema.String) }),
+          page: (_args, cursor) => {
+            cursors.push(cursor);
+            return Effect.succeed({ rows: ["safe"], page: { hasMore: true, nextCursor: "next" } });
+          },
+        });
+        const connector = apiConnector("acme", { tools: [tool] });
+        const first = (await connector.callTool("list_items", { owner: "alice" }, context())) as {
+          page: { nextCursor: string };
+        };
+        await connector.callTool("list_items", { owner: "alice", cursor: first.page.nextCursor }, context());
+        expect(cursors).toEqual([undefined, "next"]);
+        if (mode === "bound")
+          await expect(
+            connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, context()),
+          ).rejects.toMatchObject({ code: "invalid_args" });
+        else expect(first.page.nextCursor).toBe("next");
+      }
+    },
+  );
 });
 
 // --- The value-safety boundary (B.4) -----------------------------------------------
@@ -1001,7 +1006,7 @@ function acme(
   }) as Connection;
 }
 
-describe("value-safety boundary (decision 0010, B.4)", () => {
+describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {
     const rows = [1, 2, 3].map((n) => ({ token: `sk_live_secret_${n}`, owner: { email: "alice@example.com" }, n }));
     answers.push(() => Response.json(rows));
@@ -1226,7 +1231,7 @@ function lease(credentials: () => Promise<Record<string, string> | null> = async
   return { call, charged, recorded };
 }
 
-describe("call services (decision 0010, B.1)", () => {
+describe("call services (decision 0010, B.1)", NODE, () => {
   it("INV-4 INV-9: gives kit code the admitted caller and the recovery record without the context object", async () => {
     const ctx = context();
     attachCaller(ctx, alice);
@@ -1446,7 +1451,7 @@ describe("call services (decision 0010, B.1)", () => {
 
 // --- OAuth refresh-once and the served classification (B.2, B.3) -------------------------
 
-describe("OAuth refresh-once (decision 0010, B.2)", () => {
+describe("OAuth refresh-once (decision 0010, B.2)", NODE, () => {
   const REJECTED = new ConnectorCallError("downstream_oauth_required", "Acme requires authorization.");
 
   function grant(renewal?: (stale: string) => Effect.Effect<string, HttpFailure>) {
@@ -1644,30 +1649,34 @@ const lost = (code: string) => () => {
 };
 
 describe("one dispatch per logical write (decision 0010, B.2)", () => {
-  it("INV-9: atomically reserves before async authentication for concurrent Send and direct client calls", async () => {
-    for (const direct of [false, true]) {
-      sent = [];
-      let auth = 0;
-      const authenticate = Effect.promise(async () => {
-        await Promise.resolve();
-        auth++;
-        return {};
-      });
-      const request: Effect.Effect<unknown, HttpFailure, CallServices> = direct
-        ? guardedClient({ ...OPTIONS, authenticate }).client.execute(HttpClientRequest.post("/items"))
-        : acme({ authenticate }).sendPath(POST_ITEMS, { step: "write" });
-      const results = await runEdge(
-        Effect.all([request.pipe(Effect.result), request.pipe(Effect.result)], {
-          concurrency: "unbounded",
-        }).pipe(Effect.provideContext(services("write"))),
-      );
-      expect(results.map((result) => result._tag).sort()).toEqual(["Failure", "Success"]);
-      expect(sent).toHaveLength(1);
-      expect(auth).toBe(1);
-    }
-  });
+  it(
+    "INV-9: atomically reserves before async authentication for concurrent Send and direct client calls",
+    NODE,
+    async () => {
+      for (const direct of [false, true]) {
+        sent = [];
+        let auth = 0;
+        const authenticate = Effect.promise(async () => {
+          await Promise.resolve();
+          auth++;
+          return {};
+        });
+        const request: Effect.Effect<unknown, HttpFailure, CallServices> = direct
+          ? guardedClient({ ...OPTIONS, authenticate }).client.execute(HttpClientRequest.post("/items"))
+          : acme({ authenticate }).sendPath(POST_ITEMS, { step: "write" });
+        const results = await runEdge(
+          Effect.all([request.pipe(Effect.result), request.pipe(Effect.result)], {
+            concurrency: "unbounded",
+          }).pipe(Effect.provideContext(services("write"))),
+        );
+        expect(results.map((result) => result._tag).sort()).toEqual(["Failure", "Success"]);
+        expect(sent).toHaveLength(1);
+        expect(auth).toBe(1);
+      }
+    },
+  );
 
-  it("INV-9: consumes the reservation even when asynchronous preparation fails before fetch", async () => {
+  it("INV-9: consumes the reservation even when asynchronous preparation fails before fetch", NODE, async () => {
     let auth = 0;
     const connection = acme({
       authenticate: Effect.promise(async () => {
@@ -1692,7 +1701,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect((outcome.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();
   });
 
-  it("INV-9: fresh step names under Effect.suspend/retry cannot mint write capacity", async () => {
+  it("INV-9: fresh step names under Effect.suspend/retry cannot mint write capacity", NODE, async () => {
     for (const writeSteps of [undefined, { "1": "once" as const }]) {
       sent = [];
       answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
@@ -1712,83 +1721,90 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     }
   });
 
-  it("INV-9 INV-11: fixes bounded bulk capacity once from validated item identities before the program runs", async () => {
-    const connection = acme();
-    let selections = 0;
-    const spec = {
-      name: "bulk",
-      description: "Update each selected item once.",
-      destructive: false,
-      input: Schema.Struct({ ids: Schema.Array(Schema.String).check(Schema.isMaxLength(2)) }),
-      output: Schema.Unknown,
-      writeSteps: {
-        rows: {
-          maxItems: 2,
-          request: (item: string) => ({ ...POST_ITEMS, path: `/items/${item}` }),
-          items: (args: { readonly ids: readonly string[] }) => {
-            selections++;
-            return args.ids;
+  it(
+    "INV-9 INV-11: fixes bounded bulk capacity once from validated item identities before the program runs",
+    NODE,
+    async () => {
+      const connection = acme();
+      let selections = 0;
+      const spec = {
+        name: "bulk",
+        description: "Update each selected item once.",
+        destructive: false,
+        input: Schema.Struct({ ids: Schema.Array(Schema.String).check(Schema.isMaxLength(2)) }),
+        output: Schema.Unknown,
+        writeSteps: {
+          rows: {
+            maxItems: 2,
+            request: (item: string) => ({ ...POST_ITEMS, path: `/items/${item}` }),
+            items: (args: { readonly ids: readonly string[] }) => {
+              selections++;
+              return args.ids;
+            },
           },
         },
-      },
-      run: (args: { readonly ids: readonly string[] }) =>
-        Effect.forEach(args.ids, (id) => connection.sendItem("rows", id).pipe(Effect.result), {
-          concurrency: "unbounded",
-        }).pipe(
-          Effect.flatMap((results) => {
-            const failed = results.find((result) => result._tag === "Failure");
-            return failed ? Effect.fail(failed.failure) : Effect.succeed(results);
+        run: (args: { readonly ids: readonly string[] }) =>
+          Effect.forEach(args.ids, (id) => connection.sendItem("rows", id).pipe(Effect.result), {
+            concurrency: "unbounded",
+          }).pipe(
+            Effect.flatMap((results) => {
+              const failed = results.find((result) => result._tag === "Failure");
+              return failed ? Effect.fail(failed.failure) : Effect.succeed(results);
+            }),
+            Effect.retry({ times: 1 }),
+          ),
+      };
+      const tool = write(connection, spec);
+      // Mutating the caller's declaration after construction cannot increase the bound.
+      spec.writeSteps.rows.maxItems = 100;
+      const oneStep = { rows: { ...spec.writeSteps.rows, maxItems: 1 } };
+      const one = write(connection, { ...spec, writeSteps: oneStep });
+      oneStep.rows.maxItems = 2;
+      await expect(one.handler!({ ids: ["alice", "bob"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
+        /maxItems/,
+      );
+      expect(sent).toEqual([]);
+      selections = 0;
+      answers = [() => Response.json({ ok: true }), () => new Response(null, { status: 503 })];
+      const outcome = (await through(tool, { ids: ["alice", "bob"] })).error;
+      expect(sent.map((request) => request.url).sort()).toEqual([
+        "https://api.acme.example/v1/items/alice",
+        "https://api.acme.example/v1/items/bob",
+      ]);
+      expect(outcome).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(selections).toBe(1);
+
+      sent = [];
+      await expect(
+        tool.handler!({ ids: ["alice", "alice"] }, { ...context(), fetch: globalThis.fetch }),
+      ).rejects.toThrow(/unique/);
+      expect(sent).toEqual([]);
+      await expect(
+        tool.handler!({ ids: ["alice", "bob", "carol"] }, { ...context(), fetch: globalThis.fetch }),
+      ).rejects.toThrow();
+      expect(sent).toEqual([]);
+      const unselected = write(connection, {
+        ...spec,
+        run: () =>
+          connection.sendPath(POST_ITEMS, {
+            step: "rows",
+            item: "attempt_1",
           }),
-          Effect.retry({ times: 1 }),
-        ),
-    };
-    const tool = write(connection, spec);
-    // Mutating the caller's declaration after construction cannot increase the bound.
-    spec.writeSteps.rows.maxItems = 100;
-    const oneStep = { rows: { ...spec.writeSteps.rows, maxItems: 1 } };
-    const one = write(connection, { ...spec, writeSteps: oneStep });
-    oneStep.rows.maxItems = 2;
-    await expect(one.handler!({ ids: ["alice", "bob"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
-      /maxItems/,
-    );
-    expect(sent).toEqual([]);
-    selections = 0;
-    answers = [() => Response.json({ ok: true }), () => new Response(null, { status: 503 })];
-    const outcome = (await through(tool, { ids: ["alice", "bob"] })).error;
-    expect(sent.map((request) => request.url).sort()).toEqual([
-      "https://api.acme.example/v1/items/alice",
-      "https://api.acme.example/v1/items/bob",
-    ]);
-    expect(outcome).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expect(selections).toBe(1);
-
-    sent = [];
-    await expect(tool.handler!({ ids: ["alice", "alice"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
-      /unique/,
-    );
-    expect(sent).toEqual([]);
-    await expect(
-      tool.handler!({ ids: ["alice", "bob", "carol"] }, { ...context(), fetch: globalThis.fetch }),
-    ).rejects.toThrow();
-    expect(sent).toEqual([]);
-    const unselected = write(connection, {
-      ...spec,
-      run: () =>
-        connection.sendPath(POST_ITEMS, {
-          step: "rows",
-          item: "attempt_1",
+      });
+      await expect(
+        unselected.handler!({ ids: ["alice"] }, { ...context(), fetch: globalThis.fetch }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toEqual([]);
+      expect(() =>
+        write(connection, {
+          ...spec,
+          writeSteps: { rows: { maxItems: 0, items: () => [], request: () => POST_ITEMS } },
         }),
-    });
-    await expect(
-      unselected.handler!({ ids: ["alice"] }, { ...context(), fetch: globalThis.fetch }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(sent).toEqual([]);
-    expect(() =>
-      write(connection, { ...spec, writeSteps: { rows: { maxItems: 0, items: () => [], request: () => POST_ITEMS } } }),
-    ).toThrow(/maxItems/);
-  });
+      ).toThrow(/maxItems/);
+    },
+  );
 
-  it("INV-9: a blocked retry of a served refusal cannot erase an earlier accepted write step", async () => {
+  it("INV-9: a blocked retry of a served refusal cannot erase an earlier accepted write step", NODE, async () => {
     const failure = status(429, { "Retry-After": "1" }, { code: "lock_timeout" });
     const errors: VendorErrors = {
       ...VENDOR,
@@ -1819,7 +1835,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(resendAdviceOf(result.error)).toBeUndefined();
   });
 
-  it("INV-9: bulk aliases and rotated ids cannot send identical request content twice", async () => {
+  it("INV-9: bulk aliases and rotated ids cannot send identical request content twice", NODE, async () => {
     const connection = acme();
     const base = {
       name: "bulk",
@@ -1858,6 +1874,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
 
   it.each(["query", "form", "json"] as const)(
     "INV-9: repeated %s keys cannot bind a retry for b to the vendor's first value a",
+    NODE,
     async (encoding) => {
       let attempt = 0;
       const guarded = guardedClient({ ...OPTIONS, maxResponseBytes: 4096 });
@@ -1944,7 +1961,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-9: explicit multi-value contracts preserve value order and JSON paths", async () => {
+  it("INV-9: explicit multi-value contracts preserve value order and JSON paths", NODE, async () => {
     for (const encoding of ["query", "form", "json"] as const) {
       const request = (ids: string[]) => ({
         ...POST_ITEMS,
@@ -1996,6 +2013,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
 
   it.each(["call", "request"])(
     "INV-7: closing the %s revokes retained and pending transport even when authentication ignores Credentials",
+    NODE,
     async (boundary) => {
       let resume!: () => void;
       let entered!: () => void;
@@ -2029,7 +2047,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     },
   );
 
-  it.each(["call", "request"])("INV-7: closing the %s aborts an in-flight fetch", async (boundary) => {
+  it.each(["call", "request"])("INV-7: closing the %s aborts an in-flight fetch", WORKERS, async (boundary) => {
     let entered!: () => void;
     const started = new Promise<void>((resolve) => {
       entered = resolve;
@@ -2056,6 +2074,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
 
   it.each([307, 308])(
     "INV-9: Effect.retry after a %i hands the write to fetch once and reports it unknown",
+    NODE,
     async (code) => {
       answers.push(
         () => new Response(null, { status: code, headers: { Location: "https://api.acme.example/v1/items" } }),
@@ -2072,7 +2091,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-9: a retried program that runs Send again is the same logical write, not a new one", async () => {
+  it("INV-9: a retried program that runs Send again is the same logical write, not a new one", NODE, async () => {
     answers.push(() => new Response(null, { status: 503 }));
     const outcome = await invoke(acme(), (connection) =>
       Effect.gen(function* () {
@@ -2086,6 +2105,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
 
   it.each([307, 308])(
     "INV-9: a redirect follower above the transport cannot send the write to the new location (%i)",
+    NODE,
     async (code) => {
       answers.push(
         () => new Response(null, { status: code, headers: { Location: "https://api.acme.example/v1/moved" } }),
@@ -2101,44 +2121,52 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-9: a renewal that replays a write after its 401 is stopped, and the write keeps its auth code and unknown outcome", async () => {
-    answers.push(
-      () => new Response(null, { status: 401 }),
-      () => Response.json({ ok: true }),
-    );
-    // Google's transport today: mint a new token and resend whatever was refused.
-    const replaying = over((execute, request) =>
-      execute(request).pipe(
-        Effect.flatMap((response) => (response.status === 401 ? execute(request) : Effect.succeed(response))),
-      ),
-    );
-    const outcome = await invoke(replaying, (connection) => connection.sendPath(POST_ITEMS));
-    expect(sent).toHaveLength(1);
-    expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect((outcome.error as Error).message).toBe(
-      `Acme returned HTTP 401. Acme rejected the token. ${STOPPED} The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.`,
-    );
-  });
+  it(
+    "INV-9: a renewal that replays a write after its 401 is stopped, and the write keeps its auth code and unknown outcome",
+    NODE,
+    async () => {
+      answers.push(
+        () => new Response(null, { status: 401 }),
+        () => Response.json({ ok: true }),
+      );
+      // Google's transport today: mint a new token and resend whatever was refused.
+      const replaying = over((execute, request) =>
+        execute(request).pipe(
+          Effect.flatMap((response) => (response.status === 401 ? execute(request) : Effect.succeed(response))),
+        ),
+      );
+      const outcome = await invoke(replaying, (connection) => connection.sendPath(POST_ITEMS));
+      expect(sent).toHaveLength(1);
+      expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      expect((outcome.error as Error).message).toBe(
+        `Acme returned HTTP 401. Acme rejected the token. ${STOPPED} The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.`,
+      );
+    },
+  );
 
-  it("INV-9: a reconnect after the connection broke or was refused mid-write is stopped, and the write is unknown", async () => {
-    const reconnecting = over((execute, request) =>
-      execute(request).pipe(Effect.catchTag("TransportFailure", () => execute(request))),
-    );
-    answers.push(lost("ECONNRESET"));
-    const reset = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
-    expect(sent).toHaveLength(1);
-    expect(reset.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect((reset.error as Error).message).toBe(`Could not reach the Acme API. ${STOPPED} ${UNKNOWN}`);
+  it(
+    "INV-9: a reconnect after the connection broke or was refused mid-write is stopped, and the write is unknown",
+    NODE,
+    async () => {
+      const reconnecting = over((execute, request) =>
+        execute(request).pipe(Effect.catchTag("TransportFailure", () => execute(request))),
+      );
+      answers.push(lost("ECONNRESET"));
+      const reset = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
+      expect(sent).toHaveLength(1);
+      expect(reset.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect((reset.error as Error).message).toBe(`Could not reach the Acme API. ${STOPPED} ${UNKNOWN}`);
 
-    sent = [];
-    answers = [lost("ECONNREFUSED")];
-    const refused = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
-    expect(sent).toHaveLength(1);
-    // A refused connection proves nothing: fetch can hide earlier attempts (#902 round 8).
-    expect(refused.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-  });
+      sent = [];
+      answers = [lost("ECONNREFUSED")];
+      const refused = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
+      expect(sent).toHaveLength(1);
+      // A refused connection proves nothing: fetch can hide earlier attempts (#902 round 8).
+      expect(refused.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    },
+  );
 
-  it("INV-9: a retry under a new request id is still the same logical write", async () => {
+  it("INV-9: a retry under a new request id is still the same logical write", NODE, async () => {
     answers.push(
       () => new Response(null, { status: 409 }),
       () => Response.json({ ok: true }),
@@ -2167,7 +2195,31 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED}`);
   });
 
-  it("INV-9: each named step of a write is sent once; reads are replayed freely", async () => {
+  it("INV-9: each named step of a write is sent once; reads are replayed freely", NODE, async () => {
+    for (const separate of [false, true]) {
+      sent = [];
+      answers = [() => Response.json({ rows: [] }), () => Response.json({ ok: true })];
+      const auxiliary = await invoke(
+        acme(),
+        (connection) =>
+          connection.sendPath(LOOKUP, { effect: "read", ...(separate ? { step: "lookup" } : {}) }).pipe(
+            Effect.flatMap(() => connection.sendPath(POST_ITEMS)),
+            Effect.map(({ data }) => data),
+          ),
+        "write",
+        separate ? { lookup: "once", write: "once" } : undefined,
+      );
+      expect(sent.map((request) => request.method)).toEqual(separate ? ["GET", "POST"] : ["GET"]);
+      if (separate) expect(auxiliary).toEqual({ value: { ok: true } });
+      else {
+        const message = (auxiliary.error as Error).message;
+        expect(message).toContain("write step's slot is already taken");
+        expect(message).toContain("Declare a separate writeSteps entry");
+        expect(message).not.toContain("already sent its write");
+      }
+    }
+    sent = [];
+    answers = [];
     answers.push(
       () => Response.json({ session: "s_1" }),
       () => Response.json({ ok: true }),
@@ -2216,7 +2268,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
   });
 });
 
-describe("idempotency keys (decision 0010, B.4)", () => {
+describe("idempotency keys (decision 0010, B.4)", NODE, () => {
   const keyed = (connection: Connection, run?: (connection: Connection) => ReturnType<Connection["sendPath"]>) =>
     write(connection, {
       name: "create",
@@ -2271,6 +2323,7 @@ describe("idempotency keys (decision 0010, B.4)", () => {
 describe("write outcomes after the write left (decision 0010, B.3)", () => {
   it.each(["declared", "streamed", "broken"])(
     "INV-9: a recorded 401 keeps the auth handoff when its body is %s",
+    WORKERS,
     async (body) => {
       const bytes = new TextEncoder().encode("x".repeat(5000));
       answers.push(
@@ -2296,7 +2349,7 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     },
   );
 
-  it("INV-9: a caught write 401 owns the auth handoff even after an auxiliary 429", async () => {
+  it("INV-9: a caught write 401 owns the auth handoff even after an auxiliary 429", NODE, async () => {
     answers.push(
       () => new Response(null, { status: 401 }),
       () => new Response(null, { status: 429 }),
@@ -2311,22 +2364,26 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     expect((outcome.error as Error).message).toContain("Acme rejected the token.");
   });
 
-  it("INV-9: a response received before disconnect is unknown even when the body fails with a never-connected errno", async () => {
-    answers.push(
-      () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.error(Object.assign(new Error("body disconnected"), { code: "ECONNREFUSED" }));
-            },
-          }),
-          { status: 200 },
-        ),
-    );
-    const outcome = await invoke(acme(), (connection) => connection.sendPath(POST_ITEMS));
-    expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expect(sent).toHaveLength(1);
-  });
+  it(
+    "INV-9: a response received before disconnect is unknown even when the body fails with a never-connected errno",
+    WORKERS,
+    async () => {
+      answers.push(
+        () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(Object.assign(new Error("body disconnected"), { code: "ECONNREFUSED" }));
+              },
+            }),
+            { status: 200 },
+          ),
+      );
+      const outcome = await invoke(acme(), (connection) => connection.sendPath(POST_ITEMS));
+      expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(sent).toHaveLength(1);
+    },
+  );
 
   const writeThenLookup = (connection: Connection) =>
     connection
@@ -2339,6 +2396,7 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     [503, "connector_call_failed"],
   ])(
     "INV-9: an auxiliary read answered %i after the vendor accepted the write reports the write unknown, never retryable",
+    NODE,
     async (code, expected) => {
       answers.push(
         () => Response.json({ id: 1 }, { status: 201 }),
@@ -2353,48 +2411,58 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     },
   );
 
-  it("INV-9: an auxiliary read that never connects, or the provider's own refusal, after the write is no better", async () => {
-    answers.push(() => Response.json({ id: 1 }, { status: 201 }), lost("ECONNREFUSED"));
-    const unreachable = await invoke(acme(), writeThenLookup);
-    expect(unreachable.error).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    expect((unreachable.error as Error).message).toBe(`Could not reach the Acme API. ${UNKNOWN}`);
+  it(
+    "INV-9: an auxiliary read that never connects, or the provider's own refusal, after the write is no better",
+    NODE,
+    async () => {
+      answers.push(() => Response.json({ id: 1 }, { status: 201 }), lost("ECONNREFUSED"));
+      const unreachable = await invoke(acme(), writeThenLookup);
+      expect(unreachable.error).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        writeOutcome: "unknown",
+      });
+      expect((unreachable.error as Error).message).toBe(`Could not reach the Acme API. ${UNKNOWN}`);
 
-    sent = [];
-    answers = [() => new Response(null, { status: 500 })];
-    // A write whose answer was not a success: nothing says it was accepted.
-    const own = await invoke(acme(), (connection) =>
-      connection
-        .sendPath(POST_ITEMS)
-        .pipe(
-          Effect.catch(() => Effect.fail(new Refusal({ error: new ConnectorCallError("not_found", "No such item.") }))),
-        ),
-    );
-    expect(own.error).toMatchObject({ code: "not_found", retryable: false, writeOutcome: "unknown" });
-    expect((own.error as Error).message).toBe("No such item.");
-  });
+      sent = [];
+      answers = [() => new Response(null, { status: 500 })];
+      // A write whose answer was not a success: nothing says it was accepted.
+      const own = await invoke(acme(), (connection) =>
+        connection
+          .sendPath(POST_ITEMS)
+          .pipe(
+            Effect.catch(() =>
+              Effect.fail(new Refusal({ error: new ConnectorCallError("not_found", "No such item.") })),
+            ),
+          ),
+      );
+      expect(own.error).toMatchObject({ code: "not_found", retryable: false, writeOutcome: "unknown" });
+      expect((own.error as Error).message).toBe("No such item.");
+    },
+  );
 
-  it("INV-9: a failure before the write left keeps its verdict, and the write's own refusal stands after a lookup", async () => {
-    answers.push(() => new Response(null, { status: 429, headers: { "Retry-After": "2" } }));
-    const before = await invoke(acme(), (connection) =>
-      connection
-        .sendPath(LOOKUP, { effect: "read", step: "lookup" })
-        .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
-    );
-    expect(sent).toHaveLength(1);
-    expect(before.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 2000 });
+  it(
+    "INV-9: a failure before the write left keeps its verdict, and the write's own refusal stands after a lookup",
+    NODE,
+    async () => {
+      answers.push(() => new Response(null, { status: 429, headers: { "Retry-After": "2" } }));
+      const before = await invoke(acme(), (connection) =>
+        connection
+          .sendPath(LOOKUP, { effect: "read", step: "lookup" })
+          .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+      );
+      expect(sent).toHaveLength(1);
+      expect(before.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 2000 });
 
-    sent = [];
-    answers = [() => Response.json({ id: 1 }), () => new Response(null, { status: 400 })];
-    const refused = await invoke(acme(), (connection) =>
-      connection
-        .sendPath(LOOKUP, { effect: "read", step: "lookup" })
-        .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
-    );
-    expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false });
-    expect((refused.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();
-  });
+      sent = [];
+      answers = [() => Response.json({ id: 1 }), () => new Response(null, { status: 400 })];
+      const refused = await invoke(acme(), (connection) =>
+        connection
+          .sendPath(LOOKUP, { effect: "read", step: "lookup" })
+          .pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+      );
+      expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false });
+      expect((refused.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();
+    },
+  );
 });
