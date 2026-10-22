@@ -2656,100 +2656,107 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   const ensureConnected = async (ctx: ConnectorContext, state: ConnectionState): Promise<Client> => {
-    // A 401 after connect is a verdict for the whole request scope, not merely
-    // for the one call that observed it. Do not let the still-cached client make
-    // a later status or call in the same scope report healthy.
-    if (state.authRequired) {
-      throw authRequiredError();
-    }
-    // Read the OAuth epoch before trusting either a cached client or starting a
-    // transport. A disconnected epoch is a durable operator instruction, not
-    // merely the absence of credentials: passive status/tool probes must not
-    // turn it back into a pending consent flow.
-    let oauthGeneration: string | undefined;
-    if (isOauth && (state.client || state.connecting)) {
-      // Inspect the request's shared grant without subscribing this caller's
-      // signal before it joins the connection's waiter count below.
-      const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
-      oauthGeneration = await provider.liveEpoch();
-      if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
-        closeHalf(state);
-        throw operatorDisconnectedError();
-      }
-    }
-    // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
-    // and the grant with it. This request's cached client still speaks the old
-    // token — drop it so the next connect runs against current state.
-    if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
-      if (isClosed(state)) throw scopeEndedError();
-      if (oauthGeneration !== state.connectedGeneration) {
-        closeHalf(state);
-      }
-    }
-    // The static-credential counterpart of the epoch read above, and
-    // deliberately beside it: the vault is read before any cached client is
-    // trusted, so an operator's rotation in the UI takes effect on the next
-    // call rather than the next deploy. Compared by digest — the
-    // plaintext lives in this function's scope and never reaches `state`.
-    let credentialValue: string | null = null;
-    let credentialFramed: string | null = null;
-    let credentialDigest: string | null = null;
-    if (credentialAuth || requestAuth) {
-      credentialValue = await readCredential(ctx);
-      credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
-      credentialDigest = await digestOf(credentialValue);
-      // Gated on a connect in flight as well as a cached client, exactly like
-      // the epoch read above: a rotation that lands while the first caller is
-      // still connecting must not let the second one ride the key the vault
-      // has already replaced.
-      if (
-        (state.client || state.connecting) &&
-        state.credentialDigest !== null &&
-        state.credentialDigest !== credentialDigest
-      ) {
-        // A slow vault/token read or digest can resume after a newer caller
-        // connected with the replacement. Never let that stale read tear down
-        // the newer connection and install the rotated-away credential.
-        const observedConnection = state.client ?? state.connecting;
-        const currentCredential = await readCredential(ctx);
-        if (isClosed(state)) throw scopeEndedError();
-        if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
-          throw resendAdvice(
-            new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
-              retryable: true,
-            }),
-            "; retry the operation",
-          );
-        }
-        closeHalf(state);
-      }
-    }
-    if (isClosed(state)) throw scopeEndedError();
-    if (state.client) return state.client;
-    const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
-    // A Promise edge of its own, as architecture.md's "Effect inside" requires
-    // of every shared wait: whatever this caller does next with the client is
-    // its own I/O, so it resumes in its own continuation rather than inside the
-    // call that completed the attempt.
-    connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
-    let client: Client;
-    try {
-      client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
-    } finally {
-      const remaining = (connectingWaiters.get(attempt) ?? 1) - 1;
-      if (remaining > 0) connectingWaiters.set(attempt, remaining);
+    let joined = state.connecting;
+    if (joined) connectingWaiters.set(joined, (connectingWaiters.get(joined) ?? 0) + 1);
+    const leave = () => {
+      if (!joined) return;
+      const remaining = (connectingWaiters.get(joined) ?? 1) - 1;
+      if (remaining > 0) connectingWaiters.set(joined, remaining);
       else {
-        connectingWaiters.delete(attempt);
-        // A cancelled waiter leaves its siblings' handshake alone. Once every
-        // waiter has left, abandon the attempt and its OAuth refresh too.
-        if (ctx.signal?.aborted && state.connecting === attempt) closeHalf(state);
+        connectingWaiters.delete(joined);
+        if (ctx.signal?.aborted && state.connecting === joined) closeHalf(state);
       }
+    };
+    try {
+      // A 401 after connect is a verdict for the whole request scope, not merely
+      // for the one call that observed it. Do not let the still-cached client make
+      // a later status or call in the same scope report healthy.
+      if (state.authRequired) {
+        throw authRequiredError();
+      }
+      // Read the OAuth epoch before trusting either a cached client or starting a
+      // transport. A disconnected epoch is a durable operator instruction, not
+      // merely the absence of credentials: passive status/tool probes must not
+      // turn it back into a pending consent flow.
+      let oauthGeneration: string | undefined;
+      if (isOauth && (state.client || state.connecting)) {
+        // Count an existing handshake waiter before subscribing its signal:
+        // cancelling a sibling must not close the handshake beneath it.
+        const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
+        // The read belongs to the request; this caller's wait still ends with
+        // its call. Closing one call must not revoke the shared provider.
+        oauthGeneration = await duringViewCall(ctx, () => provider.liveEpoch());
+        if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
+          closeHalf(state);
+          throw operatorDisconnectedError();
+        }
+      }
+      // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
+      // and the grant with it. This request's cached client still speaks the old
+      // token — drop it so the next connect runs against current state.
+      if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
+        if (isClosed(state)) throw scopeEndedError();
+        if (oauthGeneration !== state.connectedGeneration) {
+          closeHalf(state);
+        }
+      }
+      // The static-credential counterpart of the epoch read above, and
+      // deliberately beside it: the vault is read before any cached client is
+      // trusted, so an operator's rotation in the UI takes effect on the next
+      // call rather than the next deploy. Compared by digest — the
+      // plaintext lives in this function's scope and never reaches `state`.
+      let credentialValue: string | null = null;
+      let credentialFramed: string | null = null;
+      let credentialDigest: string | null = null;
+      if (credentialAuth || requestAuth) {
+        credentialValue = await readCredential(ctx);
+        credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
+        credentialDigest = await digestOf(credentialValue);
+        // Gated on a connect in flight as well as a cached client, exactly like
+        // the epoch read above: a rotation that lands while the first caller is
+        // still connecting must not let the second one ride the key the vault
+        // has already replaced.
+        if (
+          (state.client || state.connecting) &&
+          state.credentialDigest !== null &&
+          state.credentialDigest !== credentialDigest
+        ) {
+          // A slow vault/token read or digest can resume after a newer caller
+          // connected with the replacement. Never let that stale read tear down
+          // the newer connection and install the rotated-away credential.
+          const observedConnection = state.client ?? state.connecting;
+          const currentCredential = await readCredential(ctx);
+          if (isClosed(state)) throw scopeEndedError();
+          if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
+            throw resendAdvice(
+              new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
+                retryable: true,
+              }),
+              "; retry the operation",
+            );
+          }
+          closeHalf(state);
+        }
+      }
+      if (isClosed(state)) throw scopeEndedError();
+      if (state.client) return state.client;
+      const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+      // A Promise edge of its own, as architecture.md's "Effect inside" requires
+      // of every shared wait: whatever this caller does next with the client is
+      // its own I/O, so it resumes in its own continuation rather than inside the
+      // call that completed the attempt.
+      if (joined !== attempt) {
+        leave();
+        joined = attempt;
+        connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
+      }
+      const client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
+      // Teardown may land before this continuation receives the client.
+      if (isClosed(state)) throw scopeEndedError();
+      return client;
+    } finally {
+      leave();
     }
-    // Teardown can land between the attempt completing and this caller
-    // resuming. The client it would hand back is being closed, and this scope
-    // is over.
-    if (isClosed(state)) throw scopeEndedError();
-    return client;
   };
 
   /**
@@ -2989,7 +2996,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // credentials this client just bound to. Discard it rather than cache
         // a stale-isolate connection.
         if (provider) {
-          const generation = yield* promised(() => provider.liveEpoch());
+          const generation = yield* promised(() => provider.liveEpoch()).pipe(
+            Effect.mapError((error) => (owned() ? error : scopeEndedError())),
+          );
           // closeScope can land while the epoch read is pending, after
           // connect succeeded but before this client is cached. Discard the
           // client on that side of the await too.
@@ -3739,7 +3748,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // start fails rather than hand it out.
           let authorizationUrl: string | undefined;
           try {
-            authorizationUrl = await state.attemptProvider?.consentUrl();
+            authorizationUrl = await state.attemptProvider?.consentUrl(viewSignal(ctx, true));
           } catch (readErr) {
             return { state: "error", message: startMessage(readErr) };
           }

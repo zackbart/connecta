@@ -38,6 +38,7 @@ import {
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+import { deriveContext } from "../derived-context.js";
 import { duringViewCall, viewSignal } from "../runtime/call.js";
 
 /**
@@ -545,7 +546,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         { retryable: false },
       );
     }
-    const signal = init.signal && ctx.signal ? AbortSignal.any([init.signal, ctx.signal]) : (init.signal ?? ctx.signal);
+    const owned = viewSignal(ctx);
+    const signal = init.signal ? AbortSignal.any([init.signal, owned]) : owned;
+    ctx = deriveContext(ctx, { signal });
     const send = async (accessToken: string) => {
       if (signal?.aborted) throw signal.reason;
       sentSecretsFor(ctx).add(accessToken);
