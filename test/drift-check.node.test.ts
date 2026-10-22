@@ -452,6 +452,32 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         path: alpha.path,
       }),
     ]);
+    expect(run(directory, ["notion"]).output.match(/^\s+contract-changed\b/gm)).toHaveLength(1);
+  });
+
+  it.each([
+    ["--specs", "crm", "--docs"],
+    ["--docs", "z-vendor", "--specs"],
+  ] as const)("refuses %s narrowed to %s, which %s checks", async (selected, provider, required) => {
+    const directory = await recordWorkspace({
+      crm: {
+        version: 1,
+        provider: "crm",
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://crm.example/setup",
+            endpoints: ["https://crm.example/mcp"],
+            reviewed: ["list"],
+          },
+        ],
+      },
+      "z-vendor": { version: 1, provider: "z-vendor", checks: [endpointEvidence] },
+    });
+    const result = reportFor(directory, [selected, "--provider", provider]);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain(`${provider} is only checked by ${required}`);
+    expect(result.output).toContain("which this run did not select");
   });
 
   it(
@@ -566,13 +592,31 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(report.intentionallyUnclassified).not.toContain("preview");
     expect(report.added).toContain("preview");
     // Reordered columns work too; blank access retains its explicit acknowledgement.
-    await writeFile(
-      reference,
-      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n",
-    );
+    const matching =
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n";
+    await writeFile(reference, matching);
     const quiet = JSON.parse(run().output).docs[0];
     expect(quiet.findings).toEqual([]);
     expect(quiet.intentionallyUnclassified).toContain("preview");
+
+    await writeFile(
+      reference,
+      matching.replace("| Access | Description | Tool |", "| Permissions | Description | Tool |"),
+    );
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([
+      expect.objectContaining({ kind: "parser-error", detail: expect.stringContaining("no longer contains Access") }),
+    ]);
+
+    const missingAccess = matching.replace(
+      "| Write | Checks credentials | `list` |",
+      "| | Checks credentials | `list` |",
+    );
+    await writeFile(reference, missingAccess);
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([
+      { kind: "documented-access-missing", detail: "list: docs no longer declare the reviewed access value" },
+    ]);
+    await writeFile(reference, `${missingAccess}| Write | Checks credentials | \`list\` |\n`);
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([]);
   });
 });
 

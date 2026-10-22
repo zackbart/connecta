@@ -1184,7 +1184,6 @@ async function main() {
         );
         for (const finding of result.findings) console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
       } else if (result.endpoints !== undefined) printSpec(result, result.recordedTo);
-      if (result.added) printDocs(result);
       else printFailure(result);
     }
     for (const result of report.docs) {
