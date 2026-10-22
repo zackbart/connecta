@@ -601,6 +601,11 @@ names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
 
+Activity label resolvers receive an optional `AbortSignal`. Pass it to user-directory
+fetches and stop work when it aborts: the reader has left or the label lookup
+budget has expired. Clerk label lookups follow the same lifetime and discard
+late answers after cancellation.
+
 ## Contributor reference
 
 ### Source and tests

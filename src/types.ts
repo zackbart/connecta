@@ -956,8 +956,9 @@ export interface InboundAuth {
    * Best-effort friendly label for a stable activity actor id. Called only
    * while serving an authorized activity read, never during tool admission or
    * event writes. The result is display-only and cannot grant access.
+   * Stop request-owned work when signal aborts (reader left or label budget expired).
    */
-  activityActorLabel?(subjectId: string): string | undefined | Promise<string | undefined>;
+  activityActorLabel?(subjectId: string, signal?: AbortSignal): string | undefined | Promise<string | undefined>;
   /**
    * Optional browser sign-in configuration. When present, operator pages use
    * the provider's interactive sign-in flow.

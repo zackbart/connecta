@@ -1,4 +1,5 @@
 // Node-only: reads provider folders and documentation/providers.md from disk.
+import { generatedProblems } from "../scripts/drift-validate.mjs";
 //
 // Applies decision 0011's provider standard to every provider folder. A
 // provider listed in `PENDING` (test/provider-standard.ts) is exempt from the
@@ -325,6 +326,43 @@ describe("the provider standard's rules", () => {
       "G2: a dual provider declares the hosted and api block keys",
     ]);
     expect(guide("\n## Ids\n", { kind: "api", blockKeys: [] })).toEqual([]);
+  });
+
+  it.each([
+    [
+      "extra generated key",
+      (drift: { generated: { evidence: Record<string, string>; extra?: boolean } }) => {
+        drift.generated.extra = true;
+      },
+      "D2: drift.json needs a generated block",
+    ],
+    [
+      "invalid evidence digest",
+      (drift: { generated: { evidence: Record<string, string>; extra?: boolean } }) => {
+        drift.generated.evidence["catalog.json"] = "broken";
+      },
+      "D2: generated.evidence holds one sha256",
+    ],
+    [
+      "missing evidence key",
+      (drift: { generated: { evidence: Record<string, string>; extra?: boolean } }) => {
+        delete drift.generated.evidence["catalog.json"];
+      },
+      "D2: generated.evidence holds one sha256",
+    ],
+  ])("rejects %s through the shared drift validator", (_, corrupt, message) => {
+    const folder = standard();
+    const drift = JSON.parse(folder.read("drift.json")!);
+    corrupt(drift);
+    expect(generatedProblems(drift, { kind: folder.kind, files: folder.files })).toEqual([
+      expect.stringContaining(message),
+    ]);
+    expect(
+      driftViolations(
+        { ...folder, read: (path) => (path === "drift.json" ? JSON.stringify(drift) : folder.read(path)) },
+        today,
+      ),
+    ).toContainEqual(expect.stringContaining(message));
   });
 
   it("names the drift record's renamed and hand-kept fields", () => {

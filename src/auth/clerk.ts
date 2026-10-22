@@ -529,10 +529,6 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   // Before the Clerk client, so a malformed key fails as a connecta
   // configuration error rather than however the SDK happens to treat it.
   const frontendApiUrl = fapiUrl(opts.publishableKey);
-  const clerk = createByteReadingClerkClient({
-    secretKey: opts.secretKey,
-    publishableKey: opts.publishableKey,
-  });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
   const organizationId = normalizeOrganizationId(opts.organizationId, allowedOAuthClientIds);
@@ -599,7 +595,6 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     }
   };
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
-  const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
   let activeActivityLabelLookups = 0;
 
@@ -612,55 +607,50 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     });
   };
 
-  const resolveActivityLabel = async (userId: string): Promise<string | undefined> => {
+  const resolveActivityLabel = async (userId: string, owner?: AbortSignal): Promise<string | undefined> => {
+    if (owner?.aborted) return undefined;
     const cached = readIdentityCache(activityLabelCache, userId);
     if (cached) return cached.label;
-    const existing = pendingActivityLabels.get(userId);
-    if (existing) return existing;
-    // The Clerk SDK's getUser call has no AbortSignal. Keep the real upstream
-    // concurrency bounded even when requests hang forever: do not queue more
-    // identities in memory, and do not start a duplicate for an id whose raw
-    // lookup outlived its caller-facing deadline.
+    // Each reader owns its lookup and transport. Keep raw concurrency bounded
+    // even if a custom transport fails to settle after cancellation.
     if (inFlightActivityLabelIds.has(userId) || activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT) {
-      cacheActivityLabel(userId, undefined);
       return undefined;
     }
-
+    const ended = new AbortController();
+    const signal = owner ? AbortSignal.any([owner, ended.signal]) : ended.signal;
     activeActivityLabelLookups++;
     inFlightActivityLabelIds.add(userId);
-    const upstream = clerk.users
-      .getUser(userId)
+    const upstream = Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return createByteReadingClerkClient(opts, signal).users.getUser(userId);
+      })
       .then((user) => {
+        if (signal.aborted) return undefined;
         const label = activityLabelForUser(user);
         cacheActivityLabel(userId, label);
         return label;
       })
       .catch(() => {
-        cacheActivityLabel(userId, undefined);
+        if (!signal.aborted) cacheActivityLabel(userId, undefined);
         return undefined;
       })
       .finally(() => {
         activeActivityLabelLookups--;
         inFlightActivityLabelIds.delete(userId);
       });
-    const lookup = new Promise<string | undefined>((resolve) => {
-      let settled = false;
-      const finish = (label: string | undefined) => {
-        if (settled) return;
-        settled = true;
+    return new Promise<string | undefined>((resolve) => {
+      const finish = (label?: string) => {
         clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
         resolve(label);
       };
-      const timer = setTimeout(() => {
-        cacheActivityLabel(userId, undefined);
-        finish(undefined);
-      }, ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS);
+      const abort = () => finish();
+      const timer = setTimeout(() => ended.abort(), ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
       void upstream.then(finish);
-    }).finally(() => {
-      pendingActivityLabels.delete(userId);
-    });
-    pendingActivityLabels.set(userId, lookup);
-    return lookup;
+    }).finally(() => ended.abort());
   };
 
   const challenge = (request: Request, baseUrl: string): string => {
