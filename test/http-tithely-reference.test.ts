@@ -1,22 +1,20 @@
-import { configureGuardedTransport } from "../../guarded-transport.js";
-// Decision 0010's proof on real code: Tithe.ly's get_charge, list_charges, and
-// tithely_api_mutate rebuilt on the Effect provider kit must be
-// indistinguishable from index.ts — the same catalog bytes, the same requests
-// on the wire, and the same mapped results and failures, sent-secret
-// redaction included — except where a recorded decision changes them: A.2's
-// sensitive fields and decision 0010's 401 rule. Every other write verdict is
-// the core's on both sides, decided at api()'s boundary from the same ledger.
+// B.4 reference expressibility: the entire live Tithe.ly surface on the
+// HTTP kit, without wiring the prototype into the maintained provider.
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { attachCallClassification } from "../../call-classification.js";
-import { apiConnector } from "../../connectors/api-connector.js";
-import { ConnectorCallError, resendAdviceOf } from "../../errors.js";
-import { manifest } from "../../http/vendor.js";
-import { tracksEveryRequest } from "../../provider-call.js";
-import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext } from "../../types.js";
-import { TITHELY_API_BASE_URLS, tithely } from "./index.js";
-import { kitTools, TITHELY_KIT_FACTS, TithelyApi } from "./kit-prototype.js";
+import { attachCallClassification } from "../src/call-classification.js";
+import { apiConnector } from "../src/connectors/api-connector.js";
+import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
+import goldenSpec from "./goldens/tithely/spec.js";
+import goldenCatalog from "./goldens/tithely/catalog.json";
+import goldenCalls from "./goldens/tithely/calls.json";
+import { manifest } from "../src/http/vendor.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { silentLogger } from "./helpers.js";
+import type { Connector, ConnectorContext } from "../src/types.js";
+import { TITHELY_API_BASE_URLS, tithely } from "../src/providers/tithely/index.js";
+import { kitTools, TITHELY_KIT_FACTS, TithelyApi } from "../src/providers/tithely/kit-prototype.js";
 
 interface Stub {
   status?: number;
@@ -94,11 +92,21 @@ function context(values: Record<string, string> | null = KEYS, signal?: AbortSig
   };
 }
 
-const current = (): Connector => tithely("giving", { purpose: "Weekly giving reports", environment: "live" });
+const current = (
+  sensitiveFields: "drop" | "return" = "drop",
+  defaultPageSize = 25,
+  environment: "live" | "test" = "live",
+): Connector => tithely("giving", { purpose: "Weekly giving reports", environment, sensitiveFields, defaultPageSize });
 // Both drop A.2's sensitive fields by default. Every kit request enters the
 // core ledger, so the connector declares it as index.ts does.
-const kit = (sensitiveFields: "drop" | "return" = "drop"): Connector =>
-  tracksEveryRequest(apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS.live, 25, sensitiveFields) }));
+const kit = (
+  sensitiveFields: "drop" | "return" = "drop",
+  defaultPageSize = 25,
+  environment: "live" | "test" = "live",
+): Connector =>
+  tracksEveryRequest(
+    apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS[environment], defaultPageSize, sensitiveFields) }),
+  );
 
 /** Everything an agent or an operator record could observe about one call. */
 function observed(outcome: { value: unknown } | { error: unknown }): unknown {
@@ -162,6 +170,39 @@ const FULL_CHARGE = {
   payment_method: { pm_id: "pm_9", last_4_digits: "4242", brand: "Visa", pm_type: "card", account_id: "user_jane" },
 };
 
+const ORGANIZATION = {
+  ...FULL_CHARGE.organization,
+  account_id: "user_owner",
+  website: "https://church.example",
+  phone_number: "5551231234",
+  created_date: "1493928837",
+  address: { street_address: "1 Main St", city: "Nashville", state: "TN", postal: "37209", country: "US" },
+  giving_types: ["Tithe"],
+  giving_types_full: [
+    { id: "10", name: "Tithe", status: "1" },
+    { id: "11", name: "Missions", status: "2" },
+    { id: "12", name: "Building", status: "0" },
+  ],
+};
+const ACCOUNT = {
+  ...FULL_CHARGE.donor_account,
+  created_date: "1487792831",
+  phone_number: "5555551234",
+  address: ORGANIZATION.address,
+};
+const PAYMENT_METHOD = FULL_CHARGE.payment_method;
+const RECURRING = {
+  recurring_id: "rc_1",
+  amount: "1000",
+  currency: "USD",
+  giving_type: "Missions",
+  term: "monthly",
+  start_date: "1497632472",
+  organization: ORGANIZATION,
+  donor_account: ACCOUNT,
+  payment_method: PAYMENT_METHOD,
+};
+
 const MUTATE = { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] };
 
 const ROWS = [1, 2, 3].map((n) => ({
@@ -177,20 +218,13 @@ const ROWS = [1, 2, 3].map((n) => ({
 }));
 
 describe("Tithe.ly on the provider kit (decision 0010)", () => {
-  it("INV-1: renders catalog entries identical after #902 privacy descriptions, classification included", async () => {
-    const before = await current().listTools(context());
-    const after = await kit().listTools(context());
-    for (const name of ["list_charges", "get_charge", "tithely_api_mutate"]) {
-      const old = structuredClone(before.find((tool) => tool.name === name)!);
-      if (name === "tithely_api_mutate") {
-        (old.outputSchema!["properties"] as Record<string, { description: string }>)["result"]!.description =
-          "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.";
-      } else {
-        (old.inputSchema!["properties"] as Record<string, { description: string }>)["raw"]!.description =
-          "Return Tithe.ly's records instead of the lean projection. The guide says whether bank and legal details stay dropped.";
-      }
-      const now = after.find((tool) => tool.name === name);
-      expect(JSON.stringify(now), name).toBe(JSON.stringify(old));
+  it("INV-1: preserves all eleven catalog entries byte for byte, including order and legacy hatch names", async () => {
+    for (const pageSize of [1, 25, 99]) {
+      const before = await current("drop", pageSize).listTools(context());
+      const after = await kit("drop", pageSize).listTools(context());
+      expect(after).toHaveLength(11);
+      expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+      if (pageSize === 25) expect(JSON.stringify(after)).toBe(JSON.stringify(goldenCatalog.tools));
     }
   });
 
@@ -402,11 +436,147 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     },
   ];
 
-  it.each(cases)("INV-6 INV-9: preserves requests and results for $name", async ({ tool, args, responses }) => {
-    const { before, after } = await both(tool, args, responses);
-    expect(after.sent).toEqual(before.sent);
-    expect(after.result).toEqual(before.result);
-  });
+  it("INV-5 INV-6 INV-9: preserves all tools' request and output bytes, raw modes, paging and failures", async () => {
+    const fixtureCases = goldenSpec.calls.map((call) => ({
+      name: call.label ?? call.tool,
+      tool: call.tool,
+      args: call.args ?? {},
+      responses: Array.isArray(call.replies) ? [...call.replies] : [],
+    }));
+    expect(new Set(fixtureCases.map(({ tool }) => tool)).size).toBe(11);
+    const getters = [
+      ["get_organization", "organizationId", "organization_id", ORGANIZATION],
+      ["get_account", "accountId", "account_id", ACCOUNT],
+      ["get_charge", "chargeId", "charge_id", FULL_CHARGE],
+      ["get_recurring_charge", "recurringId", "recurring_id", RECURRING],
+    ] as const;
+    const lists = [
+      ["list_organizations", "organization_id", {}, ORGANIZATION],
+      ["list_accounts", "account_id", {}, ACCOUNT],
+      ["list_charges", "charge_id", { organizationId: "org_1", accountId: "user_1" }, FULL_CHARGE],
+      ["list_recurring_charges", "recurring_id", { organizationId: "org_1", accountId: "user_1" }, RECURRING],
+    ] as const;
+    const additional: typeof cases = [];
+    for (const [tool, arg, id, record] of getters) {
+      for (const raw of [false, true]) {
+        for (const body of [
+          record,
+          { [id]: "outer_id", object: record },
+          { [id]: "outer_id", data: record },
+          { [id]: "outer_id", object: {} },
+        ]) {
+          additional.push({
+            name: `${tool} raw=${raw} envelope=${JSON.stringify(body)}`,
+            tool,
+            args: { [arg]: "an id/with spaces?", raw },
+            responses: [{ body }],
+          });
+        }
+      }
+      additional.push({ name: `${tool} empty id`, tool, args: { [arg]: "" }, responses: [] });
+    }
+    for (const [tool, id, scope, record] of lists) {
+      for (const raw of [false, true]) {
+        for (const data of [
+          [],
+          [record],
+          [1, 2, 3].map((n) => ({ ...record, [id]: `id_${n}` })),
+          [null, {}],
+          { unexpected: true },
+        ]) {
+          additional.push({
+            name: `${tool} raw=${raw} data=${JSON.stringify(data)}`,
+            tool,
+            args: { ...scope, raw, limit: 1, cursor: "last &/id", order: "asc" },
+            responses: [{ body: { data } }],
+          });
+        }
+      }
+      additional.push({ name: `${tool} absent data`, tool, args: { ...scope }, responses: [{ body: {} }] });
+    }
+    const echoed = goldenSpec.echo.replies(`${KEYS.publicKey} ${KEYS.privateKey} ${BASIC}`);
+    additional.push({
+      name: "hatch echoes sent credentials",
+      tool: goldenSpec.echo.tool,
+      args: goldenSpec.echo.args ?? {},
+      responses: Array.isArray(echoed) ? [...echoed] : [],
+    });
+    additional.push(
+      {
+        name: "API-created accounts",
+        tool: "list_accounts",
+        args: { scope: "api", cursor: "user_1", order: "asc" },
+        responses: [{ body: { data: [ACCOUNT] } }],
+      },
+      {
+        name: "all accounts explicit",
+        tool: "list_accounts",
+        args: { scope: "all" },
+        responses: [{ body: { data: [ACCOUNT] } }],
+      },
+      { name: "recurring gifts without a scope", tool: "list_recurring_charges", args: {}, responses: [] },
+      {
+        name: "organization legacy funds",
+        tool: "get_organization",
+        args: { organizationId: "org_1" },
+        responses: [{ body: { giving_types: ["Tithe", 4, "Missions"] } }],
+      },
+      {
+        name: "organization future fund status",
+        tool: "get_organization",
+        args: { organizationId: "org_1" },
+        responses: [
+          {
+            body: {
+              giving_types_full: [
+                { id: 2, status: 9 },
+                { name: "Tithe", status: 1 },
+              ],
+            },
+          },
+        ],
+      },
+    );
+    for (const data of [undefined, {}, null, [PAYMENT_METHOD]]) {
+      for (const raw of [false, true])
+        additional.push({
+          name: `unpaged payment methods raw=${raw} data=${JSON.stringify(data)}`,
+          tool: "list_payment_methods",
+          args: { accountId: "user_1", raw },
+          responses: [{ body: { data } }],
+        });
+    }
+    const legacy = current();
+    const reference = kit();
+    for (const scenario of [...fixtureCases, ...cases, ...additional]) {
+      const before = await run(legacy, scenario.tool, scenario.args, scenario.responses, context());
+      const after = await run(reference, scenario.tool, scenario.args, scenario.responses, context());
+      expect(after.sent, scenario.name).toEqual(before.sent);
+      expect(after.result, scenario.name).toEqual(before.result);
+      expect(JSON.stringify(after), scenario.name).toBe(JSON.stringify(before));
+      const golden = goldenCalls.find(({ label }) => label === scenario.name);
+      if (golden)
+        expect(JSON.stringify(after.result), scenario.name).toBe(JSON.stringify({ value: golden.result.value }));
+    }
+    // Deployment choices cannot silently change ordering, raw policy or the
+    // projected payout currency. Exercise the complete fixture surface again.
+    for (const choice of ["drop", "return"] as const) {
+      for (const environment of ["live", "test"] as const) {
+        const legacy = current(choice, 1, environment);
+        const reference = kit(choice, 1, environment);
+        for (const scenario of fixtureCases) {
+          for (const raw of [false, true]) {
+            const args = scenario.tool.startsWith("tithely_") ? scenario.args : { ...scenario.args, raw };
+            const before = await run(legacy, scenario.tool, args, scenario.responses, context());
+            const after = await run(reference, scenario.tool, args, scenario.responses, context());
+            expect(JSON.stringify(after), `${scenario.name} ${choice} ${environment} raw=${raw}`).toBe(
+              JSON.stringify(before),
+            );
+          }
+        }
+      }
+    }
+  }, 30_000);
 
   it("INV-5: refuses missing or swapped keys before any request, in the same words", async () => {
     for (const keys of [null, { publicKey: "pri_x", privateKey: "pub_y" }]) {
@@ -540,29 +710,42 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect((error as Error).message).toContain("whether it took effect is unknown");
   });
 
-  it.each(["declared", "streamed"])("INV-9: a write's recorded 401 survives a %s oversized body", async (kind) => {
-    const result = await run(
-      kit(),
-      "tithely_api_mutate",
-      MUTATE,
-      [
-        {
-          status: 401,
-          ...(kind === "declared"
-            ? { text: "{}", headers: { "Content-Length": String(8 * 1024 * 1024) } }
-            : { stream: 5 * 1024 * 1024 }),
-        },
-      ],
-      context(),
-    );
-    expect(result.sent).toHaveLength(1);
-    expect(result.result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect((result.result as { message: string }).message).toContain("Tithe.ly rejected the key pair.");
+  it("INV-9: a write's recorded 401 survives declared and streamed oversized bodies", async () => {
+    for (const kind of ["declared", "streamed"]) {
+      const result = await run(
+        kit(),
+        "tithely_api_mutate",
+        MUTATE,
+        [
+          {
+            status: 401,
+            ...(kind === "declared"
+              ? { text: "{}", headers: { "Content-Length": String(8 * 1024 * 1024) } }
+              : { stream: 5 * 1024 * 1024 }),
+          },
+        ],
+        context(),
+      );
+      expect(result.sent).toHaveLength(1);
+      expect(result.result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      expect((result.result as { message: string }).message).toContain("Tithe.ly rejected the key pair.");
+    }
   });
 
   it("declares decision 0011's ProviderKitFacts from the same vendor and the catalog's page size", async () => {
     // drift.json v2's generated.operations: "METHOD /path", sorted, from manifest(vendor).
-    expect(TITHELY_KIT_FACTS.operations).toEqual(["GET /charges-list", "GET /charges/{chargeId}"]);
+    expect(TITHELY_KIT_FACTS.operations).toEqual([
+      "GET /accounts-list",
+      "GET /accounts-list-all",
+      "GET /accounts/{accountId}",
+      "GET /charges-list",
+      "GET /charges/{chargeId}",
+      "GET /organizations-list",
+      "GET /organizations/{organizationId}",
+      "GET /payment-methods-list",
+      "GET /recurring-list",
+      "GET /recurring/{recurringId}",
+    ]);
     for (const operation of TITHELY_KIT_FACTS.operations) {
       expect(operation).toMatch(/^(GET|HEAD|POST|PUT|PATCH|DELETE) \/\S*$/);
     }
@@ -578,16 +761,24 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
 
   it("derives the endpoint manifest drift checks read from the same declaration", () => {
     const spec = manifest(TithelyApi);
-    expect(Object.keys(spec.paths).sort()).toEqual(["/charges-list", "/charges/{chargeId}"]);
-    const list = spec.paths["/charges-list"]!.get!;
-    expect(list.parameters.map((parameter: { name: string }) => parameter.name)).toEqual([
-      "organization_id",
-      "account_id",
-      "created_after",
-      "created_before",
-      "limit",
-      "order_by",
-      "starting_after",
-    ]);
+    expect(Object.keys(spec.paths).sort()).toEqual(TITHELY_KIT_FACTS.operations.map((operation) => operation.slice(4)));
+    const paging = ["limit", "order_by", "starting_after"];
+    for (const [path, names] of [
+      ["/organizations-list", paging],
+      ["/organizations/{organizationId}", ["organizationId"]],
+      ["/accounts-list", paging],
+      ["/accounts-list-all", paging],
+      ["/accounts/{accountId}", ["accountId"]],
+      ["/charges-list", ["organization_id", "account_id", "created_after", "created_before", ...paging]],
+      ["/charges/{chargeId}", ["chargeId"]],
+      ["/recurring-list", ["organization_id", "account_id", ...paging]],
+      ["/recurring/{recurringId}", ["recurringId"]],
+      ["/payment-methods-list", ["account_id"]],
+    ] as const) {
+      expect(
+        spec.paths[path]!.get!.parameters.map((parameter: { name: string }) => parameter.name),
+        path,
+      ).toEqual(names);
+    }
   });
 });
