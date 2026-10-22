@@ -1576,7 +1576,7 @@ columns in any tool table, unknown access values and conflicting rows are provid
 findings. The internal `withVettedCatalog()`
 helper has been removed. Public provider `*_VETTED_CATALOG` exports remain
 deprecated aliases derived from each definition
-(`test/classified-decorators.test.ts`, `test/hosted-presets.test.ts`).
+(`test/classified-decorators.test.ts`).
 
 Wrappers must forward `classification` to keep the review. `{ ...connector }`,
 `Object.assign`, and `Object.create` keep it. A forwarding class that omits it

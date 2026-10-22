@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { catalogReviewOf, detectCatalogDrift, reviewedCatalog } from "../src/catalog-drift.js";
-import { hostedCatalog as linearSchemas } from "../src/providers/linear/fixtures.js";
 import { hostedSchemaFixtures as mixpanelSchemas } from "../src/providers/mixpanel/fixtures.js";
 import remainingMixpanelSchemas from "../src/providers/mixpanel/catalog.fixture.json";
-import revenuecatContracts from "../src/providers/revenuecat/contracts.fixture.json";
 import { hostedTools as stripeSchemas } from "../src/providers/stripe/fixtures.js";
 import type { ToolDef } from "../src/types.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -12,11 +10,9 @@ import { providerFixtures } from "./providers.generated.js";
 // Iterate the generated roster and every construction case so a new provider or
 // a non-default hosted implementation cannot silently escape this guard.
 const capturedSchemas: Record<string, readonly ToolDef[]> = {
-  linear: linearSchemas,
   // Remaining full schemas captured through hosted discovery on 2026-10-19.
   // Every capture must match the existing pin; no baseline is accepted here.
   mixpanel: [...mixpanelSchemas, ...remainingMixpanelSchemas],
-  revenuecat: revenuecatContracts.tools,
   stripe: stripeSchemas,
 };
 

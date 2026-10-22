@@ -93,22 +93,9 @@ the deployment constructs its registry.
 
 ## Maintained integrations
 
-Import a provider individually. For example, Linear requires an explicit
-choice of its downstream endpoint:
-
-```ts
-import { linear } from "@zackbart/connecta/providers/linear";
-
-const tracker = linear("tracker", {
-  purpose: "Engineering issues in our workspace",
-  access: "read-only",
-});
-// Add tracker to the deployment's connectors array.
-```
-
-Linear defaults to OAuth; its read-only endpoint requests only the downstream
-read scope. That is separate from Connecta endpoint or connector `readOnly`. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
-workspace instructions, and admission choices.
+Import a provider individually from its published subpath. For former Basecamp,
+Intercom, Linear, RevenueCat, and Wispr Flow presets, follow the
+[hosted MCP migration guide](./hosted-mcp-migration.md) to configure `remoteMcp()`.
 
 The [human README](../README.md#what-you-can-connect) lists available
 integrations. In the installed package, `dist/providers/<name>/index.d.ts`
@@ -121,43 +108,6 @@ mapping from admitted identity to the downstream account; an agent acts as its
 pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
-
-Intercom uses `intercom()` from `@zackbart/connecta/providers/intercom`:
-
-```ts
-import { intercom } from "@zackbart/connecta/providers/intercom";
-
-const support = intercom("support", {
-  purpose: "Customer support triage",
-  region: "eu",
-});
-// Add support to the deployment's connectors array.
-```
-
-Set `region` explicitly to `"us"` or `"eu"` to match the workspace; AU is
-unsupported. OAuth defaults to personal ownership because it acts as the
-authorizing teammate. Non-loopback OAuth callbacks require an Intercom Customer
-Support allowlist entry for the deployment's redirect URI before authorization
-can complete. Alternatively, set `auth: { type: "credential" }` and connect an
-API token through the [shared credential procedure](./auth.md#connect-a-shared-credential);
-token auth defaults to shared ownership. Fin Operator tools require OAuth,
-workspace availability and teammate permission. Their expected absence adds no
-missing-tool drift; missing core tools still do. Schema coverage reports all
-present reviewed tools as unpinned. Article operations, internal
-notes and Operator actions can write; a note can reopen a snoozed conversation.
-Use a read-only endpoint when writes are unwanted. Catalog review is based on
-[Intercom's docs](https://developers.intercom.com/docs/guides/mcp), with unpinned
-schemas; inspect live tools and the runtime guide before acting on sensitive
-customer data.
-
-Wispr Flow uses OAuth only through `wisprFlow()` from
-`@zackbart/connecta/providers/wispr-flow`. It reaches the authorized account's
-Notetaker content, with personal and work accounts holding separate data.
-Its runtime guide, available through `connecta.skill("connector:<id>")` in `execute_code`, describes account access,
-search limits, transcript permissions and paging. The
-reviewed classification includes task writes listed in Claude's directory even
-though Wispr's public help describes read-only access; discover the account's
-actual tools before assuming those writes exist.
 
 For minimal Stripe OAuth/API-key examples with and without connector `readOnly`, see [Stripe setup](./provider-auth-migration.md#stripe). With an API key, prefer a restricted `rk_` key with only read permissions for read-only access; Stripe enforces it too.
 

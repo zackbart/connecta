@@ -2304,9 +2304,9 @@ path, without credentials or a fragment. Its `client_id` must equal its URL,
 and its metadata must include the deployment's exact callback and public-client
 authentication. Changing from an external document to the self-hosted URL needs
 one Disconnect and reconnect because tokens belong to the old client ID.
-`basecamp()` now defaults to the self-hosted document and accepts an external
-URL override. Basecamp restricts DCR for HTTPS callbacks, so it needs a public
-HTTPS deployment or an external document.
+Basecamp restricts DCR for HTTPS callbacks, so its generic `remoteMcp()` entry
+needs a public HTTPS deployment or an external document. Preserve its client
+identity when following the [hosted MCP migration guide](./hosted-mcp-migration.md).
 
 For a pre-registered client, use:
 

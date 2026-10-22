@@ -1,10 +1,8 @@
 // Node-only: spawns the Node maintainer drift checker against filesystem fixtures.
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,13 +13,9 @@ async function driftRecord(provider: string, directory = providerDirectory): Pro
   return JSON.parse(await readFile(join(directory, provider, "drift.json"), "utf8"));
 }
 async function documentedEvidence(provider: string) {
-  return (await driftRecord(provider)).checks.find(
-    (check: any) => check.type === "mcp-docs" || check.type === "oauth-discovery",
-  );
+  return (await driftRecord(provider)).checks.find((check: any) => check.type === "mcp-docs");
 }
-const linearEvidence = await documentedEvidence("linear");
 const vercelEvidence = await documentedEvidence("vercel");
-const LINEAR_MCP_ENDPOINTS = { "read-write": linearEvidence.endpoints[0] };
 const VERCEL_MCP_ENDPOINT = vercelEvidence.endpoints[0];
 
 const checker = fileURLToPath(new URL("../scripts/drift-check.mjs", import.meta.url));
@@ -458,20 +452,32 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         path: alpha.path,
       }),
     ]);
+    expect(run(directory, ["notion"]).output.match(/^\s+contract-changed\b/gm)).toHaveLength(1);
   });
 
   it.each([
-    ["--specs", "linear", "--docs"],
-    ["--specs", "revenuecat", "--docs"],
-  ])("refuses %s narrowed to %s, which %s checks", async (half, provider, other) => {
-    const result = spawnSync(process.execPath, [checker, half, "--provider", provider], { encoding: "utf8" });
-    // Silently checking nothing and exiting 0 is the wrong failure mode for a
-    // command whose whole value is its exit code.
+    ["--specs", "crm", "--docs"],
+    ["--docs", "z-vendor", "--specs"],
+  ] as const)("refuses %s narrowed to %s, which %s checks", async (selected, provider, required) => {
+    const directory = await recordWorkspace({
+      crm: {
+        version: 1,
+        provider: "crm",
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://crm.example/setup",
+            endpoints: ["https://crm.example/mcp"],
+            reviewed: ["list"],
+          },
+        ],
+      },
+      "z-vendor": { version: 1, provider: "z-vendor", checks: [endpointEvidence] },
+    });
+    const result = reportFor(directory, [selected, "--provider", provider]);
     expect(result.status).toBe(2);
-    const output = `${result.stdout}${result.stderr}`;
-    expect(output).toContain(`${provider} is `);
-    expect(output).toContain(other);
-    expect(output).toContain("which this run did not select");
+    expect(result.output).toContain(`${provider} is only checked by ${required}`);
+    expect(result.output).toContain("which this run did not select");
   });
 
   it(
@@ -586,90 +592,31 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(report.intentionallyUnclassified).not.toContain("preview");
     expect(report.added).toContain("preview");
     // Reordered columns work too; blank access retains its explicit acknowledgement.
-    await writeFile(
-      reference,
-      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n",
-    );
+    const matching =
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n";
+    await writeFile(reference, matching);
     const quiet = JSON.parse(run().output).docs[0];
     expect(quiet.findings).toEqual([]);
     expect(quiet.intentionallyUnclassified).toContain("preview");
-  });
 
-  it("INV-1: checks Intercom-style Access tables without weakening required columns or write verdicts", async () => {
-    const evidence = await documentedEvidence("intercom");
-    const { intercom } = await import("../src/providers/intercom/index.js");
-    const reviewedAccess = Object.fromEntries(
-      Object.entries(intercom.definition.classify!.tools).map(([name, entry]) => [
-        name,
-        (typeof entry === "string" ? entry : entry.verdict) === "read" ? "read" : "write",
-      ]),
-    );
-    const records = await recordWorkspace({
-      intercom: {
-        version: 1,
-        provider: "intercom",
-        checks: [
-          {
-            ...evidence,
-            inventory: { url: evidence.setup, format: "table", accessColumn: "Access" },
-            reviewedAccess,
-          },
-        ],
-      },
-    });
-    const reference = join(records, "intercom.md");
-    const run = () =>
-      reportFor(records, [
-        "--docs",
-        "--strict",
-        "--tool-reference",
-        `intercom=${reference}`,
-        "--setup-reference",
-        `intercom=${reference}`,
-      ]);
-    // Credential-free fixture, not a claim the current public docs have this table.
-    const text =
-      `# MCP\nOAuth ${evidence.endpoints.join(" ")}\n\n| Description | Access | Tool |\n| --- | --- | --- |\n` +
-      Object.entries(reviewedAccess)
-        .map(([name, access]) => `| Documented behavior | **${access}** | \`${name}\` |`)
-        .join("\n");
-    await writeFile(reference, text);
-    const clean = run();
-    expect(clean.status).toBe(0);
-    expect(JSON.parse(clean.output).docs[0]).toMatchObject({
-      documentedTools: 19,
-      findings: [],
-      added: [],
-      removed: [],
-    });
     await writeFile(
       reference,
-      text.replace("| **write** | `send_operator_message`", "| Read | `send_operator_message`"),
+      matching.replace("| Access | Description | Tool |", "| Permissions | Description | Tool |"),
     );
-    const drifted = run();
-    expect(drifted.status).toBe(1);
-    expect(JSON.parse(drifted.output).docs[0].findings).toEqual([
-      { kind: "documented-access-changed", detail: "send_operator_message: docs declare read, reviewed write" },
-    ]);
-    await writeFile(reference, text.replace("| Description | Access | Tool |", "| Description | Permissions | Tool |"));
     expect(JSON.parse(run().output).docs[0].findings).toEqual([
       expect.objectContaining({ kind: "parser-error", detail: expect.stringContaining("no longer contains Access") }),
     ]);
-  });
 
-  it("INV-1: reports reviewed Access evidence that disappears without masking explicit duplicates", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-missing-"));
-    temporary.push(directory);
-    const reference = join(directory, "revenuecat.md");
-    const text = "# MCP\nOAuth https://mcp.revenuecat.ai/mcp\n\n| Tool | Access |\n| --- | --- |\n| `get-app` | |\n";
-    await writeFile(reference, text);
-    const report = JSON.parse(runDocumented("revenuecat", reference, reference).output).docs[0];
-    expect(report.findings).toContainEqual(
-      expect.objectContaining({ kind: "documented-access-missing", detail: expect.stringContaining("get-app") }),
+    const missingAccess = matching.replace(
+      "| Write | Checks credentials | `list` |",
+      "| | Checks credentials | `list` |",
     );
-    await writeFile(reference, `${text}| \`get-app\` | Read |\n`);
-    const recovered = JSON.parse(runDocumented("revenuecat", reference, reference).output).docs[0];
-    expect(recovered.findings.some((finding: Finding) => finding.kind === "documented-access-missing")).toBe(false);
+    await writeFile(reference, missingAccess);
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([
+      { kind: "documented-access-missing", detail: "list: docs no longer declare the reviewed access value" },
+    ]);
+    await writeFile(reference, `${missingAccess}| Write | Checks credentials | \`list\` |\n`);
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([]);
   });
 });
 
@@ -934,22 +881,14 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
       expect(record).toMatchObject({ version: 1, provider });
       expect(record.checks.length).toBeGreaterThan(0);
       for (const check of record.checks) {
-        expect([
-          "endpoints",
-          "versioned-endpoints",
-          "mcp-docs",
-          "oauth-discovery",
-          "mcp-catalog",
-          "manual",
-          "openapi-index",
-        ]).toContain(check.type);
+        expect(["endpoints", "versioned-endpoints", "mcp-docs", "manual", "openapi-index"]).toContain(check.type);
         if (check.type === "openapi-index") {
           const source = JSON.parse(await readFile(join(providerDirectory, provider, check.source), "utf8"));
           expect(source.url).toMatch(/^https:\/\//);
           expect(source.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
           expect(existsSync(join(providerDirectory, provider, "openapi.generated.ts"))).toBe(true);
         }
-        if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
+        if (check.type === "mcp-docs") {
           expect(check.setup).toMatch(/^https:\/\//);
           expect(check.endpoints.length).toBeGreaterThan(0);
           expect(check.endpoints.every((endpoint: string) => endpoint.startsWith("https://"))).toBe(true);
@@ -966,18 +905,28 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
         }
       }
     }
-    expect((await driftRecord("basecamp")).checks.map((check: any) => check.type)).toEqual(["oauth-discovery"]);
   });
 
   it("reports a Vercel parser failure and a network failure while still checking a later provider", async () => {
     const directory = await recordWorkspace({
       vercel: { version: 1, provider: "vercel", checks: [vercelEvidence, manualCheck] },
-      "z-vendor": { version: 1, provider: "z-vendor", checks: [linearEvidence] },
+      "z-vendor": {
+        version: 1,
+        provider: "z-vendor",
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://vendor.example/setup",
+            endpoints: ["https://vendor.example/mcp"],
+            reviewed: ["read_item"],
+          },
+        ],
+      },
     });
     const moved = join(directory, "moved.md");
     const setup = join(directory, "setup.md");
     await writeFile(moved, "# Tools moved to category pages\n");
-    await writeFile(setup, `OAuth ${VERCEL_MCP_ENDPOINT} ${LINEAR_MCP_ENDPOINTS["read-write"]}`);
+    await writeFile(setup, `OAuth ${VERCEL_MCP_ENDPOINT} https://vendor.example/mcp`);
     const result = reportFor(directory, [
       "--tool-reference",
       `vercel=${moved}`,
@@ -1059,126 +1008,6 @@ describe("drift evidence validation", () => {
   });
 });
 
-describe("public hosted catalog drift", () => {
-  const reviewed = [
-    { name: "read_item", annotations: { readOnlyHint: true, destructiveHint: false } },
-    { name: "edit_item", annotations: { readOnlyHint: false, destructiveHint: true } },
-  ];
-  const check = { type: "mcp-catalog", endpoint: "https://catalog.example/mcp", reviewed };
-
-  async function fixture(tools: unknown[], nextCursor?: string) {
-    const directory = await recordWorkspace({ vendor: { version: 1, provider: "vendor", checks: [check] } });
-    const catalog = join(directory, "catalog.json");
-    await writeFile(
-      catalog,
-      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools, ...(nextCursor === undefined ? {} : { nextCursor }) } }),
-    );
-    return { directory, catalog };
-  }
-  function catalogRun(directory: string, catalog: string, extra: string[] = []) {
-    return spawnSync(
-      process.execPath,
-      [checker, "--docs", "--provider-dir", directory, "--tool-reference", `vendor=${catalog}`, "--json", ...extra],
-      { encoding: "utf8" },
-    );
-  }
-
-  it("reports additions, removals and weakened read/write annotations without adopting or recording them", async () => {
-    const { directory, catalog } = await fixture([
-      { name: "read_item", annotations: { readOnlyHint: false, destructiveHint: false } },
-      { name: "new_item", annotations: { readOnlyHint: true } },
-    ]);
-    const path = join(directory, "vendor", "drift.json");
-    const before = await readFile(path, "utf8");
-    const result = catalogRun(directory, catalog, ["--record", "--provider", "vendor"]);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).docs[0].findings).toEqual([
-      { kind: "catalog-annotations", detail: "read_item: behavioral annotations changed" },
-      { kind: "catalog-added", detail: "new_item" },
-      { kind: "catalog-removed", detail: "edit_item" },
-    ]);
-    expect(await readFile(path, "utf8")).toBe(before);
-    expect(catalogRun(directory, catalog, ["--strict"]).status).toBe(1);
-  });
-
-  it.each([
-    [{ name: "duplicate" }, { name: "duplicate" }],
-    [{ name: "bad_hint", annotations: { readOnlyHint: "true" } }],
-  ])("reports malformed catalogs without a partial comparison", async (...tools) => {
-    const { directory, catalog } = await fixture(tools);
-    const report = JSON.parse(catalogRun(directory, catalog).stdout);
-    expect(report.docs[0].findings).toEqual([expect.objectContaining({ kind: "parser-error" })]);
-    expect(report.docs[0].catalogTools).toBeUndefined();
-  });
-
-  it("sends only unauthenticated tools/list, follows pagination and isolates protected catalogs", async () => {
-    const requests: { method: string | undefined; authorization: string | undefined; body: any }[] = [];
-    const server = createServer(async (request, response) => {
-      let body = "";
-      for await (const chunk of request) body += chunk;
-      requests.push({ method: request.method, authorization: request.headers.authorization, body: JSON.parse(body) });
-      if (request.url === "/protected") {
-        response.writeHead(401).end();
-        return;
-      }
-      const cursor = JSON.parse(body).params.cursor;
-      response.setHeader("content-type", "application/json");
-      response.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          result: {
-            tools: cursor === undefined ? [reviewed[0]] : [reviewed[1]],
-            ...(cursor === undefined ? { nextCursor: "page-2" } : {}),
-          },
-        }),
-      );
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    try {
-      const directory = await recordWorkspace({
-        vendor: { version: 1, provider: "vendor", checks: [check] },
-        protected: { version: 1, provider: "protected", checks: [check] },
-      });
-      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        execFile(
-          process.execPath,
-          [
-            checker,
-            "--docs",
-            "--provider-dir",
-            directory,
-            "--json",
-            "--tool-reference",
-            `vendor=${origin}/catalog`,
-            "--tool-reference",
-            `protected=${origin}/protected`,
-          ],
-          (error, stdout, stderr) => (error ? reject(error) : resolve({ stdout, stderr })),
-        );
-      });
-      const report = JSON.parse(result.stdout);
-      expect(report.docs.find((entry: any) => entry.provider === "vendor")).toMatchObject({
-        catalogTools: 2,
-        findings: [],
-      });
-      expect(report.docs.find((entry: any) => entry.provider === "protected").findings).toEqual([
-        expect.objectContaining({ kind: "unavailable" }),
-      ]);
-      expect(requests).toHaveLength(3);
-      for (const request of requests) {
-        expect(request.method).toBe("POST");
-        expect(request.authorization).toBeUndefined();
-        expect(request.body).toMatchObject({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-        expect(Object.keys(request.body.params).every((key) => key === "cursor")).toBe(true);
-      }
-    } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
-    }
-  });
-});
-
 describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_MS }, () => {
   const day = (offset: number) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
   const generated = (operations: string[] = [], hosted: string[] = []) => ({ operations, hosted, evidence: {} });
@@ -1212,75 +1041,11 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
         reviewed: ["a"],
       },
     ],
-    [
-      "a legacy catalog",
-      { type: "mcp-catalog", endpoint: "https://mcp.vendor.example", catalog: "catalog.fixture.json" },
-    ],
     ["a legacy pin", { type: "openapi-index", source: "openapi.source.json" }],
   ])("refuses %s in a version 2 check as invalid evidence", async (_label, check) => {
     const directory = await recordWorkspace({ vendor: v2([check]) });
     expect(evidenceInvalid(JSON.parse(reportFor(directory).output))).toEqual([
       expect.objectContaining({ kind: "evidence-invalid" }),
-    ]);
-  });
-
-  it("compares a public catalog with evidence/catalog.json, names and all four hints, missing hints included", async () => {
-    const directory = await recordWorkspace({
-      vendor: v2([
-        { type: "mcp-catalog", endpoint: "https://mcp.vendor.example/mcp", catalog: "evidence/catalog.json" },
-      ]),
-    });
-    await mkdir(join(directory, "vendor", "evidence"));
-    const capture = {
-      capturedAt: day(1),
-      method: "tools/list",
-      source: "https://mcp.vendor.example/mcp",
-      tools: [
-        { name: "edit_item", annotations: { readOnlyHint: false, destructiveHint: true } },
-        { name: "read_item", annotations: { readOnlyHint: true } },
-        { name: "silent_item" },
-      ],
-    };
-    await writeFile(join(directory, "vendor", "evidence", "catalog.json"), JSON.stringify(capture));
-    const live = join(directory, "live.json");
-    await writeFile(
-      live,
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          tools: [
-            { name: "read_item", annotations: { readOnlyHint: true, idempotentHint: true } },
-            { name: "silent_item" },
-            { name: "new_item", annotations: { readOnlyHint: true } },
-          ],
-        },
-      }),
-    );
-    const run = () =>
-      spawnSync(
-        process.execPath,
-        [checker, "--docs", "--provider-dir", directory, "--tool-reference", `vendor=${live}`, "--json"],
-        {
-          encoding: "utf8",
-        },
-      );
-    const before = await readFile(join(directory, "vendor", "drift.json"), "utf8");
-    expect(JSON.parse(run().stdout).docs[0].findings).toEqual([
-      { kind: "catalog-annotations", detail: "read_item: behavioral annotations changed" },
-      { kind: "catalog-added", detail: "new_item" },
-      { kind: "catalog-removed", detail: "edit_item" },
-    ]);
-    expect(await readFile(join(directory, "vendor", "drift.json"), "utf8")).toBe(before);
-    await writeFile(
-      join(directory, "vendor", "evidence", "catalog.json"),
-      JSON.stringify({ ...capture, method: "documentation" }),
-    );
-    expect(JSON.parse(run().stdout).docs[0].findings).toEqual([
-      expect.objectContaining({
-        kind: "evidence-invalid",
-        detail: expect.stringContaining("not a tools/list capture"),
-      }),
     ]);
   });
 

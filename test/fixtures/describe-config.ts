@@ -19,9 +19,7 @@ import {
   remoteMcp,
   type Connector,
 } from "../../src/index.js";
-import { basecamp } from "../../src/providers/basecamp/index.js";
 import { ccb } from "../../src/providers/ccb/index.js";
-import { linear } from "../../src/providers/linear/index.js";
 import { stripe } from "../../src/providers/stripe/index.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorUi } from "../../src/ui.js";
@@ -205,14 +203,15 @@ export function secretBearingDeployment() {
           clientSecret: SECRETS.providerClientSecret,
         }),
         stripe("billing", { purpose: "Revenue questions", auth: { type: "apiKey" }, mode: "sandbox" }),
-        linear("tracker", {
-          purpose: "Roadmap questions",
-          access: "read-only",
+        remoteMcp("tracker", {
+          url: "https://tickets.example/mcp/readonly",
+          description: "Roadmap questions",
           auth: { type: "headers", headers: { Authorization: SECRETS.providerKey } },
         }),
-        basecamp("studio", {
-          purpose: "Client projects",
-          clientMetadataUrl: `https://client.example/basecamp-client?k=${SECRETS.providerCimdQuery}`,
+        remoteMcp("studio", {
+          url: "https://projects.example/mcp",
+          description: "Client projects",
+          auth: { type: "oauth", clientMetadataUrl: `https://client.example/projects-client?k=${SECRETS.providerCimdQuery}` },
         }),
         custom,
       ],

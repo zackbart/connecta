@@ -74,10 +74,6 @@
       "types": "./dist/auth/cloudflare-access.d.ts",
       "import": "./dist/auth/cloudflare-access.js"
     },
-    "./providers/basecamp": {
-      "types": "./dist/providers/basecamp/index.d.ts",
-      "import": "./dist/providers/basecamp/index.js"
-    },
     "./providers/breeze": {
       "types": "./dist/providers/breeze/index.d.ts",
       "import": "./dist/providers/breeze/index.js"
@@ -114,14 +110,6 @@
       "types": "./dist/providers/infisical/index.d.ts",
       "import": "./dist/providers/infisical/index.js"
     },
-    "./providers/intercom": {
-      "types": "./dist/providers/intercom/index.d.ts",
-      "import": "./dist/providers/intercom/index.js"
-    },
-    "./providers/linear": {
-      "types": "./dist/providers/linear/index.d.ts",
-      "import": "./dist/providers/linear/index.js"
-    },
     "./providers/mixpanel": {
       "types": "./dist/providers/mixpanel/index.d.ts",
       "import": "./dist/providers/mixpanel/index.js"
@@ -137,10 +125,6 @@
     "./providers/planning-center": {
       "types": "./dist/providers/planning-center/index.d.ts",
       "import": "./dist/providers/planning-center/index.js"
-    },
-    "./providers/revenuecat": {
-      "types": "./dist/providers/revenuecat/index.d.ts",
-      "import": "./dist/providers/revenuecat/index.js"
     },
     "./providers/sheets": {
       "types": "./dist/providers/sheets/index.d.ts",
@@ -161,10 +145,6 @@
     "./providers/vercel": {
       "types": "./dist/providers/vercel/index.d.ts",
       "import": "./dist/providers/vercel/index.js"
-    },
-    "./providers/wispr-flow": {
-      "types": "./dist/providers/wispr-flow/index.d.ts",
-      "import": "./dist/providers/wispr-flow/index.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",
