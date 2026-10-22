@@ -60,7 +60,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
@@ -1717,11 +1717,7 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
       testCredential: async (value, ctx) => {
         try {
           const account = asRecord(
-            await callBreeze(
-              send,
-              { method: "GET", path: "/account/summary" },
-              deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
-            ),
+            await callBreeze(send, { method: "GET", path: "/account/summary" }, credentialProbeContext(ctx, { value })),
           );
           const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
           if (reported && reported !== subdomain) {

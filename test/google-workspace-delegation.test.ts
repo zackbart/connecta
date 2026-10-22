@@ -455,7 +455,7 @@ describe("whose account a call acts as", () => {
     expect(tokenCalls).toHaveLength(1);
   });
 
-  it("hands an async mapping the call's signal, once per call", WORKERS, async () => {
+  it("INV-7: hands an async mapping the revocable call signal, once per call", WORKERS, async () => {
     const controller = new AbortController();
     const seen: (AbortSignal | undefined)[] = [];
     const connector = mailbox({
@@ -471,7 +471,10 @@ describe("whose account a call acts as", () => {
     );
     await connector.callTool("search_threads", {}, context(identity("alice"), controller.signal));
     expect(apiCalls).toHaveLength(3);
-    expect(seen).toEqual([controller.signal]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toBe(controller.signal);
+    expect(seen[0]?.aborted).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
   });
 
   it("fails closed when the mapping has no account for this caller", NODE, async () => {

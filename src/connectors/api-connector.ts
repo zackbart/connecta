@@ -1,3 +1,6 @@
+import { credentialProbe } from "../runtime/credential-probe.js";
+import { settleOnClose } from "../runtime/call.js";
+import { registerCallEntry } from "../runtime/call-entry.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
 import { compileValidator, validateCatalogToolInput } from "../validate.js";
@@ -354,23 +357,35 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       callAdmission: opts.callAdmission,
       usageGuide: opts.usageGuide,
       credential: opts.credential,
-      testCredential: opts.testCredential,
-      testCredentials: opts.testCredentials,
+      testCredential: opts.testCredential
+        ? (value: string, ctx: ConnectorContext) =>
+            credentialProbe(ctx, { value }, (view) => settleOnClose(view, () => opts.testCredential!(value, view)))
+        : undefined,
+      testCredentials: opts.testCredentials
+        ? (values: ConnectorCredentialValues, ctx: ConnectorContext) =>
+            credentialProbe(ctx, values, (view) => settleOnClose(view, () => opts.testCredentials!(values, view)))
+        : undefined,
     }),
     ...(oauth
       ? {
-          status: oauth.status,
-          startAuth: oauth.startAuth,
-          disconnectAuth: oauth.disconnectAuth,
-          verifyState: oauth.verifyState,
-          verifyCallbackIssuer: oauth.verifyCallbackIssuer,
-          consumeAuthError: oauth.consumeAuthError,
-          finishAuth: oauth.finishAuth,
+          status: (ctx: ConnectorContext) => settleOnClose(ctx, () => oauth.status(ctx)),
+          startAuth: (ctx: ConnectorContext, options?: { force?: boolean }) =>
+            settleOnClose(ctx, () => oauth.startAuth(ctx, options)),
+          disconnectAuth: (ctx: ConnectorContext) => settleOnClose(ctx, () => oauth.disconnectAuth(ctx)),
+          // Callback work belongs to its request, including the route's
+          // uninterruptible exchange, rather than any resource call.
+          verifyState: (state: string | null, ctx: ConnectorContext) =>
+            settleOnClose(ctx, () => oauth.verifyState(state, ctx), true),
+          verifyCallbackIssuer: (issuer: string | null, ctx: ConnectorContext) =>
+            settleOnClose(ctx, () => oauth.verifyCallbackIssuer(issuer, ctx), true),
+          consumeAuthError: (ctx: ConnectorContext) => settleOnClose(ctx, () => oauth.consumeAuthError(ctx), true),
+          finishAuth: (code: string, ctx: ConnectorContext, callbackParams: URLSearchParams) =>
+            settleOnClose(ctx, () => oauth.finishAuth(code, ctx, callbackParams), true),
         }
       : {}),
     staticTools: defs,
     async listTools(ctx) {
-      return redactCatalog(ctx, defs);
+      return settleOnClose(ctx, async () => redactCatalog(ctx, defs));
     },
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
@@ -414,7 +429,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       });
       let result: unknown;
       try {
-        result = await tool.handler(input, handlerCtx);
+        // The opaque handler may await a helper, swallow its rejection, or
+        // wait elsewhere. Its boundary remains call-owned; auxiliary helpers
+        // retain their separate request ownership. Ledger settlement below
+        // must see the close reason before this call's Promise rejects.
+        result = await settleOnClose(callCtx, () => Promise.resolve(tool.handler(input, handlerCtx)));
       } catch (error) {
         // Settled before anything is decided or reported: a request that has
         // not left by now (a sibling awaiting its credential) never will.
@@ -488,11 +507,12 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
+  registerCallEntry(connector, connector.callTool);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
       // The built-in static OAuth status only reads the stored grant. It never
       // refreshes, invokes a handler, or sends a downstream request.
-      if ((await oauth.status(ctx)).state === "auth_required") {
+      if ((await settleOnClose(ctx, () => oauth.status(ctx))).state === "auth_required") {
         throw new ConnectorCallError(
           "downstream_oauth_required",
           `Connector "${id}" requires authorization. Call authorize_connector.`,

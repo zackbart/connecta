@@ -23,6 +23,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { connectorGuide, connectorGuideRequired, connectorGuideSummary, connectorSkillName } from "./skills.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
+import { settleOnClose } from "./runtime/call.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
 import { keepErrorName } from "./redaction-identity.js";
@@ -706,7 +707,10 @@ export class CatalogService {
   }
 
   loadConnector(id: string, callOptions: ConnectorOperationOptions = {}): Promise<ToolDef[]> {
-    return runEdge(this.catalog(id, callOptions));
+    return settleOnClose(
+      { requestScope: this.requestScope, signal: callOptions.signal ?? this.requestSignal },
+      (signal) => runEdge(this.catalog(id, { ...callOptions, signal }), { signal }),
+    );
   }
 
   // One connector's catalog from the request-scoped cache, reading it through
@@ -838,7 +842,10 @@ export class CatalogService {
   }
 
   resolveTool(address: string, callOptions: ConnectorOperationOptions = {}): Promise<CatalogResolution> {
-    return runEdge(this.resolve(address, callOptions));
+    return settleOnClose(
+      { requestScope: this.requestScope, signal: callOptions.signal ?? this.requestSignal },
+      (signal) => runEdge(this.resolve(address, { ...callOptions, signal }), { signal }),
+    );
   }
 
   // resolveTool without the Promise, for InvocationService's pipeline, which
@@ -908,7 +915,16 @@ export class CatalogService {
     return withAuthorizationHandoff(this.requestScope, error);
   }
 
-  async search(
+  search(
+    args: CatalogSearchArgs,
+    onCatalogReference?: (connector: string, tool?: string) => void,
+  ): Promise<CatalogSearchPage> {
+    return settleOnClose({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
+      this.searchPage(args, onCatalogReference),
+    );
+  }
+
+  private async searchPage(
     args: CatalogSearchArgs,
     onCatalogReference?: (connector: string, tool?: string) => void,
   ): Promise<CatalogSearchPage> {
@@ -1364,7 +1380,13 @@ export class CatalogService {
     };
   }
 
-  async describe(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
+  describe(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
+    return settleOnClose({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
+      this.describePage(args),
+    );
+  }
+
+  private async describePage(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
     const addresses = discoveryAddresses(args);
     const format = args.format ?? "compact";
     const resolved = addresses.map((rawAddress) => {

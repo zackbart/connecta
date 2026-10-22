@@ -105,7 +105,7 @@ describe("derived connector contexts", () => {
     expect("fetch" in required(seen)).toBe(true);
   });
 
-  it("INV-9: api() never mutates the registry's context, and facts recorded on the handler's copy reach it", async () => {
+  it("INV-7 INV-9: api() never mutates the registry's context, and drops recovery recorded after its call", async () => {
     const crm = connector(async (ctx) => ({ handed: ctx }));
     const origin = makeRegistry([crm]).contextFor("crm", BASE);
     const { handed } = (await crm.callTool("read", {}, origin)) as { handed: ConnectorContext };
@@ -113,7 +113,7 @@ describe("derived connector contexts", () => {
     expect("fetch" in handed).toBe(true);
     expect("fetch" in origin).toBe(false);
     recordRecovery(handed, { idempotencyKey: "key-3" });
-    expect(recoveryFor(origin)).toEqual({ idempotencyKey: "key-3" });
+    expect(recoveryFor(origin)).toBeUndefined();
   });
 
   /** A caller as a pool view hands one to the registry. */

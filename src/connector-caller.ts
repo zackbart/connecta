@@ -20,7 +20,7 @@
 // principal). A context no request admitted, such as an operator probe, has no caller, and a delegated provider fails closed on it,
 // as it does on the anonymous caller an open deployment admits.
 
-import { contextKey } from "./derived-context.js";
+import { Caller, serviceFor, setViewService } from "./runtime/call.js";
 import type { AuthenticatedIdentity, ConnectorContext } from "./types.js";
 
 export interface ConnectorCaller {
@@ -43,13 +43,10 @@ export interface ConnectorCaller {
   poolOwner?: string;
 }
 
-const callers = new WeakMap<object, ConnectorCaller>();
-
 export function attachCaller(ctx: ConnectorContext, caller: ConnectorCaller | undefined): ConnectorContext {
-  if (caller) callers.set(contextKey(ctx), caller);
+  setViewService(ctx, Caller, caller);
   return ctx;
 }
-
 export function callerOf(ctx: ConnectorContext): ConnectorCaller | undefined {
-  return callers.get(contextKey(ctx));
+  return serviceFor(ctx, Caller);
 }

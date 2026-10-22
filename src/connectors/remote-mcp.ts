@@ -1,3 +1,5 @@
+import { deriveContext } from "../derived-context.js";
+import { duringViewCall, operationContext, openRequest, settleOnClose, viewSignal } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -47,6 +49,7 @@ import { Deferred, Duration, Effect, Exit, Scope } from "effect";
 import {
   assertOAuthScope,
   authorizingContext,
+  codeExchangeResponse,
   KvOAuthProvider,
   OAuthRequestNotSentError,
   refreshCoordinatorsByPartition,
@@ -1923,8 +1926,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
     signals: readonly (AbortSignal | undefined)[],
+    renewalSignal: (response: Response) => AbortSignal | undefined,
   ): void => {
-    type FlowContext = { fetchFn?: FetchLike } & Record<string, unknown>;
+    type FlowContext = { response: Response; fetchFn?: FetchLike } & Record<string, unknown>;
     const internals = transport as unknown as {
       _authProvider?: { onUnauthorized?: (ctx: FlowContext) => Promise<void> };
       _stepUpAuthorize?: (challenge: unknown, retries: number) => Promise<unknown>;
@@ -1942,21 +1946,35 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "version this release ships with.",
       );
     }
-    const flow = async <T>(start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>): Promise<T> => {
+    const flow = async <T>(
+      start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
+      signal?: AbortSignal,
+    ): Promise<T> => {
       const trail: OAuthTrail = {};
       try {
         return await start((fetchFn) =>
           tracedOAuthFetch(trail, endpoint, async (input, init) => {
             trackSentRequest(ctx, input, init);
-            return await fetchFn(input, init);
+            return await fetchFn(
+              input,
+              signal
+                ? {
+                    ...init,
+                    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+                  }
+                : init,
+            );
           }),
         );
       } catch (err) {
-        throw await withoutAuthorizationServerText(ctx, err, trail, signals);
+        throw await withoutAuthorizationServerText(ctx, err, trail, [...signals, signal]);
       }
     };
     adapted.onUnauthorized = (ctx) =>
-      flow((trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]));
+      flow(
+        (trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]),
+        renewalSignal(ctx.response),
+      );
     internals._stepUpAuthorize = (challenge, retries) =>
       flow((trace) => {
         const traced = trace(internals._fetchWithInit ?? fetch);
@@ -2280,6 +2298,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         credentialDigest: null,
       };
       states.set(key, state);
+      const owned = state;
+      openRequest(key).own(() => {
+        const closing = Scope.closeUnsafe(owned.scope, Exit.void);
+        reset(owned);
+        if (closing) detach(closing);
+      });
     }
     return state;
   };
@@ -2295,7 +2319,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const newProvider = (
     ctx: ConnectorContext,
     state?: ConnectionState,
-    signal: AbortSignal | undefined = ctx.signal,
+    signal: AbortSignal | undefined = viewSignal(ctx, true),
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
     const metadataUrl = staticClient ? undefined : (clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id));
@@ -2350,10 +2374,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
      * retained past the transport it configures.
      */
     credentialFramed: string | null = null,
-    signal: AbortSignal | undefined = ctx.signal,
+    signal: AbortSignal | undefined = viewSignal(ctx, true),
     /** The raw value behind `credentialFramed`, under the same terms. */
     credentialValue: string | null = null,
+    /** A code exchange never transfers ownership to the refresh coordinator. */
+    exchangeOnly = false,
   ): Transport => {
+    const initiatingSignal = ctx.signal;
+    ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
     // Missing records never acquire a fresh write attempt. Only active calls
@@ -2472,18 +2500,65 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
     if (opts.auth?.type === "oauth") {
       const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
+      // The session/provider belong to the request. A renewal belongs to the
+      // exact call whose HTTP response challenged it, until claim submission.
+      // Carry that ownership on the response the SDK passes to onUnauthorized;
+      // a shared mutable "current call" would borrow a concurrent call's lease.
+      const renewalSignals = new WeakMap<Response, AbortSignal>();
+      const exchangeFetch = (send: FetchLike): FetchLike =>
+        exchangeOnly
+          ? (input, init) =>
+              duringViewCall(
+                ctx,
+                async (requestSignal) => {
+                  const response = await send(input, {
+                    ...init,
+                    signal: init?.signal ? AbortSignal.any([requestSignal, init.signal]) : requestSignal,
+                  });
+                  // An override may ignore abort. Cancel its late response before
+                  // the SDK can consume it, including a cloned pending body read.
+                  if (requestSignal.aborted) {
+                    void response.body?.cancel().catch(() => {});
+                    throw requestSignal.reason;
+                  }
+                  return codeExchangeResponse(response, requestSignal);
+                },
+                true,
+              )
+          : send;
+      const coordinatedFetch = refreshCoordinatorFor(ctx).coordinatedFetch(
+        oauthProvider,
+        exchangeFetch(learnedUrlSafeFetch(id, url, trackedFetch)),
+        signal,
+        ctx.defer,
+        exchangeFetch(learnedUrlSafeFetch(id, url, guardedFetch)),
+      );
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
-        fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
-          oauthProvider,
-          learnedUrlSafeFetch(id, url, trackedFetch),
-          signal,
-          ctx.defer,
-          learnedUrlSafeFetch(id, url, guardedFetch),
-        ),
+        fetch: async (input, init) => {
+          const response = await coordinatedFetch(input, init);
+          if (response.status === 401) {
+            let owner: AbortSignal | undefined;
+            if (typeof init?.body === "string") {
+              try {
+                const rpc: unknown = JSON.parse(init.body);
+                if (skillObject(rpc)) {
+                  if (rpc.method === "initialize" || rpc.method === "server/discover") owner = initiatingSignal;
+                  else if (typeof rpc.id === "string" || typeof rpc.id === "number")
+                    owner = flights.get(rpc.id)?.request?.ctx.signal;
+                }
+              } catch {
+                // OAuth forms and request-owned protocol fetches have no call id.
+              }
+            }
+            const ownedSignal = owner && init?.signal ? AbortSignal.any([owner, init.signal]) : (owner ?? init?.signal);
+            if (ownedSignal) renewalSignals.set(response, ownedSignal);
+          }
+          return response;
+        },
       });
-      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
+      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
       return sendingEachWriteOnce(transport, flights, untrackedRead);
     }
     const headers =
@@ -2581,98 +2656,111 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   const ensureConnected = async (ctx: ConnectorContext, state: ConnectionState): Promise<Client> => {
-    // A 401 after connect is a verdict for the whole request scope, not merely
-    // for the one call that observed it. Do not let the still-cached client make
-    // a later status or call in the same scope report healthy.
-    if (state.authRequired) {
-      throw authRequiredError();
-    }
-    // Read the OAuth epoch before trusting either a cached client or starting a
-    // transport. A disconnected epoch is a durable operator instruction, not
-    // merely the absence of credentials: passive status/tool probes must not
-    // turn it back into a pending consent flow.
-    let oauthGeneration: string | undefined;
-    if (isOauth && (state.client || state.connecting)) {
-      const provider = newProvider(ctx, state);
-      oauthGeneration = await provider.liveEpoch();
-      if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
-        closeHalf(state);
-        throw operatorDisconnectedError();
-      }
-    }
-    // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
-    // and the grant with it. This request's cached client still speaks the old
-    // token — drop it so the next connect runs against current state.
-    if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
-      if (isClosed(state)) throw scopeEndedError();
-      if (oauthGeneration !== state.connectedGeneration) {
-        closeHalf(state);
-      }
-    }
-    // The static-credential counterpart of the epoch read above, and
-    // deliberately beside it: the vault is read before any cached client is
-    // trusted, so an operator's rotation in the UI takes effect on the next
-    // call rather than the next deploy. Compared by digest — the
-    // plaintext lives in this function's scope and never reaches `state`.
-    let credentialValue: string | null = null;
-    let credentialFramed: string | null = null;
-    let credentialDigest: string | null = null;
-    if (credentialAuth || requestAuth) {
-      credentialValue = await readCredential(ctx);
-      credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
-      credentialDigest = await digestOf(credentialValue);
-      // Gated on a connect in flight as well as a cached client, exactly like
-      // the epoch read above: a rotation that lands while the first caller is
-      // still connecting must not let the second one ride the key the vault
-      // has already replaced.
-      if (
-        (state.client || state.connecting) &&
-        state.credentialDigest !== null &&
-        state.credentialDigest !== credentialDigest
-      ) {
-        // A slow vault/token read or digest can resume after a newer caller
-        // connected with the replacement. Never let that stale read tear down
-        // the newer connection and install the rotated-away credential.
-        const observedConnection = state.client ?? state.connecting;
-        const currentCredential = await readCredential(ctx);
-        if (isClosed(state)) throw scopeEndedError();
-        if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
-          throw resendAdvice(
-            new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
-              retryable: true,
-            }),
-            "; retry the operation",
-          );
-        }
-        closeHalf(state);
-      }
-    }
-    if (isClosed(state)) throw scopeEndedError();
-    if (state.client) return state.client;
-    const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
-    // A Promise edge of its own, as architecture.md's "Effect inside" requires
-    // of every shared wait: whatever this caller does next with the client is
-    // its own I/O, so it resumes in its own continuation rather than inside the
-    // call that completed the attempt.
-    connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
-    let client: Client;
-    try {
-      client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
-    } finally {
-      const remaining = (connectingWaiters.get(attempt) ?? 1) - 1;
-      if (remaining > 0) connectingWaiters.set(attempt, remaining);
+    let joined = state.connecting;
+    if (joined) connectingWaiters.set(joined, (connectingWaiters.get(joined) ?? 0) + 1);
+    const leave = () => {
+      if (!joined) return;
+      const remaining = (connectingWaiters.get(joined) ?? 1) - 1;
+      if (remaining > 0) connectingWaiters.set(joined, remaining);
       else {
-        connectingWaiters.delete(attempt);
-        // A cancelled waiter leaves its siblings' handshake alone. Once every
-        // waiter has left, abandon the attempt and its OAuth refresh too.
-        if (ctx.signal?.aborted && state.connecting === attempt) closeHalf(state);
+        connectingWaiters.delete(joined);
+        if (ctx.signal?.aborted && state.connecting === joined) closeHalf(state);
       }
+    };
+    try {
+      // A 401 after connect is a verdict for the whole request scope, not merely
+      // for the one call that observed it. Do not let the still-cached client make
+      // a later status or call in the same scope report healthy.
+      if (state.authRequired) {
+        throw authRequiredError();
+      }
+      // Read the OAuth epoch before trusting either a cached client or starting a
+      // transport. A disconnected epoch is a durable operator instruction, not
+      // merely the absence of credentials: passive status/tool probes must not
+      // turn it back into a pending consent flow.
+      let oauthGeneration: string | undefined;
+      if (isOauth && (state.client || state.connecting)) {
+        // Count an existing handshake waiter before subscribing its signal:
+        // cancelling a sibling must not close the handshake beneath it.
+        const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
+        // The read belongs to the request; this caller's wait still ends with
+        // its call. Closing one call must not revoke the shared provider.
+        oauthGeneration = await duringViewCall(ctx, () => provider.liveEpoch());
+        if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
+          closeHalf(state);
+          throw operatorDisconnectedError();
+        }
+      }
+      // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
+      // and the grant with it. This request's cached client still speaks the old
+      // token — drop it so the next connect runs against current state.
+      if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
+        if (isClosed(state)) throw scopeEndedError();
+        if (oauthGeneration !== state.connectedGeneration) {
+          closeHalf(state);
+        }
+      }
+      // The static-credential counterpart of the epoch read above, and
+      // deliberately beside it: the vault is read before any cached client is
+      // trusted, so an operator's rotation in the UI takes effect on the next
+      // call rather than the next deploy. Compared by digest — the
+      // plaintext lives in this function's scope and never reaches `state`.
+      let credentialValue: string | null = null;
+      let credentialFramed: string | null = null;
+      let credentialDigest: string | null = null;
+      if (credentialAuth || requestAuth) {
+        credentialValue = await readCredential(ctx);
+        credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
+        credentialDigest = await digestOf(credentialValue);
+        // Gated on a connect in flight as well as a cached client, exactly like
+        // the epoch read above: a rotation that lands while the first caller is
+        // still connecting must not let the second one ride the key the vault
+        // has already replaced.
+        if (
+          (state.client || state.connecting) &&
+          state.credentialDigest !== null &&
+          state.credentialDigest !== credentialDigest
+        ) {
+          // A slow vault/token read or digest can resume after a newer caller
+          // connected with the replacement. Never let that stale read tear down
+          // the newer connection and install the rotated-away credential.
+          const observedConnection = state.client ?? state.connecting;
+          const currentCredential = await readCredential(ctx);
+          if (isClosed(state)) throw scopeEndedError();
+          if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
+            throw resendAdvice(
+              new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
+                retryable: true,
+              }),
+              "; retry the operation",
+            );
+          }
+          closeHalf(state);
+        }
+      }
+      // Credential preparation belongs to this caller, even when the session
+      // it may join belongs to the request. A late preparation cannot acquire
+      // or reuse a session after its operation boundary has refused the call.
+      viewSignal(ctx).throwIfAborted();
+      if (isClosed(state)) throw scopeEndedError();
+      if (state.client) return state.client;
+      const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+      // A Promise edge of its own, as architecture.md's "Effect inside" requires
+      // of every shared wait: whatever this caller does next with the client is
+      // its own I/O, so it resumes in its own continuation rather than inside the
+      // call that completed the attempt.
+      if (joined !== attempt) {
+        leave();
+        joined = attempt;
+        connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
+      }
+      const client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
+      // Teardown may land before this continuation receives the client.
+      if (isClosed(state)) throw scopeEndedError();
+      return client;
+    } finally {
+      leave();
     }
-    // Teardown can land between the attempt completing and this caller
-    // resuming. The client it would hand back is being closed, and this scope
-    // is over.
-    if (isClosed(state)) throw scopeEndedError();
-    return client;
   };
 
   /**
@@ -2725,8 +2813,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // The transport and its OAuth provider are shared by every call in this
       // scope. A call's deadline signal is aborted even on success, so retaining
       // the first caller's signal here would abort its siblings and later calls.
-      // Keep OAuth work cancellable by the connection's own lifetime instead;
-      // requestOptions still passes each call's signal to the SDK separately.
+      // The provider uses the connection's lifetime. Each challenged response
+      // separately binds renewal preparation to the call that initiated it.
       const connectionAbort = new AbortController();
       // Own cancellation before beginFlow's storage reads.
       // The lease first owns just the signal, then the transport it creates.
@@ -2912,7 +3000,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // credentials this client just bound to. Discard it rather than cache
         // a stale-isolate connection.
         if (provider) {
-          const generation = yield* promised(() => provider.liveEpoch());
+          const generation = yield* promised(() => provider.liveEpoch()).pipe(
+            Effect.mapError((error) => (owned() ? error : scopeEndedError())),
+          );
           // closeScope can land while the epoch read is pending, after
           // connect succeeded but before this client is cached. Discard the
           // client on that side of the await too.
@@ -3267,100 +3357,113 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async callTool(name, args, ctx, options) {
       enterProviderBoundary(ctx, connector);
-      // Refusals before this call's dispatch record exists: no tools/call of
-      // its can have left, so they are known failures (ledger provenance).
-      if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
-        throw knownProviderFailure(
-          new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
-        );
-      }
-      const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state).catch((error: unknown) => {
-        throw knownProviderFailure(error);
-      });
-      const definition = options?.definition;
-      // The registry's verdict for this call; outside an invocation, the
-      // dispatched definition's, else a reviewed write or the annotations.
-      const reviewed = classification?.tools[name];
-      const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
-      const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
-      const write =
-        (callClassification(ctx) ??
-          definition?.classification ??
-          (verdict !== undefined && verdict !== "read"
-            ? "write"
-            : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
-      const dispatch = newDispatch(write);
-      dispatch.request = {
-        entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
-        ctx,
-      };
-      state.dispatches.set(dispatch, name);
+      let active: { state: ConnectionState; client: Client; dispatch: CallDispatch; write: boolean } | undefined;
       try {
-        const toolDefinition = definition
-          ? {
-              ...definition,
-              // Older stored catalogs and custom connectors may omit inputSchema.
-              inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
-            }
-          : state.toolDefinitions.get(name);
-        if (toolDefinition?.execution?.taskSupport === "required") {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            `Tool "${name}" requires task-based execution, which Connecta does not support.`,
-          );
-        }
-        let output: StandardSchemaV1 | undefined;
-        const outputError = (code: number, message: string): unknown =>
-          atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
-        if (toolDefinition?.outputSchema) {
-          try {
-            output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
-          } catch {
-            throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
+        // Race the entire operation inside its write decider. Cancellation must
+        // retain the exact request ledger and a dispatched write's verdict.
+        return await settleOnClose(ctx, async () => {
+          // Refusals before this call's dispatch record exists: no tools/call of
+          // its can have left, so they are known failures (ledger provenance).
+          if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
+            throw knownProviderFailure(
+              new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
+            );
           }
-        }
-        const result = await client
-          .callTool(
-            withDispatch(
-              {
-                name,
-                arguments: (args ?? {}) as Record<string, unknown>,
-                ...options?.input,
-              },
-              dispatch,
-            ),
-            {
-              ...requestOptions(ctx),
-              allowInputRequired: true,
-              // SDK 2.3.1's callTool checks outputSchema even for a suspension.
-              // Retain its header mirroring, then validate only final results.
-              // Given a definition, it never relists and sends a call again
-              // after a HeaderMismatch answer, so a write always has one.
-              ...(toolDefinition
-                ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
-                : write
-                  ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
-                  : {}),
-            },
-          )
-          .catch((err: unknown) => {
-            assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
-            throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
+          const state = stateFor(ctx);
+          const client = await ensureConnected(ctx, state).catch((error: unknown) => {
+            throw knownProviderFailure(error);
           });
-        if (isInputRequiredResult(result)) {
+          const definition = options?.definition;
+          // The registry's verdict for this call; outside an invocation, the
+          // dispatched definition's, else a reviewed write or the annotations.
+          const reviewed = classification?.tools[name];
+          const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
+          const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
+          const write =
+            (callClassification(ctx) ??
+              definition?.classification ??
+              (verdict !== undefined && verdict !== "read"
+                ? "write"
+                : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
+          const dispatch = newDispatch(write);
+          dispatch.request = {
+            entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
+            ctx,
+          };
+          active = { state, client, dispatch, write };
+          state.dispatches.set(dispatch, name);
+          const toolDefinition = definition
+            ? {
+                ...definition,
+                // Older stored catalogs and custom connectors may omit inputSchema.
+                inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
+              }
+            : state.toolDefinitions.get(name);
+          if (toolDefinition?.execution?.taskSupport === "required") {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `Tool "${name}" requires task-based execution, which Connecta does not support.`,
+            );
+          }
+          let output: StandardSchemaV1 | undefined;
+          const outputError = (code: number, message: string): unknown =>
+            atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+          if (toolDefinition?.outputSchema) {
+            try {
+              output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
+            } catch {
+              throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
+            }
+          }
+          const result = await client
+            .callTool(
+              withDispatch(
+                {
+                  name,
+                  arguments: (args ?? {}) as Record<string, unknown>,
+                  ...options?.input,
+                },
+                dispatch,
+              ),
+              {
+                ...requestOptions(ctx),
+                allowInputRequired: true,
+                // SDK 2.3.1's callTool checks outputSchema even for a suspension.
+                // Retain its header mirroring, then validate only final results.
+                // Given a definition, it never relists and sends a call again
+                // after a HeaderMismatch answer, so a write always has one.
+                ...(toolDefinition
+                  ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
+                  : write
+                    ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
+                    : {}),
+              },
+            )
+            .catch((err: unknown) => {
+              assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
+              throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
+            });
+          if (isInputRequiredResult(result)) {
+            return result;
+          }
+          assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+          if (output && !result.isError) {
+            if (result.structuredContent === undefined)
+              throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
+            const validation = await output["~standard"].validate(result.structuredContent);
+            if (validation.issues)
+              throw outputError(
+                -32602,
+                "Structured content does not match the tool's output schema: validation failed",
+              );
+          }
           return result;
-        }
-        assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-        if (output && !result.isError) {
-          if (result.structuredContent === undefined)
-            throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
-          const validation = await output["~standard"].validate(result.structuredContent);
-          if (validation.issues)
-            throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
-        }
-        return result;
+        });
       } catch (err) {
+        // The boundary refuses preparation too; before a dispatch record
+        // exists, this call is still a proven unsent failure.
+        if (!active) throw knownProviderFailure(err);
+        const { state, client, dispatch, write } = active;
         const direct = write && callClassification(ctx) === undefined;
         // The request's own abort reason passes by identity for a read or a
         // served call. A direct write's is finalized below: it may have left.
@@ -3423,7 +3526,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
-        state.dispatches.delete(dispatch);
+        if (active) active.state.dispatches.delete(active.dispatch);
       }
     },
 
@@ -3511,9 +3614,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ]),
         );
       reset(state);
-      // Runs the live connection's lease finalizer, if there is one.
-      if (release) await runEdge(release);
-      await cacheClosed;
+      // Start every finalizer before checking the caller's owner. Teardown is
+      // revocation machinery and must still run for an already-ended request.
+      const closing = Promise.all([release ? runEdge(release) : undefined, cacheClosed]).then(() => {});
+      void closing.catch(() => {});
+      if (viewSignal(ctx, true).aborted) return closing;
+      return settleOnClose(ctx, () => closing, true);
     },
 
     async status(ctx): Promise<ConnectorStatus> {
@@ -3556,43 +3662,50 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async finishAuth(code, ctx, callbackParams) {
-      const state = stateFor(ctx);
-      const provider = newProvider(ctx, state);
-      // verifyState ran on this request-scoped provider first and found the
-      // consent; a programmatic exchange names it by its callback's state.
-      const consent = callbackParams?.get("state") ?? null;
-      if (!consent || !(await provider.verifyCallbackState(consent))) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
-        );
-      }
-      // The exchange reads and writes only the epoch its consent was written
-      // in; it decides nothing about the grant there.
-      provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
-      await provider.bindFlow();
-      // Always a transport of the exchange's own, over the provider that
-      // verified the state: that provider holds the consent's claim, and the
-      // fence before the token request is its to cross. A connection this
-      // scope opened earlier speaks for its connect attempt, not this callback.
-      const t = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
-      const trail: OAuthTrail = {};
-      const internals = t as unknown as { _fetchWithInit?: FetchLike };
-      const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
-      const exchange = new Proxy(t, {
-        get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
-        set: (target, key, value) => Reflect.set(target, key, value, target),
-      });
-      try {
-        await exchange.finishAuth(callbackParams);
-        // Reset so the next use reconnects with the freshly stored tokens.
-        closeHalf(state);
-      } catch (err) {
-        throw await withoutAuthorizationServerText(ctx, err, trail, [ctx.signal]);
-      } finally {
-        // This exchange-only transport has no lease in the request scope.
-        detach(closeConnection(null, t, ctx.logger));
-      }
+      return duringViewCall(
+        ctx,
+        async (signal) => {
+          const state = stateFor(ctx);
+          const provider = newProvider(ctx, state);
+          // verifyState ran on this request-scoped provider first and found the
+          // consent; a programmatic exchange names it by its callback's state.
+          const consent = callbackParams?.get("state") ?? null;
+          if (!consent || !(await provider.verifyCallbackState(consent))) {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+            );
+          }
+          // The exchange reads and writes only the epoch its consent was written
+          // in; it decides nothing about the grant there.
+          provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
+          await provider.bindFlow();
+          signal.throwIfAborted();
+          // Always a transport of the exchange's own, over the provider that
+          // verified the state: that provider holds the consent's claim, and the
+          // fence before the token request is its to cross. A connection this
+          // scope opened earlier speaks for its connect attempt, not this callback.
+          const t = buildTransport(ctx, provider, null, signal, null, true) as StreamableHTTPClientTransport;
+          const trail: OAuthTrail = {};
+          const internals = t as unknown as { _fetchWithInit?: FetchLike };
+          const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+          const exchange = new Proxy(t, {
+            get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
+            set: (target, key, value) => Reflect.set(target, key, value, target),
+          });
+          try {
+            await exchange.finishAuth(callbackParams);
+            // Reset so the next use reconnects with the freshly stored tokens.
+            closeHalf(state);
+          } catch (err) {
+            throw await withoutAuthorizationServerText(ctx, err, trail, [signal, ctx.signal]);
+          } finally {
+            // This exchange-only transport has no lease in the request scope.
+            detach(closeConnection(null, t, ctx.logger));
+          }
+        },
+        true,
+      );
     },
   };
 
@@ -3655,7 +3768,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // start fails rather than hand it out.
           let authorizationUrl: string | undefined;
           try {
-            authorizationUrl = await state.attemptProvider?.consentUrl();
+            authorizationUrl = await state.attemptProvider?.consentUrl(viewSignal(ctx, true));
           } catch (readErr) {
             return { state: "error", message: startMessage(readErr) };
           }
@@ -3725,6 +3838,40 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const path = await newProvider(args[0], stateFor(args[0])).registrationPath();
       return { ...status, ...(path ? { registrationPath: path } : {}) };
     };
+  }
+  // Every published Promise operation owns its whole wait, including local
+  // storage, digest, registration-path and result processing seams. callTool
+  // settles inside its write decider; closeScope starts cleanup before racing
+  // the join, and finishAuth already owns its request-scoped exchange boundary.
+  const settlingOperation =
+    <Args extends unknown[], Result>(
+      operation: (...args: Args) => Promise<Result>,
+      contextIndex: number,
+      requestOwned = false,
+    ): ((...args: Args) => Promise<Result>) =>
+    (...args) => {
+      const ctx = args[contextIndex] as ConnectorContext;
+      const state = states.get(ctx.requestScope ?? ctx);
+      // A connector scope already revoked by teardown keeps its established
+      // refusal, before the enclosing request's more general close boundary.
+      if (state && isClosed(state)) return Promise.reject(scopeEndedError());
+      return settleOnClose(ctx, () => operation(...args), requestOwned);
+    };
+  connector.listTools = settlingOperation(connector.listTools, 0);
+  connector.readResource = settlingOperation(connector.readResource!, 1);
+  if (connector.downstreamSkills) {
+    connector.downstreamSkills.list = settlingOperation(connector.downstreamSkills.list, 0);
+    connector.downstreamSkills.read = settlingOperation(connector.downstreamSkills.read, 1);
+  }
+  const status = connector.status!;
+  connector.status = (ctx) => settleOnClose(ctx, () => status(ctx)).catch((error) => failureStatus(id, error));
+  if (connector.testCredential) connector.testCredential = settlingOperation(connector.testCredential, 1);
+  if (isOauth) {
+    connector.startAuth = settlingOperation(connector.startAuth!, 0);
+    connector.disconnectAuth = settlingOperation(connector.disconnectAuth!, 0);
+    connector.verifyState = settlingOperation(connector.verifyState!, 1, true);
+    connector.verifyCallbackIssuer = settlingOperation(connector.verifyCallbackIssuer!, 1, true);
+    connector.consumeAuthError = settlingOperation(connector.consumeAuthError!, 0, true);
     // Pin before the first asynchronous storage/discovery read, not only once
     // a refresh flight exists. These operations do not take call admission.
     const retain = retainingOAuthPartition;
@@ -3759,13 +3906,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (isOauth)
     registerInvocationAuth(
       connector,
-      retainingOAuthPartition(async (ctx) => {
-        // Only inspect local grant state here. Discovery, refresh, and MCP
-        // transports remain inside callTool and cannot establish retry safety.
-        const provider = newProvider(ctx, stateFor(ctx));
-        if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
-        if (!(await provider.tokens())) throw authRequiredError();
-      }, 0),
+      retainingOAuthPartition(
+        settlingOperation(async (ctx: ConnectorContext) => {
+          // Only inspect local grant state here. Discovery, refresh, and MCP
+          // transports remain inside callTool and cannot establish retry safety.
+          const provider = newProvider(ctx, stateFor(ctx));
+          if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
+          if (!(await provider.tokens())) throw authRequiredError();
+        }, 0),
+        0,
+      ),
     );
   return connector;
 }

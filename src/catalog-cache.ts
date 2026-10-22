@@ -11,7 +11,8 @@ import type {
 import { MAX_CACHE_TTL_MS, specTypeSchemas } from "@modelcontextprotocol/client";
 import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import { contextKey } from "./derived-context.js";
+import { Context } from "effect";
+import { serviceFor, setViewService } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
@@ -56,7 +57,7 @@ export async function observeCompletedCatalogRefresh(
   ctx: ConnectorContext,
   refresh: CompletedCatalogRefresh,
 ): Promise<void> {
-  await settings.get(contextKey(ctx))?.onCompletedCatalogRefresh?.(refresh, ctx);
+  await serviceFor(ctx, CatalogPolicy)?.onCompletedCatalogRefresh?.(refresh, ctx);
 }
 /** Hash-only facts preserve change counts without storing tool names or schemas. */
 async function catalogFingerprints(tools: readonly { name: string }[]): Promise<CatalogToolFingerprint[]> {
@@ -162,7 +163,7 @@ export async function observeUncachedCatalogRefresh(
   connectorId: string,
   tools: readonly { name: string }[],
 ): Promise<void> {
-  const policy = settings.get(contextKey(ctx));
+  const policy = serviceFor(ctx, CatalogPolicy);
   if (!policy?.onCompletedCatalogRefresh) return;
   const config = (await fingerprintSerializedCatalog("custom-connector")).fingerprint;
   const partition = (await fingerprintSerializedCatalog(JSON.stringify([policy.partition, ctx.baseUrl, ctx.publicUrl])))
@@ -201,18 +202,22 @@ export interface CatalogExpiry {
   expiresAt: number;
   staleFallback: boolean;
 }
-const expiry = new WeakMap<object, Map<CatalogMethod, CatalogExpiry>>();
-const fetches = new WeakMap<object, Map<CatalogMethod, number>>();
+class CatalogExpiryService extends Context.Service<CatalogExpiryService, Map<CatalogMethod, CatalogExpiry>>()(
+  "connecta/operation/CatalogExpiryService",
+) {}
+class CatalogFetches extends Context.Service<CatalogFetches, Map<CatalogMethod, number>>()(
+  "connecta/operation/CatalogFetches",
+) {}
 export function observeCatalogFetch(ctx: ConnectorContext, at: number, method: CatalogMethod = "tools/list"): void {
-  const methods = fetches.get(contextKey(ctx)) ?? new Map();
+  const methods = serviceFor(ctx, CatalogFetches) ?? new Map();
   methods.set(method, at);
-  fetches.set(contextKey(ctx), methods);
+  setViewService(ctx, CatalogFetches, methods);
 }
 export function catalogFetchedAt(ctx: ConnectorContext, method: CatalogMethod = "tools/list"): number | undefined {
-  return fetches.get(contextKey(ctx))?.get(method);
+  return serviceFor(ctx, CatalogFetches)?.get(method);
 }
 export function catalogExpiry(ctx: ConnectorContext, method: CatalogMethod = "tools/list"): CatalogExpiry | undefined {
-  return expiry.get(contextKey(ctx))?.get(method);
+  return serviceFor(ctx, CatalogExpiryService)?.get(method);
 }
 export function observeCatalogExpiry(
   ctx: ConnectorContext,
@@ -222,22 +227,24 @@ export function observeCatalogExpiry(
   staleFallback = false,
 ): void {
   const fetchedAt = catalogFetchedAt(ctx, method) ?? Date.now();
-  const methods = expiry.get(contextKey(ctx)) ?? new Map();
+  const methods = serviceFor(ctx, CatalogExpiryService) ?? new Map();
   methods.set(method, {
     fetchedAt,
     ttlMs,
     expiresAt: Math.min(expiresAt ?? Infinity, fetchedAt + ttlMs),
     staleFallback,
   });
-  expiry.set(contextKey(ctx), methods);
+  setViewService(ctx, CatalogExpiryService, methods);
 }
 // Tool facts remain available for ordinary calls after a transient listing
 // failure for five minutes. Resources never use stale inventories. A fallback
 // carries its original expired deadline and cannot authorize auth recovery.
 const STALE_FALLBACK_MS = 300_000;
-const settings = new WeakMap<object, CatalogCacheSettings>();
+class CatalogPolicy extends Context.Service<CatalogPolicy, CatalogCacheSettings>()(
+  "connecta/operation/CatalogPolicy",
+) {}
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
-  settings.set(contextKey(ctx), value);
+  setViewService(ctx, CatalogPolicy, value);
 }
 interface CacheScope {
   closed: boolean;
@@ -274,7 +281,7 @@ export function observeCatalogChange(
 ): void {
   const scope = cacheScope(ctx, connectorId, owner);
   if (scope.closed || connectionSignal?.aborted) return;
-  const writing = invalidateCatalogCache(settings.get(contextKey(ctx))?.storage ?? ctx.storage, connectorId).catch(
+  const writing = invalidateCatalogCache(serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage, connectorId).catch(
     (error) => {
       logFailure(ctx.logger, "catalog invalidation failed", failureRecord({ connector: connectorId }, error));
     },
@@ -294,7 +301,7 @@ export function closeCatalogCacheScope(
 
 /** Zero is an explicit refusal to reuse. Positive hints use the configured bounds. */
 function catalogTtlMs(ctx: ConnectorContext, hint: unknown): number {
-  const policy = settings.get(contextKey(ctx));
+  const policy = serviceFor(ctx, CatalogPolicy);
   const ttl =
     hint === undefined ? Math.floor(policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000) : hint;
   if (typeof ttl !== "number" || !Number.isSafeInteger(ttl) || ttl <= 0) return 0;
@@ -441,7 +448,7 @@ export async function catalogClientOptions(
     fallbackTools: () => Promise<ListToolsResult | undefined>;
   }
 > {
-  const policy = settings.get(contextKey(ctx));
+  const policy = serviceFor(ctx, CatalogPolicy);
   const partition = JSON.stringify([
     policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null),
     ctx.baseUrl,
@@ -800,7 +807,8 @@ export async function catalogClientOptions(
       if (scope.closed || connectionSignal?.aborted)
         throw new ConnectorCallError("connector_call_failed", "Catalog cache scope ended.");
       if (listingCtx.signal?.aborted) throw listingCtx.signal.reason;
-      if (policy && !settings.has(contextKey(listingCtx))) settings.set(contextKey(listingCtx), policy);
+      if (policy && !(serviceFor(listingCtx, CatalogPolicy) !== undefined))
+        setViewService(listingCtx, CatalogPolicy, policy);
       const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
       active = listing;
       staleTools = undefined;
