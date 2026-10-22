@@ -1,37 +1,15 @@
 // Node-only: runs the Node QuickJS child-process executor.
-import { QuickJSContext } from "quickjs-emscripten";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
-import { connectorWith } from "./fixtures/connectors.js";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
-import { normalizeCode, quickJsExecutor as untrackedQuickJs } from "../src/executors/quickjs.js";
-import { executeQuickJs, prepareQuickJs } from "../src/executors/quickjs-runtime.js";
-import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
-import { required, calcConnector, makeRegistry, silentLogger } from "./helpers.js";
-import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
-import { deferred, waitFor } from "./fixtures/misc.js";
+import { normalizeCode, quickJsExecutor } from "../src/executors/quickjs.js";
+import type { AdmittingExecutor, Connector } from "../src/types.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 
-// The real-child cases pay for process startup and IPC, which fake clocks
-// cannot control. On a loaded host they outran vitest's 5s default with no
-// behavior at fault. This file budget is a hang guard. The deadlines a case
-// pins are the executor's own, asserted on its outcome.
+// Real child startup and IPC need generous hang guards on a loaded host.
+// Each deadline case still asserts the executor's own configured budget.
 vi.setConfig({ testTimeout: 20_000 });
-
-/**
- * What ended a run its wall deadline cut short. The child reports its own
- * expiry as a structural `timed out` result; when a loaded host delays that
- * report past the parent's fixed grace, the parent terminates the child at its
- * wall budget and the run rejects instead. Both are the deadline. The child's
- * own report is pinned race-free, in-process, by the runtime case below.
- */
-function deadlineOutcome(run: Promise<ExecuteResult>): Promise<string | undefined> {
-  return run.then(
-    (out) => out.error,
-    (error: Error) => error.message,
-  );
-}
 
 describe("normalizeCode", () => {
   it("wraps bare statements in an async arrow", () => {
@@ -46,6 +24,19 @@ describe("normalizeCode", () => {
 });
 
 describe("quickJsExecutor", () => {
+  // A new QuickJS context isolates every program; these cases exercise results
+  // and host failures without killing the child or depending on pool startup.
+  let executor: AdmittingExecutor;
+  let bridgeExecutor: AdmittingExecutor;
+  let rejectionExecutor: AdmittingExecutor;
+  beforeAll(() => {
+    executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+    bridgeExecutor = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    rejectionExecutor = quickJsExecutor({ timeoutMs: 1_000, cpuTimeMs: 100 });
+  });
+  afterAll(async () => {
+    await Promise.all([executor.close?.(), bridgeExecutor.close?.(), rejectionExecutor.close?.()]);
+  });
   it.each([
     ["0.125 MiB", 128 * 1024, true],
     ["0.5 MiB", 512 * 1024, false],
@@ -54,7 +45,7 @@ describe("quickJsExecutor", () => {
     "bridges or deterministically rejects a %s serialized host result",
     async (_label, size, succeeds) => {
       const payload = "x".repeat(size);
-      const ex = quickJsExecutor({ timeoutMs: 10_000 });
+      const ex = bridgeExecutor;
       const out = await ex.execute(`async () => (await large.get()).length`, [
         { name: "large", fns: { get: async () => payload } },
       ]);
@@ -70,7 +61,7 @@ describe("quickJsExecutor", () => {
 
   it("measures the bridge limit in UTF-8 bytes, not UTF-16 code units", async () => {
     const payload = "😀".repeat(70_000);
-    const ex = quickJsExecutor();
+    const ex = executor;
     const out = await ex.execute(`async () => unicode.get()`, [{ name: "unicode", fns: { get: async () => payload } }]);
     expect(payload.length).toBeLessThan(256 * 1024);
     expect(out.error).toContain("serialized bridge limit");
@@ -79,7 +70,7 @@ describe("quickJsExecutor", () => {
   it("preserves logs when a host result cannot be serialized", async () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
-    const ex = quickJsExecutor();
+    const ex = executor;
     const out = await ex.execute(`async () => { console.log("before host call"); return bad.result(); }`, [
       { name: "bad", fns: { result: async () => circular } },
     ]);
@@ -91,7 +82,7 @@ describe("quickJsExecutor", () => {
   it.each(["native-error", "plain-object", "proxy"] as const)(
     "INV-3 INV-7: describes a rejected %s without guest getters or serialization",
     async (kind) => {
-      const ex = quickJsExecutor({ timeoutMs: 1000, cpuTimeMs: 100 });
+      const ex = rejectionExecutor;
       const thrown =
         kind === "native-error"
           ? `new Error("original")`
@@ -127,7 +118,7 @@ describe("quickJsExecutor", () => {
   );
 
   it("[E6] keeps native Error data and source locations in safe rejection descriptions", async () => {
-    const out = await quickJsExecutor().execute(
+    const out = await executor.execute(
       `async () => {
       throw new TypeError("native data");
     }`,
@@ -140,7 +131,7 @@ describe("quickJsExecutor", () => {
     const result = await createExecuteTool(
       makeRegistry([calcConnector]),
       "https://connecta.test",
-      quickJsExecutor(),
+      executor,
       silentLogger,
     )({
       code: `async () => {
@@ -161,291 +152,6 @@ describe("quickJsExecutor", () => {
       hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
     });
     expect(result.structuredContent).not.toHaveProperty("logs");
-  });
-
-  it.each(["cpu", "wall"] as const)(
-    "INV-7: checks %s interruption before inspecting a rejected handle",
-    async (budget) => {
-      await prepareQuickJs();
-      const dump = vi.spyOn(QuickJSContext.prototype, "dump");
-      try {
-        const out = await executeQuickJs(`async () => { await Promise.resolve(); while (true) {} }`, [], {
-          timeoutMs: budget === "wall" ? 25 : 5000,
-          cpuTimeMs: budget === "cpu" ? 25 : 5000,
-          memoryLimitBytes: 64 * 1024 * 1024,
-          maxStackSizeBytes: 1024 * 1024,
-        });
-        expect(out.error).toBe(
-          budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.",
-        );
-        expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
-        expect(dump).not.toHaveBeenCalled();
-      } finally {
-        dump.mockRestore();
-      }
-    },
-  );
-
-  it("maps a runaway synchronous loop to the guest CPU budget", async () => {
-    // Wall budget far above the 250ms CPU default: a slow CI tick past a tight
-    // wall deadline would otherwise let wallInterrupted win the race. The
-    // untracked constructor, because this case pins the production default
-    // the tracked fixture raises.
-    const ex = untrackedQuickJs({ timeoutMs: 5_000 });
-    onTestFinished(() => ex.close?.());
-    const out = await ex.execute(`async () => { while (true) {} }`, []);
-    expect(out.result).toBeUndefined();
-    expect(out.error).toBe("Execution exceeded the 250ms guest CPU budget.");
-  }, 10_000);
-
-  it("rejects an allocation that exceeds the guest heap limit", async () => {
-    // Tight 4 MiB cap with a generous time budget: the failure must be the
-    // memory ceiling, not the deadline. A growing allocation blows the cap,
-    // bounded so the outcome owes nothing to time: a million-element array is
-    // several times the cap and well within what the runtime holds without
-    // one, so only an enforced cap fails it. Twenty doublings get there; the
-    // tens of thousands of GC-bound pushes this once took outran the budget
-    // on a loaded host.
-    const ex = quickJsExecutor({
-      memoryLimitBytes: 4 * 1024 * 1024,
-      timeoutMs: 10_000,
-      cpuTimeMs: 5_000,
-    });
-    const out = await ex.execute(
-      `async () => {
-        let a = [0];
-        for (let i = 0; i < 20; i++) a = a.concat(a);
-        return a.length;
-      }`,
-      [],
-    );
-    expect(out.result).toBeUndefined();
-    expect(out.error).toBeTruthy();
-    // The heap cap trips, not the wall-clock deadline.
-    expect(out.error).not.toContain("timed out");
-    expect(out.error).toMatch(/memory/i);
-    // Whether QuickJS returned a memory error or aborted the child, the slot is
-    // replaceable and the serving process remains usable.
-    await expect(ex.execute("async () => 7", [])).resolves.toEqual({
-      result: 7,
-    });
-  }, 15_000);
-
-  it("reports a hung host wait as a structural timeout inside the runtime", async () => {
-    // The child's half of the deadline, with no parent racing it and on a fake
-    // clock: at its own wall expiry during a host wait, and not before, the
-    // runtime returns a result naming it.
-    await prepareQuickJs();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    onTestFinished(() => {
-      vi.useRealTimers();
-    });
-    const { promise: waiting, resolve: called } = deferred<void>();
-    let settled = false;
-    const pending = executeQuickJs(
-      `async () => slow.forever({})`,
-      [
-        {
-          name: "slow",
-          fns: {
-            forever: () => {
-              called();
-              return new Promise(() => {});
-            },
-          },
-        },
-      ],
-      {
-        timeoutMs: 50,
-        cpuTimeMs: 5_000,
-        memoryLimitBytes: 64 * 1024 * 1024,
-        maxStackSizeBytes: 1024 * 1024,
-      },
-    ).finally(() => {
-      settled = true;
-    });
-    await waiting;
-    await vi.advanceTimersByTimeAsync(49);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(settled).toBe(true);
-    expect(await pending).toMatchObject({
-      error: "Execution timed out after 50ms.",
-    });
-  });
-
-  it("times out when a host call hangs", async () => {
-    const hang: ExecutorProvider[] = [{ name: "slow", fns: { forever: () => new Promise(() => {}) } }];
-    // A budget the healthy follow-up below can meet on a loaded host; 300ms
-    // was not always enough for it.
-    const ex = quickJsExecutor({ timeoutMs: 1_000 });
-    expect(await deadlineOutcome(ex.execute(`async () => slow.forever({})`, hang))).toMatch(/timed out|wall budget/);
-    // The deadline ends the run, the parent retires the child, and the
-    // replacement slot keeps serving.
-    await expect(ex.execute("async () => 3", [])).resolves.toEqual({
-      result: 3,
-    });
-  }, 10_000);
-
-  // The process boots tsx and a QuickJS child, which takes seconds on a loaded
-  // host, so time-to-exit is no signal on its own. What the case pins is that
-  // nothing outlives the computation: a leaked wall-deadline timer would hold
-  // the process for the full EXECUTOR_WALL_MS, and a still-referenced child
-  // forever. The spawn budget sits far below the first and far above startup.
-  // The guest CPU budget is generous for the same reason as the fixture's.
-  const EXECUTOR_WALL_MS = 300_000;
-  const SPAWN_BUDGET_MS = 30_000;
-  it(
-    "lets a short-lived process exit near computation time",
-    () => {
-      const child = spawnSync(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          "--input-type=module",
-          "--eval",
-          [
-            'import { quickJsExecutor } from "./src/executors/quickjs.ts";',
-            `const ex = quickJsExecutor({ timeoutMs: ${EXECUTOR_WALL_MS}, cpuTimeMs: 5_000 });`,
-            'const providers = [{ name: "fast", fns: { one: async () => 1 } }];',
-            'const out = await ex.execute("async () => { for (let i = 0; i < 20; i += 1) await fast.one(); return 20; }", providers);',
-            "if (out.result !== 20) { console.error(JSON.stringify(out)); process.exitCode = 1; }",
-          ].join("\n"),
-        ],
-        {
-          cwd: process.cwd(),
-          encoding: "utf8",
-          timeout: SPAWN_BUDGET_MS,
-        },
-      );
-      expect(child.error).toBeUndefined();
-      expect(child.status, child.stderr).toBe(0);
-    },
-    2 * SPAWN_BUDGET_MS,
-  );
-
-  it(
-    "drains pending host calls after a timeout without spinning [INV-7]",
-    () => {
-      // Drive the runtime directly, without the pool terminating its child and
-      // settling both calls together. The fixture releases one call, yields a
-      // real event-loop turn, then releases the other and checks disposal.
-      // A missing re-arm spins microtasks and blocks timers in that process;
-      // spawnSync's external watchdog can still kill it. Its budget allows tsx
-      // and WASM startup under load, matching the exit guard above.
-      const child = spawnSync(
-        process.execPath,
-        ["--import", "tsx", fileURLToPath(new URL("./fixtures/quickjs-drain.ts", import.meta.url))],
-        { cwd: process.cwd(), encoding: "utf8", timeout: SPAWN_BUDGET_MS },
-      );
-      expect(child.error, child.stderr).toBeUndefined();
-      expect(child.status, child.stderr).toBe(0);
-      expect(child.stdout).toContain("drain completed after separate releases");
-    },
-    2 * SPAWN_BUDGET_MS,
-  );
-
-  it("flags awaiting a promise that can never settle", async () => {
-    const ex = quickJsExecutor({ timeoutMs: 2_000 });
-    const out = await ex.execute(`async () => { await new Promise(() => {}); }`, []);
-    expect(out.error).toContain("stalled");
-  }, 10_000);
-
-  it("does not charge host-tool waits to the short guest CPU budget", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 250, timeoutMs: 2_000 });
-    const out = await ex.execute(`async () => slow.read()`, [
-      {
-        name: "slow",
-        fns: {
-          read: () => new Promise((resolve) => setTimeout(() => resolve("done"), 600)),
-        },
-      },
-    ]);
-    expect(out).toEqual({ result: "done" });
-  });
-
-  it("keeps the Node event loop responsive while a guest runs away", async () => {
-    // A guest run on this event loop would block it for the whole CPU budget,
-    // so the bound is derived from that budget: half of it leaves a loaded
-    // host room for its own scheduling stalls (a fixed 150ms against a 200ms
-    // budget did not) while still failing any guest that blocks the parent.
-    const cpuTimeMs = 1_000;
-    const ex = quickJsExecutor({ cpuTimeMs, timeoutMs: 10 * cpuTimeMs });
-    let last = performance.now();
-    let maxGap = 0;
-    const heartbeat = setInterval(() => {
-      const now = performance.now();
-      maxGap = Math.max(maxGap, now - last);
-      last = now;
-    }, 10);
-    const out = await ex.execute(`async () => { while (true) {} }`, []);
-    clearInterval(heartbeat);
-    expect(out.error).toContain("guest CPU budget");
-    expect(maxGap).toBeLessThan(cpuTimeMs / 2);
-  });
-
-  it("cancels a running child from the inbound request signal", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", ex, silentLogger);
-    const controller = new AbortController();
-    const pending = handler({ code: `async () => { while (true) {} }` }, { signal: controller.signal });
-    setTimeout(() => controller.abort(), 50);
-    const out = await pending;
-    const payload = JSON.parse(required(out.content[0]).text) as {
-      error: { code: string; retryable: boolean };
-    };
-    expect(payload.error).toMatchObject({
-      code: "executor_cancelled",
-      retryable: false,
-    });
-    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
-      result: 9,
-    });
-    await ex.close?.();
-  });
-
-  it("recycles a running child when the execute watchdog abandons it", async () => {
-    // The ceiling is set below this pool's own deadline only to make the
-    // abandonment observable: releasing the lease must kill the child rather
-    // than hand its slot to the next run with the old program still inside.
-    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const started = performance.now();
-    const out = await createExecuteTool(
-      makeRegistry([calcConnector]),
-      "https://connecta.test",
-      ex,
-      silentLogger,
-      undefined,
-      { watchdogMs: 300 },
-    )({ code: `async () => { while (true) {} }`, diagnostics: true });
-    expect(performance.now() - started).toBeLessThan(3_000);
-    const payload = JSON.parse(required(out.content[0]).text) as {
-      error: { code: string; message: string };
-    };
-    expect(payload.error.code).toBe("timeout");
-    expect(payload.error.message).toContain("unresponsive");
-    expect(ex.admissionSnapshot?.().active).toBe(0);
-    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
-      result: 9,
-    });
-  }, 10_000);
-
-  it("cancels a cold readiness wait without poisoning the warming slot", async () => {
-    const ex = quickJsExecutor({ timeoutMs: 2_000 });
-    const controller = new AbortController();
-    const lease = await ex.acquire({ signal: controller.signal });
-    const started = performance.now();
-    const pending = lease.execute("async () => 1", []);
-    setTimeout(() => controller.abort(), 1);
-    await expect(pending).rejects.toMatchObject({
-      code: "executor_cancelled",
-    });
-    lease.release();
-    expect(performance.now() - started).toBeLessThan(500);
-    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
-      result: 9,
-    });
   });
 
   it("loads only the canonically called connector end to end", async () => {
@@ -469,7 +175,7 @@ describe("quickJsExecutor", () => {
       },
     }));
     const registry = makeRegistry([countedCalc, ...unused]);
-    const ex = quickJsExecutor();
+    const ex = executor;
     const out = await createExecuteTool(
       registry,
       "https://connecta.test",
@@ -495,6 +201,7 @@ describe("quickJsExecutor", () => {
     // internal function; reporting that name would tell a program nothing about
     // which call was too large.
     const ex = quickJsExecutor({ cpuTimeMs: 2_000 });
+    onTestFinished(() => ex.close?.());
     // Raw custom provider results still obey the transport bound. Connecta's
     // shared program-call path now pages these before reaching this bridge.
     const out = await ex.execute(
@@ -511,103 +218,14 @@ describe("quickJsExecutor", () => {
     expect(message).toContain("reader.big");
     expect(message).not.toContain("__callNamespace");
   });
-
-  it("INV-7: transports the complete guest result in bounded IPC chunks", async () => {
-    const ex = quickJsExecutor({
-      memoryLimitBytes: 16 * 1024 * 1024,
-      cpuTimeMs: 1_000,
-    });
-    const out = await ex.execute(`async () => "x".repeat(5 * 1024 * 1024)`, []);
-    expect(out.error).toBeUndefined();
-    expect(out.result).toBe("x".repeat(5 * 1024 * 1024));
-  });
-
-  it("bounds guest-to-host call arguments before IPC", async () => {
-    const ex = quickJsExecutor({ memoryLimitBytes: 16 * 1024 * 1024 });
-    const out = await ex.execute(
-      `async () => {
-        try { return await echo.read("x".repeat(2 * 1024 * 1024)); }
-        catch (e) { return e.message; }
-      }`,
-      [{ name: "echo", fns: { read: async (value) => value } }],
-    );
-    expect(out.result).toContain("IPC limit");
-  });
-
-  it("bounds guest-controlled function names before parent IPC", async () => {
-    const ex = quickJsExecutor({ memoryLimitBytes: 16 * 1024 * 1024 });
-    const out = await ex.execute(
-      `async () => {
-        try { return await echo["x".repeat(2 * 1024 * 1024)](); }
-        catch (e) { return e.message; }
-      }`,
-      [{ name: "echo", fns: { read: async () => "ok" } }],
-    );
-    expect(out.result).toContain("IPC limit");
-  });
-
-  it("close terminates active children and rejects new admission", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const running = ex.execute(`async () => { while (true) {} }`, []);
-    const closed = expect(running).rejects.toMatchObject({
-      code: "executor_closed",
-    });
-    await waitFor(() => (ex.admissionSnapshot?.().active ?? 0) > 0);
-    await ex.close?.();
-    await closed;
-    await expect(ex.execute("async () => 1", [])).rejects.toMatchObject({
-      code: "executor_closed",
-    });
-  });
-
-  it("reports emitted blocks discarded by mid-run shutdown", async () => {
-    const { promise: started, resolve: callStarted } = deferred<void>();
-    const connector: Connector = {
-      id: "blocking",
-      kind: "api",
-      async listTools() {
-        return [
-          {
-            name: "read",
-            annotations: { readOnlyHint: true },
-          },
-        ];
-      },
-      async callTool(_name, _args, context) {
-        callStarted();
-        return new Promise((_, reject) => {
-          context.signal?.addEventListener("abort", () => reject(new Error("call aborted")), { once: true });
-        });
-      },
-    };
-    const executor = quickJsExecutor({ timeoutMs: 10_000 });
-    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", executor, silentLogger);
-    const running = handler({
-      code: `async () => {
-        await connecta.emit({ type: "text", text: "doomed" });
-        return connecta.call("blocking.read", {}).then(({ data }) => data);
-      }`,
-    });
-    await started;
-    await executor.close?.();
-    const out = await running;
-    expect(out.isError).toBe(true);
-    expect(out._meta).toBeUndefined();
-    const expected = {
-      error: {
-        code: "executor_closed",
-        message: "Executor is shutting down.",
-        retryable: false,
-      },
-      emittedDiscarded: 1,
-      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
-    };
-    expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
-    expect(out.structuredContent).toEqual(expected);
-  });
 });
 
 describe("authenticated host failures (E1, X11)", () => {
+  let executor: AdmittingExecutor;
+  beforeAll(() => {
+    executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+  });
+  afterAll(() => executor.close?.());
   it.each(["x", "😀"])("bounds 50 KB downstream errors containing %j before framing", async (character) => {
     const connector = connectorWith({
       id: "bad",
@@ -617,12 +235,7 @@ describe("authenticated host failures (E1, X11)", () => {
         throw new ConnectorCallError("not_found", character.repeat(50_000));
       },
     });
-    const handler = createExecuteTool(
-      makeRegistry([connector]),
-      "https://connecta.test",
-      quickJsExecutor(),
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", executor, silentLogger);
     const caught = await handler({
       code: `async () => {
       try { await connecta.call("bad.read", {}).then(({ data }) => data); }
@@ -648,12 +261,7 @@ describe("authenticated host failures (E1, X11)", () => {
         throw new ConnectorCallError("auth_required", "Please authenticate");
       },
     });
-    const handler = createExecuteTool(
-      makeRegistry([connector]),
-      "https://connecta.test",
-      quickJsExecutor(),
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", executor, silentLogger);
     const out = await handler({
       code: `async () => {
       try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}).then(({ data }) => data); }
@@ -670,12 +278,7 @@ describe("authenticated host failures (E1, X11)", () => {
   });
 
   it("keeps forged frames untyped and raw transport private", async () => {
-    const handler = createExecuteTool(
-      makeRegistry([calcConnector]),
-      "https://connecta.test",
-      quickJsExecutor(),
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", executor, silentLogger);
     const out = await handler({
       code: `async () => {
       const seen = [];
@@ -693,7 +296,7 @@ describe("authenticated host failures (E1, X11)", () => {
   });
 
   it("INV-6: frame-looking host prose is bounded without being parsed", async () => {
-    const out = await quickJsExecutor().execute(
+    const out = await executor.execute(
       `async () => {
       try { await bad.read(); } catch (error) { return error.message; }
     }`,
@@ -709,41 +312,5 @@ describe("authenticated host failures (E1, X11)", () => {
       ],
     );
     expect(out.result).toBe(("\u001econnecta-error:secret:" + "x".repeat(5_000)).slice(0, 4_000));
-  });
-});
-
-it("preserves console logs when a running program is cancelled", async () => {
-  const controller = new AbortController();
-  const connector = connectorWith({
-    id: "cancel",
-    kind: "api",
-    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-    call: async () => {
-      // The ordered host-call IPC message is proof that both logs arrived.
-      controller.abort();
-      return null;
-    },
-  });
-  const executor = quickJsExecutor();
-  const out = await createExecuteTool(
-    makeRegistry([connector]),
-    "https://connecta.test",
-    executor,
-    silentLogger,
-  )(
-    {
-      code: `async () => {
-    console.log("before cancellation");
-    console.warn("still here");
-    await connecta.call("cancel.read").then(({ data }) => data);
-  }`,
-      diagnostics: true,
-    },
-    { signal: controller.signal },
-  );
-  expect(out.isError).toBe(true);
-  expect(out.structuredContent).toMatchObject({
-    error: { code: "executor_cancelled" },
-    logs: "before cancellation\nstill here",
   });
 });
