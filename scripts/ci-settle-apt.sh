@@ -17,5 +17,20 @@ while pgrep -x 'apt|apt-get|dpkg' > /dev/null; do
   sleep 5
 done
 sudo dpkg --configure -a
-# Let the retry's own apt-get wait for a lock rather than fail on contact.
-echo 'DPkg::Lock::Timeout "120";' | sudo tee /etc/apt/apt.conf.d/90connecta-lock-timeout > /dev/null
+# Playwright invokes apt-get itself, so configure the equivalent of
+# -o Acquire::Retries=3 for both its update and install commands.
+cat <<'APT' | sudo tee /etc/apt/apt.conf.d/90connecta-install > /dev/null
+DPkg::Lock::Timeout "60";
+Acquire::Retries "3";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+APT
+
+# The hosted runner's Azure HTTP mirror can take minutes per font package.
+# Use Ubuntu's HTTPS archive in both direct sources and the runner mirror list.
+# Keep apt-get update: the observed delay was package downloads, not indexes.
+for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+  if [[ -f "$source" ]]; then
+    sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+  fi
+done
