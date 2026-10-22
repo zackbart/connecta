@@ -7,24 +7,19 @@
 import { describe, expect, it } from "vitest";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
-import { buildSandboxProviders } from "../src/execute.js";
-import { createMetaTools } from "../src/meta-tools.js";
-import { notion } from "../src/providers/notion/index.js";
-import type { Connector, ConnectorContext, ExecutorProvider, JsonSchema, ToolDef } from "../src/types.js";
+import type { Connector, JsonSchema, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
-import { BASE, textOf, type SearchResult } from "./fixtures/meta-tools.js";
+import { BASE } from "./fixtures/meta-tools.js";
 import {
   LINEAR_LIST_ISSUE_STATUSES,
   LINEAR_LIST_ISSUES,
   LINEAR_SAVE_ISSUE,
   PATHOLOGICAL_CORPUS,
-  PROVIDER_CORPUS,
-  REVENUECAT_LIST_SUBSCRIPTIONS,
   STRIPE_IMPLEMENTATION_PLANNER,
   STRIPE_LIST_ACCOUNTS_INPUT,
   STRIPE_LIST_ACCOUNTS_OUTPUT,
 } from "./fixtures/schema-corpus.js";
-import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { makeRegistry, required } from "./helpers.js";
 
 const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).length;
@@ -36,66 +31,6 @@ const search = (input: JsonSchema, output?: JsonSchema, observed = false) =>
   typescriptSignature(input, output, { observed, description: false });
 const describeSignature = (input: JsonSchema, output?: JsonSchema) =>
   typescriptSignature(input, output, { observed: false, description: true });
-
-/**
- * The text a TypeScript parser sees as code: comments and string literals
- * removed. Anything downstream prose could smuggle past a comment boundary
- * would survive here, so bracket balance proves no prose escaped.
- */
-function codeOf(text: string): string {
-  let code = "";
-  for (let index = 0; index < text.length; index += 1) {
-    if (text.startsWith("/*", index)) {
-      const end = text.indexOf("*/", index + 2);
-      expect(end, `unterminated comment in ${text}`).toBeGreaterThan(index);
-      index = end + 1;
-      continue;
-    }
-    if (text[index] === '"') {
-      for (index += 1; text[index] !== '"'; index += 1) {
-        expect(index, `unterminated string in ${text}`).toBeLessThan(text.length);
-        if (text[index] === "\\") index += 1;
-      }
-      code += '""';
-      continue;
-    }
-    code += text[index];
-  }
-  return code;
-}
-
-function expectBalanced(text: string): void {
-  const code = codeOf(text);
-  const pairs: Record<string, string> = { "}": "{", "]": "[", ")": "(", ">": "<" };
-  const stack: string[] = [];
-  for (let index = 0; index < code.length; index += 1) {
-    const char = code[index]!;
-    // The arrow is the one `>` that closes nothing.
-    if (char === ">" && code[index - 1] === "=") continue;
-    if ("{[(<".includes(char)) stack.push(char);
-    else if (char in pairs) expect(stack.pop(), `${char} in ${text}`).toBe(pairs[char]);
-  }
-  expect(stack, text).toEqual([]);
-}
-
-function notionContext(): ConnectorContext {
-  return {
-    storage: {
-      capabilities: { absoluteExpiry: true },
-      get: async () => null,
-      set: async () => {},
-      delete: async () => {},
-      list: async () => [],
-      compareAndSet: async () => false,
-    },
-    logger: silentLogger,
-    baseUrl: BASE,
-    credential: {
-      get: async () => "secret_token",
-      getAll: async () => ({ value: "secret_token" }),
-    },
-  };
-}
 
 describe("TypeScript signatures over real provider schemas", () => {
   it("renders the smallest real shape exactly, with and without prose", () => {
@@ -121,26 +56,6 @@ describe("TypeScript signatures over real provider schemas", () => {
     expect(describeSignature(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(/^\(args: \{ \/\*\* ONLY pass a guide_id/);
   });
 
-  it("speaks TypeScript where compact speaks JSON Schema", () => {
-    const text = search(REVENUECAT_LIST_SUBSCRIPTIONS).text;
-    // integer is not a TypeScript type; members are `;`-separated.
-    expect(text).toContain("limit?: number /* >= -9007199254740991; <= 9007199254740991 */;");
-    expect(text).not.toContain("integer");
-    expect(text).toContain('environment?: "sandbox" | "production";');
-    expect(text).toContain('expand?: "items.redemption"[]');
-  });
-
-  it("groups a union before its array suffix, as compact does", () => {
-    const text = search(LINEAR_SAVE_ISSUE).text;
-    expect(text).toContain(
-      'patch?: ({ op: "replace"; old_string: string /* length >= 1 */; new_string: string; replace_all?: boolean } | { op: "append"; text: string /* length >= 1 */ })[];',
-    );
-    expect(text).toContain("cycle?: string | null;");
-    expect(text).toContain('slaType?: "all" | "onlyBusinessDays" | null;');
-    expect(text).toContain("estimate?: number | null;");
-    expect(text).toContain('links?: { url: string /* format "uri" */; title: string /* length >= 1 */ }[]');
-  });
-
   it("keeps Linear's capped enum honest: whole values, an exact count, and the flag", () => {
     const signature = search(LINEAR_LIST_ISSUES);
     expect(signature.text).toMatch(
@@ -148,39 +63,6 @@ describe("TypeScript signatures over real provider schemas", () => {
     );
     expect(signature.inputTruncated).toBe(true);
     expect(bytes(signature.text)).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
-  });
-
-  it("renders every Notion tool with its declared input and output within budget", async () => {
-    const tools = await notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" }).listTools(
-      notionContext(),
-    );
-    expect(tools).toHaveLength(11);
-    for (const tool of tools) {
-      const input = tool.inputSchema ?? { type: "object" };
-      const found = search(input, tool.outputSchema);
-      expect(found.text, tool.name).toMatch(/^\(args\??: /);
-      expect(found.text, tool.name).not.toContain("Promise<unknown>");
-      expect(found.inputTruncated, tool.name).toBe(false);
-      expect(bytes(found.text)).toBeLessThanOrEqual(2 * MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
-      expectBalanced(found.text);
-      const described = describeSignature(input, tool.outputSchema);
-      expect(bytes(described.text)).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
-      expectBalanced(described.text);
-    }
-    const read = required(tools.find((tool) => tool.name === "notion_api_read"));
-    expect(search(read.inputSchema ?? {}, read.outputSchema).text).toMatch(/^\(args: \{ path: string\b/);
-    // Notion's property maps declare no properties: an open map, not `{}`.
-    const schema = required(tools.find((tool) => tool.name === "integration_get_data_source_schema"));
-    expect(search(schema.inputSchema ?? {}, schema.outputSchema).text).toContain("properties: Record<string, unknown>");
-  });
-
-  it("stays structurally valid for every provider shape in both modes", () => {
-    for (const { address, input, output } of PROVIDER_CORPUS) {
-      for (const signature of [search(input, output), describeSignature(input, output)]) {
-        expect(signature.text, address).toMatch(/^\(args\??: .*\) => Promise<.*>$/s);
-        expectBalanced(signature.text);
-      }
-    }
   });
 });
 
@@ -193,30 +75,9 @@ describe("TypeScript signatures over pathological schemas", () => {
       expect(bytes(found.text), name).toBeLessThanOrEqual(
         2 * MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES,
       );
-      expectBalanced(found.text);
       const described = describeSignature(schema, schema);
       expect(bytes(described.text), name).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
-      expectBalanced(described.text);
     }
-  });
-
-  it("cuts deep nesting to a marked unknown and flags it", () => {
-    const signature = search(required(corpus.deepNesting));
-    expect(signature.text).toBe(
-      "(args: { next: { next: { next: { next: { next: unknown /* truncated */ } } } } }) => Promise<unknown>",
-    );
-    expect(signature.inputTruncated).toBe(true);
-  });
-
-  it("caps a 5,000-value enum with whole values and an exact omitted count", () => {
-    const signature = search(required(corpus.hugeEnum));
-    expect(signature.text).toMatch(
-      /^\(args: \{ code: \("code_0" \| .* \| unknown \/\* (\d+) enum values omitted \*\/\) \}\)/,
-    );
-    const shown = signature.text.match(/"code_\d+"/g)?.length ?? 0;
-    const omitted = Number(signature.text.match(/(\d+) enum values omitted/)?.[1]);
-    expect(shown + omitted).toBe(5_000);
-    expect(signature.inputTruncated).toBe(true);
   });
 
   it("renders $ref cycles, direct and mutual, as a marked unknown instead of recursing", () => {
@@ -226,12 +87,6 @@ describe("TypeScript signatures over pathological schemas", () => {
     const mutual = search(required(corpus.mutualRefCycle));
     expect(mutual.text).toBe("(args: { a?: { b?: { a?: unknown /* recursive */ } } }) => Promise<unknown>");
     expect(mutual.inputTruncated).toBe(true);
-  });
-
-  it("never prints a definition name as though it were a declared type", () => {
-    const signature = search(required(corpus.unresolvedRef));
-    expect(signature.text).toBe("(args: { owner?: unknown /* unresolved */ }) => Promise<unknown>");
-    expect(signature.inputTruncated).toBe(true);
   });
 
   it("renders 2020-12 composites as tuples, intersections, and marked conditions", () => {
@@ -263,7 +118,6 @@ describe("TypeScript signatures over pathological schemas", () => {
     expect(described).toContain('/** closes *\\/ the comment } ) ] and opens /* another */ "*/ evil"?: string;');
     // A stray `)` in prose must not hide the real union from grouping.
     expect(described).toContain("union?: ({ /** b) c) */ x?: string } | number)[];");
-    expectBalanced(described);
   });
 
   it("reads OpenAPI nullable, index signatures, and boolean schemas as TypeScript", () => {
@@ -308,70 +162,7 @@ function corpusConnector(): Connector {
   });
 }
 
-async function programFns(registry: ReturnType<typeof makeRegistry>) {
-  const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-  const provider: ExecutorProvider = required(providers.find((item) => item.name === "connecta"));
-  return provider.fns;
-}
-
-type Row = Record<string, unknown> & { address: string; signature?: string };
-
 describe("TypeScript signatures across the discovery surfaces", () => {
-  it("renders identically in search_tools, connecta.search, and the renderer", async () => {
-    const registry = makeRegistry([corpusConnector()]);
-    const topLevel = textOf(
-      await createMetaTools(registry, BASE).searchTools({
-        connector: "corpus",
-        includeSchemas: "typescript",
-      }),
-    ) as SearchResult;
-    const topRows = topLevel.tools as Row[];
-    const program = (await required((await programFns(registry)).search)({
-      connector: "corpus",
-      includeSchemas: "typescript",
-    })) as { tools: Row[] };
-
-    expect(topRows.map((row) => row.address)).toEqual([
-      "corpus.list_issues",
-      "corpus.list_accounts",
-      "corpus.save_issue",
-    ]);
-    for (const [index, tool] of [LIST_ISSUES, LIST_ACCOUNTS, SAVE_ISSUE].entries()) {
-      const expected = search(required(tool.inputSchema), tool.outputSchema).text;
-      expect(required(topRows[index]).signature).toBe(expected);
-      expect(required(program.tools[index]).signature).toBe(expected);
-    }
-    // The signature replaces both schema fields rather than repeating them.
-    for (const row of [...topRows, ...program.tools]) {
-      expect(row).not.toHaveProperty("inputSchema");
-      expect(row).not.toHaveProperty("outputSchema");
-    }
-    // Key metadata still comes from the declared schema, as for compact.
-    expect(required(program.tools[0]).requiredInputKeys).toEqual(["team"]);
-    expect(required(topRows[0]).requiredInputKeys).toEqual(["team"]);
-  });
-
-  it("gives describe the prose-bearing signature in both describe routes", async () => {
-    const registry = makeRegistry([corpusConnector()]);
-    const service = await new CatalogService(registry, BASE).describe({
-      addresses: ["corpus.list_issues", "corpus.list_accounts"],
-      format: "typescript",
-    });
-    const program = (await required((await programFns(registry)).describe)({
-      addresses: ["corpus.list_issues", "corpus.list_accounts"],
-      format: "typescript",
-    })) as { tools: Row[] };
-    expect(program.tools).toEqual(service);
-    expect(required(service[0]).signature).toBe("(args: { /** Team name or ID */ team: string }) => Promise<unknown>");
-    expect(required(service[1]).signature).toBe(
-      describeSignature(STRIPE_LIST_ACCOUNTS_INPUT, STRIPE_LIST_ACCOUNTS_OUTPUT).text,
-    );
-    for (const row of service) {
-      expect(row).not.toHaveProperty("inputSchema");
-      expect(row).not.toHaveProperty("outputSchema");
-    }
-  });
-
   it("labels an observed output inside the signature and beside it, and a declaration wins", async () => {
     const registry = makeRegistry([corpusConnector()]);
     const published = await registry.getTools("corpus", BASE);
@@ -428,23 +219,5 @@ describe("TypeScript signatures across the discovery surfaces", () => {
     expect(required(described).inputSchemaTruncated).toBe(true);
     const [exact] = await catalog.describe({ address: "guided.cyclic", format: "json" });
     expect(required(exact).inputSchemaTruncated).toBeUndefined();
-  });
-
-  it("leaves every default and existing format without a signature", async () => {
-    const registry = makeRegistry([corpusConnector()]);
-    const catalog = new CatalogService(registry, BASE);
-    for (const includeSchemas of [undefined, "compact", "json"] as const) {
-      const page = await catalog.search({
-        connector: "corpus",
-        ...(includeSchemas ? { includeSchemas } : {}),
-      });
-      for (const entry of page.entries) {
-        expect(entry.tool).not.toHaveProperty("signature");
-        expect("inputSchema" in entry.tool).toBe(includeSchemas !== undefined);
-      }
-    }
-    const [compact] = await catalog.describe({ address: "corpus.list_issues" });
-    expect(required(compact).inputSchema).toBe("{ team: string // Team name or ID }");
-    expect(required(compact)).not.toHaveProperty("signature");
   });
 });

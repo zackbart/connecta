@@ -530,17 +530,16 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       const executor = required(workerExecutor);
       await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
-    for (const contractCase of CONTRACT_CASES) {
-      it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-        const harness = contractHarness(contractCase.maxStashEntries);
-        const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
-        const config = caseConfig(contractCase);
-        const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
-        const outcome = await harness.run(chosen, contractCase.code, config);
-        const follow = contractCase.follows ? await harness.run(chosen, contractCase.follows, config) : undefined;
-        contractCase.check(outcome, harness.state, follow);
-      });
-    }
+  }
+  for (const contractCase of CONTRACT_CASES) {
+    it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
+      const harness = contractHarness(contractCase.maxStashEntries);
+      const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
+      const config = caseConfig(contractCase);
+      const outcome = await harness.run(executor, contractCase.code, config);
+      const follow = contractCase.follows ? await harness.run(executor, contractCase.follows, config) : undefined;
+      contractCase.check(outcome, harness.state, follow);
+    });
   }
 
   it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {

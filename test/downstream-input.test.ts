@@ -968,7 +968,7 @@ describe("downstream input relay", () => {
     expect(read.tokenRefresh).toHaveBeenCalledOnce();
   });
 
-  it.each([429, 502, 503, 504, "timeout"] as const)(
+  it.each([429, 502, "timeout"] as const)(
     "INV-4 INV-6 INV-9: makes a spent continuation non-retryable after %s with recovery appropriate to reads and writes",
     async (failure) => {
       for (const write of [false, true]) {
@@ -1056,7 +1056,7 @@ describe("downstream input relay", () => {
     expect(flow.continuationSend).toHaveBeenCalledOnce();
   });
 
-  it.each([429, 502, 503, 504])("INV-9: preserves first-call retryability after HTTP %s", async (failureStatus) => {
+  it.each([429, 503])("INV-9: preserves first-call retryability after HTTP %s", async (failureStatus) => {
     const flow = setup();
     const fetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

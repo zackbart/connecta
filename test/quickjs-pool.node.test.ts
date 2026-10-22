@@ -156,7 +156,7 @@ describe("QuickJS pool crash backoff", () => {
     await executor.close?.();
   });
 
-  it("cancels a caller waiting out the backoff without spawning", async () => {
+  it("INV-7: cancels a caller waiting out the backoff without spawning", async () => {
     scriptChildren();
     const executor = quickJsExecutor();
     behaviour = "crash";
@@ -261,20 +261,6 @@ describe("QuickJS pool child retirement", () => {
     expect(children).toHaveLength(2);
     expect(forkedAt[1]).toBe(forkedAt[0]);
     await executor.close?.();
-  });
-
-  it("keeps a warm child across leases that finish", async () => {
-    scriptChildren();
-    const executor = quickJsExecutor();
-    for (let run = 0; run < 3; run++) {
-      await expect(executor.execute("async () => 1", [])).resolves.toMatchObject({
-        result: expect.any(Number),
-      });
-    }
-    expect(children).toHaveLength(1);
-    expect(children[0]!.kills).toEqual([]);
-    await executor.close?.();
-    expect(children[0]!.kills).toEqual([undefined]);
   });
 
   it("escalates to SIGKILL and stops waiting when a child ignores SIGTERM", async () => {

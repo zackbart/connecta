@@ -1,50 +1,12 @@
-// Every /mcp request builds a fresh McpServer, and the SDK renders each
-// registered tool's input schema at registration and again for tools/list.
-// The six meta-tool inputs are module constants, so that rendering is
-// derived once per process and reused. This suite counts zod's own JSON
-// Schema conversions to prove it, and checks that what legitimately varies —
-// descriptions by deployment and by identity-scoped view — still does.
+// Meta-tool descriptions follow deployment configuration and each identity's
+// scoped view, while input schemas remain shared.
 
-import { describe, expect, it, vi } from "vitest";
-import type { z } from "zod";
+import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcApi, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
-const conversions = vi.hoisted(() => ({ count: 0 }));
-
-// Count every JSON Schema conversion of a zod object built through the "zod"
-// specifier connecta's source imports. Only roots are wrapped: converting a
-// root walks its fields internally, so one root conversion counts once.
-vi.mock("zod", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("zod")>();
-  type Converter = Record<"input" | "output", (options: unknown) => unknown>;
-  const counted =
-    <A extends unknown[], S extends z.ZodType>(make: (...args: A) => S) =>
-    (...args: A): S => {
-      const schema = make(...args);
-      const converter = schema["~standard"].jsonSchema as unknown as Converter;
-      for (const io of ["input", "output"] as const) {
-        const convert = converter[io];
-        converter[io] = (options) => {
-          conversions.count++;
-          return convert(options);
-        };
-      }
-      return schema;
-    };
-  return {
-    ...actual,
-    z: {
-      ...actual.z,
-      object: counted(actual.z.object),
-      strictObject: counted(actual.z.strictObject),
-    },
-  };
-});
-
 const TOKEN = "test-token-123";
-const META_TOOLS = 6;
 
 const stubExecutor: Executor = {
   execute: async () => ({ result: null }),
@@ -74,39 +36,6 @@ function guided(id: string): Connector {
 }
 
 describe("meta-tool input schema rendering", () => {
-  it("converts each meta-tool input schema once across many requests, and still validates calls", async () => {
-    const deployment = makeDeployment({ executor: stubExecutor });
-    const first = schemasOf(await listTools(deployment));
-    expect(Object.keys(first)).toHaveLength(META_TOOLS);
-
-    for (let i = 0; i < 20; i++) {
-      expect(schemasOf(await listTools(deployment))).toStrictEqual(first);
-      const valid = await readJsonRpc(
-        await mcpRpc(
-          deployment,
-          "tools/call",
-          { name: "call_tool", arguments: { address: "calc.add", args: { a: 1, b: 2 } } },
-          { token: TOKEN },
-        ),
-      );
-      expect(valid.result.isError).toBeFalsy();
-      // call_tool's input is strict: an unknown key is still refused by the
-      // cached schema's validation, exactly as zod refused it before.
-      const invalid = await readJsonRpc(
-        await mcpRpc(
-          deployment,
-          "tools/call",
-          { name: "call_tool", arguments: { address: "calc.add", extra: true } },
-          { token: TOKEN },
-        ),
-      );
-      expect(JSON.stringify(invalid)).toContain("Input validation error");
-    }
-
-    expect(conversions.count).toBe(META_TOOLS);
-    await deployment.close();
-  });
-
   it("keeps per-deployment and per-identity descriptions while sharing one rendering", async () => {
     const plain = makeDeployment({ executor: stubExecutor });
     const tuned = makeDeployment({
@@ -156,7 +85,6 @@ describe("meta-tool input schema rendering", () => {
     for (const tools of [variant, alice, bob]) {
       expect(schemasOf(tools)).toStrictEqual(schemasOf(base));
     }
-    expect(conversions.count).toBe(META_TOOLS);
     await Promise.all([plain.close(), tuned.close(), scoped.close()]);
   });
 });

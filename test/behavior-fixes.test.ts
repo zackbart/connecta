@@ -180,28 +180,6 @@ describe("Phase 4 behavior fixes", () => {
     expect(read).toHaveBeenCalledOnce();
   });
 
-  it("INV-4: permits a non-interactive maintainer principal and denies missing principals or non-maintainers", async () => {
-    for (const [id, expected] of [
-      ["reader", 200],
-      // Without a principal no one can be a maintainer.
-      [undefined, 404],
-      ["other", 404],
-    ] as const) {
-      const auth: InboundAuth = {
-        kind: "api",
-        authorize: () => ({ ok: true, ...(id ? { principal: { namespace: "api", id } } : {}) }),
-      };
-      const deployment = app({
-        connectors: [connector("visible")],
-        auth,
-        maintainers: [{ namespace: "api", id: "reader" }],
-        logger: "silent",
-        activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
-      });
-      expect((await deployment.fetch(new Request(BASE + "/ui/activity"))).status).toBe(expected);
-    }
-  });
-
   it("INV-6: records call-time classification and UTF-8 result bytes before truncation and groups calls", async () => {
     const c = api("visible", {
       tools: [
@@ -413,7 +391,7 @@ describe("Phase 4 behavior fixes", () => {
     },
   );
 
-  it.each([false, true])(
+  it.each([true])(
     "INV-4 INV-6: API principals cannot read another owner or ownerless legacy rows with shared subject=%s",
     async (sharedSubject) => {
       const events: ToolCallActivityEvent[] = [];

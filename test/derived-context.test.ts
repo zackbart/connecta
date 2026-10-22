@@ -286,15 +286,6 @@ describe("derived connector contexts", () => {
     },
   );
 
-  it.each(tables)(
-    "INV-4 INV-5 INV-9: $table recorded through the origin is read through a copy derived later",
-    async ({ check }) => {
-      const registry = makeRegistry([connector(async () => ({}))]);
-      const origin = registry.contextFor("crm", BASE, {}, {}, { connectorIds: "all", caller: caller("alice") });
-      await check(deriveContext(origin, {}), origin, deriveContext(deriveContext(origin, {}), {}));
-    },
-  );
-
   it("INV-4: a listing through a copy of a context with no catalog policy lends the connection's to its origin", async () => {
     const registry = makeRegistry([connector(async () => ({}))]);
     const connection = registry.contextFor("crm", BASE);

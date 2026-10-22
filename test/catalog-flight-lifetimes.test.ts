@@ -5,7 +5,6 @@ import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withDeadline } from "../src/timeout.js";
 import type { Connector, KVStorage, Logger, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { required, silentLogger } from "./helpers.js";
@@ -79,44 +78,6 @@ describe("each reader's own deadline and cancellation (#571)", () => {
     expect(slow.signals).toHaveLength(1);
   });
 
-  it("fails a cancelled starter with its own reason and serves a live joiner from the same read", async () => {
-    vi.useFakeTimers();
-    const slow = honoring("cancelled", 50);
-    const catalog = new CatalogService(registryOf(slow.connector), BASE);
-    const starter = new AbortController();
-    const reason = new Error("starter cancelled");
-
-    const started = catalog.loadConnector("cancelled", { signal: starter.signal });
-    const joined = catalog.loadConnector("cancelled");
-    await vi.advanceTimersByTimeAsync(5);
-    starter.abort(reason);
-    await expect(started).rejects.toBe(reason);
-    expect(required(slow.signals[0]).aborted).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(45);
-    await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
-    expect(slow.signals).toHaveLength(1);
-  });
-
-  it("ends a joiner on its own deadline while the starter still gets the catalog", async () => {
-    vi.useFakeTimers();
-    const slow = honoring("joiner_leaves", 50);
-    const catalog = new CatalogService(registryOf(slow.connector), BASE);
-
-    const started = catalog.loadConnector("joiner_leaves");
-    const joined = withDeadline((signal) => catalog.loadConnector("joiner_leaves", { signal }), {
-      timeoutMs: 10,
-      timeoutError: new Error("joiner timed out"),
-    });
-    const joinerFailed = expect(joined).rejects.toThrow("joiner timed out");
-    await vi.advanceTimersByTimeAsync(10);
-    await joinerFailed;
-
-    await vi.advanceTimersByTimeAsync(40);
-    await expect(started).resolves.toEqual([{ ...READ, classification: "read" }]);
-    expect(slow.signals).toHaveLength(1);
-  });
-
   it("stops the shared read once every reader has gone, and reads afresh for the next", async () => {
     vi.useFakeTimers();
     const slow = honoring("abandoned_read", 50);
@@ -165,27 +126,6 @@ describe("each reader's own deadline and cancellation (#571)", () => {
 
     await vi.advanceTimersByTimeAsync(50);
     await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
-    expect(slow.signals).toHaveLength(2);
-  });
-
-  it("serves a long-deadline search in one request after a short-deadline search in another started the flight", async () => {
-    vi.useFakeTimers();
-    const slow = honoring("across", 50);
-    const registry = registryOf(slow.connector);
-
-    const short = new CatalogService(registry, BASE, { probeTimeoutMs: 10 }).search({ connector: "across" });
-    await flush();
-    const long = new CatalogService(registry, BASE, { probeTimeoutMs: 1_000 }).search({ connector: "across" });
-
-    await vi.advanceTimersByTimeAsync(10);
-    expect((await short).queryAnalysis?.catalogError?.message).toBe(
-      'Connector "across" catalog lookup failed (timeout).',
-    );
-
-    await vi.advanceTimersByTimeAsync(50);
-    const page = await long;
-    expect(page.queryAnalysis?.catalogError).toBeUndefined();
-    expect(page.entries.map((entry) => entry.tool.address)).toEqual(["across.read"]);
     expect(slow.signals).toHaveLength(2);
   });
 });

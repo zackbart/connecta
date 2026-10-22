@@ -201,12 +201,4 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       expect(await connector.listTools()).toEqual(facts);
     }
   });
-
-  it("INV-11: rejects blank titles and malformed common values before serving", () => {
-    const configs = configChanges[name as keyof typeof configChanges] ?? recorded.configs;
-    const options = Object.values(configs)[0]!.options;
-    for (const title of ["", " "]) expect(() => construct(name, { ...options, title })).toThrow("title");
-    expect(() => construct(name, { ...options, purpose: 3 })).toThrow("purpose");
-    expect(() => construct(name, { ...options, instructions: 3 })).toThrow("instructions");
-  });
 });

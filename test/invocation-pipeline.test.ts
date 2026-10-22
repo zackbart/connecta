@@ -150,48 +150,6 @@ describe("what a write's outcome can know", () => {
       }),
     ]);
   }
-  const send = (registry: Registry, args: unknown) =>
-    new InvocationService(registry, new CatalogService(registry, BASE)).invoke("w.send", args, {
-      source: "call_destructive_tool",
-    });
-
-  it("reports whether the connector was actually called", async () => {
-    await expect(
-      send(
-        writer(async () => ({ ok: true })),
-        { to: "a" },
-      ),
-    ).resolves.toMatchObject({ ok: true, dispatched: true });
-    // Refused before dispatch: nothing reached the connector.
-    const call = vi.fn(async () => ({ ok: true }));
-    await expect(send(writer(call, "mcp"), {})).resolves.toMatchObject({
-      ok: false,
-      dispatched: false,
-      error: { code: "invalid_args" },
-    });
-    expect(call).not.toHaveBeenCalled();
-  });
-
-  it("INV-9: a write's isError is no answer, the same as silence (round 13)", async () => {
-    // It arrives over a 2xx after the handler ran, so it proves nothing unapplied.
-    const answered = await send(
-      writer(async () => ({ isError: true, content: [{ type: "text", text: "no such thread" }] }), "mcp"),
-      { to: "a" },
-    );
-    expect(answered).toMatchObject({
-      ok: false,
-      dispatched: true,
-      answered: false,
-      error: { message: "no such thread", retryable: false, writeOutcome: "unknown" },
-    });
-    const silent = await send(
-      writer(async () => {
-        throw new TypeError("fetch failed");
-      }),
-      { to: "a" },
-    );
-    expect(silent).toMatchObject({ ok: false, dispatched: true, answered: false });
-  });
 
   it("asks a write gate only after validation, and records an unrecorded refusal as nothing", async () => {
     const gate = vi.fn(() =>

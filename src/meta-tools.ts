@@ -130,7 +130,7 @@ function isValidResultOffset(value: number): boolean {
  * (issue #38). An offset at or past `bytes.length` is left alone — there is no
  * character there to split.
  */
-export function alignStartToCharBoundary(bytes: Uint8Array, offset: number): number {
+function alignStartToCharBoundary(bytes: Uint8Array, offset: number): number {
   let o = offset;
   while (o > 0 && isContinuationByte(bytes[o])) o--;
   return o;
@@ -138,7 +138,7 @@ export function alignStartToCharBoundary(bytes: Uint8Array, offset: number): num
 
 /** End boundary for UTF-8-safe, forward-progressing result pages. See
  * documentation/meta-tools.md#result-representation. */
-export function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, total: number): number {
+function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, total: number): number {
   if (end >= total) return total;
   // A window that reaches no further than `offset` yields no bytes and no
   // progress; widen it to one byte and let the codepoint walk below finish it.

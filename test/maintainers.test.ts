@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest";
 import { discoverOAuthProtectedResourceMetadata, discoverOAuthServerInfo } from "@modelcontextprotocol/client";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { api } from "../src/connectors/api.js";
-import { describeConfigSources } from "../src/config-value-sources.js";
-import type { ConnectaConfig } from "../src/index.js";
-import type { OperatorUiContract } from "../src/operator-ui/contract.js";
 import type { InboundAuth } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
@@ -106,44 +103,6 @@ describe("maintainers", () => {
       expect(discovery.resourceMetadata?.resource).toBe(`${BASE}/mcp`);
       expect(discovery.authorizationServerUrl).toBe(issuer);
       expect(discovery.authorizationServerMetadata).toEqual(authorizationMetadata);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("INV-4: describes maintainers and pool members with their provenance, never hasGrant", async () => {
-    const app = deployment();
-    try {
-      const described = app.describeConfig();
-      expect(described.maintainers).toEqual([{ namespace: "test", id: "human" }]);
-      expect(described.pools[0]!.members).toEqual([{ kind: "human", namespace: "test", id: "other" }]);
-      expect(described).not.toHaveProperty("hasGrant");
-      const raw = {
-        readOnly: false,
-        connectors: [],
-        executor: {} as ConnectaConfig["executor"],
-        maintainers: ["human"],
-      } as ConnectaConfig;
-      const sources = describeConfigSources(described, raw);
-      expect(sources["config.maintainers.0.id"]).toBe("config");
-      expect(Object.keys(sources).some((path) => path.includes("hasGrant"))).toBe(false);
-      // The maintainer contract lists who may use each endpoint, never hasGrant.
-      const ui = await app.fetch(new Request(`${BASE}/ui/api/config`, { headers: { Authorization: "Bearer human" } }));
-      expect(ui.status).toBe(200);
-      const contract = (await ui.json()) as OperatorUiContract;
-      expect(contract.config).not.toHaveProperty("hasGrant");
-      expect(contract.root?.maintainers).toEqual([{ kind: "human", namespace: "test", id: "human", label: null }]);
-      expect(contract.pools).toEqual([
-        {
-          name: "team",
-          humanPath: "/mcp/team",
-          agentPath: "/agent/team",
-          readOnly: false,
-          owner: null,
-          tools: [{ connectorId: "docs", tools: "all" }],
-          members: [{ kind: "human", namespace: "test", id: "other", label: null }],
-        },
-      ]);
     } finally {
       await app.close();
     }

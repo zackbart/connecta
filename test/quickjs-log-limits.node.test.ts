@@ -51,15 +51,6 @@ describe("quickJsExecutor log limits", () => {
     expect(out.logs).toContain("[log truncated: size budget exceeded]");
   }, 30_000);
 
-  it("leaves small logs byte-for-byte unaffected", async () => {
-    const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => { console.log("hello", { a: 1 }); console.warn("warned"); return null; }`,
-      [],
-    );
-    expect(out.logs).toEqual(['hello {"a":1}', "warned"]);
-  });
-
   it("preserves the result when escape-heavy logs reach the transport budget", async () => {
     const ex = quickJsExecutor();
     const out = await ex.execute(

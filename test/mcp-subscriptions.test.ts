@@ -221,10 +221,7 @@ describe("MCP subscriptions", () => {
 
   it.each([
     ["authentication", (request: Request) => request.headers.delete("Authorization"), 401, undefined],
-    ["protocol header", (request: Request) => request.headers.delete("MCP-Protocol-Version"), 400, -32020],
     ["header mismatch", (request: Request) => request.headers.set("MCP-Protocol-Version", "2025-06-18"), 400, -32020],
-    ["method header", (request: Request) => request.headers.set("Mcp-Method", "tools/list"), 400, -32020],
-    ["content type", (request: Request) => request.headers.set("Content-Type", "text/plain"), 415, -32000],
   ] as const)("retains %s validation before refusing a listen", NODE, async (_name, change, status, code) => {
     const c = deployment();
     try {

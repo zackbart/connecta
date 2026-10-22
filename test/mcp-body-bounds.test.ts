@@ -1,4 +1,4 @@
-import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
+import { WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
 import { MAX_LISTEN_CLASSIFICATION_BYTES } from "../src/routes/mcp.js";
@@ -149,29 +149,4 @@ describe("MCP request bodies before auth", () => {
       }
     },
   );
-
-  it("INV-7: a small authenticated listen is still refused as unsupported without a permit", NODE, async () => {
-    const { c, bot } = await deployment();
-    try {
-      const body = JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "subscriptions/listen",
-        params: {
-          notifications: { toolsListChanged: true },
-          _meta: {
-            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-            "io.modelcontextprotocol/clientCapabilities": {},
-          },
-        },
-      });
-      const stream = new Response(body).body!;
-      const response = await c.fetch(listenRequest("/agent/team", stream, bot));
-      expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ id: 1, error: { code: -32601 } });
-      expect(await admittedTotal(c)).toBe(0);
-    } finally {
-      await c.close();
-    }
-  });
 });

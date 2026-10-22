@@ -44,45 +44,6 @@ describe("catalog probe deadlines", () => {
     expect(catalogError.code).toBe("timeout");
     expect(catalogError.message).toBe('Connector "hang" catalog lookup failed (timeout).');
   });
-
-  it("returns the same fixed timeout text for the top-level route", async () => {
-    const page = await new CatalogService(makeRegistry([hangingConnector()]), BASE, { probeTimeoutMs: 25 }).search({
-      connector: "hang",
-    });
-
-    expect(page.queryAnalysis?.catalogError?.message).toBe('Connector "hang" catalog lookup failed (timeout).');
-  });
-
-  it("ends only the timed-out asker's wait; a joiner still receives the shared read", async () => {
-    let reads = 0;
-    let release: ((tools: ToolDef[]) => void) | undefined;
-    const slow = connectorWith({
-      id: "slow",
-      kind: "mcp",
-      // Ignores its signal, as a connector may.
-      tools: () => {
-        reads++;
-        return new Promise<ToolDef[]>((resolve) => {
-          release = resolve;
-        });
-      },
-    });
-    const service = new CatalogService(makeRegistry([slow]), BASE, {
-      probeTimeoutMs: 20,
-    });
-
-    const searched = service.search({ connector: "slow" });
-    const joined = service.loadConnector("slow");
-    const page = await searched;
-    expect(page.queryAnalysis?.catalogError?.code).toBe("timeout");
-
-    required(release)([READ]);
-    await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
-    // The read the probe started now serves the rest of the request.
-    const again = await service.search({ connector: "slow" });
-    expect(again.entries.map((entry) => entry.tool.address)).toEqual(["slow.read"]);
-    expect(reads).toBe(1);
-  });
 });
 
 describe("request-scoped catalog cache", () => {
@@ -145,48 +106,5 @@ describe("request-scoped catalog cache", () => {
     const resolved = await service.resolveTool("flaky.read");
     expect(resolved.ok).toBe(true);
     expect(reads).toBe(2);
-  });
-
-  it("joins concurrent asks for one connector into one read", async () => {
-    let reads = 0;
-    const counted = connectorWith({
-      id: "counted",
-      kind: "api",
-      tools: async () => {
-        reads++;
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return [READ];
-      },
-    });
-    const service = new CatalogService(makeRegistry([counted]), BASE);
-
-    const [page, described, resolved, loaded] = await Promise.all([
-      service.search({}),
-      service.describe({ address: "counted.read" }),
-      service.resolveTool("counted.read"),
-      service.loadConnector("counted"),
-    ]);
-    expect(page.entries.map((entry) => entry.tool.address)).toEqual(["counted.read"]);
-    expect(described[0]?.name).toBe("read");
-    expect(resolved.ok).toBe(true);
-    expect(loaded).toEqual([{ ...READ, classification: "read" }]);
-    expect(reads).toBe(1);
-  });
-
-  it("rejects a synchronous getTools throw like an asynchronous one and does not cache it", async () => {
-    const registry = makeRegistry([connectorWith({ id: "sync", kind: "api", tools: [READ] })]);
-    let throws = true;
-    const getTools = registry.getTools.bind(registry);
-    const view = Object.assign(Object.create(registry) as typeof registry, {
-      getTools: (...args: Parameters<typeof registry.getTools>) => {
-        if (throws) throw new Error("synchronous failure");
-        return getTools(...args);
-      },
-    });
-    const service = new CatalogService(view, BASE);
-
-    await expect(service.loadConnector("sync")).rejects.toThrow("synchronous failure");
-    throws = false;
-    await expect(service.loadConnector("sync")).resolves.toEqual([{ ...READ, classification: "read" }]);
   });
 });

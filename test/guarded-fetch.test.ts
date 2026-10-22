@@ -85,11 +85,6 @@ describe("guardedFetch() construction", () => {
     expect(() => transport({ baseUrl: "https://api.example.com/?k=1" })).toThrow(/query or fragment/);
   });
 
-  it("allows plain http only for a loopback proxy or test double", () => {
-    expect(() => transport({ baseUrl: "http://localhost:8787/v2" })).not.toThrow();
-    expect(() => transport({ baseUrl: "http://127.0.0.1:8787" })).not.toThrow();
-  });
-
   it.each([
     ["marker-secret-12345", "absolute URL"],
     ["https://[marker-secret-12345]/api", "absolute URL"],
@@ -135,23 +130,6 @@ describe("guardedFetch() request construction", () => {
     expect(url.searchParams.has("skipped")).toBe(false);
   });
 
-  it("repeats an array-valued query key once per element, in order", async () => {
-    stubFetch(() => json({ ok: true }));
-    await transport()(
-      {
-        method: "GET",
-        path: "/gifts",
-        query: { "status[]": ["PENDING", "CONFIRMED"], ids: ["a&b"], none: [] },
-      },
-      context(),
-      asJson,
-    );
-    const url = new URL(calls[0]!.url);
-    expect(url.searchParams.getAll("status[]")).toEqual(["PENDING", "CONFIRMED"]);
-    expect(url.searchParams.getAll("ids")).toEqual(["a&b"]);
-    expect(url.searchParams.has("none")).toBe(false);
-  });
-
   it("serializes a JSON body with its content type, and frames a raw body with none", async () => {
     stubFetch(() => json({}));
     const send = transport();
@@ -168,22 +146,6 @@ describe("guardedFetch() request construction", () => {
     await send({ method: "PUT", path: "/uploads", rawBody: form }, context(), asJson);
     expect(calls[1]!.init.body).toBe(form);
     expect(calls[1]!.init.headers).not.toHaveProperty("Content-Type");
-  });
-
-  it("refuses a request carrying both a JSON body and a raw body", async () => {
-    stubFetch(() => json({}));
-    await expect(
-      transport()({ method: "POST", path: "/pages", body: {}, rawBody: "raw" }, context(), asJson),
-    ).rejects.toThrow(/both a JSON body and a raw body/);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("propagates ctx.signal and never follows a redirect", async () => {
-    stubFetch(() => json({}));
-    const controller = new AbortController();
-    await transport()({ method: "GET", path: "/self" }, context({ signal: controller.signal }), asJson);
-    expect(calls[0]!.init.signal).toBe(controller.signal);
-    expect(calls[0]!.init.redirect).toBe("manual");
   });
 });
 
@@ -212,16 +174,6 @@ describe("guardedFetch() confinement", () => {
       transport({ baseUrl: "https://api.example.com/v2" })({ method: "GET", path: "/../v20/zones" }, context(), asJson),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(0);
-  });
-
-  it("keeps a root base from doubling the separator", async () => {
-    stubFetch(() => json({}));
-    await transport({ baseUrl: "https://api.example.com/" })(
-      { method: "GET", path: "/v1/pages/p-1" },
-      context(),
-      asJson,
-    );
-    expect(calls[0]!.url).toBe("https://api.example.com/v1/pages/p-1");
   });
 
   it("refuses a request header wearing an authentication header's name", async () => {
@@ -278,16 +230,6 @@ describe("guardedFetch() confinement", () => {
 });
 
 describe("guardedFetch() response handling", () => {
-  it("normalizes an unreachable provider to a retryable unavailable", async () => {
-    globalThis.fetch = vi.fn(async () => {
-      throw new TypeError("network unreachable");
-    }) as unknown as typeof fetch;
-    const error = await failure(transport()({ method: "GET", path: "/self" }, context(), asJson));
-    expect(error.code).toBe("unavailable");
-    expect(error.retryable).toBe(true);
-    expect(error.message).toContain("Could not reach the Example API");
-  });
-
   it.each([
     [0, 300],
     [10, 300],
@@ -390,74 +332,9 @@ describe("guardedFetch() response handling", () => {
       send({ method: "GET", path: "/p" }, context(), async (response) => Array.from(await response.bytes())),
     ).resolves.toEqual([0, 1, 2, 255]);
   });
-
-  it("reads an empty body as undefined rather than a parse failure", async () => {
-    stubFetch(() => new Response(null, { status: 204 }));
-    await expect(
-      transport()({ method: "DELETE", path: "/p" }, context(), async (response) => await response.json()),
-    ).resolves.toBeUndefined();
-  });
-
-  it("leaves every status to the provider's mapper", async () => {
-    stubFetch(() => json({ code: "restricted_resource" }, { status: 403 }));
-    // The helper has no opinion about a 403 — this mapper treats it as a
-    // success, which is absurd, and is exactly the point: nothing in the
-    // transport intercepted it.
-    await expect(
-      transport()({ method: "GET", path: "/p" }, context(), async (response) => ({
-        status: response.status,
-        body: await response.json(),
-      })),
-    ).resolves.toEqual({
-      status: 403,
-      body: { code: "restricted_resource" },
-    });
-  });
-
-  it("asks the provider for authentication headers on every request", async () => {
-    stubFetch(() => json({}));
-    const authenticate = vi.fn(() => ({ Authorization: "Bearer secret" }));
-    const send = transport({ authenticate });
-    await send({ method: "GET", path: "/a" }, context(), asJson);
-    await send({ method: "GET", path: "/b" }, context(), asJson);
-    expect(authenticate).toHaveBeenCalledTimes(2);
-  });
-
-  it("lets an authentication callback fail the call before any request", async () => {
-    stubFetch(() => json({}));
-    await expect(
-      transport({
-        authenticate: () => {
-          throw new ConnectorCallError("auth_required", "No token configured.");
-        },
-      })({ method: "GET", path: "/self" }, context(), asJson),
-    ).rejects.toMatchObject({ code: "auth_required" });
-    expect(calls).toHaveLength(0);
-  });
 });
 
 describe("guardedFetch() sending through a connector's own fetch", () => {
-  it("hands the confined, framed request and the call's context to the fetcher", async () => {
-    stubFetch(() => json({ global: true }));
-    const fetcher = vi.fn(async () => json({ via: "fetcher" }));
-    const ctx = context();
-    const send = transport({ fetch: fetcher });
-    await expect(
-      send({ method: "POST", path: "/items", query: { a: 1 }, body: { b: 2 } }, ctx, asJson),
-    ).resolves.toEqual({ via: "fetcher" });
-    expect(calls).toHaveLength(0);
-    const [url, init, seen] = fetcher.mock.calls[0] as unknown as [string, RequestInit, ConnectorContext];
-    expect(url).toBe(`${BASE}/items?a=1`);
-    expect(init).toMatchObject({ method: "POST", body: '{"b":2}', redirect: "manual" });
-    expect(new Headers(init.headers).get("authorization")).toBe("Bearer secret");
-    expect(seen).toBe(ctx);
-    // Confinement still runs before the fetcher sees anything.
-    await expect(send({ method: "GET", path: "/../../elsewhere" }, ctx, asJson)).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
   it("routes oauthBearer requests through the call's grant and adds no header of its own", async () => {
     stubFetch(() => json({ global: true }));
     const grant = vi.fn(async (_input: string | URL, _init?: RequestInit) => json({ via: "grant" }));

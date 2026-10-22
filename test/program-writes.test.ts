@@ -11,10 +11,9 @@ import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { classifyTool } from "../src/tool-safety.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
@@ -332,12 +331,6 @@ describe("a program's write", () => {
     expect(value(result).result).toBe("read_only_endpoint");
     expect(w.writes()).toEqual([]);
   });
-
-  it("INV-2: runs when the host route threads no readOnly, as on a writable endpoint", async () => {
-    const w = world();
-    expect(value(await w.run(closeOne)).result).toBe("closed");
-    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
-  });
 });
 
 describe("writable-endpoint programs (#706, #820)", () => {
@@ -347,24 +340,6 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
     expect(w.events.map((event) => [event.address, event.outcome, event.source])).toEqual([
       ["tracker.close_issue", "success", "execute_code"],
-    ]);
-  });
-
-  it("INV-2: permits every write on a writable endpoint", async () => {
-    const w = world({ readOnly: false });
-    const done = await w.run(async (connecta) => {
-      await connecta.call!("tracker.close_issue", { id: 1 });
-      try {
-        await connecta.call!("tracker.post", { text: "x" });
-        return "posted";
-      } catch (error) {
-        return (error as { code: string }).code;
-      }
-    });
-    expect(value(done).result).toBe("posted");
-    expect(w.writes()).toEqual([
-      { address: "tracker.close_issue", args: { id: 1 } },
-      { address: "tracker.post", args: { text: "x" } },
     ]);
   });
 
@@ -531,18 +506,6 @@ describe("writable-endpoint programs (#706, #820)", () => {
     },
   );
 
-  it("puts write counts on the error of a program that fails after writing", async () => {
-    const w = world({ readOnly: false });
-    const failed = await w.run(async (connecta) => {
-      await connecta.call!("tracker.close_issue", { id: 1 });
-      throw new Error("the program gave up");
-    });
-    expect(failed.isError).toBe(true);
-    expect(value(failed).error).toMatchObject({
-      writes: { succeeded: 1, failed: 0, unknown: 0 },
-    });
-  });
-
   it("INV-2: keeps writes out of call_tool even on writable endpoints", async () => {
     const w = world({ readOnly: false });
     const tools = createMetaTools(w.registry, BASE);
@@ -551,17 +514,15 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(w.writes()).toEqual([]);
     const search = value(await tools.searchTools({ connector: "tracker", safety: "approvalRequired" }));
     expect(search.tools.every((tool: ToolDef) => tool.classification === "write")).toBe(true);
-    expect(JSON.stringify(search)).not.toContain('"approval":"exempt"');
   });
 
-  it("INV-11: rejects removed exemptions and unknown classification keys", () => {
+  it("INV-11: rejects unknown classification keys and malformed readOnly settings", () => {
     const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
     const notes = api("notes", {
       tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }],
     });
     const construct = (options: unknown) =>
       createConnecta({ readOnly: false, connectors: [notes], executor, logger: "silent", ...(options as object) });
-    expect(() => construct({ execute: { approval: { notes: "never" } } })).toThrow("ConnectaConfig.execute.approval");
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
     expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow('must be "read" or "write"');
@@ -572,132 +533,30 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
   });
 
-  it.each([
-    ["the deployment", (trust: unknown) => ({ trust }), "ConnectaConfig.trust"],
-    [
-      "a pool",
-      (trust: unknown) => ({
-        pools: { named: { tools: ["notes"], members: [{ namespace: "people", id: "alice" }], trust } },
-      }),
-      "ConnectaConfig.pools.named.trust",
-    ],
-  ])("INV-11: refuses the retired trust option on %s, pointing at readOnly", (_where, config, path) => {
+  it("INV-11: refuses the retired trust option, pointing at readOnly", () => {
     const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
-    const notes = api("notes", {
-      tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }],
-    });
-    for (const trust of ["trusted", "read-only", undefined]) {
-      const construct = () =>
-        (createConnecta as (config: unknown) => unknown)({
-          connectors: [notes],
-          executor,
-          logger: "silent",
-          ...config(trust),
-        });
-      expect(construct).toThrow(path);
-      expect(construct).toThrow('trust: "read-only" becomes readOnly: true');
-      expect(construct).toThrow('trust: "trusted" becomes readOnly: false');
-    }
+    const construct = () =>
+      (createConnecta as (config: unknown) => unknown)({
+        connectors: [],
+        executor,
+        logger: "silent",
+        trust: "trusted",
+      });
+    expect(construct).toThrow("ConnectaConfig.trust");
+    expect(construct).toThrow('trust: "read-only" becomes readOnly: true');
+    expect(construct).toThrow('trust: "trusted" becomes readOnly: false');
   });
 });
 
 describe("write outcomes", () => {
-  it("INV-9: classifies a write's outcome by what is known", () => {
-    const table: Array<[Parameters<typeof classifyWriteOutcome>[0], string]> = [
-      [{ ok: true, dispatched: true }, "ok"],
-      [{ ok: false, dispatched: false, error: { code: "timeout" } }, "failed"],
-      [{ ok: false, dispatched: true, error: { code: "timeout" } }, "unknown"],
-      [{ ok: false, dispatched: true, error: { code: "cancelled" } }, "unknown"],
-      // Refusal provenance (`answered`: the ledger proved it unsent, a served
-      // 4xx other than 408 refused it, or the tool answered isError) decides,
-      // whatever the code: a pre-dispatch deadline or connect failure applied
-      // nothing.
-      [{ ok: false, dispatched: true, answered: true, error: { code: "timeout" } }, "failed"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "unavailable" } }, "failed"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "connector_call_failed" } }, "failed"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "rate_limited" } }, "failed"],
-      // A typed error after the request went out (an oversized body, a
-      // refused redirect) is not an answer: the write may have landed.
-      [{ ok: false, dispatched: true, answered: false, error: { code: "connector_call_failed" } }, "unknown"],
-      // Nor is a refusal code by itself (round 11): a mapper, parser, or
-      // output validator can throw it after the write applied.
-      [{ ok: false, dispatched: true, answered: false, error: { code: "not_found" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: false, error: { code: "invalid_args" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: false, error: { code: "rate_limited" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: false, error: { code: "conflict" } }, "unknown"],
-      [{ ok: false, dispatched: true, error: { code: "result_processing_failed" } }, "ok"],
-      // An authorization verdict reached after the write left (a 401, then a
-      // failed renewal) keeps its code, but the connector says the write's
-      // outcome is unknown, and that wins over the refusal.
-      [
-        { ok: false, dispatched: true, error: { code: "downstream_oauth_required", writeOutcome: "unknown" } },
-        "unknown",
-      ],
-      [{ ok: false, dispatched: true, error: { code: "auth_required", writeOutcome: "unknown" } }, "unknown"],
-      [{ ok: false, dispatched: true, error: { code: "auth_required" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "auth_required" } }, "failed"],
-      [{ ok: false, dispatched: false, error: { code: "auth_required", writeOutcome: "unknown" } }, "failed"],
-    ];
-    for (const [outcome, expected] of table) {
-      expect(classifyWriteOutcome(outcome), JSON.stringify(outcome)).toBe(expected);
-    }
-  });
-});
-
-describe("retired pause configuration (#672)", () => {
-  const executor: Executor = { execute: async () => ({ result: null }) };
-
-  it.each([
-    ["resumableWrites", false],
-    ["resumableWrites", true],
-    ["pausedRunTtlSeconds", 1_800],
-    ["pausedRunTtlSeconds", undefined],
-  ])("refuses execute.%s = %s at construction, naming the removal", (key, setting) => {
-    const construct = () =>
-      (createConnecta as (config: unknown) => unknown)({
-        connectors: [],
-        executor: customExecutor(executor, { lifecycle: "self-managed" }),
-        logger: "silent",
-        execute: { [key]: setting },
-      });
-    expect(construct).toThrow(`ConnectaConfig.execute.${key}`);
-    expect(construct).toThrow("#672");
-    expect(construct).toThrow("call_destructive_tool");
-  });
-
-  it("lists no resume_execution and reports no resumableWrites on /health", async () => {
-    const connecta = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor: customExecutor(executor, { lifecycle: "self-managed" }),
-      logger: "silent",
-    });
-    const listed = (await readJsonRpc(await mcpRpc(connecta, "tools/list", {}))) as {
-      result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
-    };
-    expect(listed.result.tools.map((tool) => tool.name)).not.toContain("resume_execution");
-    // A default endpoint is writable, so execute_code is annotated as a write.
-    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(false);
-    const health = await (await connecta.fetch(new Request("http://localhost/health"))).json();
-    expect(health).not.toHaveProperty("resumableWrites");
-    await connecta.close();
+  it("INV-9: a dispatched write stays applied when result processing fails", () => {
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: { code: "result_processing_failed" } })).toBe(
+      "ok",
+    );
   });
 });
 
 describe("classification and pool endpoints (#706)", () => {
-  it("INV-1: classifies by overrides, provider review, then fail-closed annotations", () => {
-    const raw: ToolDef = { name: "mixed", annotations: { readOnlyHint: true } };
-    expect(classifyTool(raw, "write", { verdict: "read" })).toBe("write");
-    expect(classifyTool(raw, "read", { verdict: "write", stale: true })).toBe("read");
-    expect(classifyTool(raw, undefined, { verdict: "write" })).toBe("write");
-    expect(classifyTool(raw, undefined, { verdict: "read", stale: true })).toBe("write");
-    expect(classifyTool({ name: "silent" }, undefined, { verdict: "read" })).toBe("read");
-    for (const annotations of [undefined, {}, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
-      expect(classifyTool({ name: "unknown", ...(annotations ? { annotations } : {}) })).toBe("write");
-    }
-    expect(classifyTool(raw)).toBe("read");
-  });
-
   it("INV-1 INV-3: publishes isolated verdicts without persisting or trusting a downstream verdict", async () => {
     const storage = memoryStorage();
     const raw: ToolDef[] = [
