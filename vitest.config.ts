@@ -4,7 +4,50 @@ import goldenSourceBoundary from "./scripts/golden-source-boundary.mjs";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
-import { TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
+
+const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
+
+// workerd reruns only suites whose behaviour can differ from Node's. Pure
+// logic runs once, under Node. A listed suite that no longer exists matches
+// nothing. Never list a *.node.test.ts suite.
+const WORKERS_SUITES = [
+  // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
+  // service-bound Workers. These skip or fail outside workerd.
+  "test/auth-admission-binding.test.ts",
+  "test/auth-admission-live.test.ts",
+  "test/auth-admission-workerd.test.ts",
+  "test/catalog-cache.test.ts",
+  "test/clerk-organization-workerd.test.ts",
+  "test/codemode-compat.test.ts",
+  "test/guest-api-contract.test.ts",
+  "test/kv-to-d1.test.ts",
+  "test/usage-guide.test.ts",
+  // workerd's own fetch, stream, timer and unhandled-rejection behaviour,
+  // through real sockets and the MCP SDK edges.
+  "test/direct-write-finalizer.test.ts",
+  "test/mcp-core.test.ts",
+  "test/oauth-refresh-http.test.ts",
+  "test/remote-mcp.test.ts",
+  "test/server.test.ts",
+  "test/unhandled-rejections.test.ts",
+  // Native response reads can print sensitive downstream text below JS sinks.
+  // workerd-native-output.node.test.ts also invokes these three by filename.
+  "test/operator-sinks.test.ts",
+  "test/clerk-operator-output.test.ts",
+  "test/byte-read-response.test.ts",
+  "test/write-evidence.test.ts",
+  "test/write-provenance.test.ts",
+  // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.
+  "test/access-tokens.test.ts",
+  "test/clerk.test.ts",
+  "test/cloudflare-access-auth.test.ts",
+  "test/credentials.test.ts",
+  // Every provider's characterized requests, built by workerd.
+  "test/goldens.test.ts",
+  // Mixed suites use Vitest tags: only their native boundary cases rerun here.
+  // A brace glob also tolerates a file disappearing in the pruning PRs.
+  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
+];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
 // Worker project it executes inside workerd with the native Loader binding.
@@ -94,9 +137,9 @@ function fixtureBundle(entry: string): Promise<string> {
 // A separate native Worker: requests share no test-request I/O or promises.
 // enable_weak_ref matches the Worker example, so a charge whose work workerd
 // cancelled can be released by the collector (src/auth-admission.ts).
-async function authAdmissionWorker(backend?: string, name = backend ? "auth-admission-sdk" : "auth-admission") {
+async function authAdmissionWorker(backend?: string) {
   return {
-    name,
+    name: backend ? "auth-admission-sdk" : "auth-admission",
     ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
@@ -108,18 +151,12 @@ async function authAdmissionWorker(backend?: string, name = backend ? "auth-admi
 }
 
 // The plain Worker export plus named middleware and control entrypoints
-// sharing its isolate. Without enable_weak_ref, at this compatibility date,
-// the twin has no FinalizationRegistry and releases on settlement alone.
-async function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) {
+// sharing its isolate.
+async function authAdmissionEntryWorker(name: string, origin: string) {
   return {
     name,
     compatibilityDate: "2025-01-01",
-    compatibilityFlags: [
-      "nodejs_compat",
-      "enable_request_signal",
-      "service_binding_extra_handlers",
-      ...(weakRef ? ["enable_weak_ref"] : []),
-    ],
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal", "service_binding_extra_handlers", "enable_weak_ref"],
     bindings: { ORIGIN: origin },
     serviceBindings: { SELF: name },
     modules: true,
@@ -130,8 +167,7 @@ async function authAdmissionEntryWorker(name: string, origin: string, weakRef = 
 // One fresh isolate per collection scenario (test/auth-admission-binding.test.ts):
 // in this harness, objects left unreachable by an earlier scenario's cancelled
 // invocations were seen to keep later ones reachable in the same isolate.
-const AUTH_ADMISSION_BINDING_ISOLATES = ["ended-access", "ended-agent", "replaced-access", "replaced-agent"];
-const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "scheduled", "ended"];
+const AUTH_ADMISSION_ENTRY_ISOLATES = ["middleware", "ended"];
 const bindingName = (key: string) => `AUTH_ADMISSION_${key.toUpperCase().replaceAll("-", "_")}`;
 
 export default defineConfig({
@@ -171,19 +207,15 @@ export default defineConfig({
         },
         test: {
           name: "node",
-          env: {
-            CONNECTA_GOLDENS_RUNTIME: "node",
-            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
-            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
-          },
+          tags: [{ name: "node" }, { name: "workers" }],
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
-          include: TEST_INCLUDE,
-          exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
+          include: ["test/**/*.test.ts", "src/providers/**/*.test.ts"],
+          exclude: EXCLUDE,
         },
       },
       {
@@ -220,41 +252,27 @@ export default defineConfig({
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
                 ...Object.fromEntries(
-                  AUTH_ADMISSION_BINDING_ISOLATES.map((key) => [bindingName(key), `auth-admission-${key}`]),
-                ),
-                ...Object.fromEntries(
-                  [...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`), "entry-no-weak-ref"].flatMap(
-                    (key) => [
-                      [bindingName(key), `auth-admission-${key}`],
-                      [`${bindingName(key)}_CONTROL`, { name: `auth-admission-${key}`, entrypoint: "control" }],
-                      [`${bindingName(key)}_MIDDLEWARE`, { name: `auth-admission-${key}`, entrypoint: "middleware" }],
-                    ],
-                  ),
+                  AUTH_ADMISSION_ENTRY_ISOLATES.map((key) => `entry-${key}`).flatMap((key) => [
+                    [bindingName(key), `auth-admission-${key}`],
+                    [`${bindingName(key)}_CONTROL`, { name: `auth-admission-${key}`, entrypoint: "control" }],
+                    [`${bindingName(key)}_MIDDLEWARE`, { name: `auth-admission-${key}`, entrypoint: "middleware" }],
+                  ]),
                 ),
               },
               workers: await Promise.all([
                 clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
-                ...AUTH_ADMISSION_BINDING_ISOLATES.map((key) =>
-                  authAdmissionWorker(undefined, `auth-admission-${key}`),
-                ),
                 ...AUTH_ADMISSION_ENTRY_ISOLATES.map((key) =>
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
                 ),
-                authAdmissionEntryWorker("auth-admission-entry-no-weak-ref", inject("authAdmissionServer"), false),
               ]),
             },
           })),
         ],
         test: {
           name: "workers",
-          // workerd does not inherit arbitrary host process.env entries.
-          env: {
-            CONNECTA_GOLDENS_RUNTIME: "workers",
-            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
-            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
-          },
+          tags: [{ name: "node", skip: true }, { name: "workers" }],
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
@@ -262,8 +280,8 @@ export default defineConfig({
             "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
-          include: TEST_INCLUDE,
-          exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
+          include: WORKERS_SUITES,
+          exclude: EXCLUDE,
         },
       },
     ],

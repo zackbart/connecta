@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 // The Promise edge of the Effect core (src/runtime/run.ts). Every later step
 // of the Effect conversion leans on three promises this file keeps: a caller's
 // abort reason survives interruption, connecta's own error objects come back
@@ -29,7 +30,7 @@ afterEach(() => {
 });
 
 describe("runEdge", () => {
-  it("rejects with the original failure, not a wrapper", async () => {
+  it("rejects with the original failure, not a wrapper", NODE, async () => {
     const error = new LabelledError("the connector said no");
     const rejection = await runEdge(Effect.fail(error)).catch((e) => e);
     expect(rejection).toBe(error);
@@ -38,7 +39,7 @@ describe("runEdge", () => {
     expect(rejection.message).toBe("the connector said no");
   });
 
-  it("rejects with the original defect, whether died or thrown", async () => {
+  it("rejects with the original defect, whether died or thrown", NODE, async () => {
     const defect = new TypeError("not a function");
     await expect(runEdge(Effect.die(defect))).rejects.toBe(defect);
     await expect(
@@ -52,7 +53,7 @@ describe("runEdge", () => {
     await expect(runEdge(Effect.die(primitive))).rejects.toBe(primitive);
   });
 
-  it("maps an interrupt to the caller's abort reason", async () => {
+  it("maps an interrupt to the caller's abort reason", WORKERS, async () => {
     const controller = new AbortController();
     const reason = new LabelledError("request closed");
     const running = runEdge(Effect.never, { signal: controller.signal });
@@ -63,7 +64,7 @@ describe("runEdge", () => {
 });
 
 describe("the microtask scheduler", () => {
-  it("makes progress under fake timers without advancing them", async () => {
+  it("makes progress under fake timers without advancing them", WORKERS, async () => {
     vi.useFakeTimers();
     // Thousands of yields, and concurrent fibers, all without a single timer
     // tick: nothing here may wait on setImmediate or setTimeout.
@@ -77,10 +78,25 @@ describe("the microtask scheduler", () => {
     ).resolves.toEqual([100, 200, 300]);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("still lets Effect.sleep wait on the faked clock", WORKERS, async () => {
+    vi.useFakeTimers();
+    let done = false;
+    const running = runEdge(Effect.sleep(1_000)).then(() => {
+      done = true;
+    });
+    await drainMicrotasks();
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await running;
+    expect(done).toBe(true);
+  });
 });
 
+describe("fromSignal", () => {});
+
 describe("withDeadlineEffect", () => {
-  it("aborts the operation's signal with the labelled error before interrupting it", async () => {
+  it("aborts the operation's signal with the labelled error before interrupting it", WORKERS, async () => {
     vi.useFakeTimers();
     const timeoutError = new Error("search_tools timed out after 50ms");
     const events: string[] = [];
@@ -106,7 +122,30 @@ describe("withDeadlineEffect", () => {
     expect(events).toEqual(["abort:search_tools timed out after 50ms", "interrupt:aborted=true"]);
   });
 
-  it("does not start an operation after its caller has already aborted", async () => {
+  it("fails with the caller's abort reason, forwarded to the operation", WORKERS, async () => {
+    const caller = new AbortController();
+    const reason = new LabelledError("client went away");
+    let operationReason: unknown;
+    const running = runEdge(
+      withDeadlineEffect(
+        (signal) =>
+          Effect.never.pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                operationReason = signal.reason;
+              }),
+            ),
+          ),
+        { signal: caller.signal, timeoutMs: 60_000, timeoutError: new Error("late") },
+      ),
+    );
+    await drainMicrotasks();
+    caller.abort(reason);
+    await expect(running).rejects.toBe(reason);
+    expect(operationReason).toBe(reason);
+  });
+
+  it("does not start an operation after its caller has already aborted", NODE, async () => {
     const reason = new LabelledError("caller left before dispatch");
     const operation = vi.fn(() => Effect.succeed("dispatched"));
     await expect(
@@ -119,10 +158,22 @@ describe("withDeadlineEffect", () => {
     ).rejects.toBe(reason);
     expect(operation).not.toHaveBeenCalled();
   });
+
+  it("stops listening to the caller's signal once it settles", WORKERS, async () => {
+    const caller = new AbortController();
+    const removed = vi.spyOn(caller.signal, "removeEventListener");
+    await runEdge(
+      withDeadlineEffect(() => Effect.succeed(1), {
+        signal: caller.signal,
+        timeoutError: new Error("unused"),
+      }),
+    );
+    expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
 });
 
 describe("detach", () => {
-  it("hands the work to waitUntil and runs it to completion", async () => {
+  it("hands the work to waitUntil and runs it to completion", WORKERS, async () => {
     const handed: Array<Promise<unknown>> = [];
     let ran = false;
     detach(
@@ -136,7 +187,7 @@ describe("detach", () => {
     expect(ran).toBe(true);
   });
 
-  it("never rejects, whatever the work does", async () => {
+  it("never rejects, whatever the work does", NODE, async () => {
     const handed: Array<Promise<unknown>> = [];
     const ctx = { waitUntil: (promise: Promise<unknown>) => handed.push(promise) };
     await expect(detach(Effect.fail(new Error("background")), ctx)).resolves.toBeUndefined();

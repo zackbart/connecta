@@ -1,33 +1,15 @@
 name: Provider drift
 
 # Public vendor contracts only. This workflow reports evidence and never
-# participates in CI's aggregate check gate or accepts a new baseline. Pull
-# requests scan the providers they change (scripts/ci-drift-providers.mjs);
-# the weekly schedule and manual dispatch scan every public provider.
+# participates in CI's check gate or accepts a new baseline. Every run scans
+# every public provider weekly and on demand.
 on:
-  pull_request:
-    paths:
-      - "src/providers/**"
-      - "scripts/ci-drift-providers.mjs"
-      - "scripts/drift-check.mjs"
-      - "scripts/drift-record.mjs"
-      - "scripts/drift-validate.mjs"
-      - "scripts/generate-openapi.mjs"
-      - "scripts/providers.mjs"
-      - "scripts/value-safety.mjs"
-      - "scripts/vercel-inventory.mjs"
-      - ".github/workflows/provider-drift.yml"
   schedule:
     - cron: "23 10 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
-
-# Superseded PR evidence need not finish; scheduled/manual runs stay independent.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   drift:
@@ -36,54 +18,27 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      # Drift tooling and shared provider code widen the scan; see the script.
-      - name: Select providers
-        id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          providers=all
-          # An unreadable diff or provider tree falls back to the full scan, which reports it.
-          if [[ "$EVENT_NAME" == pull_request ]] &&
-             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"; then
-            providers=$(node scripts/ci-drift-providers.mjs < "$RUNNER_TEMP/paths") || providers=all
-          fi
-          echo "providers=$providers" >> "$GITHUB_OUTPUT"
       - name: Compare public provider contracts
         id: report
-        if: steps.scope.outputs.providers != ''
         continue-on-error: true
-        env:
-          PROVIDERS: ${{ steps.scope.outputs.providers }}
-        run: |
-          selection=()
-          if [[ "$PROVIDERS" != all ]]; then
-            for provider in $PROVIDERS; do selection+=(--provider "$provider"); done
-          fi
-          pnpm --silent run providers:check --json "${selection[@]}" > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
+        run: pnpm --silent run providers:check --json > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
       - name: Summarize advisory findings
         if: always()
         env:
-          PROVIDERS: ${{ steps.scope.outputs.providers }}
           REPORT_OUTCOME: ${{ steps.report.outcome }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
           import { join } from 'node:path';
-          const { PROVIDERS: providers, REPORT_OUTCOME: outcome, RUNNER_TEMP, GITHUB_STEP_SUMMARY } = process.env;
+          const { REPORT_OUTCOME: outcome, RUNNER_TEMP, GITHUB_STEP_SUMMARY } = process.env;
           let summary = '## Provider drift (advisory)\n\nPublic contracts only. No credentials, operational tool calls, issue filing, or baseline updates. This job is outside the aggregate `check` gate.\n\n';
-          summary += providers === 'all' ? 'Scope: every public provider.\n\n' : providers ? `Scope: providers this pull request changes, directly or through shared provider code: ${providers}.\n\n` : 'Scope: no provider with a drift record changed; nothing was scanned.\n\n';
-          if (providers) try {
+          try {
             const report = JSON.parse(readFileSync(join(RUNNER_TEMP, 'provider-drift.json'), 'utf8'));
             // manual-required repeats every run until a vendor publishes a contract;
             // everything else is new or changed against the reviewed evidence.
@@ -106,7 +61,7 @@ jobs:
           appendFileSync(GITHUB_STEP_SUMMARY, summary);
           NODE
       - name: Upload drift evidence
-        if: always() && steps.scope.outputs.providers != ''
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: provider-drift

@@ -1,3 +1,4 @@
+import { WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
 import { MAX_LISTEN_CLASSIFICATION_BYTES } from "../src/routes/mcp.js";
@@ -102,6 +103,7 @@ describe("MCP request bodies before auth", () => {
     ["/mcp/team", 401],
   ] as const)(
     "INV-7: refuses an unauthenticated large listen POST to %s without reading its body or taking a permit",
+    WORKERS,
     async (path, status) => {
       const { c } = await deployment();
       try {
@@ -123,6 +125,7 @@ describe("MCP request bodies before auth", () => {
     ["/mcp", "alice"],
   ] as const)(
     "INV-7: answers an authenticated oversized listen POST to %s with 413, reading no further than the cap",
+    WORKERS,
     async (path, who) => {
       const { c, bot } = await deployment();
       try {

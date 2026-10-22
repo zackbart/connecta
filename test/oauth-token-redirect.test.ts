@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { classifyCallError } from "../src/errors.js";
@@ -14,6 +15,7 @@ describe("native SDK token redirects on memory storage", () => {
   describe.each(["remoteMcp", "api"] as const)("%s", (kind) => {
     it.each([307])(
       "requires re-consent after HTTP %s refresh with one send and no follow (INV-5) (INV-9)",
+      WORKERS,
       async (status) => {
         const endpoint = await server(status);
         const storage = store(false);
@@ -51,6 +53,7 @@ describe("native SDK token redirects on memory storage", () => {
 
     it.each([308])(
       "refuses HTTP %s code exchange without following or retrying the form (INV-5) (INV-9)",
+      WORKERS,
       async (status) => {
         const endpoint = await server(status);
         const storage = store(false);
@@ -68,6 +71,7 @@ describe("native SDK token redirects on memory storage", () => {
 describe("native SDK token redirects on memory storage, remoteMcp", () => {
   it.each([307])(
     "allows an identical refresh token after new-epoch re-consent following HTTP %s (INV-5)",
+    NODE,
     async (status) => {
       const endpoint = await server(status);
       const storage = store(false);
@@ -101,25 +105,29 @@ describe("native SDK token redirects on memory storage, remoteMcp", () => {
   );
 });
 
-it.each([307])("never follows HTTP %s for client credentials or token revocation (INV-5) (INV-9)", async (status) => {
-  for (const body of [
-    new URLSearchParams({ grant_type: "client_credentials", client_secret: "client-secret" }),
-    "token=revoked-token&token_type_hint=refresh_token",
-  ]) {
-    const endpoint = await server(status);
-    const provider = new KvOAuthProvider("svc", memoryStorage(), "https://connecta.test/oauth/callback/svc");
-    const resourceFetch = () => {
-      throw new Error("credential request reached redirect-following resource path");
-    };
-    const response = await new OAuthRefreshCoordinator().coordinatedFetch(
-      provider,
-      fetch,
-      undefined,
-      undefined,
-      resourceFetch,
-    )(`${endpoint.issuer}/token`, { method: "POST", body, redirect: "follow" });
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ error: "invalid_request" });
-    expect((await endpoint.sent()).map((request) => request.path)).toEqual(["token"]);
-  }
-});
+it.each([307])(
+  "never follows HTTP %s for client credentials or token revocation (INV-5) (INV-9)",
+  WORKERS,
+  async (status) => {
+    for (const body of [
+      new URLSearchParams({ grant_type: "client_credentials", client_secret: "client-secret" }),
+      "token=revoked-token&token_type_hint=refresh_token",
+    ]) {
+      const endpoint = await server(status);
+      const provider = new KvOAuthProvider("svc", memoryStorage(), "https://connecta.test/oauth/callback/svc");
+      const resourceFetch = () => {
+        throw new Error("credential request reached redirect-following resource path");
+      };
+      const response = await new OAuthRefreshCoordinator().coordinatedFetch(
+        provider,
+        fetch,
+        undefined,
+        undefined,
+        resourceFetch,
+      )(`${endpoint.issuer}/token`, { method: "POST", body, redirect: "follow" });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_request" });
+      expect((await endpoint.sent()).map((request) => request.path)).toEqual(["token"]);
+    }
+  },
+);
