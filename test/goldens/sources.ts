@@ -19,6 +19,9 @@ export interface SourceState {
   events: number;
   violation?: Error;
   timers: Map<number, Timer>;
+  /** Resolves on the next counted native completion, not a host scheduling turn. */
+  waitForIO(): Promise<void>;
+  completeIO(): void;
   tick(ms: number): void;
   next(): number | undefined;
   stop(): void;
@@ -222,12 +225,10 @@ export function installSources(): Sources {
         state.events++;
         try {
           return Promise.resolve(native.apply(this, args)).finally(() => {
-            state.inFlight--;
-            state.events++;
+            state.completeIO();
           });
         } catch (error) {
-          state.inFlight--;
-          state.events++;
+          state.completeIO();
           throw error;
         }
       });
@@ -314,6 +315,7 @@ export function installSources(): Sources {
     start() {
       if (active) throw new Error("Overlapping golden captures are unsupported");
       uuid = byte = seed = 0;
+      const completions = new Set<() => void>();
       const state: SourceState = {
         now: GOLDEN_NOW,
         loading: true,
@@ -321,6 +323,16 @@ export function installSources(): Sources {
         microtasks: 0,
         events: 0,
         timers: new Map(),
+        waitForIO() {
+          // Check and subscribe synchronously so a completion cannot be missed.
+          return state.inFlight === 0 ? Promise.resolve() : new Promise((resolve) => completions.add(resolve));
+        },
+        completeIO() {
+          state.inFlight--;
+          state.events++;
+          for (const resolve of completions) resolve();
+          completions.clear();
+        },
         tick(ms) {
           state.now += ms;
           let iterations = 0;

@@ -236,14 +236,13 @@ function deterministic(): { real: RealWork; restart(): void; restore(): Promise<
     },
     async restore() {
       try {
-        for (let turns = 0; (state.inFlight || state.microtasks) && turns < MAX_SETTLE_CHANGES; turns++) {
-          state.tick(0);
-          await realTurn();
+        const checkBudget = controlledBudget(state, "Golden teardown");
+        while (state.inFlight || state.microtasks) {
+          await countedTurn(state, checkBudget);
         }
       } finally {
         state.stop();
       }
-      if (state.inFlight || state.microtasks) throw new Error("Controlled work could not drain after rejected capture");
     },
   };
 }
@@ -388,9 +387,32 @@ async function networkJitter(jitter: Jitter): Promise<void> {
 const STEP_QUIET_TURNS = 2;
 /** The same before the clock moves, which fires a deadline if the call was still working: wait longer. */
 const CLOCK_QUIET_TURNS = 8;
-/** Bounds that turn a call that keeps working, or keeps waiting on timers, into a failure instead of a hang. */
-const MAX_SETTLE_CHANGES = 10_000;
+/** Bound actual controlled operations, never the host turns a native operation needs. */
+const MAX_CONTROLLED_EVENTS = 20_000;
 const MAX_CLOCK_ADVANCES = 1_000;
+
+function controlledBudget(real: RealWork, where: string): () => void {
+  const began = real.events;
+  return () => {
+    if (real.events - began > MAX_CONTROLLED_EVENTS || real.inFlight > MAX_CONTROLLED_EVENTS)
+      throw new Error(
+        `${where}: controlled operation budget exceeded (${real.inFlight} counted I/O operations outstanding, ${real.microtasks} queued microtasks, ${real.timers.size} timers)`,
+      );
+  };
+}
+
+async function countedTurn(real: RealWork, checkBudget: () => void): Promise<void> {
+  checkBudget();
+  // Synchronous: 0 ms timers created by microtasks stay due now.
+  real.tick(0);
+  await realTurn();
+  checkBudget();
+  // Native crypto/body reads may need arbitrarily many host turns under load.
+  // Their completion wakes the driver; only actual operations spend its budget.
+  // Vitest's native runner timeout remains the backstop for a never-resolving I/O.
+  if (real.inFlight) await real.waitForIO();
+  checkBudget();
+}
 
 interface Waiting {
   request: SeenRequest;
@@ -488,14 +510,10 @@ function installNetwork(capture: Capture): Network {
     };
     const settle = async (turns: number) => {
       let last = "";
-      for (let quiet = 0, changes = 0, total = 0; quiet < turns; total++) {
-        if (total > MAX_SETTLE_CHANGES) throw new Error(`${spec.provider}: controlled work never settled`);
-        // Synchronous: 0 ms timers created by microtasks stay due now.
-        real.tick(0);
-        await realTurn();
+      const checkBudget = controlledBudget(real, spec.provider);
+      for (let quiet = 0; quiet < turns;) {
+        await countedTurn(real, checkBudget);
         const now = progress();
-        if (now !== last && ++changes > MAX_SETTLE_CHANGES)
-          throw new Error(`${spec.provider}: a call never stopped working`);
         quiet = now === last && issued === arrived && real.inFlight === 0 && real.microtasks === 0 ? quiet + 1 : 0;
         last = now;
       }
@@ -607,12 +625,15 @@ function installNetwork(capture: Capture): Network {
     } catch (error) {
       // An invalid capture can still have concurrent fake requests in flight.
       // Drain/cancel them under this capture's fakes, never the next one's.
-      for (let turn = 0; turn < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight > 0; turn++) {
+      const checkBudget = controlledBudget(real, `${spec.provider} rejected capture`);
+      let last = "";
+      for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight || real.microtasks;) {
         for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
         waiting = [];
-        real.tick(0);
-        await realTurn();
-        if (turn > MAX_SETTLE_CHANGES) break;
+        await countedTurn(real, checkBudget);
+        const now = progress();
+        quiet = now === last ? quiet + 1 : 0;
+        last = now;
       }
       throw error;
     }

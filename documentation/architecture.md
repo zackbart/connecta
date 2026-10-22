@@ -1656,6 +1656,15 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   before either can capture native references or schedule uncounted I/O. Only
   the harness's fresh-graph loading phase admits test fixture imports.
   Invalid captures cancel and drain their concurrent fake requests.
+- Settle, rejected-capture cleanup, and final teardown await counted native
+  I/O completion notifications while operations remain outstanding. Host turns
+  spent waiting for crypto or body reads do not consume a scheduling budget.
+  Each settle/drain allows 20,000 controlled source events or outstanding
+  counted operations, and clock advancement remains limited to 1,000 ticks.
+  Exceeding the operation budget reports outstanding I/O, microtasks, and
+  timers. The native Vitest timeout guards an operation that never completes.
+  The source probes delay a counted read past 10,000 host turns and require
+  identical capture bytes and fully drained cleanup paths.
 - The network answers in zero virtual time. Before advancing to the next
   timer, the loop requires eight quiet real event-loop turns and an audit.
   A row records nonzero `waitedMs`, the virtual time spent on provider

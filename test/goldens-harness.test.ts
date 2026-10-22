@@ -25,6 +25,7 @@ import planningCenter from "./goldens/planning-center/spec.js";
 
 import { canonicalGolden } from "./goldens/canonical.js";
 import { PRIVATE_KEY, PUBLIC_KEY } from "./goldens/rsa-fixture.js";
+import { goldenSources } from "./goldens/sources.js";
 
 // Small source probes use one order. Nightly's Node job exercises every seed.
 const determinism = process.env.CONNECTA_GOLDENS_DETERMINISM === "1";
@@ -78,6 +79,20 @@ const savedImmediate = (globalThis as { setImmediate?: (callback: () => void) =>
 const savedTimeout = globalThis.setTimeout.bind(globalThis);
 const savedAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
 const savedDigest = crypto.subtle.digest.bind(crypto.subtle);
+
+// A native body read whose producer deliberately exceeds the old 10,000-turn
+// polling limit. Harness-native turns avoid virtual time and runner-clock mocks.
+function delayedRead(): Promise<string> {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let turn = 0; turn < 11_000; turn++) await goldenSources().turn();
+        controller.enqueue(new TextEncoder().encode("body"));
+        controller.close();
+      },
+    }),
+  ).text();
+}
 const savedNow = performance.now.bind(performance);
 const savedDateNow = Date.now.bind(Date);
 const descriptorDateNow = Object.getOwnPropertyDescriptor(Date, "now")!.value as () => number;
@@ -646,6 +661,70 @@ describe(suiteName, { timeout: 120_000 }, () => {
     const a = await captureCall(spec, "probe", { jitter: 1 });
     expect(a).toBe(await captureCall(spec, "probe", { jitter: 2 }));
     expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: "body" });
+  });
+
+  it("awaits counted I/O beyond 10,000 host turns without changing capture bytes", WORKERS, async () => {
+    const baseline = await captureCall(
+      probeSpec(async () => new Response("body").text()),
+      "probe",
+    );
+    expect(await captureCall(probeSpec(delayedRead), "probe")).toBe(baseline);
+  });
+
+  it("drains delayed counted I/O when rejecting concurrent fake requests", WORKERS, async () => {
+    let drained = false;
+    let drainedUnderFakes = false;
+    const error = new Error("fixture rejected");
+    const spec = probeSpec(
+      async () => Promise.all([fetch("https://probe.example/a"), fetch("https://probe.example/b")]),
+      () => {
+        const fake = fetch;
+        void delayedRead().then(() => {
+          drained = true;
+          drainedUnderFakes = fetch === fake;
+        });
+        throw error;
+      },
+    );
+    await expect(captureCall(spec, "probe")).rejects.toThrow(error);
+    expect(drained).toBe(true);
+    expect(drainedUnderFakes).toBe(true);
+    const next = JSON.parse(
+      await captureCall(
+        probeSpec(async () => "clean"),
+        "probe",
+      ),
+    ) as Row;
+    expect(next.result).toMatchObject({ ok: true, value: "clean" });
+  });
+
+  it("drains delayed counted I/O when construction fails outside the network driver", WORKERS, async () => {
+    let drained = false;
+    const spec = probeSpec(async () => "unused");
+    spec.create = () => {
+      void delayedRead().then(() => {
+        drained = true;
+      });
+      throw new Error("construction rejected");
+    };
+    await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
+    expect(drained).toBe(true);
+  });
+
+  it("bounds controlled operations with an outstanding-work diagnostic", WORKERS, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () => {
+          let left = 6_000;
+          const repeat = () => {
+            if (--left > 0) queueMicrotask(() => setTimeout(repeat, 0));
+          };
+          setTimeout(repeat, 0);
+          return "done";
+        }),
+        "probe",
+      ),
+    ).rejects.toThrow(/controlled operation budget exceeded \(0 counted I\/O operations outstanding/);
   });
 
   it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", WORKERS, async () => {
