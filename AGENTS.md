@@ -77,9 +77,7 @@ CI runs `static`, `node`, and `workers` in parallel on every PR, main push,
 and nightly. `static` runs `check:static` and `check:build` with one install;
 `node` runs `test:node`; `workers` runs `test:workers`. Runtime jobs use four
 Vitest workers on the four-core runner. Installs use the frozen lockfile and
-shared pnpm store cache. Node also caches Vitest suite timings to start long suites
-first; the restore prefix allows main's cache to seed PRs. Every test still runs.
-A single inline changed-files step in `static` selects
+shared pnpm store cache. A single inline changed-files step in `static` selects
 PR browser/audit jobs with `git diff --name-only -z` against the PR base. Their
 canonical path expressions and the browser import rationale live only in
 [ci.yml](.github/workflows/ci.yml). Main, nightly and manual runs always select

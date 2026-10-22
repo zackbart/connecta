@@ -92,13 +92,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Cache Node suite timings
-        uses: actions/cache@v5
-        with:
-          path: node_modules/.vite/vitest/**/results.json
-          key: ${{ runner.os }}-vitest-node-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-vitest-node-${{ hashFiles('pnpm-lock.yaml') }}-
       - run: pnpm run test:node
 
   # workerd runs only the suites vitest.config.ts lists for it.
