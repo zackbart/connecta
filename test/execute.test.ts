@@ -606,6 +606,20 @@ describe("execute_code handler", () => {
 });
 
 // E6: a caught connector failure must not classify an unrelated program error.
+it("reports an empty terminal executor error as failure with a fixed message", async () => {
+  const out = await createExecuteTool(
+    makeRegistry([calcConnector]),
+    BASE,
+    fakeExecutor({ result: "must not succeed", error: "", logs: ["before failure"] }),
+    silentLogger,
+  )({ code: "", diagnostics: true });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "program_error", message: "Program Error: Execution failed without an error message." },
+    logs: "before failure",
+  });
+});
+
 it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {
   const connector = connectorWith({
     id: "bad",

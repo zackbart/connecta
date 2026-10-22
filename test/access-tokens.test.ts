@@ -1,3 +1,4 @@
+import type { InboundAuth } from "../src/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { AccessTokenError, AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -368,6 +369,28 @@ describe("agent identity", () => {
     expect(authz.principalKey).toBeUndefined();
     expect(await manager.auth.activityActorLabel?.("simon")).toBe("simon");
     expect(await manager.auth.activityActorLabel?.(fixture.unbound.accessToken.id)).toBeUndefined();
+  });
+
+  it("INV-4: an agent claim from any other inbound provider is refused like an unknown token", async () => {
+    const claim = (kind: string, extra: Partial<Extract<AuthResult, { ok: true }>> = {}): InboundAuth => ({
+      kind,
+      recognizesCredential: (candidate) => candidate.headers.get("authorization") === "Bearer custom",
+      authorize: () => ({ ok: true, subjectId: "service", agent: "simon", ...extra }),
+    });
+    for (const provider of [claim("custom"), claim("access_token"), claim("custom", { principal: owner })]) {
+      const authz = await authorize(request("custom"), BASE, [provider]);
+      expect(authz.ok).toBe(false);
+      if (!authz.ok) expect(authz.response.status).toBe(401);
+      const app = createTestConnecta({ connectors: [calcApi()], auth: provider, maintainers });
+      try {
+        expect((await mcpRpc(app, "tools/list", {}, { token: "custom" })).status).toBe(401);
+      } finally {
+        await app.close();
+      }
+    }
+    // Without the claim the same provider is admitted, so the claim is what refuses.
+    const plain: InboundAuth = { ...claim("custom"), authorize: () => ({ ok: true, subjectId: "service" }) };
+    expect((await authorize(request("custom"), BASE, [plain])).ok).toBe(true);
   });
 
   it("INV-5: an agent has no principal, so personal connectors are absent for it", async () => {

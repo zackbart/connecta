@@ -75,6 +75,14 @@ function handlerFor(executor: Executor) {
   return createExecuteTool(makeRegistry([calcConnector]), CONTRACT_BASE, executor, silentLogger);
 }
 
+it("keeps an empty error string as a failure through the transport", () => {
+  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] })).toEqual({
+    result: undefined,
+    error: "",
+    logs: ["before failure"],
+  });
+});
+
 describe("guest API contract (executor-independent)", () => {
   it("[R2] truncates once however many hops the value takes", () => {
     // Repeated fallback guards must retain the original serialized size.

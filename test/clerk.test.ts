@@ -459,6 +459,11 @@ describe("clerkAuth inbound auth", () => {
       await expectUnauthorized(deployment());
     });
 
+    it("rejects another OAuth application on the same instance", async () => {
+      authenticateOAuth("oat_verified", "client_other");
+      await expectUnauthorized(deployment());
+    });
+
     it.each(["/mcp", "/mcp/support"])(
       "accepts the canonical resource audience at %s without a fallback allowlist",
       async (path) => {
