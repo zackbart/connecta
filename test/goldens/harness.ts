@@ -236,16 +236,19 @@ function deterministic(): { real: RealWork; restart(): void; restore(): Promise<
     },
     async restore() {
       try {
-        const checkBudget = controlledBudget(state, "Golden teardown");
-        while (state.inFlight || state.microtasks) {
-          await countedTurn(state, checkBudget);
+        const extend = nativeExtensions(state, "Golden teardown");
+        for (let turns = 0; state.inFlight || state.microtasks; turns++) {
+          if (turns >= MAX_SETTLE_CHANGES) {
+            if (!(await extend())) break;
+            turns = 0;
+          }
+          state.tick(0);
+          await realTurn();
         }
-      } catch (error) {
-        await abortAndDrain(state, error);
-        throw error;
       } finally {
         state.stop();
       }
+      if (state.inFlight || state.microtasks) throw new Error("Controlled work could not drain after rejected capture");
     },
   };
 }
@@ -390,54 +393,24 @@ async function networkJitter(jitter: Jitter): Promise<void> {
 const STEP_QUIET_TURNS = 2;
 /** The same before the clock moves, which fires a deadline if the call was still working: wait longer. */
 const CLOCK_QUIET_TURNS = 8;
-/** Bound actual controlled operations, never the host turns a native operation needs. */
-const MAX_CONTROLLED_EVENTS = 20_000;
+/** Bounds that turn a call that keeps working, or keeps waiting on timers, into a failure instead of a hang. */
+const MAX_SETTLE_CHANGES = 10_000;
 const MAX_CLOCK_ADVANCES = 1_000;
-class ControlledBudgetExceeded extends Error {}
+const MAX_NATIVE_EXTENSIONS = 100;
 
-function controlledBudget(real: RealWork, where: string): () => void {
-  const began = real.events;
-  return () => {
-    if (real.events - began > MAX_CONTROLLED_EVENTS || real.inFlight > MAX_CONTROLLED_EVENTS)
-      throw new ControlledBudgetExceeded(
-        `${where}: controlled operation budget exceeded (${real.inFlight} counted I/O operations outstanding, ${real.microtasks} queued microtasks, ${real.timers.size} timers)`,
-      );
+/** Only genuinely native operations may extend a bounded polling window. */
+function nativeExtensions(real: RealWork, where: string): () => Promise<boolean> {
+  let extensions = 0;
+  return async () => {
+    if (real.nativePending.size === 0) return false;
+    if (++extensions > MAX_NATIVE_EXTENSIONS)
+      throw new Error(`${where}: native completion wait budget exceeded (${MAX_NATIVE_EXTENSIONS} extensions)`);
+    const pending = [...real.nativePending];
+    await real.waitForNative();
+    if (pending.some((operation) => real.nativePending.has(operation)))
+      throw new Error(`${where}: native completion wait returned with unsettled operations`);
+    return true;
   };
-}
-
-async function countedTurn(real: RealWork, checkBudget: () => void): Promise<void> {
-  const assertSupported = () => {
-    if (real.violation && !real.aborted) throw real.violation;
-  };
-  checkBudget();
-  assertSupported();
-  // Synchronous: 0 ms timers created by microtasks stay due now.
-  real.tick(0, checkBudget);
-  await realTurn();
-  checkBudget();
-  assertSupported();
-  // Only reads attributed to controlled producers can depend on our timers.
-  // Drain genuinely native operations first, preserving request cohorts and
-  // deadlines while crypto or native bodies are pending. Once every remaining
-  // operation is a controlled read, run its next timer (intervals included).
-  if (real.inFlight && !real.microtasks) {
-    const next = real.next();
-    if (next !== undefined && real.inFlight === real.controlledReads) real.tick(next, checkBudget);
-    else await real.waitForWork();
-  }
-  checkBudget();
-  assertSupported();
-}
-
-async function abortAndDrain(real: RealWork, error: unknown): Promise<void> {
-  real.abort(error instanceof Error ? error : new Error(String(error)));
-  const checkBudget = controlledBudget(real, "Golden aborted capture");
-  let last = -1;
-  for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || real.inFlight || real.microtasks;) {
-    await countedTurn(real, checkBudget);
-    quiet = real.events === last && !real.inFlight && !real.microtasks ? quiet + 1 : 0;
-    last = real.events;
-  }
 }
 
 interface Waiting {
@@ -536,10 +509,18 @@ function installNetwork(capture: Capture): Network {
     };
     const settle = async (turns: number) => {
       let last = "";
-      const checkBudget = controlledBudget(real, spec.provider);
-      for (let quiet = 0; quiet < turns;) {
-        await countedTurn(real, checkBudget);
+      const extend = nativeExtensions(real, spec.provider);
+      for (let quiet = 0, changes = 0, total = 0; quiet < turns; total++) {
+        if (total > MAX_SETTLE_CHANGES) {
+          if (!(await extend())) throw new Error(`${spec.provider}: controlled work never settled`);
+          total = changes = 0;
+        }
+        // Synchronous: 0 ms timers created by microtasks stay due now.
+        real.tick(0);
+        await realTurn();
         const now = progress();
+        if (now !== last && ++changes > MAX_SETTLE_CHANGES)
+          throw new Error(`${spec.provider}: a call never stopped working`);
         quiet = now === last && issued === arrived && real.inFlight === 0 && real.microtasks === 0 ? quiet + 1 : 0;
         last = now;
       }
@@ -626,7 +607,7 @@ function installNetwork(capture: Capture): Network {
           );
         }
         if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
-        real.tick(real.next()!, controlledBudget(real, spec.provider));
+        real.tick(real.next()!);
       }
       const outcome = state.outcome!;
       if (!outcome.ok) throw outcome.error;
@@ -640,7 +621,7 @@ function installNetwork(capture: Capture): Network {
       for (let cleanup = 0; real.timers.size; cleanup++) {
         if (cleanup > MAX_CLOCK_ADVANCES || [...real.timers.values()].some((timer) => !timer.deadline))
           throw new Error(`${spec.provider}: outstanding controlled timer after call completion`);
-        real.tick(real.next()!, controlledBudget(real, spec.provider));
+        real.tick(real.next()!);
         await settle(STEP_QUIET_TURNS);
         if (issued !== finishedIssued || JSON.stringify(outcome.value) !== finished)
           throw new Error(`${spec.provider}: controlled work outlived call completion`);
@@ -649,27 +630,18 @@ function installNetwork(capture: Capture): Network {
         throw new Error(`${spec.provider}: outstanding controlled work after call completion`);
       return { value: outcome.value, steps, waitedMs };
     } catch (error) {
-      if (error instanceof ControlledBudgetExceeded || real.violation) {
-        for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
-        await abortAndDrain(real, error);
-        throw error;
-      }
       // An invalid capture can still have concurrent fake requests in flight.
       // Drain/cancel them under this capture's fakes, never the next one's.
-      const checkBudget = controlledBudget(real, `${spec.provider} rejected capture`);
-      let last = "";
-      try {
-        for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight || real.microtasks;) {
-          for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
-          waiting = [];
-          await countedTurn(real, checkBudget);
-          const now = progress();
-          quiet = now === last ? quiet + 1 : 0;
-          last = now;
+      const extend = nativeExtensions(real, `${spec.provider} rejected capture`);
+      for (let turn = 0; turn < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight > 0; turn++) {
+        for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
+        waiting = [];
+        real.tick(0);
+        await realTurn();
+        if (turn > MAX_SETTLE_CHANGES) {
+          if (!(await extend())) break;
+          turn = 0;
         }
-      } catch (cleanupError) {
-        await abortAndDrain(real, cleanupError);
-        throw cleanupError;
       }
       throw error;
     }

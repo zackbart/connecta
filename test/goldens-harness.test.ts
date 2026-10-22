@@ -80,8 +80,9 @@ const savedTimeout = globalThis.setTimeout.bind(globalThis);
 const savedAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
 const savedDigest = crypto.subtle.digest.bind(crypto.subtle);
 
-// A native body read whose producer deliberately exceeds the old 10,000-turn
-// polling limit. Harness-native turns avoid virtual time and runner-clock mocks.
+// A producer-fed body read deliberately exceeding the 10,000-turn
+// polling limit. It must reject rather than extending the native-only budget.
+// Harness-native turns avoid virtual time and runner-clock mocks.
 function delayedRead(): Promise<string> {
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -93,8 +94,8 @@ function delayedRead(): Promise<string> {
     }),
   ).text();
 }
-// A counted read whose producer queues work after the driver's tick, either
-// before it subscribes to progress or after it has started waiting for I/O.
+// A counted read whose producer queues controlled work after the driver's
+// tick. Native yields must never strand the subsequent zero-time callback.
 function queuedTimerRead(turns = 0, callbacks = 1): Promise<string> {
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -131,7 +132,6 @@ const controlledIOCases = [
     produce: (close: () => void) => {
       queueMicrotask(() => setTimeout(close, 1));
     },
-    waitedMs: 1,
   },
   {
     name: "a zero-delay interval needing three callbacks",
@@ -144,14 +144,12 @@ const controlledIOCases = [
         }
       }, 0);
     },
-    waitedMs: 2,
   },
   {
     name: "a longer-delay chain",
     produce: (close: () => void) => {
       queueMicrotask(() => setTimeout(() => setTimeout(() => setTimeout(close, 5_000), 50), 2));
     },
-    waitedMs: 5_052,
   },
   {
     name: "a native producer's direct zero timer then future close",
@@ -159,10 +157,12 @@ const controlledIOCases = [
       for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
       setTimeout(() => setTimeout(close, 1), 0);
     },
-    waitedMs: 1,
   },
 ];
-const CONTROLLED_IO = { ...WORKERS, timeout: 8_000 };
+// These timeouts only guard regressions: rejection comes from the harness's
+// bounded turn loop, never from elapsed time.
+const CONTROLLED_IO = { ...WORKERS, timeout: 30_000 };
+const DRAIN_REJECTION = "Controlled work could not drain after rejected capture";
 async function expectCleanCapture(): Promise<void> {
   const clean = JSON.parse(
     await captureCall(
@@ -763,18 +763,40 @@ describe(suiteName, { timeout: 120_000 }, () => {
     },
   );
 
-  it.each(controlledIOCases)(
-    "drives controlled I/O produced by $name",
+  it.each(["timer", "microtask"] as const)(
+    "completes a native producer's direct zero-time %s after native turns",
     CONTROLLED_IO,
-    async ({ produce, waitedMs }) => {
+    async (source) => {
       const row = JSON.parse(
         await captureCall(
-          probeSpec(async () => producedRead(produce)),
+          probeSpec(async () =>
+            producedRead(async (close) => {
+              for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+              if (source === "timer") setTimeout(close, 0);
+              else queueMicrotask(close);
+            }),
+          ),
           "probe",
         ),
       ) as Row;
       expect(row.result).toMatchObject({ ok: true, value: "body" });
-      expect(row.waitedMs).toBe(waitedMs);
+      expect(row.waitedMs).toBeUndefined();
+      await expectCleanCapture();
+    },
+  );
+
+  // Unsupported producers deliberately assert bounded rejection and a clean
+  // following capture. They must never become unbounded native waits.
+  it.each(controlledIOCases)(
+    "rejects controlled I/O produced by $name within the bound and recovers",
+    CONTROLLED_IO,
+    async ({ produce }) => {
+      await expect(
+        captureCall(
+          probeSpec(async () => producedRead(produce)),
+          "probe",
+        ),
+      ).rejects.toThrow(DRAIN_REJECTION);
       await expectCleanCapture();
     },
   );
@@ -800,9 +822,9 @@ describe(suiteName, { timeout: 120_000 }, () => {
         return value;
       },
     },
-  ])("attributes controlled I/O through $name", CONTROLLED_IO, async ({ read }) => {
-    const captured = JSON.parse(
-      await captureCall(
+  ])("rejects a future-timer read through $name within the bound and recovers", CONTROLLED_IO, async ({ read }) => {
+    await expect(
+      captureCall(
         probeSpec(async () =>
           read(
             producedStream((close) => {
@@ -812,33 +834,52 @@ describe(suiteName, { timeout: 120_000 }, () => {
         ),
         "probe",
       ),
-    ) as Row;
-    expect(captured.result).toMatchObject({ ok: true, value: "body" });
-    expect(captured.waitedMs).toBe(1);
+    ).rejects.toThrow(DRAIN_REJECTION);
     await expectCleanCapture();
   });
 
-  it("rejects an endless controlled I/O producer at its budget and recovers", CONTROLLED_IO, async () => {
+  it.each([
+    {
+      name: "an endless controlled interval",
+      produce: () => {
+        setInterval(() => {}, 1);
+      },
+    },
+    { name: "a stream that never closes and has no timers", produce: () => {} },
+    {
+      name: "a future timer whose callback would fail",
+      produce: () => {
+        setTimeout(() => {
+          throw new Error("timer producer failed");
+        }, 1);
+      },
+    },
+    {
+      name: "a native producer's failing microtask",
+      produce: async () => {
+        for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+        queueMicrotask(() => {
+          throw new Error("microtask producer failed");
+        });
+      },
+    },
+  ])("rejects $name within the bound and recovers", CONTROLLED_IO, async ({ produce }) => {
     await expect(
       captureCall(
-        probeSpec(async () =>
-          producedRead(() => {
-            setInterval(() => {}, 1);
-          }),
-        ),
+        probeSpec(async () => producedRead(produce)),
         "probe",
       ),
-    ).rejects.toThrow(/controlled operation budget exceeded/);
+    ).rejects.toThrow(DRAIN_REJECTION);
     await expectCleanCapture();
   });
 
   it(
-    "preserves controlled I/O ownership across overlapping capture rejection and recovers",
+    "rejects overlapping capture without releasing its owner, then recovers after bounded rejection",
     CONTROLLED_IO,
     async () => {
       let overlaps = 0;
-      const result = JSON.parse(
-        await captureCall(
+      await expect(
+        captureCall(
           probeSpec(async () => {
             await expect(
               captureCall(
@@ -853,117 +894,65 @@ describe(suiteName, { timeout: 120_000 }, () => {
           }),
           "probe",
         ),
-      ) as Row;
-      expect(overlaps).toBe(1); // The rejected nested start must not stop its owner.
-      expect(result.result).toMatchObject({ ok: true, value: "body" });
+      ).rejects.toThrow(DRAIN_REJECTION);
+      expect(overlaps).toBe(1);
       await expectCleanCapture();
     },
   );
 
-  it("drains controlled I/O future timers after construction rejects", CONTROLLED_IO, async () => {
-    let drained = false;
+  it("rejects a future-timer read after construction fails within the bound and recovers", CONTROLLED_IO, async () => {
     const spec = probeSpec(async () => "unused");
     spec.create = () => {
       void producedRead((close) => {
         queueMicrotask(() => setTimeout(close, 1));
-      }).then(() => {
-        drained = true;
       });
       throw new Error("construction rejected");
     };
-    await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
-    expect(drained).toBe(true);
+    await expect(captureCall(spec, "probe")).rejects.toThrow(DRAIN_REJECTION);
     await expectCleanCapture();
   });
 
-  it("tears down controlled I/O after its timer callback fails", CONTROLLED_IO, async () => {
-    await expect(
-      captureCall(
-        probeSpec(async () =>
-          producedRead(() => {
-            setTimeout(() => {
-              throw new Error("timer producer failed");
-            }, 1);
-          }),
-        ),
-        "probe",
-      ),
-    ).rejects.toThrow("timer producer failed");
+  it("rejects a producer-fed read beyond 10,000 turns within the bound and recovers", CONTROLLED_IO, async () => {
+    await expect(captureCall(probeSpec(delayedRead), "probe")).rejects.toThrow("controlled work never settled");
     await expectCleanCapture();
-  });
-
-  it("wakes controlled I/O when a native producer's microtask fails and recovers", CONTROLLED_IO, async () => {
-    await expect(
-      captureCall(
-        probeSpec(async () =>
-          producedRead(async () => {
-            for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
-            queueMicrotask(() => {
-              throw new Error("microtask producer failed");
-            });
-          }),
-        ),
-        "probe",
-      ),
-    ).rejects.toThrow("microtask producer failed");
-    await expectCleanCapture();
-  });
-
-  it("awaits counted I/O beyond 10,000 host turns without changing capture bytes", WORKERS, async () => {
-    const baseline = await captureCall(
-      probeSpec(async () => new Response("body").text()),
-      "probe",
-    );
-    expect(await captureCall(probeSpec(delayedRead), "probe")).toBe(baseline);
-  });
-
-  it.each(countedReadCases)("drains $name when rejecting concurrent fake requests", WORKERS, async ({ read }) => {
-    let drained = false;
-    let drainedUnderFakes = false;
-    const error = new Error("fixture rejected");
-    const spec = probeSpec(
-      async () => Promise.all([fetch("https://probe.example/a"), fetch("https://probe.example/b")]),
-      () => {
-        const fake = fetch;
-        void read().then(() => {
-          drained = true;
-          drainedUnderFakes = fetch === fake;
-        });
-        throw error;
-      },
-    );
-    await expect(captureCall(spec, "probe")).rejects.toThrow(error);
-    expect(drained).toBe(true);
-    expect(drainedUnderFakes).toBe(true);
-    const next = JSON.parse(
-      await captureCall(
-        probeSpec(async () => "clean"),
-        "probe",
-      ),
-    ) as Row;
-    expect(next.result).toMatchObject({ ok: true, value: "clean" });
   });
 
   it.each(countedReadCases)(
-    "drains $name when construction fails outside the network driver",
-    WORKERS,
+    "rejects concurrent fake requests during $name and recovers",
+    CONTROLLED_IO,
     async ({ read }) => {
-      let drained = false;
-      const spec = probeSpec(async () => "unused");
-      spec.create = () => {
-        void read().then(() => {
-          drained = true;
-        });
-        throw new Error("construction rejected");
-      };
-      await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
-      expect(drained).toBe(true);
+      const error = new Error("fixture rejected");
+      const spec = probeSpec(
+        async () => Promise.all([fetch("https://probe.example/a"), fetch("https://probe.example/b")]),
+        () => {
+          void read();
+          throw error;
+        },
+      );
+      await expect(captureCall(spec, "probe")).rejects.toThrow(error);
+      await expectCleanCapture();
     },
   );
 
-  it("bounds controlled operations with an outstanding-work diagnostic", WORKERS, async () => {
-    await expect(
-      captureCall(
+  it.each(countedReadCases)(
+    "rejects construction during $name within the bound and recovers",
+    CONTROLLED_IO,
+    async ({ read }) => {
+      const spec = probeSpec(async () => "unused");
+      spec.create = () => {
+        void read();
+        throw new Error("construction rejected");
+      };
+      await expect(captureCall(spec, "probe")).rejects.toThrow(
+        read === delayedRead ? DRAIN_REJECTION : "construction rejected",
+      );
+      await expectCleanCapture();
+    },
+  );
+
+  it("completes 6,000 controlled timer/microtask callbacks within the turn bound", CONTROLLED_IO, async () => {
+    const row = JSON.parse(
+      await captureCall(
         probeSpec(async () => {
           let left = 6_000;
           const repeat = () => {
@@ -974,16 +963,132 @@ describe(suiteName, { timeout: 120_000 }, () => {
         }),
         "probe",
       ),
-    ).rejects.toThrow(/controlled operation budget exceeded \(0 counted I\/O operations outstanding/);
+    ) as Row;
+    expect(row.result).toMatchObject({ ok: true, value: "done" });
+    await expectCleanCapture();
   });
 
-  it("bounds timer/microtask producers while a counted body read remains outstanding", WORKERS, async () => {
+  it(
+    "completes a counted body read with 6,000 timer/microtask callbacks within the turn bound",
+    CONTROLLED_IO,
+    async () => {
+      const row = JSON.parse(
+        await captureCall(
+          probeSpec(async () => queuedTimerRead(0, 6_000)),
+          "probe",
+        ),
+      ) as Row;
+      expect(row.result).toMatchObject({ ok: true, value: "body" });
+      await expectCleanCapture();
+    },
+  );
+
+  it("rejects a controlled read awaiting the fake network within the bound and recovers", CONTROLLED_IO, async () => {
     await expect(
       captureCall(
-        probeSpec(async () => queuedTimerRead(0, 6_000)),
+        probeSpec(async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                const response = await fetch("https://probe.example/body");
+                controller.enqueue(new TextEncoder().encode(await response.text()));
+                controller.close();
+              },
+            }),
+          ).text(),
+        ),
         "probe",
       ),
-    ).rejects.toThrow(/controlled operation budget exceeded \([1-9]\d* counted I\/O operations outstanding/);
+    ).rejects.toThrow("controlled work never settled");
+    await expectCleanCapture();
+  });
+
+  it.each(["response", "upload"])(
+    "rejects a directly driven TransformStream %s within the bound and recovers",
+    CONTROLLED_IO,
+    async (destination) => {
+      await expect(
+        captureCall(
+          probeSpec(async () => {
+            const stream = new TransformStream<Uint8Array, Uint8Array>();
+            const writer = stream.writable.getWriter();
+            setTimeout(() => {
+              void writer.write(new TextEncoder().encode("body")).then(() => writer.close());
+            }, 1);
+            if (destination === "response") return new Response(stream.readable).text();
+            const response = await fetch("https://probe.example/upload", {
+              method: "POST",
+              body: stream.readable,
+              duplex: "half",
+            } as RequestInit);
+            return response.text();
+          }),
+          "probe",
+        ),
+      ).rejects.toThrow(DRAIN_REJECTION);
+      await expectCleanCapture();
+    },
+  );
+
+  it("awaits native crypto without advancing a deadline or changing capture bytes", CONTROLLED_IO, async () => {
+    const baseline = await captureCall(
+      probeSpec(async () => "done"),
+      "probe",
+    );
+    const captured = await captureCall(
+      probeSpec(async () => {
+        let expired = false;
+        const deadline = setTimeout(() => {
+          expired = true;
+        }, 1);
+        for (let operation = 0; operation < 3; operation++)
+          await crypto.subtle.digest("SHA-256", new Uint8Array([operation]));
+        clearTimeout(deadline);
+        expect(expired).toBe(false);
+        return "done";
+      }),
+      "probe",
+    );
+    expect(captured).toBe(baseline);
+    await expectCleanCapture();
+  });
+
+  it("observes requests issued by native crypto after the handler returns", CONTROLLED_IO, async () => {
+    const captured = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          void crypto.subtle.digest("SHA-256", new Uint8Array([1])).then(() => fetch("https://probe.example/late"));
+          return "done";
+        }),
+        "probe",
+      ),
+    ) as Row;
+    expect(captured.steps.flat()).toHaveLength(1);
+    expect(captured.steps.flat()[0]!.url).toBe("https://probe.example/late");
+    await expectCleanCapture();
+  });
+
+  it("accounts for rejected native crypto and rejected body reads, then recovers", CONTROLLED_IO, async () => {
+    const row = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          await expect(crypto.subtle.digest("unsupported", new Uint8Array())).rejects.toThrow();
+          await expect(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new Error("body rejected"));
+                },
+              }),
+            ).text(),
+          ).rejects.toThrow("body rejected");
+          return "done";
+        }),
+        "probe",
+      ),
+    ) as Row;
+    expect(row.result).toMatchObject({ ok: true, value: "done" });
+    await expectCleanCapture();
   });
 
   it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", WORKERS, async () => {

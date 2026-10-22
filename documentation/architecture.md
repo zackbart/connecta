@@ -1656,31 +1656,24 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   before either can capture native references or schedule uncounted I/O. Only
   the harness's fresh-graph loading phase admits test fixture imports.
   Invalid captures cancel and drain their concurrent fake requests.
-- Settle, rejected-capture cleanup, and final teardown await counted native
-  I/O completion or runnable controlled timer/microtask notifications while
-  operations remain outstanding. Each read retains its producer's attribution,
-  including through readers, clones, tees and synchronous stream transforms.
-  Explicit JS stream producers are controlled; crypto and native string, Blob,
-  fetch and FormData bodies remain native. Constructor-created implementation
-  streams do not turn those native bodies into controlled producers.
-  The driver advances to the next controlled timer only when every outstanding
-  operation is a controlled-producer read and no controlled microtask or due
-  timer remains runnable. This supports positive delays and repeating intervals
-  without advancing deadlines or merging request cohorts during native I/O. Host turns
-  spent waiting for crypto or body reads do not consume a scheduling budget.
-  Each settle/drain allows 20,000 controlled source events or outstanding
-  counted operations, including timer callbacks and virtual clock advances.
-  Clock advancement outside a counted read remains limited to 1,000 ticks.
-  Exceeding the operation budget reports outstanding I/O, microtasks, and
-  timers. The native Vitest timeout guards an operation that never completes.
-  The source probes delay a counted read past 10,000 host turns and require
-  identical capture bytes and fully drained cleanup paths.
-  On a controlled producer failure or exhausted budget, cleanup clears its
-  timers, suppresses its queued microtasks and interrupts its counted reads.
-  Later native read settlements are consumed without resuming their callers
-  again. Genuine native operations still drain before teardown. Teardown always
-  releases the owning capture, so rejection cannot poison the next capture;
-  rejecting an overlapping start cannot release the existing owner's state.
+- Settle, rejected-capture cleanup, and final teardown pump controlled timers,
+  microtasks, and fake requests within the original 10,000-host-turn windows.
+  Only outstanding captured Web Crypto operations can extend a window: after
+  exhausting it, await a snapshot of those native operations to settle, then
+  resume with a fresh bounded window. Each phase allows at most 100 native
+  extensions and reports an explicit error on exhaustion. Web Crypto always
+  settles independently of the harness's fake network, timers, and producers.
+  Body reads and stream reads are counted for quiescence but cannot extend a
+  window: their producers may require a fake response, future virtual time,
+  or never complete. No producer attribution or stream constructor tracking
+  is needed. Pending native crypto never advances virtual deadlines or merges
+  request cohorts. Clock advancement remains limited to 1,000 ticks.
+  Unsupported producer dependencies reject within the turn bound; teardown
+  always clears timers and releases capture ownership, including after failed
+  construction and overlapping capture rejection. The next capture must work.
+  Source regressions explicitly assert either completion or bounded rejection
+  followed by recovery. Crypto-delay probes at 11,000 and 100,000 host turns
+  must complete with unchanged observations; producer-fed bodies need not.
 - The network answers in zero virtual time. Before advancing to the next
   timer, the loop requires eight quiet real event-loop turns and an audit.
   A row records nonzero `waitedMs`, the virtual time spent on provider
