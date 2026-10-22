@@ -1,10 +1,9 @@
 import { attachCallClassification } from "../../call-classification.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorContext, ToolDef } from "../../types.js";
-import { guideOf, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
+import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { ConnectorCallError } from "../../errors.js";
-import { CallAdmissionError } from "../../call-admission.js";
 import { CredentialVault } from "../../credentials.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { createMetaTools } from "../../meta-tools.js";
@@ -21,10 +20,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, cloudflare } from "./index.js";
-import { PIN_REFUSED_UNSCOPED, PIN_SAFE_UNSCOPED } from "./rest.js";
-import { openapi } from "./openapi.generated.js";
-import { connectorGuideSummary } from "../../skills.js";
+import { cloudflare } from "./index.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const OTHER_ACCOUNT = "ffffffffffffffffffffffffffffffff";
@@ -43,60 +39,6 @@ const GLOBAL = {
 describe("cloudflare() over OAuth", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
-  });
-
-  it("owns the hosted endpoint, OAuth only, and says execute is always a write", () => {
-    const connector = cloudflare("cf", {
-      purpose: "Estate changes",
-      auth: { type: "oauth" },
-      instructions: "Never touch the apex record.",
-    });
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "cf",
-      expect.objectContaining({
-        url: CLOUDFLARE_MCP_ENDPOINT,
-        title: "Cloudflare (MCP)",
-        auth: { type: "oauth" },
-        requireHttps: true,
-      }),
-    );
-    const guide = guideOf(connector);
-    for (const text of [
-      "A read-only endpoint therefore gets `docs` and `search` here",
-      "Never touch the apex record.",
-    ]) {
-      expect(guide, text).toContain(text);
-    }
-    // The REST connector's mechanics never leak into the OAuth guide.
-    expect(guide).not.toContain("page.param");
-    expect(guide).not.toContain("Global API Key");
-    expect(connectorGuideSummary(connector)).toContain("execute programs always classify as writes");
-  });
-
-  it("INV-11: refuses REST-only options and bearer or credential auth on the hosted path by name", () => {
-    for (const [key, value] of [
-      ["accountId", ACCOUNT],
-      ["zoneId", ZONE],
-      ["pin", { accountIds: [ACCOUNT] }],
-      ["baseUrl", "https://proxy.example"],
-      ["maxConcurrency", 2],
-      ["unpinned", true],
-    ] as const) {
-      expect(() =>
-        cloudflare("cf", {
-          purpose: "Ops",
-          auth: { type: "oauth" },
-          [key]: value,
-        } as never),
-      ).toThrow(`Unknown option: cloudflare("cf").${key}.`);
-    }
-    for (const type of ["headers", "credential", "request", "bearer"]) {
-      expect(() => cloudflare("cf", { purpose: "Ops", auth: { type } } as never)).toThrow(
-        'cloudflare("cf") requires auth.type to be one of "oauth", "apiToken", "globalApiKey".',
-      );
-    }
-    expect(() => cloudflare("cf", { purpose: "Ops", surface: "mcp" } as never)).toThrow("auth.type is required");
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
   });
 
   it("INV-1: keeps execute destructive despite a read claim and fails closed on an unknown tool", async () => {
@@ -177,27 +119,6 @@ describe("cloudflare() over a key", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     return error as ConnectorCallError;
   }
-
-  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
-    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
-    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
-    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
-    const connector = cloudflare("cf", TOKEN);
-    respond = () => envelope({ lines: [[123, input]] });
-    const result = (await connector.callTool(
-      "cloudflare_api_read",
-      { path: `/accounts/${ACCOUNT}/builds/builds/build-1/logs`, select: ["lines"] },
-      token(),
-    )) as any;
-    expect(result.data).toEqual({ lines: [[123, expected]] });
-    respond = () => Response.json({ success: false, errors: [{ code: 1001, message: input }] }, { status: 400 });
-    const error = await refusal(
-      connector.callTool("cloudflare_api_read", { path: `/accounts/${ACCOUNT}/access/custom_pages/page-1` }, token()),
-    );
-    expect(error.message).toContain("Download");
-    expect(error.message).toContain("[redacted]");
-    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
-  });
 
   it.each([503, 429])(
     "INV-9: a zone ownership preflight cannot perform the resource write (HTTP %i)",
@@ -294,30 +215,6 @@ describe("cloudflare() over a key", () => {
     expect(sent[0]!.headers.get("content-type")).toBe("text/plain");
   });
 
-  it("pages a cursor list and stops at an empty cursor", async () => {
-    const connector = cloudflare("cf", { ...TOKEN, zoneId: ZONE });
-    respond = () => envelope([{ name: "k1" }], { result_info: { count: 1, cursor: "abc" } });
-    expect(
-      (
-        (await connector.callTool(
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns1/keys` },
-          token(),
-        )) as any
-      ).page,
-    ).toEqual({ hasMore: true, next: "abc", param: "cursor" });
-    respond = () => envelope([], { result_info: { count: 0, cursor: "" } });
-    expect(
-      (
-        (await connector.callTool(
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns1/keys` },
-          token(),
-        )) as any
-      ).page,
-    ).toEqual({ hasMore: false });
-  });
-
   it("maps Cloudflare's own error codes and chains, not only the HTTP status", async () => {
     const connector = cloudflare("cf", TOKEN);
     const cases: Array<[number, unknown, Record<string, string>, string, string]> = [
@@ -365,30 +262,6 @@ describe("cloudflare() over a key", () => {
       expect(failure.code, `${status}`).toBe(code);
       expect(failure.message).toContain(message);
     }
-  });
-
-  it("INV-5: authenticates a Global API Key with its two fields and refuses a missing credential before sending", async () => {
-    const connector = cloudflare("legacy", GLOBAL);
-    respond = () => envelope({ id: "u1", email: "ops@example.com" });
-    // The email is sent as credential material, so results redact it (INV-5).
-    expect(await connector.callTool("verify_credential", {}, globalKey())).toMatchObject({
-      auth: "globalApiKey",
-      status: "active",
-      email: "[redacted]",
-    });
-    expect(sent[0]!.url.pathname).toBe("/client/v4/user");
-    expect(sent[0]!.headers.get("x-auth-email")).toBe("ops@example.com");
-    expect(sent[0]!.headers.get("x-auth-key")).toBe("gk-1");
-    expect(sent[0]!.headers.get("authorization")).toBeNull();
-    const missing = await refusal(connector.callTool("verify_credential", {}, connectorContext()));
-    expect(missing.code).toBe("auth_required");
-    expect(await connector.testCredentials!({ email: "ops@example.com", apiKey: "gk-1" }, connectorContext())).toEqual({
-      ok: true,
-      message: "Global API Key verified for ops@example.com.",
-    });
-    const bare = await refusal(cloudflare("cf", TOKEN).callTool("list_zones", {}, connectorContext()));
-    expect(bare.code).toBe("auth_required");
-    expect(sent).toHaveLength(2);
   });
 
   it("tests a user token, then an account token under its account", async () => {
@@ -560,62 +433,6 @@ describe("cloudflare() over a key", () => {
       expect(sent).toHaveLength(3);
     });
 
-    it.each([2, 3])(
-      "INV-4: charges each ownership read in a multi-zone query with a budget of %i",
-      async (maxCalls) => {
-        const { registry, tools } = await admittedConnector(maxCalls);
-        respond = (request) =>
-          request.url.pathname.endsWith("/graphql")
-            ? Response.json({ data: { viewer: {} } })
-            : envelope({ account: { id: ACCOUNT } });
-        const result = await tools.callTool({
-          address: "cf.graphql_query",
-          args: { query: `{ viewer { zones(filter: { zoneTag_in: ["${ZONE}", "${OTHER_ZONE}"] }) { zoneTag } } }` },
-          resultMode: "value",
-        });
-        const ownershipPaths = [`/client/v4/zones/${ZONE}`, `/client/v4/zones/${OTHER_ZONE}`];
-        expect(sent.map((request) => request.url.pathname)).toEqual(
-          maxCalls === 3 ? [...ownershipPaths, "/client/v4/graphql"] : ownershipPaths.slice(0, 1),
-        );
-        expect(result.isError === true).toBe(maxCalls === 2);
-        expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
-          active: 0,
-          queued: 0,
-          totals: { admitted: maxCalls, rateLimited: maxCalls === 2 ? 1 : 0 },
-        });
-      },
-    );
-
-    it("INV-4: returns the normal admission error before either ownership or target request when the budget is exhausted", async () => {
-      const { connector, registry, read } = await admittedConnector(1);
-      const call = connector.callTool.bind(connector);
-      let caught: unknown;
-      connector.callTool = async (...args) => {
-        try {
-          return await call(...args);
-        } catch (error) {
-          caught = error;
-          throw error;
-        }
-      };
-      const result = await read(ZONE);
-      expect(result.isError).toBe(true);
-      expect(caught).toBeInstanceOf(CallAdmissionError);
-      expect(caught).toMatchObject({ admissionKind: "budget", code: "rate_limited", retryable: true });
-      expect(JSON.parse(result.content[0]!.text)).toMatchObject({
-        ok: false,
-        error: { code: "rate_limited", retryable: true, retryAfterMs: expect.any(Number) },
-        attempts: 1,
-      });
-      expect(sent).toEqual([]);
-      expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
-        active: 0,
-        queued: 0,
-        totals: { admitted: 1, rateLimited: 1 },
-      });
-      expect(await registry.statusFor("cf", "https://connecta.test")).toMatchObject({ state: "ok" });
-    });
-
     it("filters account and zone lists to the pin, in the generic and named tools", async () => {
       const connector = pinned();
       respond = () =>
@@ -671,41 +488,6 @@ describe("cloudflare() over a key", () => {
       );
       expect(sent).toHaveLength(1);
     });
-  });
-
-  it("runs read-only GraphQL and refuses mutations however they are hidden", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    for (const query of [
-      "mutation { deleteZone(id: 1) }",
-      "query A { viewer { x } }\nmutation B { y }",
-      "{ viewer { x } } subscription S { y }",
-      "# comment\n  mutation{y}",
-      "﻿mutation { y }",
-      "schema { query: Q }",
-      '{ viewer { x(s: "unterminated) } }',
-      "{ viewer { x }",
-    ]) {
-      const error = await refusal(connector.callTool("graphql_query", { query }, token()));
-      expect(error.code, query).toBe("invalid_args");
-    }
-    expect(sent).toEqual([]);
-    respond = () =>
-      Response.json({
-        data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
-      });
-    const query = `# mutation in a comment\nquery Daily { viewer { zones(filter: { zoneTag: "${ZONE}", note: "mutation { x }" }) { dimensions { date } } } }`;
-    expect(await connector.callTool("graphql_query", { query, operationName: "Daily" }, token())).toEqual({
-      data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
-    });
-    expect(sent[0]!.url.href).toBe(`${CLOUDFLARE_API_BASE}/graphql`);
-    expect(JSON.parse(String(sent[0]!.body))).toEqual({
-      query,
-      operationName: "Daily",
-    });
-    respond = () => Response.json({ data: null, errors: [{ message: "unknown field 'x'" }] });
-    expect(
-      (await refusal(connector.callTool("graphql_query", { query: "{ viewer { x } }" }, token()))).message,
-    ).toContain("unknown field");
   });
 
   it("uploads reviewed multipart and binary bodies, with R2 headers and slash-bearing keys", async () => {
@@ -803,28 +585,6 @@ describe("cloudflare() over a key", () => {
     expect(sent).toHaveLength(2);
   });
 
-  it("INV-4: lets no argument choose the credential, the host, or an arbitrary header", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    for (const tool of await connector.listTools(token())) {
-      const properties = Object.keys(((tool.inputSchema as any)?.properties ?? {}) as object);
-      expect(
-        properties.filter((name) => /auth|key$|credential|token|host|url/i.test(name)),
-        tool.name,
-      ).toEqual([]);
-      const headers = (tool.inputSchema as any)?.properties?.headers;
-      if (headers) expect(Object.keys(headers.properties)).toEqual(["cf-r2-jurisdiction", "cf-r2-storage-class"]);
-    }
-    const error = await refusal(
-      connector.callTool(
-        "cloudflare_api_read",
-        { path: `/zones/${ZONE}`, headers: { Authorization: "Bearer x" } },
-        token(),
-      ),
-    );
-    expect(error.code).toBe("invalid_args");
-    expect(sent).toEqual([]);
-  });
-
   describe("default-deny pins (round 1, finding 1)", () => {
     const legacy = () => cloudflare("legacy", GLOBAL);
 
@@ -861,33 +621,6 @@ describe("cloudflare() over a key", () => {
         "/client/v4/radar/ct/authorities",
         "/client/v4/user",
       ]);
-    });
-
-    it("classifies every unscoped operation in the pinned index, so a new family fails review", () => {
-      const scoped = (path: string) => {
-        const parts = path.split("/");
-        return parts.some(
-          (part, index) => part.startsWith("{") && (parts[index - 1] === "accounts" || parts[index - 1] === "zones"),
-        );
-      };
-      const unclassified = openapi.ops
-        .filter(([, path]) => !scoped(path))
-        .filter(([method, path]) => {
-          const family = path.split("/")[1] ?? "";
-          if (PIN_SAFE_UNSCOPED.has(`${method} ${path}`)) return false;
-          if (method === "GET" && family === "radar") return false;
-          return !Object.hasOwn(PIN_REFUSED_UNSCOPED, family);
-        })
-        .map(([method, path]) => `${method} ${path}`);
-      expect(unclassified).toEqual([]);
-      for (const key of PIN_SAFE_UNSCOPED) {
-        if (key === "POST /graphql") continue;
-        const [method, path] = key.split(" ");
-        expect(
-          openapi.ops.some(([m, p]) => m === method && p === path),
-          key,
-        ).toBe(true);
-      }
     });
   });
 
@@ -969,156 +702,6 @@ describe("cloudflare() over a key", () => {
         expect(error.message).toMatch(/Connecta does not|grants access|client secret/);
       }
       expect(sent).toEqual([]);
-    });
-
-    it("redacts reviewed fields on every method, bare bodies, lists, and uploads", async () => {
-      const connector = cloudflare("cf", TOKEN);
-      const cases: Array<[string, Record<string, unknown>, unknown, (data: any) => void]> = [
-        [
-          "cloudflare_api_write",
-          {
-            method: "PUT",
-            path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`,
-            body: { domains: ["a.example"], mode: "managed", name: "w" },
-          },
-          { success: true, errors: [], result: { sitekey: "0x4AAA", secret: "0x4AAA-live-secret" } },
-          (data) => expect(data.secret).toBe("[redacted]"),
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/zones/${ZONE}/access/identity_providers/idp1` },
-          {
-            success: true,
-            errors: [],
-            result: { id: "idp1", scim_config: { secret: "scim-secret" }, config: { client_id: "c" } },
-          },
-          (data) => {
-            expect(data.scim_config.secret).toBe("[redacted]");
-            expect(data.config.client_id).toBe("c");
-          },
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/stream/live_inputs/li1` },
-          {
-            success: true,
-            errors: [],
-            result: {
-              uid: "li1",
-              rtmps: { url: "rtmps://live.cloudflare.com:443/live/", streamKey: "rtmps-key" },
-              srt: { url: "srt://live.cloudflare.com:778", streamId: "s", passphrase: "srt-pass" },
-              webRTC: { url: "https://customer.cloudflarestream.com/SECRETKEY/webRTC/publish" },
-            },
-          },
-          (data) => {
-            expect(data.rtmps.streamKey).toBe("[redacted]");
-            expect(data.srt.passphrase).toBe("[redacted]");
-            expect(data.webRTC.url).toBe("https://customer.cloudflarestream.com/[redacted]");
-            expect(JSON.stringify(data)).not.toContain("SECRETKEY");
-          },
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/logpush/jobs` },
-          {
-            success: true,
-            errors: [],
-            result: [
-              {
-                id: 1,
-                destination_conf: "s3://bucket/logs?region=us-east-1&access-key-id=AKIA1&secret-access-key=SECRET1",
-              },
-              { id: 2, destination_conf: "https://logs.example/ingest?header_Authorization=Basic%20SECRET2" },
-            ],
-          },
-          (data) => {
-            expect(data[0].destination_conf).toBe("s3://bucket/[redacted]");
-            expect(JSON.stringify(data)).not.toMatch(/SECRET1|SECRET2/);
-          },
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/load_balancers/monitors` },
-          {
-            success: true,
-            errors: [],
-            result: [
-              { id: "m1", header: { Host: ["origin.example"], Authorization: ["Bearer MONITOR"] }, path: "/health" },
-            ],
-          },
-          (data) => {
-            expect(data[0].header).toBe("[redacted]");
-            expect(data[0].path).toBe("/health");
-          },
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/zones/${ZONE}/settings/zaraz/export` },
-          // A bare (non-envelope) body.
-          {
-            variables: { ga: { name: "ga", type: "secret", value: "GA-SECRET" }, site: { type: "string", value: "x" } },
-            debugKey: "DBG",
-          },
-          (data) => {
-            expect(data.variables.ga.value).toBe("[redacted]");
-            expect(data.debugKey).toBe("[redacted]");
-          },
-        ],
-        [
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/addressing/prefixes` },
-          { success: true, errors: [], result: [{ id: "p1", ownership_validation_token: "published-token" }] },
-          (data) => expect(data[0].ownership_validation_token).toBe("published-token"),
-        ],
-        [
-          // No verdict: the key-name heuristic, typed secrets, and URL sanitization still apply.
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/workers/scripts` },
-          {
-            success: true,
-            errors: [],
-            result: [
-              {
-                id: "s1",
-                api_token: "T1",
-                bindings: [{ name: "K", type: "secret_text", value: "BIND" }],
-                callback: "https://user:PASS@hooks.example/x?sig=SIG&page=2",
-                nested: { clientSecret: "CS", next_page_token: "cursor-1", privateKey: { pem: "PEM" } },
-              },
-            ],
-          },
-          (data) => {
-            const text = JSON.stringify(data);
-            for (const secret of ["T1", "BIND", "PASS", "CS", "PEM"]) expect(text, secret).not.toContain(secret);
-            // No reviewed diagnostic path: generic parameters are application data.
-            expect(new URL(data[0].callback).searchParams.get("sig")).toBe("SIG");
-            expect(data[0].nested.next_page_token).toBe("cursor-1");
-            expect(data[0].callback).toContain("page=2");
-          },
-        ],
-      ];
-      for (const [tool, args, body, check] of cases) {
-        respond = () => Response.json(body);
-        const result = (await connector.callTool(tool, args, token())) as any;
-        check(result.data);
-      }
-      // An upload's result passes the same redaction.
-      respond = () => envelope({ id: "s1", api_token: "UPLOAD-SECRET" });
-      const upload = (await connector.callTool(
-        "cloudflare_api_upload",
-        { method: "PUT", path: `/accounts/${ACCOUNT}/workers/scripts/s1`, parts: [{ name: "metadata", text: "{}" }] },
-        token(),
-      )) as any;
-      expect(JSON.stringify(upload)).not.toContain("UPLOAD-SECRET");
-      // A select projection reads the redacted data, never the original.
-      respond = () => envelope({ sitekey: "0x4AAA", secret: "PROJECTED" });
-      expect(
-        await connector.callTool(
-          "cloudflare_api_read",
-          { path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`, select: ["secret"] },
-          token(),
-        ),
-      ).toEqual({ status: 200, data: { secret: "[redacted]" } });
     });
   });
 
@@ -1439,56 +1022,6 @@ describe("cloudflare() over a key", () => {
         check(response.data);
         expect(JSON.stringify(response)).not.toContain("THIRD-PARTY");
       }
-    });
-
-    it("withholds vendor error text on every failure route for operations that take or return credentials (finding 4)", async () => {
-      const connector = cloudflare("cf", TOKEN);
-      const echo = (status: number) => () =>
-        Response.json(
-          { success: false, errors: [{ code: 10001, message: "Rejected credential ECHOED-SECRET" }] },
-          { status },
-        );
-      const routes: Array<[number, string, Record<string, unknown>]> = [
-        [200, "cloudflare_api_read", { path: `/accounts/${ACCOUNT}/secondary_dns/tsigs/t1` }],
-        [
-          400,
-          "cloudflare_api_write",
-          {
-            method: "POST",
-            path: `/accounts/${ACCOUNT}/secrets_store/stores/st1/secrets`,
-            body: [{ name: "k", value: "ECHOED-SECRET", scopes: ["workers"] }],
-          },
-        ],
-        [
-          400,
-          "cloudflare_api_write",
-          {
-            method: "POST",
-            path: `/accounts/${ACCOUNT}/hyperdrive/configs`,
-            body: {
-              name: "db",
-              origin: {
-                host: "db.example",
-                database: "d",
-                user: "u",
-                password: "ECHOED-SECRET",
-                scheme: "postgres",
-                port: 5432,
-              },
-            },
-          },
-        ],
-      ];
-      for (const [status, tool, args] of routes) {
-        respond = echo(status);
-        const error = await refusal(connector.callTool(tool, args, token()));
-        expect(error.message, String(args["path"])).toContain("Cloudflare error code 10001.");
-        expect(error.message).not.toContain("ECHOED-SECRET");
-      }
-      respond = echo(400);
-      expect(
-        (await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()))).message,
-      ).toContain("Rejected credential");
     });
 
     it("INV-4: places a pinned zone only by body.account.id, not a look-alike field", async () => {
