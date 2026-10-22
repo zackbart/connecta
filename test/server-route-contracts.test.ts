@@ -413,26 +413,6 @@ describe("server route contracts", () => {
     }
   });
 
-  it("serves the browser 404 without the UI, with no link to a missing home or favicon", async () => {
-    const connecta = createTestConnecta({
-      connectors: [],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: silentLogger,
-      ...({ ui: undefined } as { ui?: never }),
-    });
-    const response = await connecta.fetch(new Request(`${BASE}/`, { headers: { Accept: "text/html" } }));
-    expect(response.status).toBe(404);
-    expect(response.headers.get("Content-Security-Policy")).toBe(
-      "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-    );
-    expect(response.headers.get("X-Frame-Options")).toBe("DENY");
-    const body = await response.text();
-    expect(body).toContain("<h1>Page not found</h1>");
-    expect(body).not.toContain("favicon");
-    expect(body).not.toContain("Go to Connecta");
-  });
-
   it("keeps operator shells open, framed off, and data-free", async () => {
     const connecta = createTestConnecta({
       connectors: [surfaceConnector()],

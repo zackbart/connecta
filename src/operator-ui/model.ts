@@ -126,7 +126,7 @@ export interface UiData {
   pools?: string[];
 }
 
-export interface FilteredUiConnector {
+interface FilteredUiConnector {
   connector: UiConnector;
   tools: UiTool[];
 }

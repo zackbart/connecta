@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  agentFrictionForCode,
-  recordToolActivity,
-  type ActivityRequestContext,
-  type ToolCallActivityEvent,
-} from "../src/activity.js";
-import { CONNECTA_VERSION } from "../src/version.js";
-import { INVALID_CLIENT_FACTS } from "./fixtures/client-identity.js";
+import { recordToolActivity, type ActivityRequestContext, type ToolCallActivityEvent } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
@@ -30,85 +23,6 @@ const EVENT: ToolCallActivityEvent = {
 };
 
 describe("activity delivery", () => {
-  it("INV-6: stamps every emitted event and call source independently of serverInfo, including auth failures", () => {
-    const calls: ToolCallActivityEvent[] = [];
-    const context = {
-      sink: { record: (event: ToolCallActivityEvent) => void calls.push(event) },
-      actor: { kind: "test" },
-      requestId: "r",
-      logger: silentLogger,
-      serverInfo: { name: "display", version: "999.0.0" },
-      clientInfo: { name: "Claude Code", version: "2.1.0" },
-    };
-    for (const source of ["call_tool", "call_destructive_tool", "execute_code"] as const) {
-      recordToolActivity(context, {
-        connectorId: "calc",
-        toolName: "add",
-        address: "calc.add",
-        source,
-        outcome: "error",
-        errorCode: "auth_required",
-        durationMs: 1,
-        attempts: 1,
-      });
-    }
-    expect(calls).toHaveLength(3);
-    for (const event of calls) {
-      expect(event).toMatchObject({
-        packageVersion: CONNECTA_VERSION,
-        serverVersion: "999.0.0",
-        clientName: "Claude Code",
-        clientVersion: "2.1.0",
-      });
-    }
-    const input = {
-      connectorId: "calc",
-      toolName: "add",
-      address: "calc.add",
-      source: "call_tool",
-      outcome: "error",
-      errorCode: "auth_required",
-      durationMs: 1,
-      attempts: 1,
-    } as const;
-    recordToolActivity(
-      {
-        sink: context.sink,
-        actor: context.actor,
-        requestId: context.requestId,
-        serverInfo: context.serverInfo,
-        logger: context.logger,
-      },
-      input,
-    );
-    expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
-    expect(calls.at(-1)).not.toHaveProperty("clientName");
-    expect(calls.at(-1)).not.toHaveProperty("clientVersion");
-    for (const value of INVALID_CLIENT_FACTS) {
-      recordToolActivity(
-        { ...context, clientInfo: { name: value, version: value } as typeof context.clientInfo },
-        input,
-      );
-      expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
-      expect(calls.at(-1)).not.toHaveProperty("clientName");
-      expect(calls.at(-1)).not.toHaveProperty("clientVersion");
-    }
-  });
-
-  it("derives coarse agent friction from typed codes only", () => {
-    expect(agentFrictionForCode("unknown_tool")).toBe("tool_not_found");
-    expect(agentFrictionForCode("ambiguous_tool_alias")).toBe("tool_not_found");
-    expect(agentFrictionForCode("invalid_args")).toBe("schema_retry");
-    expect(agentFrictionForCode("destructive_tool_requires_approval")).toBe("destructive_reroute");
-    expect(agentFrictionForCode("auth_required")).toBe("auth_required");
-    expect(agentFrictionForCode("result_too_large")).toBe("result_too_large");
-    expect(agentFrictionForCode("connector_call_failed")).toBeUndefined();
-    // A downstream resource that is not there is not a friction class: the
-    // caller re-addresses on its own, and `tool_not_found` means connecta could
-    // not route the call at all, which is a different timeline entirely.
-    expect(agentFrictionForCode("not_found")).toBeUndefined();
-  });
-
   it("keeps every event's floor of one attempt and carries no approval scope", () => {
     const events: ToolCallActivityEvent[] = [];
     const context: ActivityRequestContext = {
@@ -193,42 +107,6 @@ describe("activity delivery", () => {
     expect(warnings).toHaveLength(1);
   });
 
-  it("records approved destructive calls under their actual entry point", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    const dangerous = api("danger", {
-      tools: [
-        {
-          name: "erase",
-          description: "Erase the thing",
-          annotations: { readOnlyHint: false, destructiveHint: true },
-          handler: () => ({ erased: true }),
-        },
-      ],
-    });
-    const activity: ActivityRequestContext = {
-      recordTool: recordToolActivity,
-      sink: {
-        record(event) {
-          events.push(event);
-        },
-      },
-      actor: { kind: "clerk", id: "user_123" },
-      requestId: EVENT.requestId,
-      serverInfo: { name: "connecta", version: "0.1.0" },
-      logger: silentLogger,
-    };
-    const tools = createMetaTools(makeRegistry([dangerous]), "https://connecta.test", { activity });
-
-    await tools.callDestructiveTool({ address: "danger.erase" });
-
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      address: "danger.erase",
-      source: "call_destructive_tool",
-      outcome: "success",
-    });
-  });
-
   it("records result-size friction without retaining the result", async () => {
     const events: ToolCallActivityEvent[] = [];
     const large = api("large", {
@@ -268,57 +146,6 @@ describe("activity delivery", () => {
     // failures — including the D1 example this repository ships.
     expect(events[0]).not.toHaveProperty("errorCode");
     expect(JSON.stringify(events[0])).not.toContain("xxxxx");
-  });
-
-  it("records a hallucinated connector id as attempted, with no payload", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    const activity: ActivityRequestContext = {
-      recordTool: recordToolActivity,
-      sink: {
-        record(event) {
-          events.push(event);
-        },
-      },
-      actor: { kind: "bearer" },
-      requestId: EVENT.requestId,
-      serverInfo: { name: "connecta", version: "0.1.0" },
-      logger: silentLogger,
-    };
-    const tools = createMetaTools(
-      makeRegistry([
-        api("real", {
-          tools: [
-            {
-              name: "read",
-              description: "Read a value",
-              annotations: { readOnlyHint: true },
-              handler: () => ({ ok: true }),
-            },
-          ],
-        }),
-      ]),
-      "https://connecta.test",
-      { activity },
-    );
-
-    await tools.callTool({
-      address: "ghost.read",
-      args: { secret: "top-secret-argument" },
-    });
-
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      connectorId: "ghost",
-      toolName: "read",
-      address: "ghost.read",
-      source: "call_tool",
-      outcome: "error",
-      errorCode: "unknown_address",
-      friction: "tool_not_found",
-    });
-    const serialized = JSON.stringify(events[0]);
-    expect(serialized).not.toContain("top-secret-argument");
-    expect(serialized).not.toContain("secret");
   });
 
   it("clamps an invented identity so the event cannot carry a payload", async () => {

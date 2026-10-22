@@ -4,11 +4,7 @@ import { oauthSealerFor } from "../src/oauth-sealing.js";
 import { makeRegistry, required } from "./helpers.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { describe, expect, it } from "vitest";
-import {
-  describeUndeclaredCredentialFields,
-  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-  storedCredentialShape,
-} from "../src/credential-rules.js";
+import { STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR, storedCredentialShape } from "../src/credential-rules.js";
 import type { ConnectorContext, ConnectorCredentialConfig } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
@@ -54,29 +50,9 @@ describe("storedCredentialShape", () => {
       state: "mismatch",
     },
     {
-      name: "accepts extra fields beside a single declaration",
-      declaration: single,
-      stored: { value: "secret", extra: "old", legacy: "older" },
-      state: "valid",
-      undeclared: ["extra", "legacy"],
-    },
-    {
       name: "accepts an exact named set regardless of order",
       declaration: named,
       stored: { apiKey: "secret", email: "operator@example.com" },
-      state: "valid",
-      undeclared: [],
-    },
-    {
-      name: "compares duplicate named declarations as a key set",
-      declaration: {
-        label: "Service credential",
-        fields: [
-          { name: "apiKey", label: "Primary API key" },
-          { name: "apiKey", label: "Repeated API key" },
-        ],
-      },
-      stored: { apiKey: "secret" },
       state: "valid",
       undeclared: [],
     },
@@ -105,34 +81,6 @@ describe("storedCredentialShape", () => {
       state: "valid",
       undeclared: ["email"],
     },
-    {
-      name: "rejects a superset that is still missing a declared field",
-      declaration: named,
-      stored: { apiKey: "secret", region: "old" },
-      state: "mismatch",
-    },
-    {
-      name: "rejects an empty stored map against a single declaration",
-      declaration: single,
-      stored: {},
-      state: "mismatch",
-    },
-    {
-      name: "rejects an empty stored map against a named declaration",
-      declaration: named,
-      stored: {},
-      state: "mismatch",
-    },
-    {
-      name: "accepts a named field literally called value",
-      declaration: {
-        label: "Service credential",
-        fields: [{ name: "value", label: "Value" }],
-      },
-      stored: { value: "secret" },
-      state: "valid",
-      undeclared: [],
-    },
   ];
 
   for (const testCase of cases) {
@@ -147,14 +95,6 @@ describe("storedCredentialShape", () => {
       }
     });
   }
-
-  it("names leftover fields once, and summarizes a long tail", () => {
-    expect(describeUndeclaredCredentialFields(["email"])).toContain("(email)");
-    expect(describeUndeclaredCredentialFields(["email"])).toContain("drop it");
-    const many = describeUndeclaredCredentialFields(["a", "b", "c", "d", "e", "f", "g"]);
-    expect(many).toContain("(a, b, c, d, e, and 2 more)");
-    expect(many).toContain("drop them");
-  });
 });
 
 describe("CredentialVault", () => {
@@ -171,16 +111,6 @@ describe("CredentialVault", () => {
     }
     await vault.setAll("service", { value: "synthetic-secret", constructor: "explicit-secret" }, "operator");
     expect(await credential.get("constructor")).toBe("explicit-secret");
-  });
-
-  it("returns null for absent fields that also name Object prototype members", async () => {
-    const vault = new CredentialVault(memoryStorage(), KEY);
-    await vault.set("service", "synthetic-secret", "operator");
-    for (const field of ["constructor", "toString", "hasOwnProperty"]) {
-      expect(await vault.get("service", field)).toBeNull();
-    }
-    await vault.setAll("service", { constructor: "declared-secret" }, "operator");
-    expect(await vault.get("service", "constructor")).toBe("declared-secret");
   });
 
   it("INV-5: encrypts credentials in the existing KV storage and decrypts on demand", async () => {

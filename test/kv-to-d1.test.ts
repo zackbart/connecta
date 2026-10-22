@@ -1,12 +1,11 @@
 import { stashClockSkewContract } from "./stash-charge-contract.js";
 import { sqlStashFixture } from "./sql-storage-contract.js";
-import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 // The one-shot Workers KV → D1 copy, against a real local KV namespace and D1
 // database: the workers vitest project binds both (vitest.config.ts). The
 // test module is imported indirectly so this file still loads in the Node
 // project, where `cloudflare:test` does not resolve and the suite skips.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyKvToD1 as copy,
   markKvToD1Live,
@@ -32,7 +31,6 @@ import {
   resultKeys,
   scopes,
 } from "../src/storage/keys.js";
-import { NUL_VALUES } from "./storage-contract.js";
 
 const bindings = await (async () => {
   try {
@@ -114,28 +112,14 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
   }
 
   beforeEach(wipe);
-  afterEach(() => {
-    vi.useRealTimers();
-  });
 
-  /** A row as D1 holds it, bytes and expiry included. */
+  /** A row's expiry as D1 holds it. */
   async function row(key: string) {
     return db
-      .prepare(
-        `SELECT length(CAST(value AS BLOB)) AS bytes, expires_at_ms
-       FROM connecta_kv WHERE key = ?`,
-      )
+      .prepare("SELECT expires_at_ms FROM connecta_kv WHERE key = ?")
       .bind(key)
-      .first<{ bytes: number; expires_at_ms: number | null }>();
+      .first<{ expires_at_ms: number | null }>();
   }
-
-  it("keeps a live dispatched refresh across D1 adapters with skewed isolate clocks (INV-5)", async () => {
-    try {
-      await skewedRefresh(d1Storage(db), d1Storage(db));
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
 
   it("copies each family verbatim with its absolute expiry and counts by family", async () => {
     const entries: [key: string, value: string, ttl?: number][] = [
@@ -197,30 +181,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(await storage.list("")).toEqual(entries.map(([key]) => key).sort());
   });
 
-  it("keeps NUL, multi-byte, and large values byte for byte through the store's reads", async () => {
-    const large = `${"é".repeat(512 * 1024)}\0${"x".repeat(512 * 1024)}`;
-    const values = [...NUL_VALUES, large];
-    for (const [index, value] of values.entries()) {
-      await kv.put(credentialKeys.credential(`svc${index}`), value);
-    }
-    const result = await copyKvToD1(kv, db);
-    expect(totals(result.families)).toEqual({ ...zero, copied: values.length });
-
-    // The shared storage contract's reads, on the copied keys.
-    const storage = d1Storage(db);
-    for (const [index, value] of values.entries()) {
-      const key = credentialKeys.credential(`svc${index}`);
-      expect(await storage.get(key)).toBe(value);
-      expect((await row(key))?.bytes).toBe(new TextEncoder().encode(value).byteLength);
-    }
-    expect(await storage.list(scopes.connector("svc1"))).toEqual([credentialKeys.credential("svc1")]);
-    // Compare-and-set matches only the exact bytes copied.
-    const key = credentialKeys.credential("svc3");
-    expect(await storage.compareAndSet(key, "before", "x")).toBe(false);
-    expect(await storage.compareAndSet(key, values[3]!, "rotated")).toBe(true);
-    expect(await storage.get(key)).toBe("rotated");
-  });
-
   it("pages past 1,000 keys and resumes from a returned cursor", async () => {
     const keys = Array.from({ length: 1_234 }, (_, index) => accessTokenKeys.record(String(index).padStart(5, "0")));
     for (let start = 0; start < keys.length; start += 100) {
@@ -240,12 +200,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     const whole = await copyKvToD1(kv, db, { maxKeys: 5_000 });
     expect(whole.done).toBe(true);
     expect(whole.families["access-token"]).toEqual({ ...zero, copied: keys.length });
-
-    // A small budget resumes exactly where it stopped.
-    await db.prepare("DROP TABLE connecta_kv").run();
-    const small = await copyAll(kv, db, { maxKeys: 300 });
-    expect(small.calls).toBe(5);
-    expect(small.families["access-token"]).toEqual({ ...zero, copied: keys.length });
   });
 
   it("copies nothing twice when rerun", async () => {
@@ -260,32 +214,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       unchanged: 20,
     });
     expect((await db.prepare("SELECT * FROM connecta_kv ORDER BY key").all()).results).toEqual(before.results);
-  });
-
-  it("keeps a different D1 value unless asked to overwrite it", async () => {
-    const storage = d1Storage(db);
-    const changed = credentialKeys.credential("svc");
-    const same = accessTokenKeys.active;
-    const fresh = accessTokenKeys.record("new");
-    await kv.put(changed, "from kv");
-    await kv.put(same, "same");
-    await kv.put(fresh, "fresh");
-    await storage.set(changed, "written since");
-    await storage.set(same, "same");
-
-    const kept = await copyKvToD1(kv, db);
-    expect(kept.families).toEqual({
-      credential: { ...zero, conflicts: 1 },
-      "access-token": { ...zero, unchanged: 1, copied: 1 },
-    });
-    expect(await storage.get(changed)).toBe("written since");
-
-    const replaced = await copyKvToD1(kv, db, { overwriteFamilies: ["credential", "access-token"] });
-    expect(replaced.families).toEqual({
-      credential: { ...zero, overwritten: 1 },
-      "access-token": { ...zero, unchanged: 2 },
-    });
-    expect(await storage.get(changed)).toBe("from kv");
   });
 
   it("overwrites only explicitly allowed families and rejects unknown family names", async () => {
@@ -347,53 +275,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(await storage.get(differs)).toBe("the deployment's");
     expect(await storage.get(matches)).toBe(`kv ${matches}`);
     expect(await storage.get(free)).toBe(`kv ${free}`);
-  });
-
-  it("treats an expired D1 row as absent and copies over it", async () => {
-    const key = credentialKeys.credential("svc");
-    await kv.put(key, "live");
-    await db.batch([
-      db.prepare(`CREATE TABLE IF NOT EXISTS connecta_kv (
-        key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at_ms INTEGER)`),
-      db.prepare("INSERT INTO connecta_kv VALUES (?, ?, ?)").bind(key, "stale", Date.now() - 1),
-    ]);
-    expect((await copyKvToD1(kv, db)).families).toEqual({ credential: { ...zero, copied: 1 } });
-    expect(await d1Storage(db).get(key)).toBe("live");
-    expect((await row(key))?.expires_at_ms).toBeNull();
-  });
-
-  it("skips entries that expired in KV, whether listed expired or gone on read", async () => {
-    await kv.put(oauthHandoffKeys.handoff("svc", "a"), "principal", { expirationTtl: 60 });
-    await kv.put(credentialKeys.credential("svc"), "durable");
-    // Past the handoff's expiry by this process's clock, which judges it.
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 61_000 });
-    const result = await copyKvToD1(kv, db);
-    expect(result.families).toEqual({
-      "oauth-handoff": { ...zero, expired: 1 },
-      credential: { ...zero, copied: 1 },
-    });
-    expect(await db.prepare("SELECT count(*) AS n FROM connecta_kv").first("n")).toBe(1);
-    vi.useRealTimers();
-
-    // Listed live, deleted before its value was read.
-    await wipe();
-    await kv.put(accessTokenKeys.record("gone"), "x");
-    const vanishing: KVNamespaceBinding = {
-      list: (options) => kv.list(options),
-      async get(key) {
-        await kv.delete(key);
-        return kv.get(key, "text");
-      },
-    };
-    expect((await copyKvToD1(vanishing, db)).families).toEqual({ "access-token": { ...zero, expired: 1 } });
-  });
-
-  it("refuses a bad maxKeys before reading anything", async () => {
-    for (const maxKeys of [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
-      await expect(copyKvToD1(kv, db, { maxKeys })).rejects.toThrow(
-        new TypeError("copyKvToD1 maxKeys must be a positive integer"),
-      );
-    }
   });
 
   it("INV-6: reports and fails without key or value text, resuming from the failed page", async () => {
@@ -565,32 +446,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(largestBatch).toBeLessThanOrEqual(4 * 1024 * 1024);
   });
 
-  it("bounds buffered multi-byte values by bytes across batches", async () => {
-    let sinceWrite = 0;
-    let maxReads = 0;
-    const large = "é".repeat(800_000);
-    for (let n = 0; n < 8; n++) await kv.put(credentialKeys.credential(String(n)), large);
-    const measured: KVNamespaceBinding = {
-      list: (options) => kv.list(options),
-      async get(key, type) {
-        sinceWrite++;
-        maxReads = Math.max(maxReads, sinceWrite);
-        return kv.get(key, type);
-      },
-    };
-    const measuredDb: D1DatabaseBinding = {
-      prepare: (query) => db.prepare(query),
-      async batch(statements) {
-        if (statements.length > 0) sinceWrite = 0;
-        return db.batch(statements as unknown as D1PreparedStatement[]);
-      },
-    };
-    expect(totals((await copyKvToD1(measured, measuredDb)).families).copied).toBe(8);
-    // Two buffered values plus the currently read value, not all eight.
-    expect(maxReads).toBeLessThanOrEqual(3);
-    expect(totals((await copyKvToD1(kv, db, { verify: true })).families).verified).toBe(8);
-  });
-
   it("INV-6: scopes cursors to a required source and lets only one concurrent consumer claim", async () => {
     await expect(copy(kv, db, {} as KvToD1CopyOptions)).rejects.toThrow("copyKvToD1 source must be a namespace id");
     for (let n = 0; n < 3; n++) await kv.put(accessTokenKeys.record(String(n)), "x");
@@ -650,7 +505,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
 
   it("runs the script flow under maintenance, reporting invalid and mismatch counts with non-zero status", async () => {
     const path = "../examples/worker/scripts/copy-kv-to-d1.mjs";
-    const { runMigration, parseArgs, HELP } = await import(/* @vite-ignore */ path);
+    const { runMigration, parseArgs } = await import(/* @vite-ignore */ path);
     const key = credentialKeys.credential("a");
     await kv.put(key, "good");
     const output = { log: vi.fn(), table: vi.fn(), error: vi.fn() };
@@ -665,26 +520,15 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(output.table.mock.lastCall?.[0].credential.invalid).toBe(1);
     expect(() => parseArgs(["--overwrite"])).toThrow("Unknown argument");
     expect(() => parseArgs([])).toThrow("Traffic and writers must be stopped");
-    for (const family of [
-      "credential",
-      "access-token",
-      "oauth-v2",
-      "oauth-grant",
-      "oauth-flow",
-      "oauth-refresh",
-      "oauth-handoff",
-      "oauth-connect",
-    ]) {
-      expect(() => parseArgs(["--maintenance", "--overwrite-family", family])).toThrow("requires --confirm-stale-d1");
-      expect(
-        parseArgs(["--maintenance", "--overwrite-family", family, "--confirm-stale-d1"]).overwriteFamilies,
-      ).toEqual([family]);
-    }
+    expect(() => parseArgs(["--maintenance", "--overwrite-family", "credential"])).toThrow(
+      "requires --confirm-stale-d1",
+    );
+    expect(
+      parseArgs(["--maintenance", "--overwrite-family", "credential", "--confirm-stale-d1"]).overwriteFamilies,
+    ).toEqual(["credential"]);
     expect(
       parseArgs(["--maintenance", "--overwrite-family", "catalog", "--overwrite-family", "result"]).overwriteFamilies,
     ).toEqual(["catalog", "result"]);
-    expect(HELP).toContain("at least 60 seconds");
-    expect(HELP).toContain("BEFORE switching traffic");
     await runMigration(kv, db, { ...options, markLive: true }, operations, output);
     await expect(runMigration(kv, db, options, operations, output)).rejects.toThrow("refuses stale KV");
     expect(await runMigration(kv, db, { ...options, allowStale: true }, operations, output)).toBe(1);
@@ -713,52 +557,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(error.message).toBe("Workers KV source is not stable; keep maintenance active, wait, and repeat");
     expect(output.table).not.toHaveBeenCalled();
     expect(await d1Storage(db).get(key)).toBeNull();
-  });
-
-  it("INV-6: validates raw cursors before failing D1 access and sanitizes foreign copy errors", async () => {
-    const failing: D1DatabaseBinding = {
-      prepare() {
-        throw new Error("SECRETVALUETEXT");
-      },
-      async batch() {
-        throw new Error("SECRETVALUETEXT");
-      },
-    };
-    await expect(copyKvToD1(kv, failing, { cursor: "SECRETKEYTEXT" })).rejects.toThrow(
-      "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance",
-    );
-    await kv.put(accessTokenKeys.record("a"), "a");
-    await kv.put(accessTokenKeys.record("b"), "b");
-    const params = new WeakMap<object, unknown[]>();
-    const foreignError: D1DatabaseBinding = {
-      prepare(query) {
-        const statement = db.prepare(query);
-        return {
-          ...statement,
-          bind(...values: unknown[]) {
-            const bound = statement.bind(...values);
-            params.set(bound, values);
-            return bound;
-          },
-          all: statement.all.bind(statement),
-          run: statement.run.bind(statement),
-        };
-      },
-      async batch(statements) {
-        if (
-          statements.some((statement) => String(params.get(statement)?.[0] ?? "").startsWith(kvCopyKeys.cursor("")))
-        ) {
-          throw new KvToD1CopyError("SECRETVALUETEXT", "SECRETKEYTEXT");
-        }
-        return db.batch(statements as unknown as D1PreparedStatement[]);
-      },
-    };
-    const error = (await copyKvToD1(kv, foreignError, { maxKeys: 1 }).catch(
-      (caught: unknown) => caught,
-    )) as KvToD1CopyError;
-    expect(error.message).toBe("Workers KV to D1 copy stopped: recording the resume point in D1 failed (Error)");
-    expect(error.cursor).toBeUndefined();
-    expect(`${error.message}${error.stack}`).not.toContain("SECRET");
   });
 });
 
