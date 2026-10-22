@@ -261,6 +261,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     ctx: ConnectorContext,
     coordinator: OAuthRefreshCoordinator,
     private readonly settings: StaticOAuthSettings,
+    requestOwned = false,
   ) {
     super(
       connectorId,
@@ -269,7 +270,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       coordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
-      viewSignal(ctx),
+      viewSignal(ctx, requestOwned),
       // No client binding: the client is configuration, so there is no
       // registration for a restart to carry forward or discard.
       undefined,
@@ -431,9 +432,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
 
   const warnShortSecret = shortSecretWarning();
-  const providerFor = (ctx: ConnectorContext) => {
+  const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
     warnShortSecret(settings.clientSecret, ctx.logger);
-    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
+    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings, requestOwned);
   };
 
   /**
@@ -573,7 +574,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             provider ??= duringViewCall(
               live,
               async () => {
-                const value = providerFor(live);
+                const value = providerFor(live, requestOwned);
                 const epoch = await value.beginFlow();
                 if (value.isOperatorDisconnectedEpoch(epoch)) {
                   throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);

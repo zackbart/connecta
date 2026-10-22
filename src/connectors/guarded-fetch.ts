@@ -1,6 +1,6 @@
 import { confinementBase, REDIRECT_STATUSES, BODILESS_STATUSES } from "../http-policy.js";
 export { retryAfterMs } from "../http-policy.js";
-import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
+import { callerSignal, duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
  * (#341): path confinement, encoded query and framed bodies, per-request
@@ -565,7 +565,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     } catch (error) {
       // Auxiliary preparation has always refused an ended request in the
       // provider's words, even if closure wins the whole-helper race first.
-      if (auxiliary) assertProviderCallOpen(ctx, provider, true);
+      const source = callerSignal(ctx);
+      if (auxiliary || !(source?.aborted && error === source.reason)) assertProviderCallOpen(ctx, provider, auxiliary);
       // No rejection proves a dispatched write unsent: fetch may have made
       // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
       // retrying dispatcher), whatever the last one reports.

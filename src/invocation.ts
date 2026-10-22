@@ -780,6 +780,9 @@ export class InvocationService {
               );
               const lease = callFromContext(operationContext, write ? "write" : "read", {
                 admitted: true,
+                // An invocation deadline aborts when its call finishes. A
+                // request-owned auxiliary must retain only request cancellation.
+                requestSourceSignal: context.requestSignal,
                 served: write ? "write" : "read",
                 charge: (signal) => runEdge(chargeCallBudget(permit, signal)),
                 chargeClosed: () =>
