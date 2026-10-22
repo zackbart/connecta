@@ -31,9 +31,12 @@ Node run; a skipped, renamed, or failing test fails `pnpm run test`.
 1. Read [PRINCIPLES.md](../../../PRINCIPLES.md) and the relevant guide in
    [documentation/](../../../documentation/). Note which invariants the
    feature touches (classification, request lifetime, credentials, purity).
-2. Write the tests first, in `test/`. Prefer a portable `*.test.ts`, which
-   runs on Node and workerd. Use `*.node.test.ts` only with a first-line
-   `// Node-only: <reason>`.
+2. Write the tests first, in `test/`. A portable `*.test.ts` runs on Node.
+   Add workerd coverage in `vitest.config.ts` when the feature exercises native
+   Workers bindings, fetch/streams/signals, crypto, or runtime scheduling.
+   In a mixed file, tag native cases `workers` and broad logic cases `node`;
+   the Workers project skips the latter. Use `*.node.test.ts` only with a
+   first-line `// Node-only: <reason>`.
 3. Cite each invariant a test enforces in its title, e.g.
    `"INV-7: releases the downstream stream when the request ends"`. Unknown IDs fail.
 4. Implement. Effect stays inside; published declarations name no Effect type.

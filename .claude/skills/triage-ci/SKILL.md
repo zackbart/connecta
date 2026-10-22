@@ -1,96 +1,46 @@
 ---
 name: triage-ci
-description: Diagnose a red or skipped connecta CI run - read the aggregate check gate, recognize safe-path skips and known flakes (Chromium/apt install, load-induced timeouts, pnpm audit advisories), and rerun the right thing in isolation. Use when a PR's checks fail or look wrong.
+description: Diagnose a red connecta CI run - read the aggregate check gate, recognize known flakes (Chromium/apt install, load-induced timeouts, pnpm audit advisories), and rerun the right thing in isolation. Use when a PR's checks fail or look wrong.
 ---
 
 # Triage connecta CI
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) has eight jobs. `check` is the one
-to merge on: it runs `if: always()` and reports each job result and each optional
-job's required flag on failure. Superseded PR runs are cancelled by concurrency;
-inspect the newest head's run. Pushes to main always run everything.
+[ci.yml](../../../.github/workflows/ci.yml) runs three core jobs and the
+required `check` gate for every PR, main push and nightly. The inline
+changed-files step in `static` selects browser/audit on relevant PRs; main,
+nightly and manual runs select both. The canonical path expressions and
+browser import rationale live in that workflow. `check` uses `if: always()`:
+core jobs and classification must succeed; selected jobs must succeed;
+unselected jobs must skip. Missing outputs, failures, cancellations and
+unexpected skips fail the gate. Superseded PR runs are cancelled; inspect the
+newest head's run.
 
-- `changes` decides `planning` ([scripts/ci-planning-paths.sh](../../../scripts/ci-planning-paths.sh)),
-  `browser` ([scripts/ci-browser-paths.sh](../../../scripts/ci-browser-paths.sh))
-  `security` ([scripts/ci-security-paths.sh](../../../scripts/ci-security-paths.sh))
-  and `goldens` ([scripts/ci-goldens-tier.mjs](../../../scripts/ci-goldens-tier.mjs)).
-  All four decisions apply to PRs. `node`, `workers` and `build` wait for it.
-- Planning-only PRs: every changed path is under `decisions/` or `.changes/`.
-  `node` and `workers` run only the always-tier golden and harness suites;
-  `build` and `browser` show as skipped. `static` still checks formatting,
-  doc links and fragments. Shipped docs (`documentation/`,
-  `README.md`, `templates/`, `examples/`) are never planning-only.
-- `static`: formatting, generated providers, docs, changes, UI/Clerk freshness,
-  lint, Knip, and typecheck.
-- `node`: `pnpm run test --config vitest.config.node.ts`. The complete Node
-  project uses the normal coverage reporter without a CLI project filter,
-  retaining invariant/spec enforcement and collection completeness checks.
-- `workers`: `pnpm run test:workers`, the complete Workers project.
-- `build`: build, declarations, bundle, examples, and `check:package`, including
-  the generated Node deployment's Docker build. Package smoke reuses `dist/`
-  and packs with `--ignore-scripts`; bundle checking skips its duplicate UI prehook.
-- `browser`: Playwright Chromium. Skipped on a PR only when every changed path
-  is in the safe set, or the PR is planning-only. Every push to `main` runs it.
-  [playwright.config.ts](../../../playwright.config.ts) splits three projects:
-  `behavior` (two CI retries), `visual` (pixel comparisons, no retries) and
-  `visual-unstable` (comparisons tagged `@unstable`, two retries). When any
-  attempt fails, flaky ones included, the job uploads `playwright-report`
-  (HTML report plus `test-results/` actual, expected and diff images, and traces).
-- `security`: `pnpm run check:security`, when a root or nested `package.json`,
-  `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package-lock.json`, `npm-shrinkwrap.json`,
-  or `.npmrc` changes in the PR diff.
-  This includes templates installed by package and Docker smoke, published
-  examples, and future workspaces. Every push to `main` also audits.
-- `check` passes when static, changes, Node and Workers succeed, build
-  succeeds or was skipped because the PR is planning-only, and browser/security
-  each succeed or were skipped because they were not required. A cancelled or
-  unexpectedly skipped job fails it.
+- `static`: `check:static` (format, generated freshness, docs, fragments,
+  lint, Knip, typecheck), then `check:build` (build, declarations, bundle cap).
+  The exemption guard rejects names absent from the PR base (the pre-push SHA on main; HEAD's
+  first parent on nightly/manual); it fails on missing comparison history.
+- `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
+  INV/spec evidence and collection enforcement. Goldens compare forward and
+  reverse observations; nightly adds repeats/jitter via
+  `CONNECTA_GOLDENS_DETERMINISM=1`.
+- `workers`: `test:workers`, runtime-sensitive `WORKERS_SUITES` in
+  [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
+  `workers`; workerd skips cases tagged `node`. Node runs both. Goldens compare
+  one canonical observation; small native-source probes include `scheduler.wait`.
+- `browser`: Playwright `behavior` retries twice in CI; `visual` never retries.
+  Any failed attempt, including a flaky pass, uploads `playwright-report` with
+  HTML, diffs and traces.
+- `audit`: `check:security` without an install.
 
-The four mandatory check jobs run in parallel on separate runners, using the
-same lockfile-keyed pnpm store cache. Each runner still needs its own
-`pnpm install --frozen-lockfile`.
+Separate workflows report status outside `check`:
 
-[Provider drift](../../../.github/workflows/provider-drift.yml) is advisory and
-outside `check`. A PR scans only the providers
-[scripts/ci-drift-providers.mjs](../../../scripts/ci-drift-providers.mjs)
-selects: changed provider folders and importers of a changed `_shared/` area;
-a drift tooling change selects all. The weekly schedule and manual dispatch
-scan every provider. Its summary separates new or changed findings from standing
-`manual-required` reviews. Drift parser and contract tests run in the `node` job.
-
-Provider goldens always compare every provider's canonical catalog/request/result
-bytes on both runtimes, with fresh evaluated module graphs and load-time source
-controls. Node also checks reverse answer order on every PR. Runtime-independent
-mutation and source checks run with one seed in the `always` tier. Full adds the
-Workers reverse order and every repeated-capture/jitter matrix on both runtimes.
-The selector derives transitive provider/core dependencies from TypeScript
-imports and selects full for provider, connector, HTTP, storage, fixture,
-harness, Vitest, dependency and selector changes. Unknown paths/dependencies or
-classification failures also run full. Every step-1 migration therefore runs
-full, as does every push to main. Check the `changes` log's `goldens` output
-before diagnosing an intentionally skipped repeated-capture test.
-
-The `changes` job uses the runner's Node with built-ins for a first pass.
-Main pushes, directly relevant or unknown paths, and deletions/renames select
-full immediately; docs-only PRs select always. Only existing source/test modules
-that require transitive import analysis return the internal `graph` sentinel.
-That result enables pnpm setup, Node/cache setup and install before the full
-selector runs. These setup steps should be skipped on both fast paths. Invalid
-first-pass or graph output and selector failures select full; `graph` is never
-published as the job's `goldens` output.
-
-Locally, unset/invalid `CONNECTA_GOLDENS_TIER` means full; only `always` reduces
-it. Compare both tiers without rewriting fixtures:
-`CONNECTA_GOLDENS_TIER=always pnpm exec vitest run --project workers test/goldens.test.ts test/goldens-harness.test.ts`
-(and repeat with `--project node`, then `CONNECTA_GOLDENS_TIER=full`).
-Use `--maxWorkers=2` on a loaded machine. Mutation tests remain active in
-always; the reverse-only dependency mutation is Node-always and both-runtime
-full. Fixed public PEM fixtures have an import/sign/verify self-test. Never
-cache evaluated module graphs or use `it.concurrent` around global controls;
-independent files/workers may run in parallel, and transformed-code caches are
-safe.
+- [Package smoke](../../../.github/workflows/package.yml): main, nightly and
+  manual; build, example typechecks, then `check:package`, including Docker.
+- [Provider drift](../../../.github/workflows/provider-drift.yml): weekly and
+  manual only, advisory. Scans all public providers and separates new findings
+  from standing manual reviews. Parser/contract tests remain in `node`.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
@@ -102,10 +52,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   `*-actual.png`, `*-expected.png` and `*-diff.png` files. Intentional changes
   need new baselines from the Operator snapshots workflow
   ([documentation/operator-tests.md](../../../documentation/operator-tests.md)).
-  A comparison that flakes without a code change gets the `@unstable` tag in
-  `UNSTABLE_VARIANTS`, for the flaking scheme only, until its cause is found. `overview-trace` and
-  `narrow-matrix` (dark) each failed one first attempt in 150 runs with a
-  stable capture, then passed the retry; no cause has been found.
 - **Chromium install.** The first install can time out; the retry runs
   [scripts/ci-settle-apt.sh](../../../scripts/ci-settle-apt.sh), which waits up
   to 180 s for a leftover apt/dpkg, finishes interrupted configuration, and
@@ -123,24 +69,22 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   failure after dispatch. Keep deadline assertions deterministic with a
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
-- **pnpm audit.** A new upstream advisory fails the nightly
-  [Security workflow](../../../.github/workflows/security.yml) and main's
-  security job. PRs audit only dependency changes. Fix it in its own PR that
-  moves the dependency; publishing stays
-  blocked until audit passes.
+- **pnpm audit.** A new upstream advisory fails `audit` and `check` on
+  dependency-changing PRs and every main push. The nightly run also
+  audits main without a new commit. Fix it in its own PR that moves the
+  dependency, then rebase; publishing stays blocked until audit passes.
 - **Coverage reporter.** `Test-backed coverage failed` comes from the full,
   unfiltered Node run, including CI's Node-only config: an `INV-n` lost its
   passing test, a `spec/coverage.json` title no longer matches a passing test
   exactly, or a collected suite did not
-  run. Reproduce it with unfiltered `pnpm run test`, the test step in `check`.
-  Project filters (including `pnpm run test:node`), file filters, and focused
-  reruns skip invariant and spec enforcement by design and cannot reproduce
-  coverage failures.
-- **Node-only collection.** `check:changes` fails when a `*.node.test.ts`
-  lacks its first-line `// Node-only: <reason>`, or a suite sits outside `test/`.
+  run. Reproduce it with unfiltered `pnpm run test:node` or `pnpm run test`.
+  `--project`, file and name filters, and focused reruns skip invariant and
+  spec enforcement by design and cannot reproduce coverage failures.
 
 ## Locally
 
-`pnpm run check:fast` is the partial inner loop. `pnpm run check` runs the same
-mandatory checks except package smoke, plus browser, serially. Other agents
+`pnpm run check:fast` runs static checks and Vitest’s built-in
+`--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
+core checks locally; run browser/audit too when applicable. `release:check` adds Chromium, examples, audit and
+package/Docker smoke. Other agents
 share this machine; check `uptime` before blaming a timeout on your change.

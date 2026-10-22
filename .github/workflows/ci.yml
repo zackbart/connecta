@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,142 +16,74 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every core check runs for every change. Share static/build setup; `check`
+# is the only required status. Applicable browser/audit failures also block it.
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      planning: ${{ steps.paths.outputs.planning }}
-      browser: ${{ steps.paths.outputs.browser }}
-      security: ${{ steps.paths.outputs.security }}
-      goldens: ${{ steps.goldens.outputs.goldens }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Decide which test, browser and dependency checks are needed
-        id: paths
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          planning=false
-          browser=true
-          security=true
-          goldens=full
-          if [[ "$EVENT_NAME" == pull_request ]]; then
-            if git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"; then
-              planning=$(bash scripts/ci-planning-paths.sh < "$RUNNER_TEMP/paths")
-              browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
-              security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
-              # Classification failures must spend more CI, never skip the oracle.
-              if git diff --no-renames --diff-filter=D --quiet "$BASE_SHA...$HEAD_SHA"; then
-                goldens=$(node scripts/ci-goldens-tier.mjs --fast < "$RUNNER_TEMP/paths") || goldens=full
-                case "$goldens" in full|always|graph) ;; *) goldens=full ;; esac
-              fi
-            else
-              echo "Path diff failed; running every check with full goldens." >&2
-            fi
-          fi
-          echo "Provider goldens tier: $goldens"
-          # A planning-only change has nothing for Chromium to exercise.
-          if [[ "$planning" == true ]]; then browser=false; fi
-          {
-            echo "planning=$planning"
-            echo "browser=$browser"
-            echo "security=$security"
-            echo "goldens=$goldens"
-          } >> "$GITHUB_OUTPUT"
-      - if: steps.paths.outputs.goldens == 'graph'
-        uses: pnpm/action-setup@v6
-      - if: steps.paths.outputs.goldens == 'graph'
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - if: steps.paths.outputs.goldens == 'graph'
-        run: pnpm install --frozen-lockfile
-      - name: Resolve provider goldens tier
-        id: goldens
-        env:
-          FIRST_PASS: ${{ steps.paths.outputs.goldens }}
-        run: |
-          goldens=full
-          if [[ "$FIRST_PASS" == graph ]]; then
-            goldens=$(node scripts/ci-goldens-tier.mjs < "$RUNNER_TEMP/paths") || goldens=full
-          elif [[ "$FIRST_PASS" == always ]]; then
-            goldens=always
-          fi
-          if [[ "$goldens" != always ]]; then goldens=full; fi
-          echo "Provider goldens tier: $goldens"
-          echo "goldens=$goldens" >> "$GITHUB_OUTPUT"
-
-  # Keep every check:core check, but give both runtimes their own runner.
-  # Static checks run for every change, including planning-only pull requests.
   static:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run format:check
-      - run: pnpm run check:providers-generated
-      - run: pnpm run check:docs
-      - run: pnpm run check:changes
-      - run: pnpm run check:operator-ui
-      - run: pnpm run check:clerk-sdk
-      - run: pnpm run check:lint
-      - run: pnpm run check:unused
-      - run: pnpm run typecheck
-
-  # Planning-only PRs still run the golden oracle on both runtimes, while
-  # skipping the rest of the suites and the package build.
-  node:
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CONNECTA_GOLDENS_TIER: ${{ needs.changes.outputs.goldens }}
-      # PR checkout is a merge commit whose first parent is the PR base.
-      # Pushes must compare before the entire push, even after main advances.
-      CONNECTA_STANDARD_BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+    timeout-minutes: 15
+    outputs:
+      changed-files: ${{ steps.changes.outcome }}
+      browser: ${{ steps.changes.outputs.browser }}
+      audit: ${{ steps.changes.outputs.audit }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - name: Fetch the provider exemption comparison commit if needed
+      - name: Select browser and audit checks
+        id: changes
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
         run: |
-          if [[ -z "$CONNECTA_STANDARD_BASE" || "$CONNECTA_STANDARD_BASE" =~ ^0+$ ]]; then
-            echo "CONNECTA_STANDARD_BASE must be a real base SHA; first pushes fail closed." >&2
-            exit 1
+          base=${PR_BASE:-${PUSH_BASE:-HEAD^1}}
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT" != pull_request ]]; then
+            echo 'browser=true' >> "$GITHUB_OUTPUT"
+            echo 'audit=true' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          if ! git cat-file -e "$CONNECTA_STANDARD_BASE^{commit}"; then
-            git fetch --no-tags --depth=1 origin "$CONNECTA_STANDARD_BASE"
+          test -n "$PR_BASE"
+          git fetch --no-tags --depth=1 origin "$PR_BASE"
+          git diff --name-only --no-renames -z "$base" HEAD > "$RUNNER_TEMP/changed-files"
+          # Canonical browser input list. The build reads operator-ui/{app,styles},
+          # tokens/page CSS, fonts and LICENSE. Playwright fixtures import the real
+          # server through helpers.ts, so src/ covers their shared auth/routes/core;
+          # fixtures/helpers cover their local dependencies; node.ts uses bin/ tool names.
+          if grep -zEq '^(src/|bin/|test/(browser/|fixtures/|helpers/|helpers\.ts$)|scripts/(build-operator-ui\.mjs|ci-settle-apt\.sh)$|playwright[^/]*\.config\.[^/]+$|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|LICENSE$|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
+            echo 'browser=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'browser=false' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -zEq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$|^\.github/workflows/ci\.yml$' "$RUNNER_TEMP/changed-files"; then
+            echo 'audit=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'audit=false' >> "$GITHUB_OUTPUT"
           fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
+      - name: Reject new provider exemptions (decision 0011)
+        env:
+          BASE: ${{ steps.changes.outputs.base }}
+        run: |
+          test -n "$BASE"
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
+          git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
       - run: pnpm install --frozen-lockfile
-      # A Node-only config, not --project: retain invariant/spec enforcement.
-      - if: needs.changes.outputs.planning != 'true'
-        run: pnpm run test --config vitest.config.node.ts
-      - if: needs.changes.outputs.planning == 'true'
-        run: pnpm run test:node test/goldens.test.ts test/goldens-harness.test.ts
+      - run: pnpm run check:static
+      - run: pnpm run check:build
 
-  workers:
-    needs: changes
+  # The unfiltered Node run also enforces invariant and spec coverage.
+  node:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
-      CONNECTA_GOLDENS_TIER: ${{ needs.changes.outputs.goldens }}
+      VITEST_MAX_WORKERS: 4
+      CONNECTA_GOLDENS_DETERMINISM: ${{ github.event_name == 'schedule' && '1' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -157,16 +92,14 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - if: needs.changes.outputs.planning != 'true'
-        run: pnpm run test:workers
-      - if: needs.changes.outputs.planning == 'true'
-        run: pnpm run test:workers test/goldens.test.ts test/goldens-harness.test.ts
+      - run: pnpm run test:node
 
-  build:
-    needs: changes
-    if: needs.changes.outputs.planning != 'true'
+  # workerd runs only the suites vitest.config.ts lists for it.
+  workers:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    env:
+      VITEST_MAX_WORKERS: 4
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -175,34 +108,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - run: pnpm run check:declarations
-      # build already generated the UI. Run check:bundle's script directly: pnpm runs
-      # its pre-hook even under --ignore-scripts.
-      - run: node scripts/bundle-size.mjs
-      - run: pnpm run check:examples
-      # Reuse this job's dist/. Smoke packs with --ignore-scripts, without a rebuild.
-      - run: pnpm run check:package
+      - run: pnpm run test:workers
 
-  # pnpm audit reads the lockfile and the registry, so it needs no install;
-  # verify-deps-before-run=false stops pnpm run from installing first.
-  security:
-    needs: changes
-    if: needs.changes.outputs.security == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - run: pnpm --config.verify-deps-before-run=false run check:security
-
-  # Gate the job, not the workflow, so irrelevant PRs report a skipped check.
   browser:
-    needs: changes
-    if: needs.changes.outputs.browser == 'true'
+    needs: static
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.browser == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -248,34 +158,38 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Keep the existing check name as the gate for every job, even on failure.
+  audit:
+    needs: static
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.audit == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pnpm --config.verify-deps-before-run=false run check:security
+
+  # Branch protection requires this name. Core jobs and classification must
+  # succeed; browser/audit may skip only when explicitly inapplicable.
   check:
-    needs: [static, node, workers, build, changes, browser, security]
+    needs: [static, node, workers, browser, audit]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require all checks to pass
+      - name: Require core and applicable checks
         env:
-          STATIC_RESULT: ${{ needs.static.result }}
-          NODE_RESULT: ${{ needs.node.result }}
-          WORKERS_RESULT: ${{ needs.workers.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
-          PLANNING_ONLY: ${{ needs.changes.outputs.planning }}
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          BROWSER_RESULT: ${{ needs.browser.result }}
-          BROWSER_REQUIRED: ${{ needs.changes.outputs.browser }}
-          SECURITY_RESULT: ${{ needs.security.result }}
-          SECURITY_REQUIRED: ${{ needs.changes.outputs.security }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          # A planning-only pull request skips build; both golden runtime jobs must pass.
-          planned() { [[ "$1" == success || ( "$PLANNING_ONLY" == true && "$1" == skipped ) ]]; }
-          if [[ "$STATIC_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
-             [[ "$NODE_RESULT" == success && "$WORKERS_RESULT" == success ]] && planned "$BUILD_RESULT" &&
-             [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]] &&
-             [[ "$SECURITY_RESULT" == success || ( "$SECURITY_REQUIRED" == false && "$SECURITY_RESULT" == skipped ) ]]; then
-            echo "All required checks passed"
-          else
-            echo "Static=$STATIC_RESULT node=$NODE_RESULT workers=$WORKERS_RESULT build=$BUILD_RESULT planning=$PLANNING_ONLY changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED security=$SECURITY_RESULT required=$SECURITY_REQUIRED"
-            exit 1
-          fi
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e '
+            . as $jobs |
+            all(["static", "node", "workers"][]; $jobs[.].result == "success") and
+            .static.outputs["changed-files"] == "success" and
+            all(["browser", "audit"][];
+              . as $job | $jobs.static.outputs[$job] as $applies |
+              ($applies == "true" and $jobs[$job].result == "success") or
+              ($applies == "false" and $jobs[$job].result == "skipped"))
+          ' <<< "$NEEDS" > /dev/null

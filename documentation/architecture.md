@@ -1258,7 +1258,7 @@ PRs: onto the kit with unchanged output, then onto the standard surface.
 landed each step, and this section describes their current shapes.
 `test/provider-standard.node.test.ts` holds every other provider folder to the
 standard, and `test/provider-conventions.test.ts` checks the surface rules on
-both runtimes. `providers:generate` writes the standard's derived parts and
+Node. `providers:generate` writes the standard's derived parts and
 refuses a provider past step 1 that breaks the `drift.json` rules, or one past
 step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
 (operations from the kit's `ProviderKitFacts`, hosted names from the reviewed
@@ -1591,12 +1591,13 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   counted real work to finish. Newly waiting requests form one step, sorted
   by method, URL, headers, and exact body. The loop releases **one answer at
   a time**, running to quiescence after each. Previously recorded requests
-  keep release priority over new requests. Every capture runs twice: canonical
+  keep release priority over new requests. Fixture updates capture canonical
   cohort release order and reverse cohort release order, each with its own
   fresh module graph, clock, network and cache namespace. Queue replies are
   assigned in canonical request order in both runs; only answer delivery
   changes. Steps remain readable admission cohorts, not simultaneous answers.
-  Both orders must match the oracle. Identical observations collapse to one
+  Workerd checks compare the canonical observation. In stored fixtures,
+  identical observations collapse to one
   row; differing reverse observations appear in `variants`, each with
   `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
   Setup uses the same rule, with `{ steps, variants }` only when orders differ.
@@ -1706,43 +1707,41 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
 Object keys keep the order the provider produced. A migration changes the
 provider, never the spec or harness.
 
-`test/goldens.test.ts` compares on both Vitest projects and fails if a
-provider folder is neither covered nor listed as remote-MCP-only, a tool
-has no call, or a golden file is missing or extra. It never writes.
-`test/goldens-harness.test.ts` proves the harness catches the mutations it
-exists for: Authorization moved onto a Request that `init.headers`
-replaces, an emptied, respaced, or reordered Infisical login body, a write
-sent before the login is answered, a write sent twice at once or in turn,
-and sent-secret redaction disabled or missing its percent, base64, or
-base64url forms. It checks the leak guard against each encoding directly
-and against PEM framing. A Planning Center request delayed by its
-provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
-schedules. It also captures every spec twice in one process with seeded
-scheduling jitter (requests delayed by microtasks, timers due now, and real
-work before request inspection; both answer orders tested independently) with
-committed seeds 1 and 2 (`CONNECTA_GOLDENS_SEEDS=3,7` adds seeds) and compares every file for every spec
-with the stored goldens. Partial-dependency mutations run under ten seeds,
-and saved immediate/timeout/abort-timeout, Effect scheduler, prebound crypto,
-prebound performance/Date/hrtime, module freshness, runner timing, unsupported
-sources, ambiguous replies, and cross-capture nanoseconds run on both projects.
-CI uses two characterization tiers. Every PR runs byte comparisons of every
-provider on both runtimes: Node captures fresh forward and reverse module graphs;
-Workers captures a fresh canonical graph and compares only the stored canonical
-observations. Projection removes variants only at harness observation positions,
-never from vendor results or schemas. Both tiers retain load-time source controls
-and runtime-independent mutation/source checks; always runs one seed per check.
-The reverse-only C-awaits-B-versus-both mutation runs on Node in always and on
-both runtimes in full. Planning-only PRs run these suites too.
+`test/goldens.test.ts` compares every provider on Node and workerd. It fails
+if a provider folder is neither covered nor listed as remote-MCP-only, a tool
+has no call, or a golden file is missing or extra. Ordinary checks never write.
+Node compares forward and reverse observations byte for byte; workerd compares
+canonical observations. Each order starts a fresh module graph. Workers projection
+removes variants only at harness observation positions, never from vendor fields
+or schemas. Fixture updates retain both orders.
+There are no characterization tiers, path classifiers, or planning-only runs.
 
-The full tier repeats all provider captures and the complete jitter matrix on
-both runtimes, including Workers reverse order. It runs on every main push and
-on PRs changing provider, connector, HTTP, storage, golden/harness, fixture,
-Vitest, dependency or selector inputs. The selector derives transitive core
-imports using TypeScript parsing and module resolution. Unknown paths or
-dependencies and classifier errors select full; every step-1 provider migration
-selects full. The `changes` job exports `goldens` to both runtime jobs through
-`CONNECTA_GOLDENS_TIER`. Only `always` reduces the tier; local unset/invalid
-values run full, retaining the complete `pnpm run check` gate.
+`test/goldens-harness.test.ts` keeps the source and mutation guards on Node:
+replaced Authorization headers, changed auxiliary/login bytes, writes sent
+early or twice, and missing secret-encoding redaction must alter a capture or
+fail it. Ordinary runs use one source-probe schedule. Nightly Node runs set
+`CONNECTA_GOLDENS_DETERMINISM=1` for an identical repeat, provider jitter seeds
+1 and 2, and the complete source-probe jitter matrix. Small native-source probes also run on
+workerd: `scheduler.wait`, CompressionStream, saved timers/microtasks and
+Effect scheduling, prebound crypto/clocks, module freshness, runner clocks,
+and Blob/TextDecoderStream promise settlement. Runtime-specific cases carry
+Vitest's `workers` tag; broad cases carry `node`, which the Workers project
+skips. Other mixed transport/auth/runtime suites use the same tags to retain
+native fetch, request/response streams, deadlines, signals, crypto and SDK
+settlement without duplicating their policy matrices. `vitest.config.ts`
+selects these files with globs that tolerate test-file deletion. Portable
+filenames alone do not enroll a new file in workerd.
+
+Required PR CI runs static/build, the complete Node suite with INV/spec evidence
+enforcement, and the selected workerd cases, then the fail-closed `check` gate.
+An inline changed-files step selects browser and dependency audit on relevant
+PRs; both block `check` when selected and always run on main and nightly.
+Its path expressions and import rationale live in `.github/workflows/ci.yml`.
+Examples and package/Docker smoke report separately on main and nightly.
+Provider drift runs weekly and manually. Local `check` runs unconditional PR
+checks; run browser/audit locally when applicable. `release:check` adds every
+moved check. Repository
+verification policy and exact commands live in `AGENTS.md`.
 
 JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
 import/sign/verify self-test. This avoids expensive key generation on every
@@ -2292,7 +2291,7 @@ compiling and configuring the real thing.
   identity for a read and for a served call, whose timeout passes through
   unchanged for the invocation to report.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
-  provider/tool in both runtimes, fails on missing provider/tool examples or a
+  provider/tool on Node, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read
   overrides with HTTP 503 and a connection reset after send. Local metadata
   tools prove zero sends; composite calls prove each distinct request leaves
