@@ -1684,6 +1684,32 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   before either can capture native references or schedule uncounted I/O. Only
   the harness's fresh-graph loading phase admits test fixture imports.
   Invalid captures cancel and drain their concurrent fake requests.
+- Settle, rejected-capture cleanup, and final teardown pump controlled timers,
+  microtasks, and fake requests within the original 10,000-host-turn windows.
+  Only outstanding captured Web Crypto operations can extend a window: after
+  exhausting it, await a snapshot of those native operations to settle, then
+  resume with a fresh bounded window. Each phase allows at most 100 native
+  extensions and reports an explicit error on exhaustion. Web Crypto always
+  settles independently of the harness's fake network, timers, and producers.
+  Body reads and stream reads are counted for quiescence but cannot extend a
+  window: their producers may require a fake response, future virtual time,
+  or never complete. No producer attribution or stream constructor tracking
+  is needed. Pending native crypto never advances virtual deadlines or merges
+  request cohorts. Clock advancement remains limited to 1,000 ticks.
+  Unsupported producer dependencies reject within the turn bound; teardown
+  always clears timers and releases capture ownership, including after failed
+  construction and overlapping capture rejection. The next capture must work.
+  Each capture has an async-context epoch that closes before ownership is
+  released, even when its native extension cap is exhausted. Controlled-source dispatchers reject closed
+  continuations before touching another capture's state. Fake request entry,
+  admission, response delivery, and serialization check their owning epoch,
+  including after asynchronous body inspection. Late work cannot record into
+  or receive a response from a later capture, which never waits for it.
+  Closing also attaches rejection handlers to outstanding counted promises,
+  consuming abandoned native body-read rejections without awaiting them.
+  Source regressions explicitly assert either completion or bounded rejection
+  followed by recovery. Crypto-delay probes at 11,000 and 100,000 host turns
+  must complete with unchanged observations; producer-fed bodies need not.
 - The network answers in zero virtual time. Before advancing to the next
   timer, the loop requires eight quiet real event-loop turns and an audit.
   A row records nonzero `waitedMs`, the virtual time spent on provider

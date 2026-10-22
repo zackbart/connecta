@@ -1,7 +1,9 @@
 // Installed by Vitest setup BEFORE any provider, connector, or Effect import.
 // Dispatchers keep their identity across captures, including prebound methods.
-// Native functions stay in this module's closure; outside a capture every
-// dispatcher delegates unchanged, so Vitest's runner keeps its real clock.
+// Native functions stay in this module's closure. Unscoped runner calls
+// delegate unchanged; closed capture continuations reject before dispatch.
+import { AsyncLocalStorage } from "node:async_hooks";
+
 export const GOLDEN_NOW = Date.UTC(2026, 0, 2, 3, 4, 5);
 type Callback = (...args: unknown[]) => void;
 type Method = (this: unknown, ...args: unknown[]) => unknown;
@@ -15,15 +17,20 @@ export interface SourceState {
   now: number;
   loading: boolean;
   inFlight: number;
+  /** Only captured Web Crypto implementations, never producer-fed body reads. */
+  nativePending: Set<Promise<unknown>>;
   microtasks: number;
   events: number;
   violation?: Error;
   timers: Map<number, Timer>;
+  assertCurrent(): void;
+  waitForNative(): Promise<void>;
   tick(ms: number): void;
   next(): number | undefined;
-  stop(): void;
+  stop(restarting?: boolean): void;
 }
 interface Sources {
+  capture<T>(work: () => Promise<T>): Promise<T>;
   start(): SourceState;
   turn(): Promise<void>;
   importSource(source: string, duringLoad: boolean): void;
@@ -34,6 +41,23 @@ const globals = globalThis as unknown as Record<PropertyKey, unknown>;
 export function installSources(): Sources {
   if (globals[KEY]) return globals[KEY] as Sources;
   let active: SourceState | undefined;
+  interface Epoch {
+    open: boolean;
+    pending: Set<Promise<unknown>>;
+  }
+  const context = new AsyncLocalStorage<Epoch>();
+  const closeEpoch = (epoch: Epoch) => {
+    epoch.open = false;
+    // Consume abandoned body-read rejections without waiting or hiding errors
+    // in an open capture. Native implementations may resume after teardown.
+    for (const pending of epoch.pending) void pending.catch(() => {});
+    epoch.pending.clear();
+  };
+  let activeEpoch: Epoch | undefined;
+  const assertEpoch = (expected = context.getStore()) => {
+    const epoch = context.getStore();
+    if ((epoch && !epoch.open) || epoch !== expected) throw new Error("Golden capture epoch is closed");
+  };
   const NativeDate = Date;
   const nativeDateNow = Date.now.bind(Date);
   const nativeTimeout = globalThis.setTimeout.bind(globalThis);
@@ -42,6 +66,7 @@ export function installSources(): Sources {
     new Promise<void>((resolve) => (nativeImmediate ? nativeImmediate(resolve) : nativeTimeout(resolve, 0)));
   let id = 0;
   const unsupported = (source: string): never => {
+    assertEpoch();
     const error = new Error(
       `Unsupported asynchronous source: ${source}; register and count it in test/goldens/sources.ts before capturing it`,
     );
@@ -58,6 +83,7 @@ export function installSources(): Sources {
     while (!Object.hasOwn(defining, name) && Object.getPrototypeOf(defining))
       defining = Object.getPrototypeOf(defining);
     replace(defining, name, function (this: unknown, ...args: unknown[]) {
+      assertEpoch();
       return (active ? during : (native as Method)).apply(this, args);
     });
   };
@@ -103,6 +129,7 @@ export function installSources(): Sources {
     state.events++;
     nativeMicrotask(() => {
       try {
+        assertEpoch();
         (callback as () => void)();
       } catch (error) {
         state.violation = error instanceof Error ? error : new Error(String(error));
@@ -212,19 +239,25 @@ export function installSources(): Sources {
     return array;
   });
   dispatch(Math, "random", () => (seed = (seed * 9301 + 49297) % 233280) / 233280);
-  const counted = (owner: object, names: string[]) => {
+  const counted = (owner: object, names: string[], nativeOperation = false) => {
     for (const name of names) {
       const native = (owner as Record<string, Method>)[name];
       if (typeof native !== "function") continue;
       dispatch(owner, name, function (this: unknown, ...args) {
         const state = active!;
+        const epoch = activeEpoch!;
         state.inFlight++;
         state.events++;
         try {
-          return Promise.resolve(native.apply(this, args)).finally(() => {
+          const pending = Promise.resolve(native.apply(this, args)).finally(() => {
             state.inFlight--;
             state.events++;
+            state.nativePending.delete(pending);
+            epoch.pending.delete(pending);
           });
+          epoch.pending.add(pending);
+          if (nativeOperation) state.nativePending.add(pending);
+          return pending;
         } catch (error) {
           state.inFlight--;
           state.events++;
@@ -233,20 +266,24 @@ export function installSources(): Sources {
       });
     }
   };
-  counted(crypto.subtle, [
-    "decrypt",
-    "deriveBits",
-    "deriveKey",
-    "digest",
-    "encrypt",
-    "exportKey",
-    "generateKey",
-    "importKey",
-    "sign",
-    "unwrapKey",
-    "verify",
-    "wrapKey",
-  ]);
+  counted(
+    crypto.subtle,
+    [
+      "decrypt",
+      "deriveBits",
+      "deriveKey",
+      "digest",
+      "encrypt",
+      "exportKey",
+      "generateKey",
+      "importKey",
+      "sign",
+      "unwrapKey",
+      "verify",
+      "wrapKey",
+    ],
+    true,
+  );
   const body = ["arrayBuffer", "blob", "bytes", "formData", "json", "text"];
   for (const owner of [Request.prototype, Response.prototype, Blob.prototype]) counted(owner, body);
   counted(ReadableStreamDefaultReader.prototype, ["read", "cancel"]);
@@ -268,9 +305,11 @@ export function installSources(): Sources {
     if (typeof native !== "function") continue;
     const guarded = new Proxy(native, {
       construct(target, args, newTarget) {
+        assertEpoch();
         return active ? unsupported(name) : Reflect.construct(target, args, newTarget);
       },
       apply(target, self, args) {
+        assertEpoch();
         return active ? unsupported(name) : Reflect.apply(target, self, args);
       },
     });
@@ -294,6 +333,7 @@ export function installSources(): Sources {
       dispatch(scheduler as object, name, () => unsupported(`scheduler.${name}`));
   const abortTimeout = AbortSignal.timeout;
   replace(AbortSignal, "timeout", (ms: number) => {
+    assertEpoch();
     if (!active) return abortTimeout.call(AbortSignal, ms);
     const controller = new AbortController();
     const handle = schedule(
@@ -307,20 +347,46 @@ export function installSources(): Sources {
   // A saved global fetch must never reach the network during a capture.
   dispatch(globalThis, "fetch", () => unsupported("prebound fetch; use the capture's fake network"));
   const sources: Sources = {
+    async capture(work) {
+      assertEpoch();
+      const epoch: Epoch = { open: true, pending: new Set() };
+      return context.run(epoch, async () => {
+        try {
+          return await work();
+        } finally {
+          closeEpoch(epoch);
+        }
+      });
+    },
     turn,
     importSource(source, duringLoad) {
+      assertEpoch();
       if (active && (!duringLoad || !active.loading)) unsupported(source);
     },
     start() {
+      assertEpoch();
       if (active) throw new Error("Overlapping golden captures are unsupported");
+      const epoch = context.getStore();
+      if (!epoch) throw new Error("Golden capture epoch is missing");
       uuid = byte = seed = 0;
       const state: SourceState = {
         now: GOLDEN_NOW,
         loading: true,
         inFlight: 0,
+        nativePending: new Set(),
         microtasks: 0,
         events: 0,
         timers: new Map(),
+        assertCurrent() {
+          assertEpoch(epoch);
+          if (active !== state) throw new Error("Golden capture epoch is closed");
+        },
+        async waitForNative() {
+          // Snapshot only operations that already entered the captured native
+          // implementation. A consumer may start more work as these settle;
+          // that work gets a fresh bounded polling window, not an open-ended join.
+          await Promise.allSettled(state.nativePending);
+        },
         tick(ms) {
           state.now += ms;
           let iterations = 0;
@@ -342,12 +408,17 @@ export function installSources(): Sources {
             ? Math.min(...[...state.timers.values()].map((timer) => timer.at)) - state.now
             : undefined;
         },
-        stop() {
+        stop(restarting = false) {
           state.timers.clear();
-          active = undefined;
+          if (active === state) {
+            if (!restarting) closeEpoch(epoch);
+            active = undefined;
+            activeEpoch = undefined;
+          }
         },
       };
       active = state;
+      activeEpoch = epoch;
       return state;
     },
   };
