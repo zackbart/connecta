@@ -1804,7 +1804,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-9: explicit multi-value contracts preserve value order and JSON paths", () => {
+  it("INV-9: explicit multi-value contracts preserve value order and JSON paths", async () => {
     for (const encoding of ["query", "form", "json"] as const) {
       const request = (ids: string[]) => ({
         ...POST_ITEMS,
@@ -1815,6 +1815,42 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       });
       expect(writeRequestKey(request(["a", "b"]))).not.toBe(writeRequestKey(request(["b", "a"])));
       expect(writeRequestKey(request(["a", "b"]))).not.toBe(writeRequestKey(request(["b"])));
+    }
+    const operation = post("update", "/items/:id", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({ value: Schema.String }),
+    });
+    const connection = connect(vendor("Typed", operation), guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
+      errors: VENDOR,
+      safety: resultSafety({
+        review: "Fixture records have no secrets.",
+        sensitiveFields: { names: [], choice: "drop" },
+      }),
+    });
+    for (const value of ["one", "changed"]) {
+      sent = [];
+      const tool = write(connection, {
+        name: "typed_bulk",
+        description: "One bound typed operation.",
+        destructive: false,
+        input: Schema.Struct({ value: Schema.String }),
+        output: Schema.Unknown,
+        writeSteps: {
+          rows: {
+            maxItems: 1,
+            items: () => ["a"],
+            request: () => ({ ...POST_ITEMS, path: "/items/a", json: '{"value":"one"}' }),
+          },
+        },
+        run: (args) =>
+          connection
+            .send(operation, { params: { id: "a" }, payload: { value: args.value } }, { step: "rows", item: "a" })
+            .pipe(Effect.map(({ data }) => data)),
+      });
+      const result = await through(tool, { value });
+      expect(sent).toHaveLength(value === "one" ? 1 : 0);
+      if (value === "changed") expect(result.error).toMatchObject({ code: "invalid_args" });
+      else expect(result).toHaveProperty("value");
     }
   });
 
