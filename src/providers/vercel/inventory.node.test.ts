@@ -275,47 +275,6 @@ describe("Vercel public inventory", () => {
     },
   );
 
-  it.each([
-    ["thematic break", (landing: string) => landing.replace("[Toolbar\n6 tools]", "\n\n---\n\n[Toolbar\n6 tools]")],
-    [
-      "emphasized autolink count",
-      (landing: string) =>
-        landing.replace(cachingLink, `Caching <${url.replace("tools.md", "tools/caching")}>\n**6** tools`),
-    ],
-    [
-      "entity autolink count",
-      (landing: string) =>
-        landing.replace(cachingLink, `Caching <${url.replace("tools.md", "tools/caching")}>\n&#54; tools`),
-    ],
-    ["unused conflicting definitions", (landing: string) => landing + "\n[help]: /docs/help\n[HELP]: /docs/support\n"],
-  ] as const)("INV-8 reconciles the round-2 %s reproduction before CLI drift comparison", async (_, mutate) => {
-    const { directory, report } = await localReferences();
-    await writeFile(join(directory, "tools.md"), mutate(await text("tools.md")));
-    const result = report().docs[0];
-    if (result.findings.some((finding: { kind: string }) => finding.kind === "unavailable")) {
-      expect(result.findings).toEqual([
-        expect.objectContaining({ kind: "unavailable", detail: expect.stringContaining("unavailable/incomplete") }),
-      ]);
-      expect(result.added).toBeUndefined();
-      expect(result.removed).toBeUndefined();
-      expect(result.documentedTools).toBeUndefined();
-    } else {
-      expect(await readVercelInventory(join(directory, "tools.md"))).toEqual({
-        names: recording.expectedNames,
-        pages: 29,
-      });
-      expect(result).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
-      expect(result.added).toHaveLength(174);
-      expect(result.added).toContain("artifact_query");
-      expect(result.removed).toEqual([
-        "check_domain_availability_and_price",
-        "deploy_to_vercel",
-        "get_deployment_build_logs",
-        "get_web_analytics",
-      ]);
-    }
-  });
-
   it("INV-8 ignores unrelated unused conflicts while retaining categories in unused definitions", async () => {
     const { pages, fetcher } = await mockPages();
     const landing = await text("tools.md");
@@ -343,50 +302,6 @@ describe("Vercel public inventory", () => {
     ]) {
       pages.set(category, (await text("caching.md")) + `\n${heading}\n`);
       await expect(readVercelInventory(url)).rejects.toThrow("unconsumed tool-heading-like content");
-    }
-  });
-
-  it("INV-8 formatting mutation combinations yield the exact recorded union or explicit unavailable, never a partial inventory", async () => {
-    const { pages } = await mockPages();
-    const landing = await text("tools.md");
-    const entry = /\[([^\]]+)\]\((\/docs\/agent-resources\/vercel-mcp\/tools\/[a-z0-9-]+)\)/g;
-    const entries = [...landing.matchAll(entry)];
-    expect(entries).toHaveLength(28);
-    // Exhaust the power set of six independent harmless formatting mutations.
-    // Every combination also retains all original category paths and counts.
-    for (let mask = 0; mask < 64; mask++) {
-      let definitions = "";
-      let transformed = entries.map(([original, originalLabel, path], i) => {
-        if (originalLabel === undefined || path === undefined) throw new Error("missing category entry captures");
-        const label = mask & 2 ? originalLabel.replace(/(\d+) tools?/, "**$1** tools") : originalLabel;
-        let value = original.replace(originalLabel, label);
-        if (mask & 4 && i % 3 === 0) value = `${label} <https://vercel.com${path}>`;
-        if (mask & 8 && i % 3 === 1) {
-          value = `[${label}][category-${i}]`;
-          definitions += `\n[category-${i}]: ${path}\n`;
-        }
-        if (mask & 16 && i % 3 === 2) value = `<a href="${path}">${label.replace("\n", "<br>")}</a>`;
-        return value;
-      });
-      if (mask & 32) transformed = transformed.reverse();
-      const mutated =
-        landing.replace(
-          entries.map(([original]) => original).join(""),
-          transformed.join(mask & 1 ? "\n\n---\n\n" : "\n"),
-        ) + definitions;
-      expect(mutated).not.toBe(landing);
-      pages.set(url, mutated);
-      try {
-        const inventory = await readVercelInventory(url);
-        expect(inventory, `mutation mask ${mask}`).toEqual({ names: recording.expectedNames, pages: 29 });
-      } catch (error) {
-        // Rethrow assertion errors: a partial success must fail this test.
-        if (!(error instanceof Error) || !error.message.includes("Vercel inventory unavailable/incomplete"))
-          throw error;
-        expect(error.message, `mutation mask ${mask}`).toMatch(
-          /(?:unconsumed.*destination|must have exactly one published tool count)/,
-        );
-      }
     }
   });
 

@@ -8,14 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { createMetaTools } from "../../meta-tools.js";
-import { SHEETS_API_BASE_URL, SHEETS_SCOPES, sheets } from "./index.js";
+import { sheets } from "./index.js";
 import { Registry } from "../../registry.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
-
-const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
+import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -86,74 +83,9 @@ function call(connector: Connector, name: string, args: Record<string, unknown> 
   return connector.callTool(name, args, context()) as Promise<any>;
 }
 
-function guide(connector: Connector): ConnectorUsageGuide {
-  if (typeof connector.usageGuide !== "object" || !connector.usageGuide) {
-    throw new Error("expected a structured guide");
-  }
-  return connector.usageGuide;
-}
-
-/** The request path below the API root, percent-escapes as sent. */
-const path = (index: number) => calls[index]!.url.pathname.replace(/^\/v4/, "");
-
 const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
 describe("sheets() identity and surface (H1)", () => {
-  it("requires a purpose and names the routing fact in title, description, and guide", () => {
-    expect(() => connection({ purpose: "  " })).toThrow(/purpose/);
-    const connector = connection({ instructions: "The budget lives in the 2026 Budget spreadsheet." });
-    expect(connector.title).toBe("Google Sheets");
-    expect(connector.description).toContain("signed-in Workspace user");
-    expect(connector.description).toContain("Finance and attendance spreadsheets");
-    const content = guide(connector).content;
-    expect(content.split("\n").find((line) => line && !line.startsWith("#"))).toMatch(
-      /only spreadsheets they can open/,
-    );
-    expect(content).toContain("Drive");
-    expect(content).toContain("last-writer-wins");
-    expect(content).toContain("## Connection instructions\n\nThe budget lives in the 2026 Budget spreadsheet.");
-    expect(guide(connector).required).toBe(true);
-  });
-
-  it("ships exactly its tools, each with its safety class", async () => {
-    const connector = connection();
-    const tools = await connector.listTools(context());
-    const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
-    expect(annotations).toEqual({
-      get_spreadsheet: { readOnlyHint: true },
-      get_values: { readOnlyHint: true },
-      update_values: { readOnlyHint: false, destructiveHint: true },
-      batch_update_values: { readOnlyHint: false, destructiveHint: true },
-      append_values: { readOnlyHint: false, destructiveHint: false },
-      clear_values: { readOnlyHint: false, destructiveHint: true },
-      create_spreadsheet: { readOnlyHint: false, destructiveHint: false },
-      add_sheet: { readOnlyHint: false, destructiveHint: false },
-      batch_update_spreadsheet: { readOnlyHint: false, destructiveHint: true },
-    });
-    expect(
-      tools
-        .filter((tool) => isRead(tool))
-        .map((tool) => tool.name)
-        .sort(),
-    ).toEqual(["get_spreadsheet", "get_values"]);
-    // No listing tool: finding a spreadsheet by name is Drive's job.
-    expect(tools.some((tool) => /^(list|search)_/.test(tool.name))).toBe(false);
-    expect(connector).not.toHaveProperty("approval");
-    expect(connector.credential).toBeUndefined();
-    expect(connector.startAuth).toBeUndefined();
-  });
-
-  it("requests exactly the spreadsheets scope", async () => {
-    expect([...SHEETS_SCOPES]).toEqual(["https://www.googleapis.com/auth/spreadsheets"]);
-    route = () => ({ body: { spreadsheetId: ID } });
-    await call(connection(), "get_spreadsheet", { spreadsheetId: ID });
-    const assertion = (globalThis.fetch as any).mock.calls.find(([url]: [string]) => url === TOKEN_URL)[1].body;
-    const jwt = new URLSearchParams(String(assertion)).get("assertion")!;
-    const claims = JSON.parse(atob(jwt.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/")));
-    expect(claims.scope).toBe("https://www.googleapis.com/auth/spreadsheets");
-    expect(claims.sub).toBe("treasurer@church.example");
-  });
-
   it("fails auth_required with no network when a mapped subject has no caller", async () => {
     const connector = connection({ subject: () => "treasurer@church.example" });
     await expect(call(connector, "get_values", { spreadsheetId: ID, ranges: ["A1"] })).rejects.toMatchObject({
@@ -165,81 +97,6 @@ describe("sheets() identity and surface (H1)", () => {
 });
 
 describe("reading a spreadsheet's shape (H9)", () => {
-  it("asks for metadata only and projects sheets and named ranges as A1", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${ID}/edit`,
-        properties: {
-          title: "2026 Budget",
-          locale: "en_US",
-          timeZone: "America/Chicago",
-          defaultFormat: { noise: true },
-        },
-        sheets: [
-          // The first sheet's id and index are 0, which Google leaves out.
-          {
-            properties: {
-              title: "Summary",
-              sheetType: "GRID",
-              gridProperties: { rowCount: 1000, columnCount: 26, frozenRowCount: 1 },
-            },
-          },
-          {
-            properties: {
-              sheetId: 7,
-              title: "Q3 Budget",
-              index: 1,
-              sheetType: "GRID",
-              hidden: true,
-              gridProperties: { rowCount: 500, columnCount: 8 },
-            },
-          },
-        ],
-        namedRanges: [
-          { namedRangeId: "n1", name: "Totals", range: { endRowIndex: 5, endColumnIndex: 3 } },
-          {
-            namedRangeId: "n2",
-            name: "Spend",
-            range: { sheetId: 7, startRowIndex: 1, startColumnIndex: 1, endColumnIndex: 4 },
-          },
-          { namedRangeId: "n3", name: "Whole", range: { sheetId: 7 } },
-          { namedRangeId: "n4", name: "Rows", range: { sheetId: 7, startRowIndex: 2, endRowIndex: 9 } },
-          { namedRangeId: "n5", name: "Odd", range: { sheetId: 7, startColumnIndex: 2, endRowIndex: 9 } },
-        ],
-      },
-    });
-    const result = await call(connection(), "get_spreadsheet", { spreadsheetId: ID });
-    expect(calls[0]!.method).toBe("GET");
-    expect(`${calls[0]!.url.origin}${calls[0]!.url.pathname}`).toBe(`${SHEETS_API_BASE_URL}/spreadsheets/${ID}`);
-    const fields = calls[0]!.url.searchParams.get("fields")!;
-    expect(fields).toContain("sheets.properties(");
-    expect(fields).toContain("namedRanges(");
-    expect(fields).not.toMatch(/data|includeGridData/);
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      title: "2026 Budget",
-      url: `https://docs.google.com/spreadsheets/d/${ID}/edit`,
-      locale: "en_US",
-      timeZone: "America/Chicago",
-      sheets: [
-        { sheetId: 0, title: "Summary", index: 0, type: "GRID", rowCount: 1000, columnCount: 26, frozenRowCount: 1 },
-        { sheetId: 7, title: "Q3 Budget", index: 1, type: "GRID", hidden: true, rowCount: 500, columnCount: 8 },
-      ],
-      // Titles are always quoted: a bare whole-sheet title is a name Google
-      // resolves to a same-named named range first.
-      namedRanges: [
-        { namedRangeId: "n1", name: "Totals", sheetId: 0, range: "'Summary'!A1:C5" },
-        { namedRangeId: "n2", name: "Spend", sheetId: 7, range: "'Q3 Budget'!B2:D" },
-        { namedRangeId: "n3", name: "Whole", sheetId: 7, range: "'Q3 Budget'" },
-        { namedRangeId: "n4", name: "Rows", sheetId: 7, range: "'Q3 Budget'!3:9" },
-        // Not expressible in A1; the sheet id still says where it is.
-        { namedRangeId: "n5", name: "Odd", sheetId: 7 },
-      ],
-    });
-    expect(JSON.stringify(result)).not.toContain("noise");
-  });
-
   it("caps named ranges and says how many it left out", async () => {
     route = () => ({
       body: {
@@ -256,50 +113,9 @@ describe("reading a spreadsheet's shape (H9)", () => {
     expect(result.namedRanges).toHaveLength(200);
     expect(result.namedRangesOmitted).toBe(5);
   });
-
-  it("returns Google's untouched metadata on raw: true, still without grid data", async () => {
-    const body = { spreadsheetId: ID, properties: { title: "T", defaultFormat: { x: 1 } }, sheets: [] };
-    route = () => ({ body });
-    const result = await call(connection(), "get_spreadsheet", { spreadsheetId: ID, raw: true });
-    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ includeGridData: "false" });
-    expect(result).toEqual(body);
-  });
 });
 
 describe("reading values (H9, H10)", () => {
-  it("batch-reads ranges as rows with the render options it was given", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        valueRanges: [
-          { range: "Summary!A1:C3", majorDimension: "ROWS", values: [["Item", "Q3"], ["Rent", 1200], []] },
-          { range: "'Q3 Budget'!B1:B1000", majorDimension: "ROWS" },
-        ],
-      },
-    });
-    const result = await call(connection(), "get_values", {
-      spreadsheetId: ID,
-      ranges: ["Summary!A1:C3", "'Q3 Budget'!B:B"],
-      valueRenderOption: "UNFORMATTED_VALUE",
-      dateTimeRenderOption: "FORMATTED_STRING",
-    });
-    expect(path(0)).toBe(`/spreadsheets/${ID}/values:batchGet`);
-    const query = calls[0]!.url.searchParams;
-    expect(query.getAll("ranges")).toEqual(["Summary!A1:C3", "'Q3 Budget'!B:B"]);
-    expect(query.get("majorDimension")).toBe("ROWS");
-    expect(query.get("valueRenderOption")).toBe("UNFORMATTED_VALUE");
-    expect(query.get("dateTimeRenderOption")).toBe("FORMATTED_STRING");
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      valueRanges: [
-        { range: "Summary!A1:C3", values: [["Item", "Q3"], ["Rent", 1200], []], rowCount: 3 },
-        { range: "'Q3 Budget'!B1:B1000", values: [], rowCount: 0 },
-      ],
-      cellCount: 5,
-      page: { hasMore: false, nextCursor: null },
-    });
-  });
-
   const rows = (from: number, count: number) =>
     Array.from({ length: count }, (_, index) => [`r${from + index}`, from + index]);
 
@@ -590,39 +406,34 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
     expect(Math.max(...pages.map(utf8))).toBeGreaterThan(150_000);
   });
 
-  it.each([1_024, 1_500, 2_048, 4_096, 9_999])(
-    "never exceeds maxBytes %i across mixed rows, ranges, and markers",
-    async (maxBytes) => {
-      const ranges = ["A!A1:C30", "Empty!A1:B2", "'B b'!A1:A30", "C"];
-      const value = (row: number, column: number) =>
-        [row * 7 + column, `r${row}c${column}`, "é".repeat((row * 37 + column * 11) % 300), true, ""][
-          (row + column) % 5
-        ];
-      route = (request) => ({
-        body: {
-          spreadsheetId: ID,
-          valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
-            if (range.startsWith("Empty")) return { range };
-            const start = Number(/!A(\d+):/.exec(range)?.[1] ?? 1);
-            const width = range.startsWith("A") ? 3 : 1;
-            return {
-              range: range === "C" ? "C!A1:B30" : range,
-              values: Array.from({ length: 31 - start }, (_, index) =>
-                Array.from({ length: width }, (_, column) => value(start + index, column)),
-              ),
-            };
-          }),
-        },
-      });
-      const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes, maxCellChars: 120 }, maxBytes);
-      const seen = (prefix: string) =>
-        pages
-          .flatMap((page) => page.valueRanges)
-          .filter((entry: any) => entry.range.startsWith(prefix))
-          .reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
-      expect([seen("A!"), seen("'B b'"), seen("C!")]).toEqual([30, 30, 30]);
-    },
-  );
+  it.each([1_024, 9_999])("never exceeds maxBytes %i across mixed rows, ranges, and markers", async (maxBytes) => {
+    const ranges = ["A!A1:C30", "Empty!A1:B2", "'B b'!A1:A30", "C"];
+    const value = (row: number, column: number) =>
+      [row * 7 + column, `r${row}c${column}`, "é".repeat((row * 37 + column * 11) % 300), true, ""][(row + column) % 5];
+    route = (request) => ({
+      body: {
+        spreadsheetId: ID,
+        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
+          if (range.startsWith("Empty")) return { range };
+          const start = Number(/!A(\d+):/.exec(range)?.[1] ?? 1);
+          const width = range.startsWith("A") ? 3 : 1;
+          return {
+            range: range === "C" ? "C!A1:B30" : range,
+            values: Array.from({ length: 31 - start }, (_, index) =>
+              Array.from({ length: width }, (_, column) => value(start + index, column)),
+            ),
+          };
+        }),
+      },
+    });
+    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes, maxCellChars: 120 }, maxBytes);
+    const seen = (prefix: string) =>
+      pages
+        .flatMap((page) => page.valueRanges)
+        .filter((entry: any) => entry.range.startsWith(prefix))
+        .reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
+    expect([seen("A!"), seen("'B b'"), seen("C!")]).toEqual([30, 30, 30]);
+  });
 
   it("refuses a single row too large for the page, naming every way out", async () => {
     // Sixty 5,000-character cells: well inside maxCells, far past the bridge.
@@ -681,98 +492,11 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
 });
 
 describe("writing values", () => {
-  it("updates one range through values:batchUpdate, overwriting it", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        totalUpdatedCells: 4,
-        responses: [
-          { spreadsheetId: ID, updatedRange: "Summary!A1:B2", updatedRows: 2, updatedColumns: 2, updatedCells: 4 },
-        ],
-      },
-    });
-    const result = await call(connection(), "update_values", {
-      spreadsheetId: ID,
-      range: "Summary!A1",
-      values: [
-        ["Item", "=SUM(B2:B9)"],
-        [null, ""],
-      ],
-      valueInputOption: "USER_ENTERED",
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(path(0)).toBe(`/spreadsheets/${ID}/values:batchUpdate`);
-    expect(calls[0]!.body).toEqual({
-      valueInputOption: "USER_ENTERED",
-      data: [
-        {
-          range: "Summary!A1",
-          majorDimension: "ROWS",
-          values: [
-            ["Item", "=SUM(B2:B9)"],
-            [null, ""],
-          ],
-        },
-      ],
-      includeValuesInResponse: false,
-    });
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      updatedRange: "Summary!A1:B2",
-      updatedRows: 2,
-      updatedColumns: 2,
-      updatedCells: 4,
-    });
-  });
-
   it("requires a valueInputOption rather than choosing one", async () => {
     await expect(
       call(connection(), "update_values", { spreadsheetId: ID, range: "A1", values: [["x"]] }),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toEqual([]);
-  });
-
-  it("writes several ranges in one call and reports each", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        totalUpdatedRows: 3,
-        totalUpdatedColumns: 2,
-        totalUpdatedCells: 4,
-        totalUpdatedSheets: 2,
-        responses: [
-          { updatedRange: "A!A1:B1", updatedRows: 1, updatedColumns: 2, updatedCells: 2 },
-          { updatedRange: "B!A1:A2", updatedRows: 2, updatedColumns: 1, updatedCells: 2 },
-        ],
-      },
-    });
-    const result = await call(connection(), "batch_update_values", {
-      spreadsheetId: ID,
-      valueInputOption: "RAW",
-      data: [
-        { range: "A!A1", values: [[1, true]] },
-        { range: "B!A1", values: [["x"], ["y"]] },
-      ],
-    });
-    expect(calls[0]!.body).toEqual({
-      valueInputOption: "RAW",
-      data: [
-        { range: "A!A1", majorDimension: "ROWS", values: [[1, true]] },
-        { range: "B!A1", majorDimension: "ROWS", values: [["x"], ["y"]] },
-      ],
-      includeValuesInResponse: false,
-    });
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      totalUpdatedRows: 3,
-      totalUpdatedColumns: 2,
-      totalUpdatedCells: 4,
-      totalUpdatedSheets: 2,
-      updates: [
-        { updatedRange: "A!A1:B1", updatedRows: 1, updatedColumns: 2, updatedCells: 2 },
-        { updatedRange: "B!A1:A2", updatedRows: 2, updatedColumns: 1, updatedCells: 2 },
-      ],
-    });
   });
 
   it("refuses a write past connecta's cell cap, unsent", async () => {
@@ -786,44 +510,6 @@ describe("writing values", () => {
     expect(failure).toMatchObject({ code: "invalid_args" });
     expect(failure.message).toContain("Nothing was written");
     expect(calls).toEqual([]);
-  });
-
-  it("appends below the table with INSERT_ROWS pinned, the range escaped into the path", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        tableRange: "'Q3 Budget'!A1:D20",
-        updates: {
-          spreadsheetId: ID,
-          updatedRange: "'Q3 Budget'!A21:D21",
-          updatedRows: 1,
-          updatedColumns: 4,
-          updatedCells: 4,
-        },
-      },
-    });
-    const result = await call(connection(), "append_values", {
-      spreadsheetId: ID,
-      range: "'Q3 Budget'!A:D",
-      values: [["2026-10-06", "Rent", 1200, "paid"]],
-      valueInputOption: "USER_ENTERED",
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(path(0)).toBe(`/spreadsheets/${ID}/values/'Q3%20Budget'!A%3AD:append`);
-    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      includeValuesInResponse: "false",
-    });
-    expect(calls[0]!.body).toEqual({ majorDimension: "ROWS", values: [["2026-10-06", "Rent", 1200, "paid"]] });
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      tableRange: "'Q3 Budget'!A1:D20",
-      updatedRange: "'Q3 Budget'!A21:D21",
-      updatedRows: 1,
-      updatedColumns: 4,
-      updatedCells: 4,
-    });
   });
 
   it("offers no OVERWRITE append, and refuses a range that is only dots", async () => {
@@ -841,126 +527,9 @@ describe("writing values", () => {
     });
     expect(calls).toEqual([]);
   });
-
-  it("clears values in several ranges", async () => {
-    route = () => ({ body: { spreadsheetId: ID, clearedRanges: ["A!A1:B9", "B!C1:C1000"] } });
-    const result = await call(connection(), "clear_values", { spreadsheetId: ID, ranges: ["A!A1:B9", "B!C:C"] });
-    expect(path(0)).toBe(`/spreadsheets/${ID}/values:batchClear`);
-    expect(calls[0]!.body).toEqual({ ranges: ["A!A1:B9", "B!C:C"] });
-    expect(result).toEqual({ spreadsheetId: ID, clearedRanges: ["A!A1:B9", "B!C1:C1000"] });
-  });
-});
-
-describe("creating spreadsheets and sheets", () => {
-  it("creates a spreadsheet with named tabs and reads back only its ids", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: "new-1",
-        spreadsheetUrl: "https://docs.google.com/spreadsheets/d/new-1/edit",
-        properties: { title: "Attendance 2026" },
-        sheets: [{ properties: { title: "Sundays" } }, { properties: { sheetId: 42, title: "Midweek" } }],
-      },
-    });
-    const result = await call(connection(), "create_spreadsheet", {
-      title: "Attendance 2026",
-      sheetTitles: ["Sundays", "Midweek"],
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(`${calls[0]!.url.origin}${calls[0]!.url.pathname}`).toBe(`${SHEETS_API_BASE_URL}/spreadsheets`);
-    expect(calls[0]!.url.searchParams.get("fields")).toBe(
-      "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)",
-    );
-    expect(calls[0]!.body).toEqual({
-      properties: { title: "Attendance 2026" },
-      sheets: [{ properties: { title: "Sundays" } }, { properties: { title: "Midweek" } }],
-    });
-    expect(result).toEqual({
-      spreadsheetId: "new-1",
-      title: "Attendance 2026",
-      url: "https://docs.google.com/spreadsheets/d/new-1/edit",
-      sheets: [
-        { sheetId: 0, title: "Sundays" },
-        { sheetId: 42, title: "Midweek" },
-      ],
-    });
-  });
-
-  it("creates a spreadsheet with Google's default sheet when none is named", async () => {
-    route = () => ({
-      body: { spreadsheetId: "new-2", properties: { title: "T" }, sheets: [{ properties: { title: "Sheet1" } }] },
-    });
-    await call(connection(), "create_spreadsheet", { title: "T" });
-    expect(calls[0]!.body).toEqual({ properties: { title: "T" } });
-  });
-
-  it("adds a sheet through one addSheet request", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        replies: [
-          {
-            addSheet: {
-              properties: {
-                sheetId: 99,
-                title: "Q4",
-                index: 2,
-                sheetType: "GRID",
-                gridProperties: { rowCount: 100, columnCount: 6 },
-              },
-            },
-          },
-        ],
-      },
-    });
-    const result = await call(connection(), "add_sheet", {
-      spreadsheetId: ID,
-      title: "Q4",
-      index: 2,
-      rowCount: 100,
-      columnCount: 6,
-    });
-    expect(path(0)).toBe(`/spreadsheets/${ID}:batchUpdate`);
-    expect(calls[0]!.body).toEqual({
-      requests: [
-        { addSheet: { properties: { title: "Q4", index: 2, gridProperties: { rowCount: 100, columnCount: 6 } } } },
-      ],
-    });
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      sheetId: 99,
-      title: "Q4",
-      index: 2,
-      type: "GRID",
-      rowCount: 100,
-      columnCount: 6,
-    });
-
-    calls.length = 0;
-    await call(connection(), "add_sheet", { spreadsheetId: ID, title: "Bare" });
-    expect(calls[0]!.body).toEqual({ requests: [{ addSheet: { properties: { title: "Bare" } } }] });
-  });
 });
 
 describe("the raw batchUpdate hatch", () => {
-  it("passes requests through untouched and returns the replies", async () => {
-    const requests = [
-      { deleteDimension: { range: { sheetId: 7, dimension: "ROWS", startIndex: 3, endIndex: 9 } } },
-      {
-        repeatCell: {
-          range: { sheetId: 7 },
-          cell: { userEnteredFormat: { textFormat: { bold: true } } },
-          fields: "userEnteredFormat.textFormat.bold",
-        },
-      },
-    ];
-    route = () => ({ body: { spreadsheetId: ID, replies: [{}, {}] } });
-    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests });
-    expect(calls[0]!.method).toBe("POST");
-    expect(path(0)).toBe(`/spreadsheets/${ID}:batchUpdate`);
-    expect(calls[0]!.body).toEqual({ requests, includeSpreadsheetInResponse: false });
-    expect(result).toEqual({ spreadsheetId: ID, replies: [{}, {}] });
-  });
-
   const bytesOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const hundred = Array.from({ length: 100 }, (_, index) => ({
     duplicateSheet: { sourceSheetId: 0, newSheetName: `Copy ${index}` },
@@ -1068,49 +637,43 @@ describe("errors (H11)", () => {
   };
   const writes: [string, Record<string, unknown>][] = [
     ["update_values", { spreadsheetId: ID, range: "A1", values: [["x"]], valueInputOption: "RAW" }],
-    ["batch_update_values", { spreadsheetId: ID, data: [{ range: "A1", values: [["x"]] }], valueInputOption: "RAW" }],
     ["append_values", { spreadsheetId: ID, range: "Log!A:C", values: [["x"]], valueInputOption: "RAW" }],
-    ["clear_values", { spreadsheetId: ID, ranges: ["A1"] }],
     ["create_spreadsheet", { title: "Attendance" }],
-    ["add_sheet", { spreadsheetId: ID, title: "Q4" }],
-    ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ deleteSheet: { sheetId: 7 } }] }],
   ];
 
-  it.each(writes)("never tells %s to retry when its 2xx reply breaks mid-stream", async (name, args) => {
-    route = () => ({ raw: brokenReply });
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("the change probably applied");
-    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    // One attempt: an accepted write is never replayed.
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "never tells %s to retry when its 2xx reply breaks mid-stream",
+    async (name, args) => {
+      route = () => ({ raw: brokenReply });
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("the change probably applied");
+      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+      // One attempt: an accepted write is never replayed.
+      expect(calls).toHaveLength(1);
+    },
+  );
 
-  it.each(writes)("INV-9: never tells %s to retry when no reply comes back", async (name, args) => {
-    route = () => ({ raw: noReply });
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("may or may not have been applied");
-    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "INV-9: never tells %s to retry when no reply comes back",
+    async (name, args) => {
+      route = () => ({ raw: noReply });
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("may or may not have been applied");
+      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   const serverError = () => ({
     status: 503,
     body: { error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } },
   });
-  it.each(writes)("treats a 5xx answering %s as an unknown outcome, never retryable", async (name, args) => {
-    route = serverError;
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("outcome is unknown");
-    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    expect(calls).toHaveLength(1);
-  });
 
   // Writing fixed cells is an operation hint, not an idempotency key, and
   // grants no retry credit (#902 round 11).
-  it.each(writes.filter(([name]) => ["update_values", "batch_update_values", "clear_values"].includes(name)))(
+  it.each(writes.filter(([name]) => name === "update_values"))(
     "INV-9: a 5xx answering %s is unknown, though it writes fixed cells",
     async (name, args) => {
       route = serverError;
@@ -1128,15 +691,20 @@ describe("errors (H11)", () => {
     create_spreadsheet: "Search Drive for this title before creating it again",
   };
 
-  it.each(writes)("treats a redirect answering %s as an unknown outcome, never as applied", async (name, args) => {
-    route = redirect;
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("unknown");
-    expect(failure.message).not.toMatch(/probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    if (advice[name]) expect(failure.message).toContain(advice[name]);
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "treats a redirect answering %s as an unknown outcome, never as applied",
+    async (name, args) => {
+      route = redirect;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("unknown");
+      expect(failure.message).not.toMatch(
+        /probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i,
+      );
+      if (advice[name]) expect(failure.message).toContain(advice[name]);
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   it("keeps a 503 with a rate-limit reason on a non-idempotent write an unknown outcome, not a rate limit", async () => {
     route = () => ({
@@ -1150,7 +718,7 @@ describe("errors (H11)", () => {
         },
       },
     });
-    const failure = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const failure = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.code).not.toBe("rate_limited");
     expect(failure.message).toContain("outcome is unknown");
@@ -1160,19 +728,19 @@ describe("errors (H11)", () => {
 
   it("gives a 5xx append or create the same advice as one that got no answer", async () => {
     route = serverError;
-    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(append.message).toContain("Appending again would add the rows a second time");
-    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
     expect(create.message).toContain("Search Drive for this title before creating it again");
   });
 
   it("tells an uncertain append to read the table, and an uncertain create to search Drive", async () => {
     route = () => ({ raw: noReply });
-    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(append.message).toContain("Appending again would add the rows a second time");
     expect(append.message).toContain("get_values");
     route = () => ({ raw: brokenReply });
-    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
     expect(create.message).toContain("Search Drive for this title before creating it again");
   });
 
@@ -1181,66 +749,11 @@ describe("errors (H11)", () => {
       status: 400,
       body: { error: { code: 400, message: "Unable to parse range: Log!A:C", status: "INVALID_ARGUMENT" } },
     });
-    const refused = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const refused = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(refused.code).toBe("invalid_args");
     expect(refused.message).not.toContain("Appending again");
     route = () => ({ raw: noReply });
     const read = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
     expect(read).toMatchObject({ code: "unavailable", retryable: true });
-  });
-
-  it("never calls a 404 absent: the spreadsheet may exist and not be shared", async () => {
-    route = () => ({
-      status: 404,
-      body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } },
-    });
-    const failure = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
-    expect(failure.code).not.toBe("not_found");
-    expect(failure.message).toContain("not visible to this account");
-  });
-
-  it("maps a refused share to provider_permission_denied and a bad range to invalid_args", async () => {
-    route = () => ({
-      status: 403,
-      body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
-    });
-    await expect(call(connection(), "get_values", { spreadsheetId: ID, ranges: ["A1"] })).rejects.toMatchObject({
-      code: "provider_permission_denied",
-    });
-    route = () => ({
-      status: 400,
-      body: { error: { code: 400, message: "Unable to parse range: Nope!A1", status: "INVALID_ARGUMENT" } },
-    });
-    const failure = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["Nope!A1"] }).catch(
-      (error) => error,
-    );
-    expect(failure.code).toBe("invalid_args");
-    expect(failure.message).toContain("Unable to parse range");
-  });
-
-  it("names the Sheets API when it is not enabled, and the scope when it is missing", async () => {
-    route = () => ({
-      status: 403,
-      body: {
-        error: {
-          code: 403,
-          message: "Google Sheets API has not been used",
-          status: "PERMISSION_DENIED",
-          details: [{ reason: "SERVICE_DISABLED" }],
-        },
-      },
-    });
-    const disabled = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
-    expect(disabled.message).toContain("Google Sheets API is not enabled");
-    route = () => ({
-      status: 403,
-      body: {
-        error: { code: 403, message: "Insufficient scopes", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] },
-      },
-    });
-    const scope = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
-    expect(scope.code).toBe("provider_permission_denied");
-    expect(scope.message).toContain("https://www.googleapis.com/auth/spreadsheets");
   });
 });

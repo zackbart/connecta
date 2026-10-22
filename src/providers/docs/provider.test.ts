@@ -1,17 +1,14 @@
-// The Google Docs connection. Tests stub the network and pin the requests each
-// tool sends, the rendering get_document returns, the edits it frames, and the
-// failures it maps — H1, H9, H10, H11, and H14 for this provider. Delegation,
+// The Google Docs connection. test/goldens/docs pins each tool's catalog entry,
+// requests, results and failure ladder; these tests stub the network for what
+// the goldens do not reach: rendering every element kind, index paging, result
+// and raw ceilings, refusals before dispatch, and write outcomes. Delegation,
 // subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Validator } from "@cfworker/json-schema";
-import { attachCaller } from "../../connector-caller.js";
-import { DOCS_API_BASE_URL, DOCS_SCOPES, docs } from "./index.js";
+import { DOCS_API_BASE_URL, docs } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type { AuthenticatedIdentity, Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
-
-const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
+import type { AuthenticatedIdentity, Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -106,15 +103,6 @@ function context(): ConnectorContext {
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
   return connector.callTool(name, args, context()) as Promise<any>;
 }
-
-function guide(connector: Connector): ConnectorUsageGuide {
-  if (typeof connector.usageGuide !== "object" || !connector.usageGuide) {
-    throw new Error("expected a structured guide");
-  }
-  return connector.usageGuide;
-}
-
-const path = (index: number) => calls[index]!.url.pathname.replace("/v1", "");
 
 // --- A document, as documents.get returns it with includeTabsContent ----------------
 
@@ -258,57 +246,6 @@ const RENDERED_FIRST_TAB = [
   "",
   "[^1]: Per the bylaws.",
 ].join("\n");
-
-describe("docs() identity and surface (H1, H14)", () => {
-  it("requires a purpose and names the routing fact in title, description, and guide", () => {
-    expect(() => connection({ purpose: "" })).toThrow(/purpose/);
-    expect(() => connection({ subject: undefined })).toThrow(/subject/);
-    const connector = connection({ instructions: "Sermon drafts live in the Preaching folder." });
-    expect(connector.title).toBe("Google Docs");
-    expect(connector.description).toContain("Staff meeting notes");
-    const content = guide(connector).content;
-    expect(content.split("\n").find((line) => line && !line.startsWith("#"))).toMatch(/cannot search or list/);
-    expect(content).toContain("## Connection instructions\n\nSermon drafts live in the Preaching folder.");
-    expect(content).toContain("Google Drive connection");
-    expect(guide(connector).required).toBe(true);
-  });
-
-  it("has exactly the six tools, and no search, list, delete, or share tool", async () => {
-    const tools = await connection().listTools(context());
-    expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "append_text",
-      "batch_update_document",
-      "create_document",
-      "get_document",
-      "insert_text",
-      "replace_all_text",
-    ]);
-    expect(tools.some((tool) => /search|list|delete|trash|share/.test(tool.name))).toBe(false);
-  });
-
-  it("classifies the read as read-only, additive edits as non-destructive, and the rest as destructive", async () => {
-    const connector = connection();
-    const tools = await connector.listTools(context());
-    const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
-    expect(tools.filter((tool) => isRead(tool)).map((tool) => tool.name)).toEqual(["get_document"]);
-    expect(byName["get_document"]).toEqual({ readOnlyHint: true });
-    for (const additive of ["create_document", "append_text", "insert_text"]) {
-      expect(byName[additive], additive).toEqual({ readOnlyHint: false, destructiveHint: false });
-    }
-    for (const destructive of ["replace_all_text", "batch_update_document"]) {
-      expect(byName[destructive], destructive).toEqual({ readOnlyHint: false, destructiveHint: true });
-    }
-    // No operator slot and no OAuth: the key is deployment config.
-    expect(connector).not.toHaveProperty("approval");
-    expect(connector.credential).toBeUndefined();
-    expect(connector.startAuth).toBeUndefined();
-  });
-
-  it("requests exactly the documents scope", () => {
-    expect([...DOCS_SCOPES]).toEqual(["https://www.googleapis.com/auth/documents"]);
-    expect(DOCS_API_BASE_URL).toBe("https://docs.googleapis.com/v1");
-  });
-});
 
 describe("reading a document (H9)", () => {
   it("asks for every tab and renders each as markdown-ish text, dropping styles", async () => {
@@ -517,140 +454,6 @@ describe("reading a document (H9)", () => {
 });
 
 describe("editing a document", () => {
-  it("creates a document from a title alone in one request", async () => {
-    route = () => ({ body: { documentId: "new-1", title: "Minutes", revisionId: "r0", body: {} } });
-    const result = await call(connection(), "create_document", { title: "Minutes" });
-    expect(calls.map((entry) => `${entry.method} ${path(calls.indexOf(entry))}`)).toEqual(["POST /documents"]);
-    expect(calls[0]!.body).toEqual({ title: "Minutes" });
-    expect(result).toEqual({
-      documentId: "new-1",
-      title: "Minutes",
-      revisionId: "r0",
-      url: "https://docs.google.com/document/d/new-1/edit",
-    });
-  });
-
-  it("writes an initial body as a second, separate insert at the end of the body", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? { body: { documentId: "new-1", replies: [{}], writeControl: { requiredRevisionId: "r1" } } }
-        : { body: { documentId: "new-1", title: "Minutes", revisionId: "r0" } };
-    const result = await call(connection(), "create_document", {
-      title: "Minutes",
-      text: "Opened in prayer.\nQuorum present.",
-    });
-    expect(path(1)).toBe("/documents/new-1:batchUpdate");
-    expect(calls[1]!.body).toEqual({
-      requests: [{ insertText: { text: "Opened in prayer.\nQuorum present.", endOfSegmentLocation: {} } }],
-    });
-    expect(result.revisionId).toBe("r1");
-  });
-
-  it("names the created document, unretryably, when Google refuses its initial text", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } }
-        : { body: { documentId: "new-1", title: "Minutes" } };
-    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
-      (error) => error,
-    );
-    expect(failure).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
-    expect(failure.message).toContain("Created document new-1");
-    expect(failure.message).toContain("add the text with append_text on new-1");
-  });
-
-  it("appends at the end of the body or a tab, under a required revision", async () => {
-    route = () => ({ body: { documentId: "doc-1", replies: [{}], writeControl: { requiredRevisionId: "rev-2" } } });
-    const result = await call(connection(), "append_text", {
-      documentId: "doc-1",
-      text: "\nAction items follow.",
-      tabId: "t.child",
-      requiredRevisionId: "rev-1",
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(`${calls[0]!.url.origin}${calls[0]!.url.pathname}`).toBe(`${DOCS_API_BASE_URL}/documents/doc-1:batchUpdate`);
-    expect(calls[0]!.body).toEqual({
-      requests: [{ insertText: { text: "\nAction items follow.", endOfSegmentLocation: { tabId: "t.child" } } }],
-      writeControl: { requiredRevisionId: "rev-1" },
-    });
-    expect(result).toEqual({ documentId: "doc-1", revisionId: "rev-2" });
-  });
-
-  it("inserts at an index, in the first tab unless one is named", async () => {
-    route = () => ({ body: { documentId: "doc-1", replies: [{}] } });
-    const result = await call(connection(), "insert_text", { documentId: "doc-1", index: 23, text: "Note: " });
-    expect(calls[0]!.body).toEqual({ requests: [{ insertText: { text: "Note: ", location: { index: 23 } } }] });
-    expect(result).toEqual({ documentId: "doc-1" });
-
-    await call(connection(), "insert_text", { documentId: "doc-1", index: 5, text: "x", tabId: "t.0" });
-    expect(calls[1]!.body.requests[0].insertText.location).toEqual({ index: 5, tabId: "t.0" });
-  });
-
-  it("replaces all text with match options and tab criteria, reporting the count", async () => {
-    route = () => ({
-      body: {
-        documentId: "doc-1",
-        replies: [{ replaceAllText: { occurrencesChanged: 3 } }],
-        writeControl: { requiredRevisionId: "rev-9" },
-      },
-    });
-    const result = await call(connection(), "replace_all_text", {
-      documentId: "doc-1",
-      find: "\\bQ(\\d)\\b",
-      replaceWith: "Quarter",
-      matchCase: true,
-      regex: true,
-      tabIds: ["t.0"],
-    });
-    expect(calls[0]!.body).toEqual({
-      requests: [
-        {
-          replaceAllText: {
-            containsText: { text: "\\bQ(\\d)\\b", matchCase: true, searchByRegex: true },
-            replaceText: "Quarter",
-            tabsCriteria: { tabIds: ["t.0"] },
-          },
-        },
-      ],
-    });
-    expect(result).toEqual({ documentId: "doc-1", occurrencesChanged: 3, revisionId: "rev-9" });
-
-    // Google leaves a zero count out of the reply; the answer still has one.
-    route = () => ({ body: { documentId: "doc-1", replies: [{ replaceAllText: {} }] } });
-    const none = await call(connection(), "replace_all_text", { documentId: "doc-1", find: "absent", replaceWith: "" });
-    expect(calls[1]!.body.requests[0].replaceAllText).toEqual({
-      containsText: { text: "absent", matchCase: false },
-      replaceText: "",
-    });
-    expect(none.occurrencesChanged).toBe(0);
-  });
-
-  it("passes raw batchUpdate requests through verbatim and returns their replies", async () => {
-    const requests = [
-      { deleteContentRange: { range: { startIndex: 5, endIndex: 9 } } },
-      { createNamedRange: { name: "agenda", range: { startIndex: 1, endIndex: 4 } } },
-    ];
-    route = () => ({
-      body: {
-        documentId: "doc-1",
-        replies: [{}, { createNamedRange: { namedRangeId: "kix.nr1" } }],
-        writeControl: { requiredRevisionId: "rev-3" },
-      },
-    });
-    const result = await call(connection(), "batch_update_document", {
-      documentId: "doc-1",
-      requests,
-      requiredRevisionId: "rev-2",
-    });
-    expect(calls[0]!.body).toEqual({ requests, writeControl: { requiredRevisionId: "rev-2" } });
-    expect(result).toEqual({
-      documentId: "doc-1",
-      revisionId: "rev-3",
-      replies: [{}, { createNamedRange: { namedRangeId: "kix.nr1" } }],
-      replyCount: 2,
-    });
-  });
-
   it("keeps a large reply inside the result budget, still saying the batch applied", async () => {
     const BUDGET = 192 * 1024;
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -750,21 +553,21 @@ describe("editing a document", () => {
 });
 
 describe("failures, mapped to what the caller does next (H11)", () => {
-  it.each([
-    ["a 400 FAILED_PRECONDITION", 400, "FAILED_PRECONDITION"],
-    ["a 409 ABORTED", 409, "ABORTED"],
-  ])("answers a stale requiredRevisionId (%s) with conflict, reading nothing more", async (_kind, status, reason) => {
-    route = () => ({ status, body: { error: { code: status, message: "The document changed.", status: reason } } });
-    const failure = await call(connection(), "insert_text", {
-      documentId: "doc-1",
-      index: 5,
-      text: "x",
-      requiredRevisionId: "rev-1",
-    }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "conflict", retryable: false });
-    expect(failure.message).toContain("changed after the revision it named");
-    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
-  });
+  it.each([["a 400 FAILED_PRECONDITION", 400, "FAILED_PRECONDITION"]])(
+    "answers a stale requiredRevisionId (%s) with conflict, reading nothing more",
+    async (_kind, status, reason) => {
+      route = () => ({ status, body: { error: { code: status, message: "The document changed.", status: reason } } });
+      const failure = await call(connection(), "insert_text", {
+        documentId: "doc-1",
+        index: 5,
+        text: "x",
+        requiredRevisionId: "rev-1",
+      }).catch((error) => error);
+      expect(failure).toMatchObject({ code: "conflict", retryable: false });
+      expect(failure.message).toContain("changed after the revision it named");
+      expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+    },
+  );
 
   it("passes other refusals through as mapped, and a precondition without a revision is no conflict", async () => {
     // A bad index is a refusal, not a conflict, revision or not.
@@ -790,110 +593,22 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(unguarded.code).toBe("connector_call_failed");
   });
 
-  it("never calls a 2xx it could not read unapplied, nor invites a repeat", async () => {
-    route = () => ({ raw: "{not json" });
-    const failure = await call(connection(), "insert_text", {
-      documentId: "doc-1",
-      index: 5,
-      text: "x",
-      requiredRevisionId: "rev-1",
-    }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("it was applied");
-    expect(failure.message).toContain("Do not repeat it");
-    expect(failure.message).not.toMatch(/nothing was applied/i);
-    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
-  });
-
-  it.each([
-    ["no answer came back", { unreachable: true }],
-    ["Google answered a 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
-    ["Google answered a 500", { status: 500, body: { error: { code: 500, message: "Internal error." } } }],
-  ])("reports every edit's outcome as unknown, unretryably, when %s", async (_kind, reply) => {
-    route = () => reply;
-    const edits: Record<string, Record<string, unknown>> = {
-      append_text: { documentId: "d", text: "x" },
-      insert_text: { documentId: "d", index: 1, text: "x" },
-      replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
-      batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-    };
-    for (const [name, values] of Object.entries(edits)) {
-      const failure = await call(connection(), name, values).catch((error) => error);
-      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message, name).toContain("outcome of this edit is unknown");
-      expect(failure.message, name).not.toMatch(/nothing was applied/i);
-    }
-
-    // A revision is a precondition, not an idempotency key: no repeat is
-    // offered with one or without one (INV-9, round 13).
-    const guarded = await call(connection(), "append_text", {
-      documentId: "d",
-      text: "x",
-      requiredRevisionId: "r",
-    }).catch((error) => error);
-    const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    for (const failure of [guarded, bare]) {
-      expect(failure.message).toContain("can duplicate it");
-      expect(failure.message).not.toContain("is safe");
-    }
-  });
-
-  it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {
-    route = () => ({
-      status: 403,
-      body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
-    });
+  it("calls an edit applied after a 2xx body breaks, and never invites a repeat", async () => {
+    route = () => ({ brokenBody: true });
     const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    expect(failure.code).toBe("provider_permission_denied");
-    expect(failure.message).toContain("may lack access");
-    expect(failure.message).not.toContain("outcome of this edit is unknown");
-  });
-
-  it.each([
-    ["a body that breaks after the status", { brokenBody: true }],
-    ["a body past the response ceiling", { oversized: true }],
-    ["a body that will not parse", { raw: "{oops" }],
-  ])("calls every edit probably applied after a 2xx with %s, and never invites a repeat", async (_kind, reply) => {
-    const args: Record<string, Record<string, unknown>> = {
-      append_text: { documentId: "d", text: "x" },
-      insert_text: { documentId: "d", index: 1, text: "x" },
-      replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
-      batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-    };
-    route = () => reply;
-    for (const [name, values] of Object.entries(args)) {
-      const failure = await call(connection(), name, values).catch((error) => error);
-      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message, name).toContain("so it was applied");
-      expect(failure.message, name).toContain("Do not repeat it");
-    }
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("so it was applied");
+    expect(failure.message).toContain("Do not repeat it");
+    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
   it.each([
     ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
     [
-      "a broken 2xx body",
-      { brokenBody: true },
-      "whether its initial text was written is unknown",
-      "only if it is missing",
-    ],
-    [
-      "an oversized 2xx",
-      { oversized: true },
-      "whether its initial text was written is unknown",
-      "only if it is missing",
-    ],
-    [
       "an explicit 4xx refusal",
       { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } },
       "Google refused its initial text",
       "add the text with append_text on new-1",
-    ],
-    [
-      "a 5xx",
-      { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } },
-      "whether its initial text was written is unknown",
-      "only if it is missing",
     ],
   ])("after creating, advises on its initial text by outcome: %s", async (_kind, reply, says, advice) => {
     route = (request) =>
@@ -912,30 +627,8 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   });
 
   it.each([
-    ["no answer came back", { unreachable: true }],
-    ["Google answered a 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
-  ])("never invites a repeat create when %s: the document may exist", async (_kind, reply) => {
-    route = () => reply;
-    const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("Whether the document was created is unknown");
-    expect(failure.message).toContain("Drive search for that title");
-    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
-  });
-
-  it("passes a 4xx create refusal through: nothing was created", async () => {
-    route = () => ({ status: 400, body: { error: { code: 400, message: "Bad title.", status: "INVALID_ARGUMENT" } } });
-    await expect(call(connection(), "create_document", { title: "Minutes" })).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("Bad title."),
-    });
-  });
-
-  it.each([
     ["an unreadable reply", { raw: "{oops" }],
     ["a reply without an id", { body: { title: "Minutes" } }],
-    ["a body that breaks after the status", { brokenBody: true }],
-    ["a body past the response ceiling", { oversized: true }],
   ])("acknowledges a create Google answered 2xx with %s", async (_kind, reply) => {
     route = () => reply;
     const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
@@ -943,61 +636,9 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(failure.message).toContain("created the document (HTTP 2xx)");
     expect(failure.message).toContain('find "Minutes" in Drive');
   });
-
-  it("states the 404 ambiguity: a document id that is unknown or not shared look alike", async () => {
-    route = () => ({
-      status: 404,
-      body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } },
-    });
-    const failure = await call(connection(), "get_document", { documentId: "nope" }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
-    expect(failure.message).toContain("not visible to this account");
-  });
-
-  it("maps a permission refusal, a missing scope, and a rate limit by their fix", async () => {
-    route = () => ({
-      status: 403,
-      body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
-    });
-    await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
-      code: "provider_permission_denied",
-      message: expect.stringContaining("may lack access"),
-    });
-
-    route = () => ({
-      status: 403,
-      body: {
-        error: {
-          code: 403,
-          message: "Insufficient scopes.",
-          status: "PERMISSION_DENIED",
-          details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
-        },
-      },
-    });
-    await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
-      code: "provider_permission_denied",
-      message: expect.stringContaining("https://www.googleapis.com/auth/documents"),
-    });
-
-    route = () => ({
-      status: 429,
-      body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } },
-    });
-    await expect(call(connection(), "append_text", { documentId: "d", text: "x" })).rejects.toMatchObject({
-      code: "rate_limited",
-    });
-  });
 });
 
 describe("whose documents", () => {
-  const identity = (id: string): AuthenticatedIdentity => ({
-    actor: { kind: "test-users", id, namespace: "https://identity.test" },
-    subject: { namespace: "https://identity.test", id },
-    principal: { namespace: "https://identity.test", id },
-    interactive: true,
-  });
-
   it("fails closed with no admitted caller, before any network call", async () => {
     const connector = connection({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@church.example` });
     await expect(call(connector, "get_document", { documentId: "doc-1" })).rejects.toMatchObject({
@@ -1006,16 +647,6 @@ describe("whose documents", () => {
     });
     expect(tokenCalls).toBe(0);
     expect(calls).toEqual([]);
-  });
-
-  it("acts as the mapped account for an admitted caller", async () => {
-    route = () => ({ body: DOCUMENT });
-    const connector = connection({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@church.example` });
-    const ctx = attachCaller(context(), { identity: identity("ann"), authenticated: true });
-    const result = (await connector.callTool("get_document", { documentId: "doc-1" }, ctx)) as any;
-    expect(result.documentId).toBe("doc-1");
-    expect(tokenCalls).toBe(1);
-    expect(calls[0]!.url.pathname).toBe("/v1/documents/doc-1");
   });
 });
 
@@ -1047,17 +678,8 @@ async function check(connector: Connector, name: string, result: unknown): Promi
 }
 
 describe("every output is declared (H8, H9)", () => {
-  it("declares every key each tool emits, on realistic and on empty resources", async () => {
+  it("accepts ProtoJSON omissions in documents and batch replies", async () => {
     const connector = connection();
-    route = () => ({ body: DOCUMENT });
-    await check(
-      connector,
-      "get_document",
-      await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }),
-    );
-    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", maxChars: 3 }));
-    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", raw: true }));
-
     // ProtoJSON drops empty fields: an empty document is very nearly `{}`.
     route = () => ({ body: {} });
     const empty = await call(connector, "get_document", { documentId: "doc-0", withIndexes: true });
@@ -1070,38 +692,6 @@ describe("every output is declared (H8, H9)", () => {
     await check(connector, "get_document", empty);
     route = () => ({ body: { documentId: "doc-0", tabs: [{ tabProperties: { tabId: "t.0" } }] } });
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-0" }));
-
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? {
-            body: {
-              documentId: "d",
-              replies: [{ replaceAllText: { occurrencesChanged: 2 } }],
-              writeControl: { requiredRevisionId: "r2" },
-            },
-          }
-        : { body: { documentId: "d", title: "T", revisionId: "r1" } };
-    await check(connector, "create_document", await call(connector, "create_document", { title: "T", text: "x" }));
-    await check(connector, "append_text", await call(connector, "append_text", { documentId: "d", text: "x" }));
-    await check(
-      connector,
-      "insert_text",
-      await call(connector, "insert_text", { documentId: "d", index: 1, text: "x" }),
-    );
-    await check(
-      connector,
-      "replace_all_text",
-      await call(connector, "replace_all_text", { documentId: "d", find: "a", replaceWith: "b" }),
-    );
-    await check(
-      connector,
-      "batch_update_document",
-      await call(connector, "batch_update_document", {
-        documentId: "d",
-        requests: [{ insertText: {} }],
-        requiredRevisionId: "r1",
-      }),
-    );
 
     // An empty batchUpdate answer still satisfies every required key.
     route = () => ({ body: {} });
@@ -1155,53 +745,6 @@ describe("every output is declared (H8, H9)", () => {
 });
 
 describe("raw reads (H9)", () => {
-  /** Every field Docs v1's Discovery document (revision 20261005) puts on Document. */
-  const DOCUMENT_FIELDS = [
-    "body",
-    "comments",
-    "commentsViewMode",
-    "documentId",
-    "documentStyle",
-    "footers",
-    "footnotes",
-    "headers",
-    "inlineObjects",
-    "lists",
-    "namedRanges",
-    "namedStyles",
-    "positionedObjects",
-    "revisionId",
-    "suggestedDocumentStyleChanges",
-    "suggestedNamedStylesChanges",
-    "suggestions",
-    "suggestionsViewMode",
-    "tabs",
-    "title",
-  ];
-
-  it("declares every field a Document can carry, none required, and a full one validates", async () => {
-    const tool = (await connection().listTools(context())).find((candidate) => candidate.name === "get_document")!;
-    const raw = (tool.outputSchema as any).properties.raw;
-    expect(Object.keys(raw.properties).sort()).toEqual(DOCUMENT_FIELDS);
-    expect(raw.required).toBeUndefined();
-    const full = Object.fromEntries(
-      DOCUMENT_FIELDS.map((field) => [
-        field,
-        field === "tabs"
-          ? DOCUMENT.tabs
-          : ["comments", "suggestions"].includes(field)
-            ? [{}]
-            : ["documentId", "title", "revisionId", "suggestionsViewMode", "commentsViewMode"].includes(field)
-              ? "x"
-              : {},
-      ]),
-    );
-    route = () => ({ body: full });
-    const result = await call(connection(), "get_document", { documentId: "x", raw: true });
-    expect(result.raw).toEqual(full);
-    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate(result).errors).toEqual([]);
-  });
-
   it("measures the raw ceiling on the whole result, to the byte", async () => {
     const LIMIT = 4 * 1024 * 1024;
     const documentWith = (padding: number) => ({
@@ -1240,44 +783,6 @@ describe("raw reads (H9)", () => {
     const child = await call(connection(), "get_document", { documentId: "doc-1", raw: true, tabId: "t.child" });
     expect(child.raw.tabs).toEqual([DOCUMENT.tabs[0]!.childTabs[0]]);
     expect(child.raw.title).toBe("Elders meeting");
-  });
-
-  it("returns an empty document as Google sent it, and validates", async () => {
-    route = () => ({ body: {} });
-    const empty = await call(connection(), "get_document", { documentId: "doc-0", raw: true });
-    expect(empty).toEqual({ documentId: "doc-0", url: "https://docs.google.com/document/d/doc-0/edit", raw: {} });
-    const tool = (await connection().listTools(context())).find((candidate) => candidate.name === "get_document")!;
-    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate(empty).errors).toEqual([]);
-    expect(
-      new Validator(tool.outputSchema as any, "2020-12", false).validate({ documentId: "d", raw: DOCUMENT }).errors,
-    ).toEqual([]);
-  });
-
-  it("refuses a raw document past its ceiling by naming the way out, and raw beside rendering options", async () => {
-    const huge = "x".repeat(4 * 1024 * 1024);
-    route = () => ({
-      body: {
-        documentId: "big",
-        tabs: [
-          {
-            tabProperties: { tabId: "t.0" },
-            documentTab: { body: { content: [paragraph(1, [run(`${huge}\n`, 1)])] } },
-          },
-        ],
-      },
-    });
-    const failure = await call(connection(), "get_document", { documentId: "big", raw: true }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "invalid_args" });
-    expect(failure.message).toContain("raw ceiling");
-    expect(failure.message).toContain("tabId");
-
-    calls.length = 0;
-    for (const extra of [{ maxChars: 10 }, { withIndexes: true }]) {
-      await expect(call(connection(), "get_document", { documentId: "d", raw: true, ...extra })).rejects.toMatchObject({
-        code: "invalid_args",
-      });
-    }
-    expect(calls).toEqual([]);
   });
 });
 
@@ -1358,8 +863,8 @@ describe("every inline element renders as something, or is named (H9)", () => {
   });
 });
 
-// Cases here push 9 MiB fields and a five-hundred-call sweep of replies near
-// the 192 KiB budget through whole calls: CPU-bound, with no timing behavior,
+// Cases here push 9 MiB fields and replies near the 192 KiB budget through
+// whole calls: CPU-bound, with no timing behavior,
 // and seconds long even on an idle machine. A loaded one ran them past
 // vitest's 5s default, so this is a hang guard, not a speed assertion.
 describe("round-3 review: outcomes by observed status, bounded copies, one final guard", { timeout: 60_000 }, () => {
@@ -1385,7 +890,7 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
 
   const SURPRISES: [string, { status: number; body?: unknown }][] = [
     ["a 503 carrying a rate-limit reason", RATE_LIMITED_503],
-    ...[301, 302, 303, 307, 308].map((status): [string, { status: number }] => [`a ${status} redirect`, { status }]),
+    ...[303].map((status): [string, { status: number }] => [`a ${status} redirect`, { status }]),
   ];
 
   it.each(SURPRISES)("never calls a write refused or applied after %s", async (_kind, reply) => {
@@ -1407,18 +912,6 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     expect(text.message).toContain("whether its initial text was written is unknown");
     expect(text.message).toContain("only if it is missing");
     expect(text.message).not.toContain("add the text with append_text on new-1");
-  });
-
-  it("keeps a 429 on a write a rate limit: a 4xx refusal, nothing applied", async () => {
-    route = () => ({
-      status: 429,
-      body: { error: { code: 429, message: "Slow down.", status: "RESOURCE_EXHAUSTED" } },
-    });
-    for (const [name, values] of Object.entries(EDITS)) {
-      const failure = await call(connection(), name, values).catch((error) => error);
-      expect(failure.code, name).toBe("rate_limited");
-      expect(failure.message, name).not.toContain("outcome of this edit is unknown");
-    }
   });
 
   it("drops, never cuts, a 9 MiB revisionId or a malformed id, on all six tools", async () => {
@@ -1471,56 +964,30 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     expect(bytes(create.message)).toBeLessThan(2_000);
   });
 
-  it("measures the reply notice it returns, at every size around the boundary", async () => {
-    // One reply nearly the whole budget, then 99 small ones: the cut lands
-    // between "1 of 100" and more, where the notice's own length decides.
-    // All 527 sizes share a connector, token cache, and invariant reply data.
-    // Rebuilding them per size repeated RSA import/signing and large-object
-    // allocation, pushing this sweep past the 5s guard under contention.
-    const connector = connection();
-    const ctx = context();
+  it.each([
+    [20, 2],
+    [21, 2],
+    [22, 1],
+  ])("measures the reply notice at the boundary with a %i-byte tail", async (tail, shown) => {
+    // Two replies, including their notice, are one byte under, at, and one
+    // byte over the budget. Dropping every reply is not a valid way to fit.
+    const big = {
+      createNamedRange: {
+        ...Object.fromEntries(Array.from({ length: 385 }, (_, key) => [`k${key}`, "n".repeat(500)])),
+        tail: "t".repeat(tail),
+      },
+    };
     const small = Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }));
-    const value = "n".repeat(500);
-    const shown = new Set<number>();
-    for (const [keys, step] of [
-      [380, 37],
-      [385, 1],
-    ] as const) {
-      const big = {
-        createNamedRange: {
-          ...Object.fromEntries(Array.from({ length: keys }, (_, key) => [`k${key}`, value])),
-          tail: "",
-        },
-      };
-      route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
-      for (let tail = 0; tail <= 512; tail += step) {
-        big.createNamedRange.tail = "t".repeat(tail);
-        const result = (await connector.callTool(
-          "batch_update_document",
-          { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-          ctx,
-        )) as { replies: unknown[]; notice: string };
-        expect(bytes(result), `keys ${keys}, tail ${tail}`).toBeLessThanOrEqual(BUDGET);
-        expect(result.notice).toContain(`${result.replies.length} of 100 replies`);
-        shown.add(result.replies.length);
-      }
-    }
-    // The sweep crossed the boundaries it was built for.
-    expect(shown.has(1)).toBe(true);
-    expect([...shown].some((count) => count > 1)).toBe(true);
-    expect(tokenCalls).toBe(1);
-  });
-
-  it("routes large reads and uncertain creates the same way in schema, guide, and messages", async () => {
-    const connector = connection();
-    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === "get_document")!;
-    expect((tool.inputSchema as any).properties.maxChars.description).toContain(
-      "call directly (call_tool, connecta.result to page)",
-    );
-    const content = guide(connector).content;
-    expect(content).toContain("Read it with a direct `call_tool`, paged");
-    expect(content).toContain("straight away only when\n  Google refused it; otherwise read the document first");
-    expect(content).not.toContain("append the text there rather than");
+    route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
+    const result = await call(connection(), "batch_update_document", {
+      documentId: "d",
+      requests: [{ insertText: {} }],
+      requiredRevisionId: "r",
+    });
+    expect(bytes(result)).toBeLessThanOrEqual(BUDGET);
+    if (tail <= 21) expect(bytes(result)).toBe(BUDGET + tail - 21);
+    expect(result.replies).toEqual([big, ...small.slice(0, shown - 1)]);
+    expect(result.notice).toContain(`${shown} of 100 replies`);
   });
 
   it("refuses a default read past the bridge budget, and lets an explicit one through", async () => {

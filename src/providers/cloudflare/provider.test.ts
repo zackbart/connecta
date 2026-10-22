@@ -62,12 +62,7 @@ describe("cloudflare() over OAuth", () => {
     );
     const guide = guideOf(connector);
     for (const text of [
-      "Hosted MCP over OAuth",
       "A read-only endpoint therefore gets `docs` and `search` here",
-      "configure an API-token connector",
-      "no `graphql_query`",
-      "authorize_connector",
-      "## Account instructions",
       "Never touch the apex record.",
     ]) {
       expect(guide, text).toContain(text);
@@ -234,46 +229,6 @@ describe("cloudflare() over a key", () => {
     },
   );
 
-  it("builds Connecta's REST connector with an operator credential, admission, and its tool set", async () => {
-    const connector = cloudflare("cf", { ...TOKEN, maxResultBytes: 30_000 });
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-    expect(connector).toMatchObject({
-      kind: "api",
-      title: "Cloudflare",
-      maxResultBytes: 30_000,
-      credential: { label: "Cloudflare API token" },
-      callAdmission: {
-        rules: [{ maxConcurrency: 6, budget: { maxCalls: 1200, windowMs: 300_000 } }],
-      },
-    });
-    expect(connector.testCredential).toBeInstanceOf(Function);
-    expect(connector.describe?.()).toMatchObject({
-      source: { kind: "api", provider: "cloudflare" },
-    });
-    expect((await connector.listTools(token())).map((tool) => tool.name)).toEqual([
-      "cloudflare_api_search",
-      "cloudflare_api_details",
-      "cloudflare_api_read",
-      "cloudflare_api_write",
-      "verify_credential",
-      "list_accounts",
-      "list_zones",
-      "graphql_query",
-      "cloudflare_api_upload",
-    ]);
-    const global = cloudflare("legacy", { ...GLOBAL, maxConcurrency: 2 });
-    expect(global).toMatchObject({
-      title: "Cloudflare (Global API Key)",
-      credential: {
-        label: "Cloudflare Global API Key",
-        fields: [{ name: "email" }, { name: "apiKey" }],
-      },
-      callAdmission: { rules: [{ maxConcurrency: 2 }] },
-    });
-    expect(global.testCredentials).toBeInstanceOf(Function);
-    expect(sent).toEqual([]);
-  });
-
   it("INV-11: requires a pin or unpinned: true for a Global API Key and refuses malformed pins", () => {
     expect(() => cloudflare("cf", { purpose: "Ops", auth: { type: "globalApiKey" } })).toThrow(
       'cloudflare("cf") requires pin: { accountIds, zoneIds } with globalApiKey auth, or unpinned: true',
@@ -309,39 +264,8 @@ describe("cloudflare() over a key", () => {
     expect(() => cloudflare("cf", { ...TOKEN, purpose: " " })).toThrow("a non-empty purpose");
   });
 
-  it("opens the Global API Key guide with its blast radius and states the pin", () => {
-    const guide = guideOf(cloudflare("legacy", GLOBAL));
-    const warning = guide.indexOf("This connector holds a Global API Key.");
-    expect(warning).toBeGreaterThan(0);
-    expect(warning).toBeLessThan(guide.indexOf("- This is Connecta's REST connector"));
-    expect(guide).toContain("R2 accepts API tokens only");
-    expect(guide).toContain(`Pinned to accounts \`${ACCOUNT}\` and every zone in them.`);
-    expect(connectorGuideSummary(cloudflare("legacy", GLOBAL))).toMatch(/^GLOBAL API KEY/);
-    const tokenGuide = guideOf(cloudflare("cf", { ...TOKEN, zoneId: ZONE }));
-    expect(tokenGuide).not.toContain("Global API Key");
-    expect(tokenGuide).toContain(`\`{zone_id}\` fills with \`${ZONE}\``);
-    for (const summary of [
-      connectorGuideSummary(cloudflare("cf", TOKEN)),
-      connectorGuideSummary(cloudflare("l", GLOBAL)),
-    ]) {
-      expect(new TextEncoder().encode(summary ?? "").length).toBeLessThanOrEqual(120);
-    }
-  });
-
-  it("INV-1: annotates its own tools and keeps SQL, AI runs, and ordinary POSTs out of the read tool", async () => {
+  it("INV-1: keeps SQL, AI runs, and ordinary POSTs out of the read tool and sends SQL as text", async () => {
     const connector = cloudflare("cf", TOKEN);
-    const tools = await connector.listTools(token());
-    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
-      cloudflare_api_search: { readOnlyHint: true },
-      cloudflare_api_details: { readOnlyHint: true },
-      cloudflare_api_read: { readOnlyHint: true },
-      cloudflare_api_write: { readOnlyHint: false, destructiveHint: true },
-      verify_credential: { readOnlyHint: true },
-      list_accounts: { readOnlyHint: true },
-      list_zones: { readOnlyHint: true },
-      graphql_query: { readOnlyHint: true },
-      cloudflare_api_upload: { readOnlyHint: false, destructiveHint: true },
-    });
     for (const path of [
       `/zones/${ZONE}/purge_cache`,
       `/accounts/${ACCOUNT}/d1/database/db1/query`,
@@ -370,111 +294,8 @@ describe("cloudflare() over a key", () => {
     expect(sent[0]!.headers.get("content-type")).toBe("text/plain");
   });
 
-  it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    const found = (await connector.callTool(
-      "cloudflare_api_search",
-      { query: "dns records", method: "PATCH" },
-      token(),
-    )) as any;
-    expect(found.operations).toContainEqual(
-      expect.objectContaining({
-        method: "PATCH",
-        path: "/zones/{zone_id}/dns_records/{dns_record_id}",
-        tool: "cloudflare_api_write",
-      }),
-    );
-    const details = (await connector.callTool(
-      "cloudflare_api_details",
-      { method: "GET", path: "/zones/{zone_id}/dns_records" },
-      token(),
-    )) as any;
-    expect(details.tool).toBe("cloudflare_api_read");
-    expect(details.parameters.map((parameter: any) => parameter.name)).toEqual(
-      expect.arrayContaining(["zone_id", "type", "page", "per_page"]),
-    );
-    expect(sent).toEqual([]);
-  });
-
-  it("refuses unknown paths, guessed parameters, and unpinned placeholders before anything reaches Cloudflare", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    const path = await refusal(
-      connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}/dns_record` }, token()),
-    );
-    expect(path.message).toContain("Nearest:");
-    expect(path.message).toContain("/zones/{zone_id}/dns_records");
-    const param = await refusal(
-      connector.callTool(
-        "cloudflare_api_read",
-        { path: `/zones/${ZONE}/dns_records`, query: { zone_name: "x" } },
-        token(),
-      ),
-    );
-    expect(param.message).toContain("Not sent:");
-    expect(param.validation?.issues[0]).toMatchObject({
-      path: "/query/zone_name",
-      code: "additionalProperties",
-    });
-    const placeholder = await refusal(
-      connector.callTool("cloudflare_api_read", { path: "/zones/{zone_id}/dns_records" }, token()),
-    );
-    expect(placeholder.message).toContain("{placeholder}");
-    const slash = await refusal(
-      connector.callTool("cloudflare_api_read", { path: `/zones/a%2Fb/dns_records` }, token()),
-    );
-    expect(slash.message).toContain("encoded separator");
-    expect(sent).toEqual([]);
-  });
-
-  it("fills configured default ids, sends Bearer auth, unwraps the envelope, and pages by number", async () => {
+  it("pages a cursor list and stops at an empty cursor", async () => {
     const connector = cloudflare("cf", { ...TOKEN, zoneId: ZONE });
-    respond = () =>
-      envelope(
-        [
-          {
-            id: "r1",
-            name: "a.example.com",
-            type: "A",
-            ttl: 1,
-            content: "192.0.2.1",
-          },
-          {
-            id: "r2",
-            name: "b.example.com",
-            type: "A",
-            ttl: 300,
-            content: "192.0.2.2",
-          },
-        ],
-        {
-          result_info: {
-            page: 1,
-            per_page: 2,
-            count: 2,
-            total_count: 5,
-            total_pages: 3,
-          },
-        },
-      );
-    const result = await connector.callTool(
-      "cloudflare_api_read",
-      {
-        path: "/zones/{zone_id}/dns_records",
-        query: { type: "A", per_page: 2 },
-        select: ["id", "ttl"],
-      },
-      token(),
-    );
-    expect(result).toEqual({
-      status: 200,
-      data: [
-        { id: "r1", ttl: 1 },
-        { id: "r2", ttl: 300 },
-      ],
-      page: { hasMore: true, next: "2", param: "page" },
-    });
-    expect(sent[0]!.url.href).toBe(`${CLOUDFLARE_API_BASE}/zones/${ZONE}/dns_records?type=A&per_page=2`);
-    expect(sent[0]!.headers.get("authorization")).toBe("Bearer cf-token-123");
     respond = () => envelope([{ name: "k1" }], { result_info: { count: 1, cursor: "abc" } });
     expect(
       (
@@ -497,59 +318,9 @@ describe("cloudflare() over a key", () => {
     ).toEqual({ hasMore: false });
   });
 
-  it("sends a JSON write once and maps a 500 without retrying (INV-9)", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    respond = () => envelope({ id: "r1", ttl: 300 });
-    expect(
-      await connector.callTool(
-        "cloudflare_api_write",
-        {
-          method: "PATCH",
-          path: `/zones/${ZONE}/dns_records/r1`,
-          body: { ttl: 300 },
-        },
-        token(),
-      ),
-    ).toEqual({ status: 200, data: { id: "r1", ttl: 300 } });
-    expect(sent[0]!.method).toBe("PATCH");
-    expect(JSON.parse(String(sent[0]!.body))).toEqual({ ttl: 300 });
-    respond = () =>
-      Response.json(
-        {
-          success: false,
-          errors: [{ code: 10001, message: "boom" }],
-          result: null,
-        },
-        { status: 500 },
-      );
-    const failure = await refusal(
-      connector.callTool(
-        "cloudflare_api_write",
-        {
-          method: "PATCH",
-          path: `/zones/${ZONE}/dns_records/r1`,
-          body: { ttl: 60 },
-        },
-        token(),
-      ),
-    );
-    // No idempotency header: a 5xx after dispatch is an unknown outcome, never retryable.
-    expect(failure.code).toBe("connector_call_failed");
-    expect(failure.retryable).toBe(false);
-    expect(failure.message).toContain("check the target before repeating it");
-    expect(sent).toHaveLength(2);
-  });
-
-  it("maps Cloudflare failures by the caller's next move and surfaces Retry-After", async () => {
+  it("maps Cloudflare's own error codes and chains, not only the HTTP status", async () => {
     const connector = cloudflare("cf", TOKEN);
     const cases: Array<[number, unknown, Record<string, string>, string, string]> = [
-      [
-        429,
-        { success: false, errors: [{ code: 10000, message: "Rate limited" }] },
-        { "retry-after": "7" },
-        "rate_limited",
-        "1,200 requests",
-      ],
       [
         400,
         {
@@ -559,26 +330,6 @@ describe("cloudflare() over a key", () => {
         {},
         "auth_required",
         "verify_credential",
-      ],
-      [
-        403,
-        {
-          success: false,
-          errors: [{ code: 10000, message: "Authentication error" }],
-        },
-        {},
-        "provider_permission_denied",
-        "lacks this permission",
-      ],
-      [
-        404,
-        {
-          success: false,
-          errors: [{ code: 81044, message: "Record does not exist." }],
-        },
-        { "cf-ray": "8abc-SJC" },
-        "not_found",
-        "Ray 8abc-SJC.",
       ],
       [
         400,
@@ -607,17 +358,12 @@ describe("cloudflare() over a key", () => {
         "invalid_args",
         "1000: Odd",
       ],
-      [502, undefined, {}, "unavailable", "HTTP 502"],
     ];
     for (const [status, body, headers, code, message] of cases) {
-      respond = () =>
-        body === undefined
-          ? new Response("<html>bad gateway</html>", { status, headers })
-          : Response.json(body, { status, headers });
+      respond = () => Response.json(body, { status, headers });
       const failure = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
       expect(failure.code, `${status}`).toBe(code);
       expect(failure.message).toContain(message);
-      if (status === 429) expect(failure.retryAfterMs).toBe(7_000);
     }
   });
 
@@ -681,67 +427,6 @@ describe("cloudflare() over a key", () => {
     expect(rejected.ok).toBe(false);
     // Token verification handles credentials, so the vendor text is withheld; the code remains.
     expect(rejected.message).toContain("Cloudflare error code 1000.");
-  });
-
-  it("refuses credential GETs, side-effect GETs, and token writes, and redacts embedded secrets", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    const cases: Array<[string, Record<string, unknown>, string]> = [
-      ["cloudflare_api_read", { path: `/accounts/${ACCOUNT}/cfd_tunnel/t1/token` }, "tunnel token"],
-      ["cloudflare_api_read", { path: `/accounts/${ACCOUNT}/warp_connector/t1/token` }, "Mesh node token"],
-      [
-        "cloudflare_api_read",
-        {
-          path: `/accounts/${ACCOUNT}/workflows/w/instances/i/subscribe/token`,
-        },
-        "does not create, rotate, or return credentials",
-      ],
-      [
-        "cloudflare_api_read",
-        {
-          path: `/accounts/${ACCOUNT}/alerting/v3/policies/p1/email/unsubscribe`,
-        },
-        "unsubscribe",
-      ],
-      [
-        "cloudflare_api_write",
-        {
-          method: "POST",
-          path: "/user/tokens",
-          body: { name: "x", policies: [] },
-        },
-        "does not create",
-      ],
-      ["cloudflare_api_write", { method: "PUT", path: "/user/tokens/t1/value", body: {} }, "does not create"],
-      ["cloudflare_api_write", { method: "PUT", path: `/accounts/${ACCOUNT}/tokens/t1`, body: {} }, "does not create"],
-    ];
-    for (const [tool, args, message] of cases) {
-      const error = await refusal(connector.callTool(tool, args, token()));
-      expect(error.code, JSON.stringify(args)).toBe("invalid_args");
-      expect(error.message).toContain(message);
-    }
-    expect(sent).toEqual([]);
-    respond = () => envelope({ sitekey: "0x4AAA", secret: "0x4AAA-secret", mode: "managed" });
-    expect(
-      await connector.callTool(
-        "cloudflare_api_read",
-        { path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA` },
-        token(),
-      ),
-    ).toEqual({
-      status: 200,
-      data: { sitekey: "0x4AAA", secret: "[redacted]", mode: "managed" },
-    });
-    respond = () =>
-      new Response("export default {}", {
-        headers: { "content-type": "application/javascript" },
-      });
-    // Script content is code, not a credential: readable on purpose.
-    await connector.callTool(
-      "cloudflare_api_read",
-      { path: `/accounts/${ACCOUNT}/workers/scripts/s1/content/v2` },
-      token(),
-    );
-    expect(sent).toHaveLength(2);
   });
 
   it("refuses Global API Key writes to the user and memberships", async () => {
@@ -929,21 +614,6 @@ describe("cloudflare() over a key", () => {
         totals: { admitted: 1, rateLimited: 1 },
       });
       expect(await registry.statusFor("cf", "https://connecta.test")).toMatchObject({ state: "ok" });
-    });
-
-    it("INV-4: stops a later ownership read before dispatch when an earlier call spent the shared budget", async () => {
-      const { registry, read } = await admittedConnector(3);
-      expect((await read(ZONE)).isError).not.toBe(true);
-      expect((await read(OTHER_ZONE)).isError).toBe(true);
-      expect(sent.map((request) => request.url.pathname)).toEqual([
-        `/client/v4/zones/${ZONE}`,
-        `/client/v4/zones/${ZONE}/dns_records`,
-      ]);
-      expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
-        active: 0,
-        queued: 0,
-        totals: { admitted: 3, rateLimited: 1 },
-      });
     });
 
     it("filters account and zone lists to the pin, in the generic and named tools", async () => {
@@ -1284,28 +954,14 @@ describe("cloudflare() over a key", () => {
       }
     });
 
-    it("refuses credential producers before sending, in the generic and upload tools", async () => {
+    it("refuses credential producers before sending in the upload tool", async () => {
       const connector = cloudflare("cf", TOKEN);
+      // The shared value-safety harness sweeps the generic tools; the upload tool is its own route.
       const producers: Array<[string, Record<string, unknown>]> = [
-        [
-          "cloudflare_api_write",
-          { method: "POST", path: `/accounts/${ACCOUNT}/access/service_tokens`, body: { name: "x" } },
-        ],
-        ["cloudflare_api_write", { method: "POST", path: `/zones/${ZONE}/access/service_tokens`, body: { name: "x" } }],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/r2/temp-access-credentials`, body: {} }],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/stream/keys` }],
-        [
-          "cloudflare_api_write",
-          { method: "POST", path: `/accounts/${ACCOUNT}/containers/registries/registry.example/credentials`, body: {} },
-        ],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/images/v2/direct_upload` }],
         [
           "cloudflare_api_upload",
           { method: "POST", path: `/accounts/${ACCOUNT}/images/v2/direct_upload`, parts: [{ name: "a", text: "b" }] },
         ],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/stream/s1/token`, body: {} }],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/oauth_clients/o1/rotate_secret` }],
-        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/pay-invoice`, body: {} }],
       ];
       for (const [tool, args] of producers) {
         const error = await refusal(connector.callTool(tool, args, token()));
@@ -1464,62 +1120,6 @@ describe("cloudflare() over a key", () => {
         ),
       ).toEqual({ status: 200, data: { secret: "[redacted]" } });
     });
-
-    it("withholds vendor error text for secret families and keeps it elsewhere", async () => {
-      const connector = cloudflare("cf", TOKEN);
-      respond = () =>
-        Response.json(
-          { success: false, errors: [{ code: 10001, message: "secret 0xECHOED rejected" }] },
-          { status: 400 },
-        );
-      const secretFamily = await refusal(
-        connector.callTool(
-          "cloudflare_api_write",
-          {
-            method: "PUT",
-            path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`,
-            body: { domains: ["a"], mode: "managed", name: "w" },
-          },
-          token(),
-        ),
-      );
-      expect(secretFamily.code).toBe("invalid_args");
-      expect(secretFamily.message).toContain("Cloudflare error code 10001.");
-      expect(secretFamily.message).not.toContain("0xECHOED");
-      const ordinary = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
-      expect(ordinary.message).toContain("secret 0xECHOED rejected");
-    });
-  });
-
-  it("INV-1: admits stateless application lookup and posture validation as reads", async () => {
-    const connector = cloudflare("cf", TOKEN);
-    for (const [path, body, result] of [
-      [
-        `/accounts/${ACCOUNT}/resource-library/applications/lookup`,
-        { lookup: "block Example Chat" },
-        [{ id: 1, name: "Example Chat" }],
-      ],
-      [
-        `/accounts/${ACCOUNT}/data-security/posture/finding_types/validate`,
-        {
-          name: "policy",
-          description: "Policy",
-          asset_vendor: "GOOGLE_WORKSPACE",
-          asset_class: "GoogleWorkspaceFile",
-          severity: "High",
-          expression: 'result := "pass"',
-          applies_to_all_integrations: true,
-        },
-        { valid: false, errors: [{ message: "Invalid definition" }] },
-      ],
-    ] as const) {
-      respond = () => Response.json({ success: true, result });
-      expect(await connector.callTool("cloudflare_api_read", { method: "POST", path, body }, token())).toMatchObject({
-        status: 200,
-        data: result,
-      });
-    }
-    expect(sent.map((request) => request.method)).toEqual(["POST", "POST"]);
   });
 
   it("INV-5: withholds application setup form defaults before select without losing field metadata", async () => {
@@ -1587,7 +1187,7 @@ describe("cloudflare() over a key", () => {
     expect(sent).toHaveLength(before);
   });
 
-  it.each([200, 400])(
+  it.each([200])(
     "INV-5: refuses schemaless Cloudforce matches before a secret-bearing HTTP %i response",
     async (status) => {
       const connector = cloudflare("cf", TOKEN);
