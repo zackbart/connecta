@@ -10,3 +10,5 @@ export function driftRecordProblems(
   name: string,
   options?: { catalog?: unknown; today?: string; recording?: boolean },
 ): string[];
+
+export function generatedProblems(record: unknown, options?: { kind?: string; files?: readonly string[] }): string[];

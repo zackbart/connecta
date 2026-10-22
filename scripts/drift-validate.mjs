@@ -45,23 +45,45 @@ export function validateRecord(record, name) {
   if (record.version === DRIFT_VERSION) validateGenerated(record);
 }
 
+/** D2 checks; folder context also verifies provider kind and evidence-file coverage. */
+export function generatedProblems(recordValue, { kind, files } = {}) {
+  const found = [];
+  const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const sortedUnique = (value) =>
+    Array.isArray(value) && value.every((item, i) => typeof item === "string" && (i === 0 || value[i - 1] < item));
+  const SHA256 = /^sha256:[0-9a-f]{64}$/;
+  const HASHED_EVIDENCE = ["catalog.json", "openapi.json", "openapi.document.json", "value-safety.json"];
+  const generated = recordValue.generated;
+  if (!record(generated) || Object.keys(generated).some((key) => !["operations", "hosted", "evidence"].includes(key))) {
+    found.push("D2: drift.json needs a generated block of operations, hosted, and evidence only");
+  } else {
+    const operations = generated["operations"];
+    if (kind !== "mcp" && !(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
+      found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
+    }
+    const hosted = generated["hosted"];
+    if (!sortedUnique(hosted) || (kind === "api" ? hosted.length !== 0 : kind !== undefined && hosted.length === 0)) {
+      found.push(
+        "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
+      );
+    }
+    const evidence = generated["evidence"];
+    const expected = files && HASHED_EVIDENCE.filter((name) => files.includes(`evidence/${name}`));
+    if (
+      !record(evidence) ||
+      (expected && JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expected.sort())) ||
+      !Object.values(evidence).every((digest) => typeof digest === "string" && SHA256.test(digest))
+    ) {
+      found.push("D2: generated.evidence holds one sha256 per hashed evidence file");
+    }
+  }
+  return found;
+}
+
 /** A version-2 record's generated block, which only providers:generate writes. */
 function validateGenerated(record) {
-  const { generated } = record;
-  const names = (value) =>
-    Array.isArray(value) &&
-    value.every((item, index) => typeof item === "string" && (index === 0 || value[index - 1] < item));
-  require(generated &&
-    typeof generated === "object" &&
-    !Array.isArray(generated) &&
-    names(generated.operations) &&
-    generated.operations.every((key) => OPERATION.test(key)) &&
-    names(generated.hosted) &&
-    generated.evidence &&
-    typeof generated.evidence === "object" &&
-    !Array.isArray(
-      generated.evidence,
-    ), `${record.provider}'s version 2 record needs the generated operations, hosted, and evidence that providers:generate writes`);
+  const problems = generatedProblems(record);
+  require(problems.length === 0, problems.join("; "));
 }
 
 /** Reject version-2 evidence that keeps a version-1 shape (decision 0011, D3 and D4). */

@@ -791,14 +791,16 @@ describe("status UI", () => {
     }
   });
 
-  it("bounds a custom activity-label resolver that never settles", async () => {
+  it("INV-7: bounds and aborts a custom activity-label resolver that never settles", async () => {
     vi.useFakeTimers();
     try {
       let enterResolver!: () => void;
       const resolverStarted = new Promise<void>((resolve) => {
         enterResolver = resolve;
       });
-      const resolveLabel = vi.fn(() => {
+      let lookupSignal: AbortSignal | undefined;
+      const resolveLabel = vi.fn((_id: string, signal?: AbortSignal) => {
+        lookupSignal = signal;
         enterResolver();
         return new Promise<string | undefined>(() => {});
       });
@@ -852,9 +854,10 @@ describe("status UI", () => {
       // Authorization includes native async work. Wait for actual resolver
       // entry without spending any of its request-owned virtual deadline.
       await resolverStarted;
-      expect(resolveLabel).toHaveBeenCalledExactlyOnceWith("local-user");
+      expect(resolveLabel).toHaveBeenCalledExactlyOnceWith("local-user", expect.any(AbortSignal));
       await vi.advanceTimersByTimeAsync(1_500);
       const response = await pending;
+      expect(lookupSignal?.aborted).toBe(true);
       const page = (await response.json()) as ActivityReadPage;
       expect(required(page.events[0]).actor).toEqual(event.actor);
     } finally {
