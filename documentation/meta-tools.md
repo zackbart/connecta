@@ -1061,8 +1061,10 @@ the 401 and returned, or a result that could not be processed, still ends
 in that verdict, and a program counts the write in `writes.unknown`. An
 idempotency key never makes such a write repeatable, so it gets no
 key-reuse advice. Once every such 401 is renewed
-the handoff goes, but a call that also sent another write stays unknown,
-never retryable and without a wait.
+the handoff goes, but the call stays unknown, even if its handler caught
+the failure and returned a result: renewal does not prove whether the write
+took effect. A caught read 401, or a declared refusal followed by a successful
+write, does not prevent the call from succeeding.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after

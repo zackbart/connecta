@@ -4,7 +4,7 @@
 // (dispatch, status, a reviewed authBeforeExecution match, a 401's mapped
 // verdict, a renewal of that request's own credential); `settleWrite` decides,
 // in the invocation for a served call and at the outermost boundary otherwise.
-// Each case here is a review repro of PR #917, rounds 3 to 5.
+// Each case here is a review repro of PR #917, rounds 3 to 6.
 import { Context, Effect, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordRecovery } from "../src/call-recovery.js";
@@ -76,6 +76,7 @@ async function run(
     const result = await meta.callDestructiveTool({
       address: `${connector.id}.${tool}`,
       args,
+      resultMode: "value",
       ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
     });
     return result.structuredContent as Outcome;
@@ -706,6 +707,232 @@ describe("the invocation's own deadline and cancellation, and what Q8 leaves alo
 });
 
 describe("Q8's verdict is final, for every outcome a write call can end in", () => {
+  it.each(["direct", "served", "caught program", "uncaught program"] as const)(
+    "INV-9: a handler that catches a write's real OAuth renewal and returns still fails unknown (%s)",
+    async (how) => {
+      const tokenEndpoint = "https://tickets.example/token";
+      const sent: string[] = [];
+      let refreshes = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === tokenEndpoint) {
+          refreshes++;
+          return Response.json({ access_token: "fresh-token", refresh_token: "fresh-refresh", token_type: "Bearer" });
+        }
+        sent.push(`${init?.method} ${new Headers(init?.headers).get("authorization")}`);
+        return new Response(null, { status: 401 });
+      });
+      const connector = tracksEveryRequest(
+        api("tickets", {
+          oauth: {
+            authorizationEndpoint: "https://tickets.example/authorize",
+            tokenEndpoint,
+            clientId: "fixture-client",
+            apiOrigins: ["https://tickets.example"],
+          },
+          tools: [
+            {
+              ...CREATE,
+              handler: async (_args, ctx) => {
+                await ctx.oauth!.fetch("https://tickets.example/items", { method: "POST" }).catch(() => undefined);
+                return { claimed: "success" };
+              },
+            },
+          ],
+        }),
+      );
+      const storage = memoryStorage();
+      await seedGrant(
+        storage,
+        {
+          issuer: tokenEndpoint,
+          tokens: { access_token: "old-token", refresh_token: "old-refresh", token_type: "Bearer" },
+        },
+        "v3:seeded",
+        scopes.connector("tickets"),
+      );
+      const registry = makeRegistry([connector], { storage });
+      let error: CallErrorDetails;
+      if (how === "direct" || how === "served") {
+        const outcome = await run(connector, how, { registry });
+        expect(outcome.ok).toBe(false);
+        error = (outcome as { error: CallErrorDetails }).error;
+        expect(error).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown" });
+      } else {
+        const execute = createExecuteTool(
+          registry,
+          BASE,
+          scriptedExecutor(async (fns) => {
+            const pending = fns.call!("tickets.create", {});
+            if (how === "caught program") await pending.catch(() => undefined);
+            else await pending;
+            return "done";
+          }),
+          silentLogger,
+          undefined,
+          { readOnly: false },
+        );
+        const result = (await execute({ code: "async () => null" })).structuredContent as { error: CallErrorDetails };
+        expect(result).not.toHaveProperty("result");
+        error = result.error;
+        expect(error).toMatchObject({ code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } });
+      }
+      expect(error).toMatchObject({ retryable: false });
+      expect(error).not.toHaveProperty("retryAfterMs");
+      expect(error).not.toHaveProperty("nextAction");
+      expect(sent).toEqual(["POST Bearer old-token"]);
+      expect(refreshes).toBe(1);
+    },
+  );
+
+  it.each(["undeclared", "renewed", "GET", "HEAD", "declared", "auxiliary", "read POST"] as const)(
+    "INV-9: a guarded mapper returning JSON settles its write 401 outside a ledger too (%s)",
+    async (kind) => {
+      let sends = 0;
+      const read = kind === "GET" || kind === "HEAD" || kind === "read POST";
+      const send = guardedFetch({
+        provider: "Tickets",
+        baseUrl: "https://tickets.example",
+        maxResponseBytes: 1024,
+        authenticate: () => ({}),
+        auxiliary: kind === "auxiliary",
+        ...(kind === "declared"
+          ? { authBeforeExecution: { evidence: "Reviewed fixture refusal", matches: () => true } }
+          : {}),
+        fetch: async () => {
+          sends++;
+          return Response.json({ id: "claimed-success" }, { status: 401 });
+        },
+      });
+      const handler = (_args: unknown, ctx: ConnectorContext) =>
+        send(
+          {
+            method: kind === "GET" || kind === "HEAD" ? kind : "POST",
+            path: "/items",
+            ...(kind === "read POST" ? { classification: "read" as const } : {}),
+          },
+          ctx,
+          (response) => {
+            if (kind === "renewed") renewedAfterUnauthorized(answeredRequest(response), "old", "fresh");
+            return response.json();
+          },
+        );
+      const custom: Connector = {
+        id: "tickets",
+        kind: "api",
+        listTools: async () => [{ ...CREATE, annotations: { readOnlyHint: read } }],
+        callTool: (_name, args, ctx) => handler(args, ctx),
+      };
+      const boundary = tracksEveryRequest(
+        api("tickets", { tools: [{ ...CREATE, annotations: { readOnlyHint: read }, handler }] }),
+      );
+      for (const connector of [custom, boundary]) {
+        const registry = makeRegistry([connector]);
+        const outcome = await run(connector, "direct", { registry });
+        if (kind === "undeclared" || kind === "renewed") {
+          expect(outcome.ok).toBe(false);
+          const error = (outcome as { error: CallErrorDetails }).error;
+          expect(error).toMatchObject({
+            code: kind === "renewed" ? "connector_call_failed" : "auth_required",
+            retryable: false,
+            writeOutcome: "unknown",
+          });
+          expect(error).not.toHaveProperty("retryAfterMs");
+          if (kind === "renewed") expect(error).not.toHaveProperty("nextAction");
+        } else expect(outcome).toEqual({ ok: true, value: { id: "claimed-success" } });
+      }
+      const meta = createMetaTools(makeRegistry([custom]), BASE);
+      const served = await (read ? meta.callTool : meta.callDestructiveTool)({
+        address: "tickets.create",
+        args: {},
+        resultMode: "value",
+      });
+      if (kind === "undeclared" || kind === "renewed") {
+        expect(served.structuredContent).toMatchObject({
+          ok: false,
+          error: {
+            code: kind === "renewed" ? "connector_call_failed" : "auth_required",
+            writeOutcome: "unknown",
+            retryable: false,
+          },
+        });
+      } else expect(served.isError).not.toBe(true);
+      expect(sends).toBe(3);
+    },
+  );
+
+  it.each(["GET", "HEAD", "POST", "declared retry"] as const)(
+    "INV-9: success after a caught read 401 or declared refusal stands, and a read-classified POST still counts as a write (%s)",
+    async (kind) => {
+      const sends: string[] = [];
+      const send = guardedFetch({
+        provider: "Tickets",
+        baseUrl: "https://tickets.example",
+        maxResponseBytes: 1024,
+        authenticate: () => ({}),
+        ...(kind === "declared retry"
+          ? { authBeforeExecution: { evidence: "Reviewed fixture refusal", matches: () => true } }
+          : {}),
+        fetch: async (url, init) => {
+          sends.push(`${init.method} ${new URL(url).pathname}`);
+          return Response.json({ id: "created" }, { status: new URL(url).pathname === "/denied" ? 401 : 200 });
+        },
+      });
+      const child = tracksEveryRequest(
+        api("inner", {
+          tools: [
+            {
+              ...CREATE,
+              annotations: { readOnlyHint: kind !== "declared retry" },
+              handler: (_args, ctx) =>
+                send({ method: kind === "GET" || kind === "HEAD" ? kind : "POST", path: "/denied" }, ctx, () => {
+                  throw new ConnectorCallError("auth_required", "Refused.");
+                }),
+            },
+          ],
+        }),
+      );
+      const connector = outer(
+        "tickets",
+        async (ctx) => {
+          await child.callTool("create", {}, ctx).catch(() => undefined);
+          return send({ method: "POST", path: "/accepted" }, ctx, (response) => response.json());
+        },
+        true,
+      );
+      for (const how of ["direct", "served"] as const) {
+        const outcome = await run(connector, how);
+        if (kind === "POST") expectQ8(outcome, how);
+        else {
+          expect(outcome.ok).toBe(true);
+          if (how === "direct") expect(outcome).toEqual({ ok: true, value: { id: "created" } });
+        }
+      }
+      const execute = createExecuteTool(
+        makeRegistry([connector]),
+        BASE,
+        scriptedExecutor(async (fns) => {
+          await fns.call!("tickets.create", {}).catch(() => undefined);
+          return "done";
+        }),
+        silentLogger,
+        undefined,
+        { readOnly: false },
+      );
+      const result = (await execute({ code: "async () => null" })).structuredContent as {
+        result?: unknown;
+        error?: CallErrorDetails;
+      };
+      if (kind === "POST") expect(result.error).toMatchObject({ writes: { succeeded: 0, failed: 0, unknown: 1 } });
+      else expect(result).toMatchObject({ result: "done" });
+      expect(sends).toEqual(
+        Array.from({ length: 3 }, () => [
+          `${kind === "declared retry" ? "POST" : kind} /denied`,
+          "POST /accepted",
+        ]).flat(),
+      );
+    },
+  );
+
   /**
    * An api() write that records an idempotency key, sends one keyed POST
    * answered 401 (renewed with a fresh token, or not), then ends as `end`:
@@ -743,6 +970,13 @@ describe("Q8's verdict is final, for every outcome a write call can end in", () 
 
   /** Every failure and result shape an enricher might add advice to, typed or not. */
   const ENDS: Array<[string, () => unknown]> = [
+    [
+      "unsupported destructive_tool_requires_approval",
+      () => {
+        // Defensive: no supported producer emits this after dispatch.
+        throw new ConnectorCallError("destructive_tool_requires_approval" as never, "Host approval required.");
+      },
+    ],
     [
       "timeout",
       () => {
@@ -832,6 +1066,7 @@ describe("Q8's verdict is final, for every outcome a write call can end in", () 
     expect(error).not.toHaveProperty("retryAfterMs");
     expect(error!.message).not.toMatch(/Retry the write|Reusing it/);
     expect(error!.retry ?? "").not.toMatch(/cannot repeat|idempotencyKey|^Retry /);
+    expect(error!.nextAction).not.toMatchObject({ tool: "call_destructive_tool" });
     if (!renewed) expect(error).toMatchObject({ code: "auth_required", nextAction: { tool: "authorize_connector" } });
     // A renewal clears only its own 401: a later authorization failure still needs recovery.
     else if (error!.code !== "auth_required") expect(error).not.toHaveProperty("nextAction");
@@ -842,17 +1077,6 @@ describe("Q8's verdict is final, for every outcome a write call can end in", () 
     async (renewed) => {
       const connector = keyedWrite;
       for (const [end, run] of ENDS) {
-        // After a renewed 401 the credential needs no recovery and the
-        // handler answered: its result stands. Every failure is still settled.
-        if (renewed && end.endsWith("result")) {
-          const served = await createMetaTools(makeRegistry([connector(renewed, run)]), BASE).callDestructiveTool({
-            address: "tickets.create",
-            args: {},
-          });
-          const code = (served.structuredContent as { error?: CallErrorDetails } | undefined)?.error?.code;
-          expect(code, end).not.toBe("auth_required");
-          continue;
-        }
         const served = await createMetaTools(makeRegistry([connector(renewed, run)]), BASE).callDestructiveTool({
           address: "tickets.create",
           args: {},

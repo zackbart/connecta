@@ -509,6 +509,7 @@ export class InvocationService {
               },
             };
           case "destructive_tool_requires_approval": {
+            if (settled) return error;
             const echoed = argumentEcho;
             return {
               ...error,
@@ -958,7 +959,7 @@ export class InvocationService {
       if (!completed) {
         return yield* Effect.die(new Error("Invocation completed without a resolved tool"));
       }
-      // Q8 settles a result too: a write an unrenewed 401 left unknown is no
+      // Q8 settles a result too: a write an undeclared 401 left unknown is no
       // success, whatever its handler made of the 401, and its result is not
       // processed.
       if (dispatchedToConnector && completed.definition.classification !== "read") {

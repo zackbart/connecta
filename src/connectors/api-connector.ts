@@ -479,7 +479,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         });
       }
       closeProviderCall(callCtx);
-      // A write an unrenewed 401 left unknown fails however its handler returned.
+      // A write an undeclared 401 left unknown fails however its handler returned.
       const unknown = providerCallResult(handlerCtx, write ? "write" : "read");
       if (unknown) throw redactSentSecrets(ctx, unknown);
       return redactSentSecrets(ctx, result);

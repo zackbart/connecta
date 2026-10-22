@@ -24,6 +24,7 @@ import {
   nestedProviderCall,
   nestedProviderRequests,
   providerRequests,
+  readMethod,
   refusalRequest,
   refusedStatus,
   unauthorizedAnswer,
@@ -106,9 +107,15 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
  * outermost boundary, over every ledger beneath it. The verdict to throw in
  * place of the result, or undefined when the result stands.
  */
-export function providerCallResult(ctx: ConnectorContext, fallback: "read" | "write"): ConnectorCallError | undefined {
+export function providerCallResult(
+  ctx: ConnectorContext,
+  fallback: "read" | "write",
+  request?: ProviderRequest,
+): ConnectorCallError | undefined {
   if ((callClassification(ctx) ?? fallback) !== "write") return undefined;
-  const requests = providerRequests(ctx);
+  // A transport inside a ledger only records; its api() boundary settles.
+  if (request && providerRequests(ctx)) return undefined;
+  const requests = providerRequests(ctx) ?? (request && [request]);
   if (!requests || inLogicalCall(ctx) || nestedProviderCall(ctx)) return undefined;
   return settleWriteResult([...requests, ...nestedProviderRequests(ctx)]);
 }
@@ -316,17 +323,16 @@ export function settleWrite(requests: readonly ProviderRequest[], error: unknown
 }
 
 /**
- * The same decision for a call that returned a result: a write left unknown
- * by an unrenewed 401 is never a success, however its handler went on (it
- * caught the 401, say), so it fails with Q8's verdict. A result stands after
- * a 401 every renewal answered, or one the vendor's reviewed evidence makes
- * the call's only, refused, request.
+ * The same decision for a call that returned a result: any undeclared write
+ * 401 blocks success, even after renewal. A read's 401 (recorded GET/HEAD)
+ * and a declared refusal do not invalidate the handler's successful result.
  */
 export function settleWriteResult(requests: readonly ProviderRequest[]): ConnectorCallError | undefined {
-  const sent = requests.filter((request) => request.dispatched && !request.auxiliary);
-  const unrenewed = sent.find((request) => request.status === 401 && request.renewed !== true);
-  if (unrenewed === undefined || (sent.length === 1 && unrenewed.authBeforeExecution === true)) return undefined;
-  return settledWrite(unauthorizedVerdict(unrenewed, undefined));
+  return settleWrite(
+    requests.filter((request) => !readMethod(request.method) && request.authBeforeExecution !== true),
+    undefined,
+    false,
+  ) as ConnectorCallError | undefined;
 }
 
 /**

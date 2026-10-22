@@ -2223,9 +2223,12 @@ compiling and configuring the real thing.
   ledger per call, linked to the one whose handler entered it). The same
   decision settles a call that returned (`settleWriteResult`, before its
   result is processed in the invocation, and in `providerCallResult` at an
-  outermost direct boundary): a write an unrenewed 401 left unknown is never
-  a success, whatever its handler made of the 401, and a program counts it
-  in `writes.unknown`. The decider normalizes every failure it settles,
+  outermost direct boundary, including a guarded transport outside any ledger):
+  any undeclared write 401 blocks success, even after renewal. Renewal drops
+  only the handoff; a program still counts the write in `writes.unknown`.
+  A caught read 401 (only a recorded GET or HEAD counts as a read) or a
+  declared refusal followed by a successful write does not block success.
+  The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the
   invocation reads the mark before anything rebuilds the details, and its

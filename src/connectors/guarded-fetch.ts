@@ -24,7 +24,7 @@ import {
   vendorRefusal,
   type ProviderRequest,
 } from "../provider-call.js";
-import { providerCallFailure } from "../write-outcome.js";
+import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
@@ -557,7 +557,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     }
   };
 
-  return async function guarded(request, ctx, map) {
+  return async function guarded<T>(request: GuardedRequest, ctx: ConnectorContext, map: GuardedResponseMapper<T>) {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
     // A call that already ended sends nothing more, not even a credential read.
     assertProviderCallOpen(ctx, provider, auxiliary);
@@ -567,8 +567,10 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     });
     let dispatched = false;
     let response: Response | undefined;
+    let result: T;
+    const fallback = request.classification ?? (readMethod(request.method) ? "read" : "write");
     try {
-      return await requestOnce(request, ctx, map);
+      result = await requestOnce(request, ctx, map);
     } catch (error) {
       // No rejection proves a dispatched write unsent: fetch may have made
       // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
@@ -576,12 +578,15 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && !auxiliary,
         ...(response ? { status: response.status } : {}),
-        fallback: request.classification ?? (readMethod(request.method) ? "read" : "write"),
+        fallback,
         repeatable: request.idempotencyKey !== undefined,
         authBeforeExecution: dispatch.authBeforeExecution === true,
         ...(auxiliary ? {} : { request: dispatch }),
       });
     }
+    const unknown = providerCallResult(ctx, fallback, dispatch);
+    if (unknown) throw unknown;
+    return result;
 
     async function requestOnce<T>(
       request: GuardedRequest,
