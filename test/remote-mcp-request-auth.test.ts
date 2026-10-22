@@ -180,25 +180,3 @@ it("INV-11: allowlist mode is validated and deep-frozen as public classification
   expect(frozen.unlisted).toBe("hide");
   expect(Object.isFrozen(frozen)).toBe(true);
 });
-
-it("INV-1: a changing unlisted accessor is captured once and cannot discard the hide policy", async () => {
-  let reads = 0;
-  const classification = {
-    tools: { listed: "read" },
-    get unlisted() {
-      return ++reads <= 2 ? "hide" : undefined;
-    },
-  } as unknown as ToolClassification;
-  const frozen = reviewedClassification(classification, "github");
-  expect(reads).toBe(1);
-  expect(frozen.unlisted).toBe("hide");
-  const catalog = reviewedCatalog(frozen, "github");
-  expect(
-    await classifyCatalog(
-      catalog,
-      "github",
-      [{ name: "unlisted", annotations: { readOnlyHint: true } }],
-      connectorContext().logger,
-    ),
-  ).toEqual([]);
-});

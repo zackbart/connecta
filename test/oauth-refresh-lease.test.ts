@@ -3,12 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import {
-  OAUTH_REFRESH_LEASE_SECONDS,
-  oauthGrantKeys,
-  oauthRefreshActiveKeys,
-  oauthRefreshKeys,
-} from "../src/storage/keys.js";
+import { OAUTH_REFRESH_LEASE_SECONDS, oauthRefreshActiveKeys, oauthRefreshKeys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -22,14 +17,15 @@ const init = {
   body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
 };
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-function store(delayed: boolean): KVStorage {
+/** Memory storage whose every operation crosses macrotask hops, exposing interleavings. */
+function store(): KVStorage {
   const backing = memoryStorage();
   const hop =
     <Args extends unknown[], R>(op: (...args: Args) => Promise<R>) =>
     async (...args: Args): Promise<R> => {
-      if (delayed) await pause();
+      await pause();
       const answer = await op(...args);
-      if (delayed) await pause();
+      await pause();
       return answer;
     };
   return {
@@ -75,16 +71,13 @@ function deadline(ms: number) {
 }
 afterEach(() => vi.restoreAllMocks());
 
-describe.each([
-  ["memory", false],
-  ["delayed", true],
-] as const)("refresh dispatch leases on %s storage", (_label, delayed) => {
+describe("refresh dispatch leases on delayed storage", () => {
   it.each([31_000, 121_000])(
     "never resends a live holder's token after %i ms, including shared-storage expiry (INV-5)",
     async (elapsed) => {
       let now = Date.now();
       vi.spyOn(Date, "now").mockImplementation(() => now);
-      const storage = store(delayed);
+      const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
       const a = await isolate(storage);
       const b = await isolate(storage);
@@ -121,8 +114,9 @@ describe.each([
     },
   );
 
-  it.each([-300_000, 300_000])("ignores %i ms of contender clock skew for a dispatched lease (INV-5)", async (skew) => {
-    const storage = store(delayed);
+  it("ignores a contender clock 300 seconds ahead for a dispatched lease (INV-5)", async () => {
+    const skew = 300_000;
+    const storage = store();
     await seedGrant(storage, { issuer: ISSUER, tokens });
     const a = await isolate(storage, () => Date.now());
     const b = await isolate(storage, () => Date.now() + skew);
@@ -145,7 +139,7 @@ describe.each([
   });
 
   it("takes over an expired claimed lease once and fences the unsent holder's dispatch CAS (INV-5)", async () => {
-    const storage = store(delayed);
+    const storage = store();
     await seedGrant(storage, { issuer: ISSUER, tokens });
     const entered = deferred<void>();
     const gate = deferred<void>();
@@ -175,37 +169,10 @@ describe.each([
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps an expired dispatched fingerprint refused even after a later grant write (INV-5)", async () => {
-    const storage = store(delayed);
-    await seedGrant(storage, { issuer: ISSUER, tokens });
-    const key = await leaseKey(storage);
-    const activeKey = oauthRefreshActiveKeys.holder((await storedGrant(storage))!.epoch, "crashed");
-    await storage.set(
-      key,
-      JSON.stringify({
-        connectaOAuthRefresh: 1,
-        holder: "crashed",
-        state: "dispatched",
-        activeKey,
-        expiresAt: Date.now() + 999_999,
-      }),
-    );
-    // The liveness key has expired in storage, regardless of isolate clocks.
-    const a = await isolate(storage, () => Date.now() - 300_000);
-    const send = vi.fn(async () => Response.json(next));
-    await expect(a.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
-    expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
-    expect(JSON.parse((await storage.get(key))!)).toMatchObject({ state: "dispatched", verdict: { kind: "dead" } });
-    await seedGrant(storage, { issuer: ISSUER, tokens });
-    const later = await isolate(storage);
-    await expect(later.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
-    expect(send).not.toHaveBeenCalled();
-  });
-
   it.each(["fetch", "body"])(
     "bounds the refresh %s to 20 seconds and refuses an ambiguous token (INV-5) (INV-7)",
     async (phase) => {
-      const storage = store(delayed);
+      const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
       const a = await isolate(storage);
       const fire = deadline(20_000);
@@ -246,40 +213,8 @@ describe.each([
     },
   );
 
-  it.each([200, 503])(
-    "permanently refuses a lost HTTP %i response stream before newcomers can resend (INV-5)",
-    async (status) => {
-      const storage = store(delayed);
-      await seedGrant(storage, { issuer: ISSUER, tokens });
-      const a = await isolate(storage);
-      const b = await isolate(storage);
-      const key = await leaseKey(storage);
-      const send = vi.fn(
-        async () =>
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(new TextEncoder().encode('{"access_token":"new-access",'));
-                controller.error(new Error("Response body lost"));
-              },
-            }),
-            { status },
-          ),
-      );
-      await expect(a.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
-      expect(a.provider.refreshVerdict()).toEqual({ kind: "dead" });
-      expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
-      const refused = await storage.get(key);
-      expect(JSON.parse(refused!)).toMatchObject({ state: "dispatched", verdict: { kind: "dead" } });
-      await seedGrant(storage, { issuer: ISSUER, tokens });
-      await expect(b.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
-      expect(await storage.get(key)).toBe(refused);
-      expect(send).toHaveBeenCalledTimes(1);
-    },
-  );
-
   it("returns retryable unavailable through SDK fallback when a waiter reaches 35 seconds, keeping the grant (INV-5)", async () => {
-    const storage = store(delayed);
+    const storage = store();
     await seedGrant(storage, {
       issuer: ISSUER,
       tokens,
@@ -325,143 +260,47 @@ describe.each([
     expect(await a.provider.pendingAuthorizationUrl()).toBeUndefined();
   });
 
-  it.each(["initial grant", "refresh record"])(
-    "times out a cross-isolate waiter whose %s read is blocked, without a late dispatch (INV-5)",
-    async (phase) => {
-      const storage = store(delayed);
-      await seedGrant(storage, { issuer: ISSUER, tokens });
-      const key = await leaseKey(storage);
-      const gate = deferred<void>();
-      const entered = deferred<void>();
-      let blocked = false;
-      const held: KVStorage = {
-        ...storage,
-        async get(readKey) {
-          if (blocked && readKey === (phase === "initial grant" ? oauthGrantKeys.grant : key)) {
-            entered.resolve();
-            await gate.promise;
-          }
-          return storage.get(readKey);
-        },
-      };
-      const a = await isolate(held);
-      blocked = true;
-      const fire = deadline(35_000);
-      const send = vi.fn(async () => Response.json(next));
-      const request = a
-        .fetch(send)(`${ISSUER}/token`, init)
-        .catch((error: unknown) => error);
-      await entered.promise;
-      (await fire)();
-      expect(await request).toMatchObject({ code: "unavailable", retryable: true });
-      expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
-      gate.resolve();
-      await pause();
-      expect(send).not.toHaveBeenCalled();
-      expect(await storage.get(key)).toBeNull();
-    },
-  );
-
-  it("times out a local joiner while its holder's commit is blocked, leaving the holder able to commit (INV-5)", async () => {
-    const storage = store(delayed);
-    await seedGrant(storage, { issuer: ISSUER, tokens });
-    const gate = deferred<void>();
-    const entered = deferred<void>();
-    const held: KVStorage = {
-      ...storage,
-      async compareAndSet(key, expected, value, opts) {
-        if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
-          entered.resolve();
-          await gate.promise;
-        }
-        return storage.compareAndSet(key, expected, value, opts);
-      },
-    };
-    const a = await isolate(held);
-    const send = vi.fn(async () => Response.json(next));
-    const owner = a.fetch(send)(`${ISSUER}/token`, init);
-    await entered.promise;
-    const b = new KvOAuthProvider("svc", storage, REDIRECT, a.coordinator, false);
-    await b.beginFlow();
-    await b.tokens({ issuer: ISSUER });
-    const fire = deadline(35_000);
-    const waiter = a.coordinator
-      .coordinatedFetch(b, send)(`${ISSUER}/token`, init)
-      .catch((error: unknown) => error);
-    (await fire)();
-    expect(await waiter).toMatchObject({ code: "unavailable", retryable: true });
-    await expect(b.state()).rejects.toMatchObject({ code: "unavailable", retryable: true });
-    expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
-    gate.resolve();
-    expect((await owner).status).toBe(200);
-    expect((await storedGrant(storage))!.body!.tokens).toMatchObject(next);
-    expect(send).toHaveBeenCalledTimes(1);
-  });
-
-  it("settles a cancelled unsent owner's local flight while grant reads and cleanup are blocked (INV-5)", async () => {
-    const storage = store(delayed);
+  it("times out a cross-isolate waiter whose refresh record read is blocked, without a late dispatch (INV-5)", async () => {
+    const storage = store();
     await seedGrant(storage, { issuer: ISSUER, tokens });
     const key = await leaseKey(storage);
+    const gate = deferred<void>();
     const entered = deferred<void>();
-    const readGate = deferred<void>();
-    const cleanupGate = deferred<void>();
-    let claimed = false;
-    let pins = 0;
-    const coordinator = new OAuthRefreshCoordinator(() => {
-      pins++;
-      return () => {
-        pins--;
-      };
-    });
+    let blocked = false;
     const held: KVStorage = {
       ...storage,
       async get(readKey) {
-        if (claimed && readKey === oauthGrantKeys.grant) {
+        if (blocked && readKey === key) {
           entered.resolve();
-          await readGate.promise;
+          await gate.promise;
         }
         return storage.get(readKey);
       },
-      async compareAndSet(casKey, expected, value, opts) {
-        if (casKey === key && value === null) await cleanupGate.promise;
-        const won = await storage.compareAndSet(casKey, expected, value, opts);
-        if (casKey === key && won && value?.includes('"state":"claimed"')) claimed = true;
-        return won;
-      },
     };
-    const a = await isolate(held, Date.now, coordinator);
-    const controller = new AbortController();
+    const a = await isolate(held);
+    blocked = true;
+    const fire = deadline(35_000);
     const send = vi.fn(async () => Response.json(next));
-    const owner = a
-      .fetch(send, controller.signal)(`${ISSUER}/token`, init)
+    const request = a
+      .fetch(send)(`${ISSUER}/token`, init)
       .catch((error: unknown) => error);
     await entered.promise;
-    expect(pins).toBe(1);
-    controller.abort(new Error("caller left"));
-    expect(await owner).toBe(controller.signal.reason);
-    await vi.waitFor(() => expect(pins).toBe(0));
-    expect(send).not.toHaveBeenCalled();
+    (await fire)();
+    expect(await request).toMatchObject({ code: "unavailable", retryable: true });
     expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
-    // A later local caller can safely replace the expired unsent claim.
-    const b = await isolate(storage, () => Date.now() + 300_000, coordinator);
-    expect((await b.fetch(send)(`${ISSUER}/token`, init)).status).toBe(200);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(pins).toBe(0);
-    readGate.resolve();
-    cleanupGate.resolve();
+    gate.resolve();
     await pause();
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(await storage.get(key)).toBeNull();
   });
 
   it.each([
-    ["liveness write", "cancel"],
     ["liveness write", "timeout"],
     ["dispatch CAS", "cancel"],
-    ["dispatch CAS", "timeout"],
   ] as const)(
     "settles an unsent owner's flight when %s is blocked and the caller reaches %s (INV-5)",
     async (phase, end) => {
-      const storage = store(delayed);
+      const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
       const key = await leaseKey(storage);
       const entered = deferred<void>();

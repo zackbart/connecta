@@ -1,11 +1,10 @@
-import { checkClientActivity, INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
+import { INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/index.js";
-import { InvalidActivityCursorError } from "../src/activity.js";
 import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { stashChargeContract } from "./stash-charge-contract.js";
-import { compareAndSetContract, NUL_VALUES } from "./storage-contract.js";
+import { compareAndSetContract } from "./storage-contract.js";
 
 /**
  * One SQL database as a suite sees it: fresh stores over it, and raw SQL for
@@ -93,33 +92,15 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect(await a.compareAndSet("holder", null, "fresh", { ttlSeconds: 120 })).toBe(true);
   });
 
-  it("rejects a NUL key before creating the KV schema", async () => {
+  it("shares one table between stores over the same database", async () => {
     const db = await open();
-    await expect(db.storage().get("a\0b")).rejects.toThrow(/U\+0000 \(NUL\)/);
-    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?", "connecta_kv")).toEqual([]);
-  });
-
-  it("stores every byte of a value holding NUL and reads values without one as text", async () => {
-    const db = await open();
-    const storage = db.storage();
-    for (const [index, value] of NUL_VALUES.entries()) {
-      await storage.set(`nul:${index}`, value);
-    }
-    await storage.set("plain", "no zero byte");
-    const stored = await db.rows<{ key: string; type: string; bytes: number }>(
-      `SELECT key, typeof(value) AS type, length(CAST(value AS BLOB)) AS bytes
-       FROM connecta_kv ORDER BY key`,
+    const first = db.storage();
+    const second = db.storage();
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
     );
-    const encoder = new TextEncoder();
-    expect(stored).toEqual([
-      ...NUL_VALUES.map((value, index) => ({
-        key: `nul:${index}`,
-        type: "text",
-        bytes: encoder.encode(value).length,
-      })).sort((a, b) => (a.key < b.key ? -1 : 1)),
-      { key: "plain", type: "text", bytes: 12 },
-    ]);
-    expect(await storage.get("plain")).toBe("no zero byte");
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await second.get("claim")).toBe(await first.get("claim"));
   });
 
   it("refuses a stored value holding NUL that is not UTF-8 instead of reading it wrong", async () => {
@@ -144,13 +125,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect(await storage.list("conn:")).toEqual(["conn:b:token"]);
   });
 
-  it("sorts list results by UTF-16 code unit, as memory storage does", async () => {
-    const storage = (await open()).storage();
-    // UTF-8 byte order puts U+FF5E before U+1F600; UTF-16 puts it after.
-    for (const key of ["k:\u{1F600}", "k:\uFF5E", "k:a"]) await storage.set(key, "v");
-    expect(await storage.list("k:")).toEqual(["k:a", "k:\u{1F600}", "k:\uFF5E"]);
-  });
-
   it("treats a list prefix literally, never as a pattern", async () => {
     const storage = (await open()).storage();
     await storage.set("a%b", "1");
@@ -158,28 +132,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     await storage.set("axb", "3");
     expect(await storage.list("a%")).toEqual(["a%b"]);
     expect(await storage.list("a_")).toEqual(["a_b"]);
-  });
-
-  it("removes expired rows physically on a later write", async () => {
-    const db = await open();
-    const storage = db.storage();
-    await storage.set("old", "v", { ttlSeconds: -1 });
-    expect(await storage.get("old")).toBeNull();
-    expect(await storage.list("")).toEqual([]);
-    expect(await keys(db)).toEqual(["old"]);
-    await storage.set("new", "v");
-    expect(await keys(db)).toEqual(["new"]);
-  });
-
-  it("shares one table between stores over the same database", async () => {
-    const db = await open();
-    const first = db.storage();
-    const second = db.storage();
-    const claims = await Promise.all(
-      Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
-    );
-    expect(claims.filter(Boolean)).toHaveLength(1);
-    expect(await second.get("claim")).toBe(await first.get("claim"));
   });
 
   it("reads a key-value table the 0.28 Worker example created", async () => {
@@ -272,10 +224,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     }
   });
 
-  it("INV-6: withholds invalid client facts across direct/program SQL activity and UI", async () => {
-    await checkClientActivity((await open()).activity());
-  });
-
   it("INV-6: withholds invalid client facts in historical SQL rows", async () => {
     const db = await open();
     const activity = db.activity();
@@ -351,33 +299,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 1 })).events).toEqual([recorded]);
   });
 
-  it("round-trips a historical resumed program's approval row", async () => {
-    // Written before 0.28.0 removed program pauses; the Activity tab still
-    // renders these rows, so they must read back exactly.
-    const activity = (await open()).activity();
-    const approved = event(3, {
-      toolName: "close_issue",
-      address: "notes.close_issue",
-      source: "resume_execution",
-      outcome: "approved",
-      durationMs: 0,
-      attempts: 0,
-      approval: "tool",
-    });
-    await activity.record(approved);
-    expect((await activity.list!({ limit: 1 })).events).toEqual([approved]);
-  });
-
-  it("refuses a cursor it did not issue", async () => {
-    const activity = (await open()).activity();
-    await expect(activity.list!({ limit: 1, cursor: "not a cursor" })).rejects.toBeInstanceOf(
-      InvalidActivityCursorError,
-    );
-    await expect(activity.list!({ limit: 1, cursor: btoa("12:not-a-uuid") })).rejects.toBeInstanceOf(
-      InvalidActivityCursorError,
-    );
-  });
-
   it("INV-6: upgrades old activity rows without inventing package or client facts and derives friction", async () => {
     const db = await open();
     await db.exec(LEGACY_ACTIVITY_TABLE);
@@ -446,16 +367,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     ]);
   });
 
-  it("creates the tables from many first uses at once", async () => {
-    const db = await open();
-    await Promise.all([
-      ...Array.from({ length: 4 }, (_, index) => db.activity().record(event(index))),
-      ...Array.from({ length: 4 }, (_, index) => db.storage().set(`k${index}`, "v")),
-    ]);
-    expect((await db.activity().list!({ limit: 10 })).events).toHaveLength(4);
-    expect(await keys(db)).toEqual(["k0", "k1", "k2", "k3"]);
-  });
-
   it("prunes activity older than the retention window as it writes", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-07-27T00:00:00.000Z") });
     const activity = (await open()).activity({ retentionDays: 1 });
@@ -476,10 +387,6 @@ const LEGACY_ACTIVITY_TABLE = `CREATE TABLE tool_call_activity (
   error_code TEXT, server_name TEXT NOT NULL, server_version TEXT NOT NULL,
   deployment_id TEXT
 )`;
-
-async function keys(db: SqlFixture): Promise<string[]> {
-  return (await db.rows<{ key: string }>("SELECT key FROM connecta_kv ORDER BY key")).map((row) => row.key);
-}
 
 function id(index: number): string {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;

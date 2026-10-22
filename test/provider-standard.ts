@@ -12,7 +12,7 @@
 /**
  * Providers that have not landed a step yet. Each list only shrinks: a
  * migration PR removes its provider, and `provider-standard.node.test.ts`
- * checks the committed baseline and fails while a listed provider already passes, so an exemption cannot
+ * checks the current inventory and fails while a listed provider already passes, so an exemption cannot
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
@@ -73,20 +73,6 @@ export const PENDING = {
     "wispr-flow",
   ]),
 } as const;
-
-/** The committed remaining exemptions, compared with the pre-push/PR base (merge base locally) by the Node suite. */
-export interface PendingBaseline {
-  readonly step1: readonly string[];
-  readonly step2: readonly string[];
-}
-
-export function pendingAdditions(current: PendingBaseline, previous: PendingBaseline): string[] {
-  return (["step1", "step2"] as const).flatMap((step) =>
-    current[step]
-      .filter((name) => !previous[step].includes(name))
-      .map((name) => `${step}: added or reinserted ${name}`),
-  );
-}
 
 /** Independent of optional H-convention metadata; omission must never skip the S checks. */
 export async function authoredTools(

@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
@@ -254,7 +255,7 @@ const labels = (connector: Connector, ctx: ConnectorContext, args: Record<string
 // --- The assertion ----------------------------------------------------------------
 
 describe("the JWT-bearer assertion", () => {
-  it("is RS256 with the delegation claims, and verifies against the key", async () => {
+  it("is RS256 with the delegation claims, and verifies against the key", WORKERS, async () => {
     const owner = account();
     vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     await labels(mailbox({}, owner), context(identity("alice")));
@@ -282,7 +283,7 @@ describe("the JWT-bearer assertion", () => {
     expect(apiCalls[0]!.authorization).toBe("Bearer token-1");
   });
 
-  it("accepts the downloaded JSON key text, escaped newlines included", async () => {
+  it("accepts the downloaded JSON key text, escaped newlines included", NODE, async () => {
     const owner = account();
     const file = JSON.stringify({
       type: "service_account",
@@ -403,11 +404,11 @@ describe("construction refuses a structural mistake", () => {
     ],
     ["no subject", { subject: undefined }, /subject/],
     ["a fixed subject that is not an address", { subject: "alice" }, /email address/],
-  ])("%s", (_name, overrides, message) => {
+  ])("%s", WORKERS, (_name, overrides, message) => {
     expect(build(overrides)).toThrow(message);
   });
 
-  it("accepts a real RSA key, whose layout the mutations above target", () => {
+  it("accepts a real RSA key, whose layout the mutations above target", NODE, () => {
     expect(build({})).not.toThrow();
     // The mutations change exactly the byte they mean to, so each refusal is
     // about that byte and not an accident of a misplaced offset.
@@ -417,7 +418,7 @@ describe("construction refuses a structural mistake", () => {
     expect([der[version - 2], der[version - 1], der[version]]).toEqual([0x02, 0x01, 0x00]);
   });
 
-  it("never puts the key in a construction error", () => {
+  it("never puts the key in a construction error", NODE, () => {
     const secret = `-----BEGIN PRIVATE KEY-----\n${btoa("x".repeat(100))}\n-----END PRIVATE KEY-----`;
     try {
       build({ serviceAccount: { clientEmail: "a@b.c", privateKey: secret } })();
@@ -431,7 +432,7 @@ describe("construction refuses a structural mistake", () => {
 // --- Subject ------------------------------------------------------------------------
 
 describe("whose account a call acts as", () => {
-  it("comes from the config function applied to the admitted identity", async () => {
+  it("comes from the config function applied to the admitted identity", NODE, async () => {
     const connector = mailbox();
     await labels(connector, context(identity("alice")));
     await labels(connector, context(identity("bob")));
@@ -441,7 +442,7 @@ describe("whose account a call acts as", () => {
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
   });
 
-  it("may be resolved asynchronously, from a directory lookup", async () => {
+  it("may be resolved asynchronously, from a directory lookup", NODE, async () => {
     const connector = mailbox({
       subject: async (who: AuthenticatedIdentity) => `${who.principal?.id}@lookup.example`,
     });
@@ -449,13 +450,13 @@ describe("whose account a call acts as", () => {
     expect(decodeSegment(tokenCalls[0]!.assertion.split(".")[1]!).sub).toBe("carol@lookup.example");
   });
 
-  it("may be one fixed account, which needs no caller", async () => {
+  it("may be one fixed account, which needs no caller", NODE, async () => {
     const connector = mailbox({ subject: "shared-inbox@org.example" });
     await labels(connector, context());
     expect(decodeSegment(tokenCalls[0]!.assertion.split(".")[1]!).sub).toBe("shared-inbox@org.example");
   });
 
-  it("fails closed with no admitted caller, before any network call", async () => {
+  it("fails closed with no admitted caller, before any network call", NODE, async () => {
     await expect(labels(mailbox(), context())).rejects.toMatchObject({
       code: "auth_required",
       message: expect.stringContaining("no admitted caller"),
@@ -464,7 +465,7 @@ describe("whose account a call acts as", () => {
     expect(apiCalls).toEqual([]);
   });
 
-  it("never asks the mapping about an unauthenticated caller", async () => {
+  it("never asks the mapping about an unauthenticated caller", NODE, async () => {
     // An open deployment admits everyone as the anonymous actor; a mapping
     // that answers for anyone must still never be consulted for them.
     const mapping = vi.fn(() => "alice@org.example");
@@ -486,7 +487,7 @@ describe("whose account a call acts as", () => {
     expect(tokenCalls).toHaveLength(1);
   });
 
-  it("hands an async mapping the call's signal, once per call", async () => {
+  it("hands an async mapping the call's signal, once per call", WORKERS, async () => {
     const controller = new AbortController();
     const seen: (AbortSignal | undefined)[] = [];
     const connector = mailbox({
@@ -505,7 +506,7 @@ describe("whose account a call acts as", () => {
     expect(seen).toEqual([controller.signal]);
   });
 
-  it("fails closed when the mapping has no account for this caller", async () => {
+  it("fails closed when the mapping has no account for this caller", NODE, async () => {
     await expect(labels(mailbox(), context(identity("mallory")))).rejects.toMatchObject({
       code: "auth_required",
       message: expect.stringContaining("no Google Workspace account mapped"),
@@ -514,7 +515,7 @@ describe("whose account a call acts as", () => {
     expect(apiCalls).toEqual([]);
   });
 
-  it("refuses a mapping that throws or answers something that is not an address", async () => {
+  it("refuses a mapping that throws or answers something that is not an address", NODE, async () => {
     const thrower = mailbox({
       subject: () => {
         throw new Error("directory down: secret-detail");
@@ -529,7 +530,7 @@ describe("whose account a call acts as", () => {
     expect(tokenCalls).toEqual([]);
   });
 
-  it("INV-3: cannot be chosen by an argument", async () => {
+  it("INV-3: cannot be chosen by an argument", NODE, async () => {
     // Every schema is closed, so a subject- or user-shaped argument is refused
     // locally rather than reaching anything that might read it.
     for (const args of [{ subject: "ceo@org.example" }, { userId: "ceo@org.example" }]) {
@@ -545,7 +546,7 @@ describe("whose account a call acts as", () => {
     expect(apiCalls).toEqual([]);
   });
 
-  it("reaches only the token's own mailbox", async () => {
+  it("reaches only the token's own mailbox", NODE, async () => {
     await labels(mailbox(), context(identity("alice")));
     expect(apiCalls[0]!.url).toBe(`${GMAIL_API_BASE_URL}/labels`);
   });
@@ -566,7 +567,7 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     };
   }
 
-  it("maps each admitted user to their own mailbox, whatever the request says", async () => {
+  it("maps each admitted user to their own mailbox, whatever the request says", NODE, async () => {
     const connecta = createTestConnecta({
       connectors: [mailbox()],
       auth: users(),
@@ -612,7 +613,7 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
       ),
     );
 
-  it("refuses an open deployment's anonymous requests before the mapping runs", async () => {
+  it("refuses an open deployment's anonymous requests before the mapping runs", NODE, async () => {
     const mapping = vi.fn(() => "alice@org.example");
     const connecta = createTestConnecta({ connectors: [mailbox({ subject: mapping })], logger: silentLogger });
     const result = await labelsOver(connecta);
@@ -623,7 +624,7 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     expect(apiCalls).toEqual([]);
   });
 
-  it("counts a machine token without a person behind it as authenticated", async () => {
+  it("counts a machine token without a person behind it as authenticated", NODE, async () => {
     const mapping = vi.fn((who: AuthenticatedIdentity) =>
       who.actor.kind === "access_token" ? "robot@org.example" : undefined,
     );
@@ -655,14 +656,14 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     );
   const sub = (index = 0) => decodeSegment(tokenCalls[index]!.assertion.split(".")[1]!).sub;
 
-  it("INV-3: a human in an owned pool acts as themselves through the mapping", async () => {
+  it("INV-3: a human in an owned pool acts as themselves through the mapping", NODE, async () => {
     const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
     await labels(mailbox({ subject: mapping }), inPool(identity("alice"), "assistant-bob", "bob@org.example"));
     expect(mapping).toHaveBeenCalledTimes(1);
     expect(sub()).toBe("alice@org.example");
   });
 
-  it("INV-3: an agent in an owned pool acts as the owner, and the mapping is never asked", async () => {
+  it("INV-3: an agent in an owned pool acts as the owner, and the mapping is never asked", NODE, async () => {
     const mapping = vi.fn(() => "alice@org.example");
     await labels(mailbox({ subject: mapping }), inPool(agent("assistant"), "assistant-bob", "bob@org.example"));
     expect(mapping).not.toHaveBeenCalled();
@@ -670,25 +671,29 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     expect(apiCalls).toHaveLength(1);
   });
 
-  it("INV-3: an agent in an ownerless pool, or in no pool, fails auth_required before anything leaves", async () => {
-    const mapping = vi.fn(() => "alice@org.example");
-    for (const ctx of [
-      inPool(agent("assistant"), "team"),
-      inPool(agent("assistant")),
-      // An owner without the pool it belongs to is not one core set.
-      inPool(agent("assistant"), undefined, "bob@org.example"),
-    ]) {
-      const failure = await labels(mailbox({ subject: mapping }), ctx).catch((error) => error);
-      expect(failure).toBeInstanceOf(ConnectorCallError);
-      expect(failure).toMatchObject({ code: "auth_required", message: expect.stringContaining("has no owner") });
-      expect(failure.message).not.toContain("@");
-    }
-    expect(mapping).not.toHaveBeenCalled();
-    expect(tokenCalls).toEqual([]);
-    expect(apiCalls).toEqual([]);
-  });
+  it(
+    "INV-3: an agent in an ownerless pool, or in no pool, fails auth_required before anything leaves",
+    NODE,
+    async () => {
+      const mapping = vi.fn(() => "alice@org.example");
+      for (const ctx of [
+        inPool(agent("assistant"), "team"),
+        inPool(agent("assistant")),
+        // An owner without the pool it belongs to is not one core set.
+        inPool(agent("assistant"), undefined, "bob@org.example"),
+      ]) {
+        const failure = await labels(mailbox({ subject: mapping }), ctx).catch((error) => error);
+        expect(failure).toBeInstanceOf(ConnectorCallError);
+        expect(failure).toMatchObject({ code: "auth_required", message: expect.stringContaining("has no owner") });
+        expect(failure.message).not.toContain("@");
+      }
+      expect(mapping).not.toHaveBeenCalled();
+      expect(tokenCalls).toEqual([]);
+      expect(apiCalls).toEqual([]);
+    },
+  );
 
-  it("INV-3: a fixed subject applies to humans and agents alike, and the pool owner is ignored", async () => {
+  it("INV-3: a fixed subject applies to humans and agents alike, and the pool owner is ignored", NODE, async () => {
     const shared = mailbox({ subject: "shared-inbox@org.example" });
     await labels(shared, inPool(identity("alice"), "assistant-bob", "bob@org.example"));
     await labels(shared, inPool(agent("assistant"), "assistant-bob", "bob@org.example"));
@@ -769,34 +774,38 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       return (await readJsonRpc(await connecta.fetch(request))).result;
     };
 
-    it("INV-3: one connector serves per-person pools, and each agent call at /agent/<pool> reaches only its pool owner's mailbox", async () => {
-      const { connecta, mapping, assistant } = await deployment();
-      // The same agent at a human pool endpoint is refused before any delegation.
-      const human = await connecta.fetch(
-        mcpRpc(
-          "tools/call",
-          { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
-          { token: assistant, pool: "assistant-alice" },
-        ),
-      );
-      expect(human.status).toBe(401);
-      expect(await human.text()).toContain("host_auth_required");
-      expect(tokenCalls).toEqual([]);
-      expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
-      expect((await callOver(connecta, assistant, "assistant-bob")).isError).toBeFalsy();
-      expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
-      expect(mapping).not.toHaveBeenCalled();
-      // The delegated subject in each token request; the third reuses Alice's token.
-      expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example", "bob@org.example"]);
-      expect(apiCalls.map((call) => call.authorization)).toEqual([
-        "Bearer token-1",
-        "Bearer token-2",
-        "Bearer token-1",
-      ]);
-      await connecta.close();
-    });
+    it(
+      "INV-3: one connector serves per-person pools, and each agent call at /agent/<pool> reaches only its pool owner's mailbox",
+      NODE,
+      async () => {
+        const { connecta, mapping, assistant } = await deployment();
+        // The same agent at a human pool endpoint is refused before any delegation.
+        const human = await connecta.fetch(
+          mcpRpc(
+            "tools/call",
+            { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
+            { token: assistant, pool: "assistant-alice" },
+          ),
+        );
+        expect(human.status).toBe(401);
+        expect(await human.text()).toContain("host_auth_required");
+        expect(tokenCalls).toEqual([]);
+        expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
+        expect((await callOver(connecta, assistant, "assistant-bob")).isError).toBeFalsy();
+        expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
+        expect(mapping).not.toHaveBeenCalled();
+        // The delegated subject in each token request; the third reuses Alice's token.
+        expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example", "bob@org.example"]);
+        expect(apiCalls.map((call) => call.authorization)).toEqual([
+          "Bearer token-1",
+          "Bearer token-2",
+          "Bearer token-1",
+        ]);
+        await connecta.close();
+      },
+    );
 
-    it("INV-3: a human in someone else's owned pool still acts as themselves", async () => {
+    it("INV-3: a human in someone else's owned pool still acts as themselves", NODE, async () => {
       const { connecta, mapping } = await deployment();
       expect((await callOver(connecta, "alice", "assist-bob")).isError).toBeFalsy();
       expect(mapping).toHaveBeenCalledTimes(1);
@@ -804,82 +813,91 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       await connecta.close();
     });
 
-    it("INV-4: an agent in an ownerless pool does not see a mapping Workspace connector anywhere, and a call fails as for a missing connector", async () => {
-      // A fixed subject is the shared-account exception and stays visible.
-      const shared = gmail("shared_mail", {
-        purpose: "Shared inbox",
-        serviceAccount: account(),
-        subject: "shared-inbox@org.example",
-      } as Parameters<typeof gmail>[1]);
-      const code = (error: unknown) => String((error as { code?: string }).code ?? error);
-      const { connecta, mapping, assistant } = await deployment({
-        extra: [shared],
-        executor: scriptedExecutor(async (fns) => ({
-          search: ((await fns.search!({ query: "labels" })) as { tools: { address: string }[] }).tools.map(
-            (tool) => tool.address,
-          ),
-          describe: await fns.describe!({ address: "mail.list_labels" }).catch(code),
-          describeGhost: await fns.describe!({ address: "ghost.list_labels" }).catch(code),
-          call: await fns.call!("mail.list_labels", {}).catch(code),
-          callGhost: await fns.call!("ghost.list_labels", {}).catch(code),
-        })),
-      });
-      const rpc = async (token: string, endpoint: { pool?: string; agentPool?: string }, name: string, args: object) =>
-        (
-          await readJsonRpc(
-            await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token, ...endpoint })),
-          )
-        ).result;
-      const addresses = (result: { structuredContent: { tools: { address: string }[] } }) =>
-        result.structuredContent.tools.map((tool) => tool.address);
-      const group = { agentPool: "group" };
+    it(
+      "INV-4: an agent in an ownerless pool does not see a mapping Workspace connector anywhere, and a call fails as for a missing connector",
+      NODE,
+      async () => {
+        // A fixed subject is the shared-account exception and stays visible.
+        const shared = gmail("shared_mail", {
+          purpose: "Shared inbox",
+          serviceAccount: account(),
+          subject: "shared-inbox@org.example",
+        } as Parameters<typeof gmail>[1]);
+        const code = (error: unknown) => String((error as { code?: string }).code ?? error);
+        const { connecta, mapping, assistant } = await deployment({
+          extra: [shared],
+          executor: scriptedExecutor(async (fns) => ({
+            search: ((await fns.search!({ query: "labels" })) as { tools: { address: string }[] }).tools.map(
+              (tool) => tool.address,
+            ),
+            describe: await fns.describe!({ address: "mail.list_labels" }).catch(code),
+            describeGhost: await fns.describe!({ address: "ghost.list_labels" }).catch(code),
+            call: await fns.call!("mail.list_labels", {}).catch(code),
+            callGhost: await fns.call!("ghost.list_labels", {}).catch(code),
+          })),
+        });
+        const rpc = async (
+          token: string,
+          endpoint: { pool?: string; agentPool?: string },
+          name: string,
+          args: object,
+        ) =>
+          (
+            await readJsonRpc(
+              await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token, ...endpoint })),
+            )
+          ).result;
+        const addresses = (result: { structuredContent: { tools: { address: string }[] } }) =>
+          result.structuredContent.tools.map((tool) => tool.address);
+        const group = { agentPool: "group" };
 
-      expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
-        "shared_mail.list_labels",
-      ]);
-      const called = await rpc(assistant, group, "call_tool", { address: "mail.list_labels", args: {} });
-      const ghost = await rpc(assistant, group, "call_tool", { address: "ghost.list_labels", args: {} });
-      expect(called.isError).toBe(true);
-      expect(called.structuredContent.error).toEqual({
-        ...ghost.structuredContent.error,
-        message: 'Unknown address "mail.list_labels"',
-      });
-      expect(called.structuredContent.error).toMatchObject({
-        code: "unknown_address",
-        configuredConnectors: ["shared_mail"],
-      });
-      const written = await rpc(assistant, group, "call_destructive_tool", { address: "mail.list_labels", args: {} });
-      expect(written.structuredContent.error.code).toBe("unknown_address");
-      const authorize = await rpc(assistant, group, "authorize_connector", { connector: "mail" });
-      expect(authorize.content[0].text).toBe('Unknown connector "mail"');
-      const skills = await rpc(assistant, group, "skills", {});
-      expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
-        "connector:mail",
-      );
-      expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).toContain(
-        "connector:shared_mail",
-      );
-      const program = (await rpc(assistant, group, "execute_code", { code: "async () => null" })).structuredContent
-        .result;
-      expect(program.search).toEqual(["shared_mail.list_labels"]);
-      // Byte-for-byte what a connector that never existed gets, name aside.
-      const asGhost = (value: unknown) => JSON.stringify(value).replaceAll('"mail.', '"ghost.');
-      expect(asGhost(program.describe)).toBe(JSON.stringify(program.describeGhost));
-      expect(asGhost(program.call)).toBe(JSON.stringify(program.callGhost));
+        expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
+          "shared_mail.list_labels",
+        ]);
+        const called = await rpc(assistant, group, "call_tool", { address: "mail.list_labels", args: {} });
+        const ghost = await rpc(assistant, group, "call_tool", { address: "ghost.list_labels", args: {} });
+        expect(called.isError).toBe(true);
+        expect(called.structuredContent.error).toEqual({
+          ...ghost.structuredContent.error,
+          message: 'Unknown address "mail.list_labels"',
+        });
+        expect(called.structuredContent.error).toMatchObject({
+          code: "unknown_address",
+          configuredConnectors: ["shared_mail"],
+        });
+        const written = await rpc(assistant, group, "call_destructive_tool", { address: "mail.list_labels", args: {} });
+        expect(written.structuredContent.error.code).toBe("unknown_address");
+        const authorize = await rpc(assistant, group, "authorize_connector", { connector: "mail" });
+        expect(authorize.content[0].text).toBe('Unknown connector "mail"');
+        const skills = await rpc(assistant, group, "skills", {});
+        expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
+          "connector:mail",
+        );
+        expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).toContain(
+          "connector:shared_mail",
+        );
+        const program = (await rpc(assistant, group, "execute_code", { code: "async () => null" })).structuredContent
+          .result;
+        expect(program.search).toEqual(["shared_mail.list_labels"]);
+        // Byte-for-byte what a connector that never existed gets, name aside.
+        const asGhost = (value: unknown) => JSON.stringify(value).replaceAll('"mail.', '"ghost.');
+        expect(asGhost(program.describe)).toBe(JSON.stringify(program.describeGhost));
+        expect(asGhost(program.call)).toBe(JSON.stringify(program.callGhost));
 
-      // People in the same pool, and the agent in an owned pool, still see it.
-      expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
-        "mail.list_labels",
-        "shared_mail.list_labels",
-      ]);
-      expect(
-        addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
-      ).toEqual(["mail.list_labels"]);
-      expect(mapping).not.toHaveBeenCalled();
-      expect(tokenCalls).toEqual([]);
-      expect(apiCalls).toEqual([]);
-      await connecta.close();
-    });
+        // People in the same pool, and the agent in an owned pool, still see it.
+        expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
+          "mail.list_labels",
+          "shared_mail.list_labels",
+        ]);
+        expect(
+          addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
+        ).toEqual(["mail.list_labels"]);
+        expect(mapping).not.toHaveBeenCalled();
+        expect(tokenCalls).toEqual([]);
+        expect(apiCalls).toEqual([]);
+        await connecta.close();
+      },
+    );
 
     it.each([
       {
@@ -945,7 +963,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         args: { connector: "shared_mail", query: "zzzzzqwerty" },
         expected: { tools: [], queryAnalysis: { guide: "connector:shared_mail", guideSummary: expect.any(String) } },
       },
-    ])("INV-4: return paging rechecks $name after a pool owner is removed", async ({ name, args, expected }) => {
+    ])("INV-4: return paging rechecks $name after a pool owner is removed", NODE, async ({ name, args, expected }) => {
       const storage = memoryStorage();
       const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
       const mail = mailbox({ subject: mapping, title: "Staff mailbox" });
@@ -1056,49 +1074,53 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       }
     });
 
-    it("INV-3: nothing an agent sends — arguments, headers, or a program — moves it off its pool owner", async () => {
-      const { connecta, assistant } = await deployment({
-        executor: scriptedExecutor(async (fns) => {
-          const forged = await fns.call!("mail.list_labels", { subject: "bob@org.example" }).catch((error) =>
-            String((error as { code?: string }).code ?? error),
-          );
-          await fns.call!("mail.list_labels", {});
-          return forged;
-        }),
-      });
-      const forged = await callOver(connecta, assistant, "assistant-alice", { userId: "bob@org.example" });
-      expect(forged.isError).toBe(true);
-      expect(JSON.stringify(forged)).toContain("invalid_args");
-      const headed = await callOver(
-        connecta,
-        assistant,
-        "assistant-alice",
-        {},
-        {
-          "X-Goog-Subject": "bob@org.example",
-          "X-Connecta-Pool-Owner": "bob@org.example",
-        },
-      );
-      expect(headed.isError).toBeFalsy();
-      const program = (
-        await readJsonRpc(
-          await connecta.fetch(
-            mcpRpc(
-              "tools/call",
-              { name: "execute_code", arguments: { code: "async () => null" } },
-              { token: assistant, agentPool: "assistant-alice" },
+    it(
+      "INV-3: nothing an agent sends — arguments, headers, or a program — moves it off its pool owner",
+      NODE,
+      async () => {
+        const { connecta, assistant } = await deployment({
+          executor: scriptedExecutor(async (fns) => {
+            const forged = await fns.call!("mail.list_labels", { subject: "bob@org.example" }).catch((error) =>
+              String((error as { code?: string }).code ?? error),
+            );
+            await fns.call!("mail.list_labels", {});
+            return forged;
+          }),
+        });
+        const forged = await callOver(connecta, assistant, "assistant-alice", { userId: "bob@org.example" });
+        expect(forged.isError).toBe(true);
+        expect(JSON.stringify(forged)).toContain("invalid_args");
+        const headed = await callOver(
+          connecta,
+          assistant,
+          "assistant-alice",
+          {},
+          {
+            "X-Goog-Subject": "bob@org.example",
+            "X-Connecta-Pool-Owner": "bob@org.example",
+          },
+        );
+        expect(headed.isError).toBeFalsy();
+        const program = (
+          await readJsonRpc(
+            await connecta.fetch(
+              mcpRpc(
+                "tools/call",
+                { name: "execute_code", arguments: { code: "async () => null" } },
+                { token: assistant, agentPool: "assistant-alice" },
+              ),
             ),
-          ),
-        )
-      ).result;
-      expect(program.isError).toBeFalsy();
-      expect(JSON.stringify(program)).toContain("invalid_args");
-      expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example"]);
-      expect(apiCalls).toHaveLength(2);
-      await connecta.close();
-    });
+          )
+        ).result;
+        expect(program.isError).toBeFalsy();
+        expect(JSON.stringify(program)).toContain("invalid_args");
+        expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example"]);
+        expect(apiCalls).toHaveLength(2);
+        await connecta.close();
+      },
+    );
 
-    it("INV-11: construction refuses an owner that is not a Workspace address", () => {
+    it("INV-11: construction refuses an owner that is not a Workspace address", NODE, () => {
       for (const owner of ["bob", "bob@", "two@at@org.example", "bob @org.example", "", 42]) {
         expect(() =>
           createTestConnecta({
@@ -1112,7 +1134,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       }
     });
 
-    it("describeConfig names each pool's trimmed owner, or null", async () => {
+    it("describeConfig names each pool's trimmed owner, or null", NODE, async () => {
       const { connecta } = await deployment();
       const owners = connecta.describeConfig().pools.map((pool) => [pool.name, pool.owner]);
       expect(owners).toEqual([
@@ -1129,7 +1151,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 // --- Token cache --------------------------------------------------------------------
 
 describe("the in-memory token cache", () => {
-  it("reuses a token until a minute before it expires, then mints anew", async () => {
+  it("reuses a token until a minute before it expires, then mints anew", NODE, async () => {
     let now = 1_800_000_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const connector = mailbox();
@@ -1156,7 +1178,7 @@ describe("the in-memory token cache", () => {
     ]);
   });
 
-  it("keys by subject and scope set, and shares across connectors on one account", async () => {
+  it("keys by subject and scope set, and shares across connectors on one account", NODE, async () => {
     const owner = account();
     const first = mailbox({}, owner);
     const second = mailbox({}, owner);
@@ -1167,7 +1189,7 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(2);
   });
 
-  it("sends concurrent callers through one mint", async () => {
+  it("sends concurrent callers through one mint", WORKERS, async () => {
     const held = deferred();
     tokenReplies.push(held.reply);
     const connector = mailbox();
@@ -1179,7 +1201,7 @@ describe("the in-memory token cache", () => {
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer shared", "Bearer shared", "Bearer shared"]);
   });
 
-  it("lets a follower in another request mint again, never reading the owner's signal", async () => {
+  it("lets a follower in another request mint again, never reading the owner's signal", WORKERS, async () => {
     // On workerd an AbortSignal belongs to the request that made it, and
     // reading it from another throws. Each "request" here runs in its own
     // async context, and the owner's signal throws the same way when read
@@ -1211,7 +1233,7 @@ describe("the in-memory token cache", () => {
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-2"]);
   });
 
-  it("stops waiting on another caller's mint at its deadline", async () => {
+  it("stops waiting on another caller's mint at its deadline", NODE, async () => {
     tokenReplies.push(deferred().reply);
     const connector = mailbox();
     const short = context(identity("alice"));
@@ -1223,7 +1245,7 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(2);
   });
 
-  it("forgets only the token a late 401 rejected, never a newer one", async () => {
+  it("forgets only the token a late 401 rejected, never a newer one", NODE, async () => {
     let now = 1_800_000_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const late = deferred();
@@ -1243,14 +1265,14 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(2);
   });
 
-  it("keys the cache by the key itself, so a rotated key never reuses a token", async () => {
+  it("keys the cache by the key itself, so a rotated key never reuses a token", WORKERS, async () => {
     const owner = account();
     await labels(mailbox({}, owner), context(identity("alice")));
     await labels(mailbox({}, { ...owner, privateKey: ROTATED_KEY }), context(identity("alice")));
     expect(tokenCalls).toHaveLength(2);
   });
 
-  it("shares a refusal from Google with everyone waiting on it", async () => {
+  it("shares a refusal from Google with everyone waiting on it", NODE, async () => {
     const held = deferred();
     tokenReplies.push(held.reply);
     const connector = mailbox();
@@ -1266,7 +1288,7 @@ describe("the in-memory token cache", () => {
   // seconds long on a loaded host, where vitest's 5s default cut it off and
   // its still-running loop then drained the replies later cases queued. The
   // budget is a hang guard, not a speed assertion.
-  it("stays bounded, dropping the oldest token first", async () => {
+  it("stays bounded, dropping the oldest token first", { ...NODE, timeout: 60_000 }, async () => {
     const connector = mailbox({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@org.example` });
     await labels(connector, context(identity("first")));
     for (let index = 0; index < 512; index += 1) {
@@ -1277,9 +1299,9 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(513);
     await labels(connector, context(identity("first")));
     expect(tokenCalls).toHaveLength(514);
-  }, 60_000);
+  });
 
-  it("forgets a token the API rejects and replays once with a fresh one", async () => {
+  it("forgets a token the API rejects and replays once with a fresh one", NODE, async () => {
     apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
     const connector = mailbox();
     await labels(connector, context(identity("alice")));
@@ -1287,7 +1309,7 @@ describe("the in-memory token cache", () => {
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
   });
 
-  it("answers auth_required when the fresh token is rejected too", async () => {
+  it("answers auth_required when the fresh token is rejected too", NODE, async () => {
     const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
     apiReplies.push(rejected, rejected);
     await expect(labels(mailbox(), context(identity("alice")))).rejects.toMatchObject({
@@ -1296,37 +1318,41 @@ describe("the in-memory token cache", () => {
     expect(apiCalls).toHaveLength(2);
   });
 
-  it("INV-9: a read's 401 the fresh token replaced leaves a later write's failure to decide the call", async () => {
-    apiReplies.push(
-      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-      () =>
-        Response.json({
-          id: "d1",
-          message: {
-            id: "m1",
-            threadId: "t1",
-            payload: { mimeType: "text/plain", headers: [{ name: "To", value: "bob@org.example" }], body: {} },
-          },
-        }),
-      () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
-    );
-    // A direct call: update_draft's GET is a read, so its 401 earns the replay.
-    const failure = await mailbox()
-      .callTool("update_draft", { draftId: "d1", body: "Revised." }, context(identity("alice")))
-      .catch((error: unknown) => error);
-    const error = classifyCallError(failure);
-    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect(error.message).toContain("answered HTTP 503 after receiving the request");
-    expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual([
-      "GET Bearer token-1",
-      "GET Bearer token-2",
-      "PUT Bearer token-2",
-    ]);
-  });
+  it(
+    "INV-9: a read's 401 the fresh token replaced leaves a later write's failure to decide the call",
+    NODE,
+    async () => {
+      apiReplies.push(
+        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+        () =>
+          Response.json({
+            id: "d1",
+            message: {
+              id: "m1",
+              threadId: "t1",
+              payload: { mimeType: "text/plain", headers: [{ name: "To", value: "bob@org.example" }], body: {} },
+            },
+          }),
+        () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
+      );
+      // A direct call: update_draft's GET is a read, so its 401 earns the replay.
+      const failure = await mailbox()
+        .callTool("update_draft", { draftId: "d1", body: "Revised." }, context(identity("alice")))
+        .catch((error: unknown) => error);
+      const error = classifyCallError(failure);
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(error.message).toContain("answered HTTP 503 after receiving the request");
+      expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual([
+        "GET Bearer token-1",
+        "GET Bearer token-2",
+        "PUT Bearer token-2",
+      ]);
+    },
+  );
 });
 
 describe("Workspace served classification on unauthorized requests", () => {
-  it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", async () => {
+  it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", NODE, async () => {
     apiReplies.push(
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
       () => Response.json({ labels: [] }),
@@ -1356,6 +1382,7 @@ describe("Workspace served classification on unauthorized requests", () => {
 
   it.each([503, "reset"] as const)(
     "INV-9: a write-classified Google GET's %s stays an unknown outcome",
+    NODE,
     async (answer) => {
       apiReplies.push(() => {
         if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
@@ -1386,6 +1413,7 @@ describe("Workspace served classification on unauthorized requests", () => {
     ["slides", slides, "create_presentation", { title: "Example" }],
   ] as const)(
     "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
+    NODE,
     async (_name, provider, tool, args) => {
       apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
       const registry = makeRegistry([
@@ -1410,7 +1438,7 @@ describe("Workspace served classification on unauthorized requests", () => {
     },
   );
 
-  it("INV-9: a served read-classified POST replays once after 401 with the same body", async () => {
+  it("INV-9: a served read-classified POST replays once after 401 with the same body", NODE, async () => {
     apiReplies.push(
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
       () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
@@ -1445,7 +1473,7 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
     return { failure, owner };
   }
 
-  it("names the client ID and exact scopes when delegation is not granted", async () => {
+  it("names the client ID and exact scopes when delegation is not granted", NODE, async () => {
     const { failure, owner } = await refusedWith(401, {
       error: "unauthorized_client",
       error_description: "Client is unauthorized to retrieve access tokens using this method.",
@@ -1459,6 +1487,7 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
 
   it.each(["unauthorized_client", "access_denied", "invalid_scope", undefined])(
     "INV-6: delegation refusal %s asks an administrator for the exact grant without token-endpoint text",
+    NODE,
     async (error) => {
       const { failure } = await refusedWith(403, { error, error_description: "downstream-text-sentinel" });
       expect(failure).toMatchObject({ code: "provider_permission_denied", retryable: false });
@@ -1468,7 +1497,7 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
     },
   );
 
-  it("explains invalid_grant: unknown or suspended user, deleted key, or clock skew", async () => {
+  it("explains invalid_grant: unknown or suspended user, deleted key, or clock skew", NODE, async () => {
     const { failure } = await refusedWith(400, {
       error: "invalid_grant",
       error_description: "Invalid email or User ID",
@@ -1483,7 +1512,7 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
     expect(failure.message).toMatch(/clock/);
   });
 
-  it("withholds the token endpoint's description on every refusal (#695)", async () => {
+  it("withholds the token endpoint's description on every refusal (#695)", NODE, async () => {
     const planted = "planted-secret-7f3a9c";
     for (const [status, error] of [
       [401, "unauthorized_client"],
@@ -1501,19 +1530,19 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
     }
   });
 
-  it("reports a disabled service account", async () => {
+  it("reports a disabled service account", NODE, async () => {
     const { failure } = await refusedWith(401, { error: "invalid_client" });
     expect(failure.code).toBe("auth_required");
   });
 
-  it("passes on Google's wait and its outages as retryable", async () => {
+  it("passes on Google's wait and its outages as retryable", NODE, async () => {
     const limited = await refusedWith(429, { error: "rate_limit_exceeded" }, { "Retry-After": "7" });
     expect(limited.failure).toMatchObject({ code: "rate_limited", retryAfterMs: 7000 });
     const down = await refusedWith(503, {});
     expect(down.failure).toMatchObject({ code: "unavailable", retryable: true });
   });
 
-  it("refuses a success that carries no token", async () => {
+  it("refuses a success that carries no token", NODE, async () => {
     const { failure } = await refusedWith(200, { token_type: "Bearer" });
     expect(failure.code).toBe("connector_call_failed");
   });
@@ -1527,6 +1556,7 @@ describe("API refusals map by Google's reason codes", () => {
 
   it.each([undefined, "mcp", "value"] as const)(
     "INV-6: scope recovery reaches the agent in %s mode while Google prose stays out of operator sinks",
+    NODE,
     async (resultMode) => {
       apiReplies.push(() =>
         Response.json(
@@ -1573,7 +1603,7 @@ describe("API refusals map by Google's reason codes", () => {
     },
   );
 
-  it("names the exact scopes when the token lacks one", async () => {
+  it("names the exact scopes when the token lacks one", NODE, async () => {
     const failure = await apiFailure(403, {
       message: "Request had insufficient authentication scopes.",
       status: "PERMISSION_DENIED",
@@ -1583,7 +1613,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(failure.message).toContain(GMAIL_SCOPES.join(","));
   });
 
-  it("says to enable the API when the project has not", async () => {
+  it("says to enable the API when the project has not", NODE, async () => {
     const failure = await apiFailure(403, {
       message: "Gmail API has not been used in project 1 before or it is disabled.",
       errors: [{ reason: "accessNotConfigured" }],
@@ -1592,7 +1622,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(failure.message).toContain("Gmail API is not enabled");
   });
 
-  it("maps quota exhaustion to rate_limited", async () => {
+  it("maps quota exhaustion to rate_limited", NODE, async () => {
     const failure = await apiFailure(403, {
       message: "User-rate limit exceeded.",
       errors: [{ reason: "userRateLimitExceeded" }],
@@ -1600,7 +1630,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(failure.code).toBe("rate_limited");
   });
 
-  it("reports a refused precondition neutrally, with Google's own words for which", async () => {
+  it("reports a refused precondition neutrally, with Google's own words for which", NODE, async () => {
     // The same reason means a user without Gmail and a stale write elsewhere,
     // so the classification asserts neither; Google's message says which.
     const failure = await apiFailure(400, {
@@ -1614,7 +1644,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(failure.message).not.toMatch(/disabled/);
   });
 
-  it("names a disabled API by Google's reason, whatever status carries it", async () => {
+  it("names a disabled API by Google's reason, whatever status carries it", NODE, async () => {
     const failure = await apiFailure(400, {
       message: "Gmail API has not been used in project 1 before or it is disabled.",
       status: "FAILED_PRECONDITION",
@@ -1629,7 +1659,7 @@ describe("API refusals map by Google's reason codes", () => {
     ["domainPolicy", "domain policy forbids"],
     ["insufficientFilePermissions", "does not have the permission on this item"],
     ["forbidden", "does not have the permission on this item"],
-  ])("names a 403 %s precisely", async (reason, words) => {
+  ])("names a 403 %s precisely", NODE, async (reason, words) => {
     const failure = await apiFailure(403, {
       message: "The caller does not have permission",
       status: "PERMISSION_DENIED",
@@ -1643,7 +1673,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(googleReasonsOf(failure)).toEqual([reason, "PERMISSION_DENIED"]);
   });
 
-  it("maps either rate-limit reason to rate_limited, whatever the status", async () => {
+  it("maps either rate-limit reason to rate_limited, whatever the status", NODE, async () => {
     for (const reason of ["rateLimitExceeded", "userRateLimitExceeded"]) {
       const failure = await apiFailure(403, { message: "Rate Limit Exceeded", errors: [{ reason }] });
       expect(failure.code).toBe("rate_limited");
@@ -1651,7 +1681,7 @@ describe("API refusals map by Google's reason codes", () => {
     }
   });
 
-  it("exposes Google's reasons sanitized and bounded, never its words", async () => {
+  it("exposes Google's reasons sanitized and bounded, never its words", NODE, async () => {
     const failure = await apiFailure(403, {
       message: "secret-bearing prose about file Q3-payroll.xlsx",
       status: "PERMISSION_DENIED",
@@ -1679,7 +1709,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(JSON.stringify(reasons)).not.toContain("payroll");
   });
 
-  it("has no reasons for a failure that never reached Google, or for anything else", async () => {
+  it("has no reasons for a failure that never reached Google, or for anything else", NODE, async () => {
     const unadmitted = await labels(mailbox(), context()).catch((error) => error);
     expect(unadmitted.code).toBe("auth_required");
     expect(googleReasonsOf(unadmitted)).toEqual([]);
@@ -1687,7 +1717,7 @@ describe("API refusals map by Google's reason codes", () => {
     expect(googleReasonsOf(undefined)).toEqual([]);
   });
 
-  it("maps a bad argument to invalid_args and an outage to unavailable", async () => {
+  it("maps a bad argument to invalid_args and an outage to unavailable", NODE, async () => {
     expect((await apiFailure(400, { message: "Invalid query" })).code).toBe("invalid_args");
     expect((await apiFailure(500, { message: "Backend Error" })).code).toBe("unavailable");
   });
@@ -1714,7 +1744,7 @@ describe("the shared client reads bytes and text for the products that need them
     });
   }
 
-  it("returns bytes with their content type, under the delegated token", async () => {
+  it("returns bytes with their content type, under the delegated token", NODE, async () => {
     apiReplies.push(
       () => new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "Content-Type": "application/pdf" } }),
     );
@@ -1732,7 +1762,7 @@ describe("the shared client reads bytes and text for the products that need them
     });
   });
 
-  it("decodes text in the charset the response declares", async () => {
+  it("decodes text in the charset the response declares", NODE, async () => {
     apiReplies.push(
       () =>
         new Response(new Uint8Array([67, 97, 102, 0xe9]), {
@@ -1752,7 +1782,7 @@ describe("the shared client reads bytes and text for the products that need them
     });
   });
 
-  it("bounds the body by the product's ceiling", async () => {
+  it("bounds the body by the product's ceiling", NODE, async () => {
     apiReplies.push(() => new Response(new Uint8Array(2048)));
     await expect(client(1024).bytes({ method: "GET", path: "/files/f1" }, context())).rejects.toMatchObject({
       code: "connector_call_failed",
@@ -1779,7 +1809,7 @@ describe("the shared client reads bytes and text for the products that need them
       [409, "ABORTED"],
       [400, "ABORTED"],
       [409, "FAILED_PRECONDITION"],
-    ])("maps HTTP %i %s to conflict with fixed words", async (status, reason) => {
+    ])("maps HTTP %i %s to conflict with fixed words", NODE, async (status, reason) => {
       apiReplies.push(stale(status, reason));
       const failure = await client()
         .json(write, context(), { revisionGuarded: true })
@@ -1796,7 +1826,7 @@ describe("the shared client reads bytes and text for the products that need them
       );
     });
 
-    it("applies to bytes and text requests too", async () => {
+    it("applies to bytes and text requests too", NODE, async () => {
       apiReplies.push(stale(400, "FAILED_PRECONDITION"), stale(409, "ABORTED"));
       const drive = client();
       await expect(drive.bytes(write, context(), undefined, { revisionGuarded: true })).rejects.toMatchObject({
@@ -1807,7 +1837,7 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("leaves an unflagged request exactly as before", async () => {
+    it("leaves an unflagged request exactly as before", NODE, async () => {
       apiReplies.push(stale(400, "FAILED_PRECONDITION"), stale(409, "ABORTED"));
       const drive = client();
       await expect(drive.json(write, context())).rejects.toMatchObject({ code: "connector_call_failed" });
@@ -1841,7 +1871,7 @@ describe("the shared client reads bytes and text for the products that need them
         "does not have the permission",
       ],
       ["forbidden", 409, "ABORTED", "provider_permission_denied", "does not have the permission"],
-    ])("lets %s outrank the guard on HTTP %i %s", async (reason, status, canonical, code, words) => {
+    ])("lets %s outrank the guard on HTTP %i %s", NODE, async (reason, status, canonical, code, words) => {
       apiReplies.push(() =>
         Response.json(
           {
@@ -1862,7 +1892,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(classifyCallError(failure).message).toContain(words);
     });
 
-    it("does not turn an unrelated refusal into a conflict", async () => {
+    it("does not turn an unrelated refusal into a conflict", NODE, async () => {
       apiReplies.push(() =>
         Response.json(
           { error: { code: 400, message: "Invalid requests[0]", status: "INVALID_ARGUMENT" } },
@@ -1895,7 +1925,7 @@ describe("the shared client reads bytes and text for the products that need them
         (error) => error,
       );
 
-    it("before-send: nothing left, nothing happened", async () => {
+    it("before-send: nothing left, nothing happened", NODE, async () => {
       const mapped = googleWorkspaceClient({
         provider: "Google Drive",
         api: "Google Drive API",
@@ -1920,7 +1950,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(apiCalls).toEqual([]);
     });
 
-    it("awaiting-response: a write that got no answer is not retried; a read is", async () => {
+    it("awaiting-response: a write that got no answer is not retried; a read is", NODE, async () => {
       const dropped = () => {
         throw new TypeError("fetch failed");
       };
@@ -1937,7 +1967,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(retryable)).toEqual({ dispatched: true, phase: "awaiting-response" });
     });
 
-    it("reading-body: a 2xx whose body breaks off reads as probably applied for a write", async () => {
+    it("reading-body: a 2xx whose body breaks off reads as probably applied for a write", NODE, async () => {
       apiReplies.push(brokenReply, brokenReply, brokenReply);
       const drive = client();
 
@@ -1962,7 +1992,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(reread)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
-    it("reading-body: an overflowing 2xx or a redirect after a write is never a retryable refusal", async () => {
+    it("reading-body: an overflowing 2xx or a redirect after a write is never a retryable refusal", NODE, async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 200 }),
         () => new Response(null, { status: 303, headers: { Location: "https://elsewhere.example/" } }),
@@ -1987,7 +2017,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(big)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
-    it("refused: Google's error status is a refusal, nothing applied", async () => {
+    it("refused: Google's error status is a refusal, nothing applied", NODE, async () => {
       const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
       apiReplies.push(
         () =>
@@ -2010,23 +2040,27 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(unauthorized)).toEqual({ dispatched: true, status: 401, phase: "refused" });
     });
 
-    it("INV-9 unauthorized: a write Google answered 401 is not sent again, and its outcome is unknown", async () => {
-      apiReplies.push(
-        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-        () => Response.json({ id: "f1" }),
-      );
-      const drive = client();
-      const failure = await failing(drive.json(write, context()));
-      expect(failure).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "unauthorized" });
-      expect(apiCalls).toHaveLength(1);
-      expect(tokenCalls).toHaveLength(1);
-      // The refused token is dropped: a deliberate repeat mints a fresh one.
-      await expect(drive.json(write, context())).resolves.toEqual({ id: "f1" });
-      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
-    });
+    it(
+      "INV-9 unauthorized: a write Google answered 401 is not sent again, and its outcome is unknown",
+      NODE,
+      async () => {
+        apiReplies.push(
+          () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+          () => Response.json({ id: "f1" }),
+        );
+        const drive = client();
+        const failure = await failing(drive.json(write, context()));
+        expect(failure).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "unauthorized" });
+        expect(apiCalls).toHaveLength(1);
+        expect(tokenCalls).toHaveLength(1);
+        // The refused token is dropped: a deliberate repeat mints a fresh one.
+        await expect(drive.json(write, context())).resolves.toEqual({ id: "f1" });
+        expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+      },
+    );
 
-    it("refused: an error status stays a refusal when its body is past the ceiling", async () => {
+    it("refused: an error status stays a refusal when its body is past the ceiling", NODE, async () => {
       apiReplies.push(() => new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }));
       const failure = await failing(client(1024).json(write, context()));
       expect(failure.code).toBe("provider_permission_denied");
@@ -2034,42 +2068,46 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
     });
 
-    it("reading-body: keeps a stream's or parser's error, and the body it quotes, out of every failure (#695)", async () => {
-      const planted = "planted-secret-7f3a9c";
-      const quoting = () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(`{"echo":"${planted}`));
-              controller.error(new TypeError(`other side closed after ${planted}`));
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      const malformed = () =>
-        new Response(`${planted} is not json`, { headers: { "Content-Type": "application/json" } });
-      apiReplies.push(quoting, quoting, malformed, malformed);
-      const drive = client();
-      const failures = [
-        await failing(drive.json(write, context())),
-        await failing(drive.json(read, context())),
-        await failing(drive.json(write, context())),
-        await failing(drive.json(read, context())),
-      ];
-      expect(failures.map((failure) => [failure.code, failure.retryable])).toEqual([
-        ["connector_call_failed", false],
-        ["unavailable", true],
-        ["connector_call_failed", false],
-        ["connector_call_failed", false],
-      ]);
-      for (const failure of failures) {
-        expect(failure.cause).toBeUndefined();
-        expect(googleOutcomeOf(failure)).toMatchObject({ status: 200, phase: "reading-body" });
-        expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
-      }
-    });
+    it(
+      "reading-body: keeps a stream's or parser's error, and the body it quotes, out of every failure (#695)",
+      NODE,
+      async () => {
+        const planted = "planted-secret-7f3a9c";
+        const quoting = () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(`{"echo":"${planted}`));
+                controller.error(new TypeError(`other side closed after ${planted}`));
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        const malformed = () =>
+          new Response(`${planted} is not json`, { headers: { "Content-Type": "application/json" } });
+        apiReplies.push(quoting, quoting, malformed, malformed);
+        const drive = client();
+        const failures = [
+          await failing(drive.json(write, context())),
+          await failing(drive.json(read, context())),
+          await failing(drive.json(write, context())),
+          await failing(drive.json(read, context())),
+        ];
+        expect(failures.map((failure) => [failure.code, failure.retryable])).toEqual([
+          ["connector_call_failed", false],
+          ["unavailable", true],
+          ["connector_call_failed", false],
+          ["connector_call_failed", false],
+        ]);
+        for (const failure of failures) {
+          expect(failure.cause).toBeUndefined();
+          expect(googleOutcomeOf(failure)).toMatchObject({ status: 200, phase: "reading-body" });
+          expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
+        }
+      },
+    );
 
-    it("reading-body: a GET whose JSON body breaks off is retryable; malformed JSON is not", async () => {
+    it("reading-body: a GET whose JSON body breaks off is retryable; malformed JSON is not", NODE, async () => {
       apiReplies.push(
         brokenReply,
         () => new Response("{not json", { headers: { "Content-Type": "application/json" } }),
@@ -2084,7 +2122,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(malformed)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
-    it("before-send: an invalid maxBytes is annotated like every other local refusal", async () => {
+    it("before-send: an invalid maxBytes is annotated like every other local refusal", NODE, async () => {
       const failure = await failing(client().bytes(read, context(), undefined, { maxBytes: -1 }));
       expect(failure).toBeInstanceOf(TypeError);
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: false, phase: "before-send" });
@@ -2098,7 +2136,7 @@ describe("the shared client reads bytes and text for the products that need them
         (["POST", "PATCH", "PUT", "DELETE"] as const).flatMap((method) =>
           [500, 502, 503, 504].map((status) => [method, status] as const),
         ),
-      )("%s → %i: outcome unknown, not retried", async (method, status) => {
+      )("%s → %i: outcome unknown, not retried", NODE, async (method, status) => {
         apiReplies.push(upstream(status));
         const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
@@ -2109,7 +2147,7 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
       });
 
-      it.each([500, 502, 503, 504])("GET → %i stays a retryable refusal", async (status) => {
+      it.each([500, 502, 503, 504])("GET → %i stays a retryable refusal", NODE, async (status) => {
         apiReplies.push(upstream(status));
         const failure = await failing(client().json(read, context()));
         expect(failure).toMatchObject({ code: "unavailable", retryable: true });
@@ -2132,7 +2170,7 @@ describe("the shared client reads bytes and text for the products that need them
             [403, "RATE_LIMIT_EXCEEDED"],
           ].map(([status, reason]) => [method, status as number, reason as string] as const),
         ),
-      )("%s → %i %s stays rate_limited: Google rejected it before applying", async (method, status, reason) => {
+      )("%s → %i %s stays rate_limited: Google rejected it before applying", NODE, async (method, status, reason) => {
         apiReplies.push(quota(status, reason));
         const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
         expect(failure.code).toBe("rate_limited");
@@ -2145,17 +2183,22 @@ describe("the shared client reads bytes and text for the products that need them
             (reason) => [method, reason] as const,
           ),
         ),
-      )("%s → 503 %s is still an unknown outcome: a 5xx proves nothing was turned away", async (method, reason) => {
-        apiReplies.push(quota(503, reason));
-        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
-        // The reason is still there for a provider that wants it.
-        expect(googleReasonsOf(failure)).toContain(reason);
-      });
+      )(
+        "%s → 503 %s is still an unknown outcome: a 5xx proves nothing was turned away",
+        NODE,
+        async (method, reason) => {
+          apiReplies.push(quota(503, reason));
+          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+          expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
+          // The reason is still there for a provider that wants it.
+          expect(googleReasonsOf(failure)).toContain(reason);
+        },
+      );
 
       it.each(WRITES.flatMap((method) => [301, 302, 303, 307, 308].map((status) => [method, status] as const)))(
         "%s → %i redirect: outcome unknown, never probably applied",
+        NODE,
         async (method, status) => {
           apiReplies.push(() => new Response(null, { status, headers: { Location: "https://elsewhere.example/" } }));
           const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
@@ -2168,6 +2211,7 @@ describe("the shared client reads bytes and text for the products that need them
 
       it.each(WRITES.flatMap((method) => [300, 304, 305, 306].map((status) => [method, status] as const)))(
         "%s → %i with a quota reason is still redirected, never a rate limit",
+        NODE,
         async (method, status) => {
           // 300, 304, 305, and 306 pass the transport's own redirect check, so
           // they reach the mapper; a reason in the body must not turn them into
@@ -2190,7 +2234,7 @@ describe("the shared client reads bytes and text for the products that need them
         },
       );
 
-      it("classifies a 300 the same whether its body is readable or past the ceiling", async () => {
+      it("classifies a 300 the same whether its body is readable or past the ceiling", NODE, async () => {
         apiReplies.push(
           () => Response.json({ error: { errors: [{ reason: "rateLimitExceeded" }] } }, { status: 300 }),
           () => new Response(new Uint8Array(4096), { status: 300, headers: { "Content-Length": "4096" } }),
@@ -2203,14 +2247,14 @@ describe("the shared client reads bytes and text for the products that need them
         }
       });
 
-      it("keeps a GET's 300 a non-retryable redirect", async () => {
+      it("keeps a GET's 300 a non-retryable redirect", NODE, async () => {
         apiReplies.push(() => new Response(null, { status: 300 }));
         const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
       });
 
-      it("keeps a GET redirect's own refusal, phase redirected", async () => {
+      it("keeps a GET redirect's own refusal, phase redirected", NODE, async () => {
         apiReplies.push(() => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/" } }));
         const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
@@ -2218,7 +2262,7 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
       });
 
-      it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", async () => {
+      it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", NODE, async () => {
         apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
         const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
@@ -2230,7 +2274,7 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
 
-      it("is unknown even when the 5xx body itself is past the ceiling", async () => {
+      it("is unknown even when the 5xx body itself is past the ceiling", NODE, async () => {
         apiReplies.push(
           () => new Response(new Uint8Array(4096), { status: 502, headers: { "Content-Length": "4096" } }),
         );
@@ -2240,7 +2284,7 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("refreshes and replays a read once on a 401 whose body is past the ceiling", async () => {
+    it("refreshes and replays a read once on a 401 whose body is past the ceiling", NODE, async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
         () => Response.json({ id: "f1" }),
@@ -2250,7 +2294,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     });
 
-    it("answers auth_required, refused, when the replay's oversized 401 repeats", async () => {
+    it("answers auth_required, refused, when the replay's oversized 401 repeats", NODE, async () => {
       const oversized401 = () =>
         new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
       apiReplies.push(oversized401, oversized401);
@@ -2292,7 +2336,7 @@ describe("the shared client reads bytes and text for the products that need them
         ["GET", 503, "refused"],
         ["POST", 200, "reading-body"],
         ["POST", 307, "redirected"],
-      ] as const)("%s → %i records %s", async (method, status, phase) => {
+      ] as const)("%s → %i records %s", NODE, async (method, status, phase) => {
         const ctx = cancelledOnAnswer(oversized(status));
         const failure = await failing(
           client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx),
@@ -2300,7 +2344,7 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
       });
 
-      it("neither refreshes nor replays a 401 once the caller has left, and keeps the 401", async () => {
+      it("neither refreshes nor replays a 401 once the caller has left, and keeps the 401", NODE, async () => {
         // The caller leaves while the 401's body is being read: whether the
         // body read finishes (a TokenRejected) or fails (the transport's
         // check), no new token is minted and the outcome is the 401 seen.
@@ -2318,14 +2362,14 @@ describe("the shared client reads bytes and text for the products that need them
         }
       });
 
-      it("keeps a whole-resource PUT's 5xx a server error, never a refusal", async () => {
+      it("keeps a whole-resource PUT's 5xx a server error, never a refusal", NODE, async () => {
         const ctx = cancelledOnAnswer(oversized(503));
         const failure = await failing(client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx));
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
     });
 
-    it("knows nothing of errors the client did not throw", () => {
+    it("knows nothing of errors the client did not throw", NODE, () => {
       expect(googleOutcomeOf(new Error("plain"))).toBeUndefined();
       expect(googleOutcomeOf(undefined)).toBeUndefined();
       expect(googleOutcomeOf("text")).toBeUndefined();
@@ -2357,7 +2401,7 @@ describe("the shared client reads bytes and text for the products that need them
       return { seen, stream };
     }
 
-    it("reads one byte past the bound, then cancels the rest of the stream unread", async () => {
+    it("reads one byte past the bound, then cancels the rest of the stream unread", WORKERS, async () => {
       const { seen, stream } = source();
       apiReplies.push(
         () =>
@@ -2383,7 +2427,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(seen.pulled).toBeLessThan(4);
     });
 
-    it("returns a capped prefix of a body past the ceiling instead of failing", async () => {
+    it("returns a capped prefix of a body past the ceiling instead of failing", NODE, async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096).fill(66), { headers: { "Content-Length": "4096" } }),
         () => new Response(new Uint8Array(4096).fill(67), { headers: { "Content-Length": "4096" } }),
@@ -2398,7 +2442,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(large.bytes.length).toBe(1024);
     });
 
-    it("reports a body that fits the bound as whole", async () => {
+    it("reports a body that fits the bound as whole", NODE, async () => {
       apiReplies.push(() => new Response("hello", { headers: { "Content-Type": "text/plain" } }));
       const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5 });
       expect(result).toEqual({
@@ -2410,13 +2454,13 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("drops a code point the cut left incomplete", async () => {
+    it("drops a code point the cut left incomplete", NODE, async () => {
       apiReplies.push(() => new Response("hé!", { headers: { "Content-Type": "text/plain; charset=utf-8" } }));
       const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 2 });
       expect(result).toMatchObject({ text: "h", truncated: true });
     });
 
-    it("answers an empty file's 416 as an empty result, only when bounded", async () => {
+    it("answers an empty file's 416 as an empty result, only when bounded", NODE, async () => {
       const empty = () =>
         new Response("Requested range not satisfiable", {
           status: 416,
@@ -2450,7 +2494,7 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("refuses a bound that is not a whole number of bytes, before anything leaves", async () => {
+    it("refuses a bound that is not a whole number of bytes, before anything leaves", NODE, async () => {
       for (const maxBytes of [-1, 1.5, Number.NaN]) {
         await expect(
           client().bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes }),
@@ -2461,7 +2505,7 @@ describe("the shared client reads bytes and text for the products that need them
     });
   });
 
-  it("INV-9: replays a read's byte body intact after a 401, and never a write's", async () => {
+  it("INV-9: replays a read's byte body intact after a 401, and never a write's", NODE, async () => {
     const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
     apiReplies.push(rejected, () => Response.json({ id: "f9" }), rejected);
     const request = {
@@ -2494,7 +2538,7 @@ describe("the shared client reads bytes and text for the products that need them
     }
   });
 
-  it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {
+  it("refuses a stream body, which a replay could not resend, before anything leaves", NODE, async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([1]));
@@ -2508,7 +2552,7 @@ describe("the shared client reads bytes and text for the products that need them
     expect(apiCalls).toEqual([]);
   });
 
-  it("maps Google's error body and replays a 401 like the JSON path", async () => {
+  it("maps Google's error body and replays a 401 like the JSON path", NODE, async () => {
     apiReplies.push(
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
       () => new Response("ok", { headers: { "Content-Type": "text/plain" } }),

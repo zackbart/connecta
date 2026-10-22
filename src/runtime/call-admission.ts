@@ -11,7 +11,7 @@
 // bounds executor work, this bounds calls to one downstream connector, and a
 // shared queue between them was refused.
 
-import { Effect, type Scope } from "effect";
+import { Effect } from "effect";
 import type { CallAdmissionError, CallAdmissionPermit, ConnectorCallAdmissionController } from "../call-admission.js";
 import type { ConnectorCallAdmissionInput } from "../types.js";
 
@@ -86,38 +86,4 @@ export function startCallAdmission(
   request: CallAdmissionRequest,
 ): Effect.Effect<CallAdmissionPermit, CallAdmissionError> {
   return installed()(controller, request, liveNow);
-}
-
-/**
- * Admit one downstream call, as `controller.acquire()` does, without a
- * Promise.
- *
- * Fails with the same CallAdmissionError objects and bumps the same counters.
- * The rolling window and queue-wait times read the fiber's Clock. Nothing
- * happens until the effect runs, and each run is a fresh admission.
- * Interrupting the fiber while it is queued withdraws it (counted as
- * cancelled); interrupting it after a slot was handed over releases that slot
- * rather than stranding it.
- */
-export function admitCall(
-  controller: ConnectorCallAdmissionController,
-  request: CallAdmissionRequest,
-): Effect.Effect<CallAdmissionPermit, CallAdmissionError> {
-  const admit = installed();
-  return Effect.clockWith((clock) => admit(controller, request, () => clock.currentTimeMillisUnsafe()));
-}
-
-/**
- * A permit owned by the enclosing Scope: released when the scope closes, on
- * success, failure, or interruption alike. The queued wait stays
- * interruptible, so a caller that left does not hold its place in line until
- * the queue timeout.
- */
-export function acquireCallScoped(
-  controller: ConnectorCallAdmissionController,
-  request: CallAdmissionRequest,
-): Effect.Effect<CallAdmissionPermit, CallAdmissionError, Scope.Scope> {
-  return Effect.acquireRelease(admitCall(controller, request), (permit) => Effect.sync(() => permit.release()), {
-    interruptible: true,
-  });
 }

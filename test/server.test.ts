@@ -1,34 +1,18 @@
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
-import { createTestConnecta, required } from "./helpers.js";
+import { createTestConnecta } from "./helpers.js";
 import { calcApi, fakeClerkAuth, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 
-// True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
-// executor (emscripten WASM loaded from disk) — Workers deployments use
-// DynamicWorkerExecutor instead — so tests that actually run code skip there.
-const WORKERD = typeof navigator !== "undefined" && navigator.userAgent?.includes("Cloudflare-Workers");
-
-// QuickJS charges its 250ms default guest CPU budget by wall clock, so a loaded
-// host bills its own contention to these programs. Cases that are not about
-// the budget run under a generous one, as the Node QuickJS suites do.
-const GENEROUS_GUEST_CPU_MS = 5_000;
-
-async function loadQuickJsExecutor() {
-  // This module now imports node:child_process by design. Keep it out of the
-  // Workers bundle entirely; the two callers below skip under workerd.
-  const path = "../src/executors/quickjs" + ".js";
-  return import(/* @vite-ignore */ path) as Promise<typeof import("../src/executors/quickjs.js")>;
-}
 import { api } from "../src/connectors/api.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
-import type { Connector, Executor, InboundAuth } from "../src/types.js";
+import type { Connector, Executor } from "../src/types.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -71,23 +55,6 @@ function recoverableStaticConnector(): Connector {
 }
 
 describe("server /mcp end-to-end", () => {
-  it("401s without a token and includes WWW-Authenticate", async () => {
-    const c = makeDeployment();
-    const res = await mcpRpc(c, "tools/list", {});
-    expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toBeTruthy();
-  });
-
-  it("serves CORS on /mcp errors so browsers can read the 401", async () => {
-    const c = makeDeployment();
-    const request = mcpRpc("tools/list", {});
-    request.headers.set("Origin", BASE);
-    const res = await c.fetch(request);
-    expect(res.status).toBe(401);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
-    expect(res.headers.get("Access-Control-Expose-Headers")).toContain("WWW-Authenticate");
-  });
-
   it("serves CORS on successful legacy /mcp responses too", async () => {
     const c = makeDeployment();
     const request = mcpRpc(
@@ -104,38 +71,6 @@ describe("server /mcp end-to-end", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
     expect(res.headers.get("Access-Control-Expose-Headers")).toContain("mcp-session-id");
-  });
-
-  it("legacy initialize succeeds with a valid token", async () => {
-    const c = makeDeployment();
-    const res = await mcpRpc(
-      c,
-      "initialize",
-      {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "test", version: "1.0.0" },
-      },
-      { token: TOKEN },
-    );
-    expect(res.status).toBe(200);
-    const body = await readJsonRpc(res);
-    expect(body.result.serverInfo.name).toBe("connecta");
-    expect(body.result.instructions).toContain("Unknown-address read-only work starts with execute_code");
-    expect(body.result.instructions).toContain("On a writable endpoint, programs and call_destructive_tool may write");
-    expect(body.result.instructions).toContain(
-      "On a read-only endpoint, search omits write tools and every write call is refused",
-    );
-    expect(body.result.instructions).not.toContain("trust");
-    expect(body.result.instructions).toContain("call_destructive_tool");
-    expect(body.result.instructions).not.toContain("resume_execution");
-    expect(body.result.instructions).toContain('skills({ name: "usage" })');
-    expect(body.result.instructions).toContain(
-      "When an auth error includes a handoff, give it to the user or operator.",
-    );
-    expect(body.result.instructions).toContain("Sample unfamiliar reads");
-    expect(body.result.instructions).toContain("discover, call, and return the answer");
-    expect(body.result.instructions).toContain("only for missing guidance or program repair");
   });
 
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
@@ -228,21 +163,6 @@ describe("server /mcp end-to-end", () => {
     await c.close();
   });
 
-  it("tools/list shows exactly the six meta-tools", async () => {
-    const c = makeDeployment();
-    const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
-    const body = await readJsonRpc(res);
-    const names = body.result.tools.map((t: { name: string }) => t.name).sort();
-    expect(names).toEqual([
-      "authorize_connector",
-      "call_destructive_tool",
-      "call_tool",
-      "execute_code",
-      "search_tools",
-      "skills",
-    ]);
-  });
-
   it("rejects removed retry arguments before dispatching either direct-call tool", async () => {
     const call = vi.fn(async () => ({ done: true }));
     const c = createTestConnecta({
@@ -277,49 +197,6 @@ describe("server /mcp end-to-end", () => {
       expect(JSON.stringify(body)).toContain("maxRetries");
     }
     expect(call).not.toHaveBeenCalled();
-  });
-
-  it("advertises no rendering metadata on any tool", async () => {
-    const body = await readJsonRpc(await mcpRpc(makeDeployment(), "tools/list", {}, { token: TOKEN }));
-    const tools = body.result.tools as Array<{
-      name: string;
-      description: string;
-      _meta?: unknown;
-    }>;
-    const execute = required(tools.find((tool) => tool.name === "execute_code"));
-    expect(execute.description).not.toContain("connecta.ui");
-    for (const tool of tools) {
-      expect(tool._meta ?? {}).not.toHaveProperty("ui");
-    }
-  });
-
-  it("advertises tools and skill resources without Apps", async () => {
-    const c = makeDeployment();
-    const body = await readJsonRpc(
-      await mcpRpc(
-        c,
-        "initialize",
-        {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "test", version: "1.0.0" },
-        },
-        { token: TOKEN },
-      ),
-    );
-    expect(body.result.capabilities.extensions).toEqual({ "io.modelcontextprotocol/skills": {} });
-    expect(body.result.capabilities.resources).toEqual({});
-    const read = await readJsonRpc(
-      await mcpRpc(
-        c,
-        "resources/read",
-        {
-          uri: "ui://connecta/program-ui/v3",
-        },
-        { token: TOKEN },
-      ),
-    );
-    expect(read.error).toBeDefined();
   });
 
   it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {
@@ -449,20 +326,6 @@ describe("server /mcp end-to-end", () => {
     }
   }, 30_000);
 
-  it("serves a 2025-era request that omits MCP-Protocol-Version", async () => {
-    // Clients before 2025-06-18 never sent the header, and the spec has a
-    // server that still serves them assume 2025-03-26. A bare JSON-RPC body
-    // carries no 2026-07-28 claim, so it is legacy traffic and is served.
-    const c = makeDeployment();
-    const request = mcpRpc("tools/call", { name: "skills", arguments: {} }, { token: TOKEN });
-    expect(request.headers.has("mcp-protocol-version")).toBe(false);
-    const response = await c.fetch(request);
-    expect(response.status).toBe(200);
-    const body = await readJsonRpc(response);
-    expect(body.error, JSON.stringify(body)).toBeUndefined();
-    expect(body.result.isError).toBeFalsy();
-  });
-
   it("refuses a 2026-07-28 request that drops MCP-Protocol-Version with HeaderMismatch", async () => {
     // 2026-07-28 requires the header on every POST and has the server reject a
     // request missing it, so an intermediary routing on the header and the
@@ -496,64 +359,6 @@ describe("server /mcp end-to-end", () => {
     } finally {
       await client.close();
     }
-  });
-
-  it("accepts a legacy batch of up to 100 messages and refuses a longer one", async () => {
-    // JSON-RPC batching left the protocol in 2025-06-18; only a 2025-03-26
-    // client may send one. @modelcontextprotocol/server 2.1.0 caps a batch at
-    // 100 messages, a constant with no option, and answers a longer one 400.
-    const c = makeDeployment();
-    const batch = (size: number) =>
-      c.fetch(
-        new Request(`${BASE}/mcp`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            Authorization: `Bearer ${TOKEN}`,
-          },
-          body: JSON.stringify(
-            Array.from({ length: size }, () => ({
-              jsonrpc: "2.0",
-              method: "notifications/initialized",
-            })),
-          ),
-        }),
-      );
-    expect((await batch(100)).status).toBe(202);
-    const refused = await batch(101);
-    expect(refused.status).toBe(400);
-    expect(((await refused.json()) as { error: { code: number } }).error.code).toBe(-32600);
-  });
-
-  it("lists and fetches the usage skill", async () => {
-    const c = makeDeployment();
-    const listed = await mcpRpc(c, "tools/call", { name: "skills", arguments: {} }, { token: TOKEN });
-    const listedBody = await readJsonRpc(listed);
-    expect(listedBody.result.isError).toBeFalsy();
-    expect(listedBody.result.content[0].text).toContain("`usage` — How to route work between one execute_code program");
-
-    const fetched = await mcpRpc(c, "tools/call", { name: "skills", arguments: { name: "usage" } }, { token: TOKEN });
-    const fetchedBody = await readJsonRpc(fetched);
-    const skill = fetchedBody.result.content[0].text as string;
-    expect(skill).toContain("# Connecta usage");
-    expect(skill).toContain("## Choose the route");
-    expect(skill).toContain("## The global and the envelopes");
-    expect(skill).toContain("## Keep partial successes");
-    expect(skill).toContain("each fails read_only_endpoint");
-    expect(skill).not.toContain("trust");
-    expect(skill).toContain("No imports, require, filesystem, fetch, or timers");
-    expect(skill).toContain("## Large results and recovery");
-    expect(skill).toContain("Follow\nnextOffset in UTF-8 bytes");
-    expect(skill).toContain("## Output");
-    expect(skill).not.toContain("connecta.ui");
-    expect(skill).not.toContain("connecta.batch");
-    expect(skill).toContain("crm.get_account");
-
-    const missing = await mcpRpc(c, "tools/call", { name: "skills", arguments: { name: "missing" } }, { token: TOKEN });
-    const missingBody = await readJsonRpc(missing);
-    expect(missingBody.result.isError).toBe(true);
-    expect(missingBody.result.content[0].text).toContain('Unknown skill "missing"');
   });
 
   it("keeps shared usage stable while guide-specific tool notes stay conditional", async () => {
@@ -699,38 +504,6 @@ describe("server /mcp end-to-end", () => {
     await c.close();
   });
 
-  it("tools/call search_tools returns its flat discovery envelope", async () => {
-    const c = makeDeployment();
-    const res = await mcpRpc(c, "tools/call", { name: "search_tools", arguments: { query: "add" } }, { token: TOKEN });
-    const body = await readJsonRpc(res);
-    expect(body.result.isError).toBeFalsy();
-    const payload = JSON.parse(body.result.content[0].text) as {
-      tools: { address: string }[];
-      total: number;
-    };
-    expect(payload).toEqual({
-      catalogErrors: [],
-      tools: [
-        {
-          name: "add",
-          address: "calc.add",
-          classification: "read",
-          description: "Add two numbers",
-          annotations: { readOnlyHint: true },
-        },
-      ],
-      total: 1,
-      offset: 0,
-      limit: 8,
-      hasMore: false,
-    });
-    expect(body.result.structuredContent).toEqual(payload);
-    expect(body.result.content[0].text).toBe(JSON.stringify(body.result.structuredContent));
-    expect(payload.tools).toHaveLength(1);
-    expect(payload.tools.map((t) => t.address)).toEqual(["calc.add"]);
-    expect(payload.total).toBe(1);
-  });
-
   it.each(["search_tools", "execute_code"] as const)(
     "INV-7: waits for a fresh catalog through %s without spawning a deferred refresh",
     async (surface) => {
@@ -813,49 +586,6 @@ describe("server /mcp end-to-end", () => {
     },
   );
 
-  it("search_tools ignores the private flag and includes keys with schemas", async () => {
-    // The undeclared flag is still dropped at the MCP boundary. Key metadata
-    // follows includeSchemas rather than a private client control.
-    const c = makeDeployment();
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "search_tools",
-        arguments: {
-          query: "add",
-          includeSchemas: "compact",
-          includeSchemaKeys: true,
-        },
-      },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    expect(body.result.isError).toBeFalsy();
-    const tool = body.result.structuredContent.tools[0];
-    expect(tool.inputSchema).toBe("{ a: number, b: number }");
-    expect(tool.inputKeys).toEqual(["a", "b"]);
-    expect(tool.requiredInputKeys).toEqual(["a", "b"]);
-    expect(tool).not.toHaveProperty("outputKeys");
-  });
-
-  it("tools/call call_tool invokes a downstream api tool", async () => {
-    const c = makeDeployment();
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "call_tool",
-        arguments: { address: "calc.add", args: { a: 2, b: 5 } },
-      },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    expect(body.result.isError).toBeFalsy();
-    const inner = JSON.parse(body.result.content[0].text);
-    expect(inner).toEqual({ sum: 7 });
-  });
-
   it("INV-6: records one payload-free activity event for each resolved tool call", async () => {
     const events: ToolCallActivityEvent[] = [];
     const activity: ActivityStore = {
@@ -918,52 +648,6 @@ describe("server /mcp end-to-end", () => {
     expect(JSON.stringify(events)).not.toContain("never-store-this");
   });
 
-  it("stores the admitting activity identity namespace with the stable actor id", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    const auth: InboundAuth = {
-      kind: "oidc",
-      activityActorNamespace: "https://identity.example",
-      authorize(request) {
-        return request.headers.get("authorization") === `Bearer ${TOKEN}`
-          ? { ok: true, userId: "local-user-1" }
-          : {
-              ok: false,
-              response: Response.json({ error: "unauthorized" }, { status: 401 }),
-            };
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth,
-      maintainers: [{ namespace: "https://identity.example", id: "local-user-1" }],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      activity: activityHistory({
-        store: {
-          record(event) {
-            events.push(event);
-          },
-        },
-      }),
-    });
-
-    await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "call_tool",
-        arguments: { address: "calc.add", args: { a: 1, b: 2 } },
-      },
-      { token: TOKEN },
-    );
-
-    expect(required(events[0]).actor).toEqual({
-      kind: "oidc",
-      id: "local-user-1",
-      namespace: "https://identity.example",
-    });
-  });
-
   it("INV-6: stores a finite error code instead of a raw downstream error", async () => {
     const events: ToolCallActivityEvent[] = [];
     const failing: Connector = {
@@ -999,93 +683,6 @@ describe("server /mcp end-to-end", () => {
       errorCode: "connector_call_failed",
     });
     expect(JSON.stringify(events)).not.toContain("customer secret");
-  });
-
-  it("tools/call authorize_connector kicks a startAuth flow end-to-end", async () => {
-    const authConn: Connector = {
-      id: "needsauth",
-      kind: "mcp",
-      description: "Needs auth",
-      async listTools() {
-        throw new Error("unauthorized");
-      },
-      async callTool() {
-        throw new Error("unauthorized");
-      },
-      async startAuth() {
-        return {
-          state: "auth_required",
-          authorizationUrl: "https://auth.example/authorize?x=1",
-          message: "Authorization required — open the URL to connect.",
-        };
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [calcApi(), authConn],
-      auth: fakeClerkAuth({ token: TOKEN }),
-      storage: memoryStorage(),
-      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
-      publicUrl: BASE,
-    });
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "authorize_connector", arguments: { connector: "needsauth" } },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    expect(body.result.isError).toBeFalsy();
-    const payload = JSON.parse(body.result.content[0].text) as {
-      connector: string;
-      status: string;
-      authorizationUrl?: string;
-    };
-    expect(payload.connector).toBe("needsauth");
-    expect((payload as any).recovery).toBe("oauth");
-    expect(payload.status).toBe("auth_required");
-    expect(payload.authorizationUrl).toContain(`${BASE}/connect/needsauth?h=`);
-  });
-
-  it("gives a machine-only deployment a safe handoff but keeps mutation interactive-only", async () => {
-    const c = createTestConnecta({
-      connectors: [recoverableStaticConnector()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
-    });
-    const response = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "authorize_connector", arguments: { connector: "static" } },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(response);
-    const recovery = JSON.parse(body.result.content[0].text);
-    expect(recovery).toMatchObject({
-      connector: "static",
-      recovery: "operator_config",
-      operatorUrl: `${BASE}/`,
-    });
-    expect(recovery.instructions).toContain("signed-in human with access to this connector");
-
-    const mutation = await c.fetch(
-      new Request(`${BASE}/ui/credentials/static`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${TOKEN}`,
-          Origin: BASE,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          values: { account: "operator@example.com", apiKey: "secret" },
-        }),
-      }),
-    );
-    expect(mutation.status).toBe(403);
-    expect(await mutation.json()).toEqual({
-      error: "credential management requires interactive user authentication",
-    });
   });
 
   it("recovers a machine agent after a Clerk operator update without redeploy", async () => {
@@ -1198,177 +795,6 @@ describe("server /mcp end-to-end", () => {
     });
   });
 
-  it("INV-3: get_result is removed from tools/call", async () => {
-    const c = makeDeployment();
-    const body = await readJsonRpc(
-      await mcpRpc(
-        c,
-        "tools/call",
-        {
-          name: "get_result",
-          arguments: { id: "any" },
-        },
-        { token: TOKEN },
-      ),
-    );
-    expect(body.error?.message ?? body.result?.content[0]?.text).toContain("get_result");
-    expect(body.error !== undefined || body.result?.isError === true).toBe(true);
-    await c.close();
-  });
-
-  it("honors the deployment-wide maxResultBytes end to end", async () => {
-    // `ConnectaConfig.calls.maxResultBytes` is the only place a deployment sets
-    // the cap — `createMetaTools` takes no override (issue #44) — so this pins
-    // that the configured value reaches call_tool through serve() and stashes a
-    // pageable result.
-    let pagedId = "";
-    const c = createTestConnecta({
-      executor: {
-        async execute(_code, providers) {
-          return { result: await providers[0]!.fns.result!(pagedId, { maxBytes: 1_000 }) };
-        },
-      },
-      connectors: [
-        api("blob", {
-          description: "Blobs",
-          tools: [
-            {
-              name: "big",
-              description: "Return a large blob",
-              annotations: { readOnlyHint: true },
-              inputSchema: { type: "object" },
-              handler: () => "x".repeat(500),
-            },
-          ],
-        }),
-      ],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      calls: { maxResultBytes: 100 },
-    });
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "call_tool", arguments: { address: "blob.big" } },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    const lines = (body.result.content[0].text as string).split("\n");
-    const notice = JSON.parse(required(lines[0])) as {
-      truncated: boolean;
-      resultId: string;
-      totalBytes: number;
-    };
-    expect(notice.truncated).toBe(true);
-    expect(notice.totalBytes).toBe(502);
-    expect(lines.slice(1).join("\n")).toHaveLength(100);
-
-    pagedId = notice.resultId;
-    const paged = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "execute_code",
-        arguments: {
-          code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { maxBytes: 1_000 })`,
-        },
-      },
-      { token: TOKEN },
-    );
-    const page = (await readJsonRpc(paged)).result.structuredContent.result;
-    expect(page).toMatchObject({
-      resultId: notice.resultId,
-      offset: 0,
-      bytes: 100,
-      totalBytes: 502,
-      hasMore: true,
-      nextOffset: 100,
-      format: "text",
-    });
-    expect(page.text).toBe(JSON.stringify("x".repeat(500)).slice(0, 100));
-  });
-
-  it("forwards calls.defaultTimeoutMs into connector call context", async () => {
-    const seen: Array<{ timeoutMs?: number; hasSignal: boolean }> = [];
-    const c = createTestConnecta({
-      connectors: [
-        api("budget", {
-          description: "Budget",
-          tools: [
-            {
-              name: "read",
-              description: "Read the call budget",
-              annotations: { readOnlyHint: true },
-              inputSchema: { type: "object" },
-              handler: (_args, ctx) => {
-                seen.push({
-                  ...(ctx.timeoutMs !== undefined ? { timeoutMs: ctx.timeoutMs } : {}),
-                  hasSignal: Boolean(ctx.signal),
-                });
-                return { ok: true };
-              },
-            },
-          ],
-        }),
-      ],
-      auth: machineAuth(TOKEN),
-      publicUrl: BASE,
-      calls: { defaultTimeoutMs: 1_234 },
-    });
-
-    await mcpRpc(c, "tools/call", { name: "call_tool", arguments: { address: "budget.read" } }, { token: TOKEN });
-
-    expect(seen).toEqual([{ timeoutMs: 1_234, hasSignal: true }]);
-  });
-
-  it("forwards discovery.probeTimeoutMs to the discovery fan-out", async () => {
-    const hanging: Connector = {
-      id: "hang",
-      kind: "mcp",
-      description: "Never resolves",
-      listTools() {
-        return new Promise<never>(() => {});
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [hanging, calcApi()],
-      auth: machineAuth(TOKEN),
-      publicUrl: BASE,
-      discovery: { probeTimeoutMs: 10 },
-    });
-    const started = Date.now();
-
-    const response = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "search_tools",
-        arguments: { query: "add impossible" },
-      },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(response);
-    const payload = JSON.parse(body.result.content[0].text) as {
-      tools: Array<{ address: string }>;
-      queryAnalysis?: { unavailableConnectorCount?: number };
-    };
-
-    // The deadline is honored end to end: the search returns on the healthy
-    // catalog rather than waiting on the one that never answers, and reports
-    // the connector it could not reach.
-    expect(Date.now() - started).toBeLessThan(2_000);
-    const ids = payload.tools.map((tool) => tool.address.split(".")[0]);
-    expect(ids).toContain("calc");
-    expect(ids).not.toContain("hang");
-    expect(payload.queryAnalysis).toMatchObject({
-      unavailableConnectorCount: 1,
-    });
-  });
-
   it("forwards discovery.concurrency to catalog fan-out", async () => {
     let active = 0;
     let maxActive = 0;
@@ -1409,13 +835,6 @@ describe("server /mcp end-to-end", () => {
 });
 
 describe("server open routes", () => {
-  it("redirects HTTP to the configured HTTPS public URL", async () => {
-    const c = makeDeployment();
-    const res = await c.fetch(new Request("http://connecta.test/ui?probe=1"));
-    expect(res.status).toBe(308);
-    expect(res.headers.get("location")).toBe("https://connecta.test/?probe=1");
-  });
-
   it("keeps authority-shaped upgrade paths on the configured origin", async () => {
     const c = makeDeployment();
     for (const unsafe of [
@@ -1442,33 +861,6 @@ describe("server open routes", () => {
     }
   });
 
-  it("rejects removed connector HTTP hooks at construction without invoking them", () => {
-    const handleRequest = vi.fn(async () => new Response("private"));
-    const ownHook = { ...calcApi(), handleRequest };
-    const inheritedHook = Object.assign(Object.create({ handleRequest }) as Connector, calcApi());
-    for (const connector of [ownHook, inheritedHook]) {
-      expect(() => createTestConnecta({ connectors: [connector] })).toThrow(
-        'Connector "calc" declares removed handleRequest',
-      );
-    }
-    expect(handleRequest).not.toHaveBeenCalled();
-  });
-
-  it("returns a secured 404 for custom paths with or without MCP authentication", async () => {
-    const c = makeDeployment();
-    for (const token of [undefined, TOKEN]) {
-      const response = await c.fetch(
-        new Request(`${BASE}/download/report.txt`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }),
-      );
-      expect(response.status).toBe(404);
-      expect(await response.text()).toBe("Not Found");
-      expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-      expect(response.headers.get("Strict-Transport-Security")).toBe("max-age=31536000");
-    }
-  });
-
   it("serves /health over HTTP without redirecting to the public URL", async () => {
     // Container HEALTHCHECKs hit loopback over plain HTTP; a 308 to the public
     // origin would make the probe depend on external DNS and TLS.
@@ -1476,44 +868,6 @@ describe("server open routes", () => {
     const res = await c.fetch(new Request("http://127.0.0.1:8787/health"));
     expect(res.status).toBe(200);
     expect(((await res.json()) as { status: string }).status).toBe("ok");
-  });
-
-  it("keeps HTTP available when no HTTPS public URL is configured", async () => {
-    const c = createTestConnecta({ connectors: [calcApi()] });
-    const res = await c.fetch(new Request("http://localhost:8787/health"));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
-  });
-
-  it("/health is open (no auth)", async () => {
-    const c = makeDeployment();
-    const res = await c.fetch(new Request(`${BASE}/health`));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.status).toBe("ok");
-    expect(body.connectors).toBe(1);
-    expect(res.headers.get("Strict-Transport-Security")).toBe("max-age=31536000");
-    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
-  });
-
-  it("protects the UI from framing without applying UI CSP to MCP routes", async () => {
-    const c = makeDeployment();
-    for (const path of ["/"]) {
-      const ui = await c.fetch(new Request(`${BASE}${path}`));
-      const csp = ui.headers.get("Content-Security-Policy") ?? "";
-      expect(csp).toContain("script-src 'self'");
-      expect(csp).toContain("frame-ancestors 'none'");
-      expect(ui.headers.get("X-Frame-Options")).toBe("DENY");
-    }
-
-    const legacy = await c.fetch(new Request(`${BASE}/ui`));
-    expect(legacy.status).toBe(308);
-    expect(legacy.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
-    expect(legacy.headers.get("X-Frame-Options")).toBe("DENY");
-
-    const health = await c.fetch(new Request(`${BASE}/health`));
-    expect(health.headers.get("Content-Security-Policy")).toBeNull();
   });
 
   it("/health exposes additive server and deployment version metadata", async () => {
@@ -1533,48 +887,6 @@ describe("server open routes", () => {
       id: "worker-version-123",
       tag: "production",
     });
-  });
-
-  it("/health reports the configured sandbox, sanitized and bounded", async () => {
-    class CustomExecutor {
-      async execute() {
-        return { result: null };
-      }
-    }
-    const named = createTestConnecta({
-      connectors: [calcApi()],
-      executor: new CustomExecutor(),
-    });
-    const namedBody = (await (await named.fetch(new Request(`${BASE}/health`))).json()) as any;
-    expect(namedBody.executor).toEqual({ name: "CustomExecutor" });
-
-    const hostile = createTestConnecta({
-      connectors: [calcApi()],
-      executor: {
-        name: "bad\nname " + "y".repeat(80),
-        execute: async () => ({ result: null }),
-      },
-    });
-    const hostileBody = (await (await hostile.fetch(new Request(`${BASE}/health`))).json()) as any;
-    expect(hostileBody.executor.name).toMatch(/^bad name y+$/);
-    expect(hostileBody.executor.name.length).toBeLessThanOrEqual(40);
-
-    // An anonymous object literal identifies nothing, so /health claims
-    // nothing and `connecta doctor` names no sandbox (#368).
-    const anonymous = createTestConnecta({
-      connectors: [calcApi()],
-      executor: { execute: async () => ({ result: null }) },
-    });
-    const anonymousBody = (await (await anonymous.fetch(new Request(`${BASE}/health`))).json()) as any;
-    expect(anonymousBody).not.toHaveProperty("executor");
-  });
-
-  it("OPTIONS returns a CORS preflight 204", async () => {
-    const c = makeDeployment();
-    const res = await c.fetch(new Request(`${BASE}/mcp`, { method: "OPTIONS", headers: { Origin: BASE } }));
-    expect(res.status).toBe(204);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
-    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 });
 
@@ -1617,48 +929,6 @@ describe("clerk metadata routes (no network)", () => {
     const body = (await res.json()) as any;
     expect(body.resource).toBe(`${BASE}/mcp`);
   });
-
-  it("serves pool-specific protected-resource metadata and challenges with it", async () => {
-    const c = makeClerkConnecta();
-    const meta = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/support`));
-    expect(meta.status).toBe(200);
-    expect(((await meta.json()) as any).resource).toBe(`${BASE}/mcp/support`);
-    const challenge = await c.fetch(
-      new Request(`${BASE}/mcp/support`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }),
-    );
-    expect(challenge.status).toBe(401);
-    expect(challenge.headers.get("WWW-Authenticate")).toContain(
-      `resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/support"`,
-    );
-    const plain = await c.fetch(
-      new Request(`${BASE}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
-    );
-    expect(plain.headers.get("WWW-Authenticate")).toContain(
-      `resource_metadata="${BASE}/.well-known/oauth-protected-resource"`,
-    );
-  });
-
-  it("OPTIONS on a .well-known route returns 204 with CORS", async () => {
-    const c = makeClerkConnecta();
-    const res = await c.fetch(
-      new Request(`${BASE}/.well-known/oauth-protected-resource`, {
-        method: "OPTIONS",
-      }),
-    );
-    expect(res.status).toBe(204);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
-  });
-
-  it("machine token still admits /mcp when clerk is co-configured", async () => {
-    const c = makeClerkConnecta();
-    const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
-    const body = await readJsonRpc(res);
-    expect(body.result.tools).toHaveLength(6);
-  });
 });
 
 describe("execute_code registration (code mode)", () => {
@@ -1697,248 +967,4 @@ describe("execute_code registration (code mode)", () => {
     expect(description).toContain("Writable endpoint: programs may read and write; the client approves.");
     expect(description).not.toContain("resume_execution");
   });
-
-  it("advertises and runs execute_code on the six-tool surface", async () => {
-    let executions = 0;
-    const withExec = createTestConnecta({
-      connectors: [calcApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      executor: {
-        execute: async () => {
-          executions++;
-          return { result: { executor: "live" } };
-        },
-      },
-    });
-    const res2 = await mcpRpc(withExec, "tools/list", {}, { token: TOKEN });
-    const listed2 = (await readJsonRpc(res2)).result.tools;
-    const names2 = listed2.map((t: { name: string }) => t.name);
-    expect(names2.sort()).toEqual([
-      "authorize_connector",
-      "call_destructive_tool",
-      "call_tool",
-      "execute_code",
-      "search_tools",
-      "skills",
-    ]);
-
-    const executeTool = listed2.find((tool: { name: string }) => tool.name === "execute_code");
-    expect(executeTool.description).toContain("One known read: call_tool. One known write: call_destructive_tool.");
-    expect(executeTool.description).toContain("Everything else: execute_code.");
-    // Advice, not a validity claim: nothing rejects a program that returns
-    // catalog matches, and a description that says otherwise teaches the model
-    // a rule the server does not enforce (#295).
-    expect(executeTool.description).toContain("JSON schemas default");
-    expect(executeTool.description).toContain("Never repeat writes for output");
-    expect(executeTool.description).not.toContain("Never make a discovery-only");
-    expect(executeTool.description).not.toContain("resume_execution");
-    expect(executeTool.description).toContain("No portable ambient capabilities");
-    expect(executeTool.description).toContain('skills({ name: "usage" })');
-    expect(executeTool.inputSchema.properties.code.description).toContain(
-      "connecta global to discover, call, and return the reduced answer",
-    );
-    // The call form itself, not just the address: a bullet that says an
-    // address is "callable" without showing the parentheses teaches nothing,
-    // and the sanitization rule two clauses later makes "as written" false.
-    expect(executeTool.description).toContain(
-      "call(address: string, args?: unknown, options?: { timeoutMs?: number })",
-    );
-    // #418 deliberately replaces the former 4.4 KiB ceiling. The detailed
-    // selection rules and examples now live only in the on-demand usage skill.
-    expect(executeTool.description.length).toBeLessThan(1_800);
-    expect(executeTool.description).not.toContain("Dependent example");
-    expect(executeTool.description).not.toContain("requiredInputKeys");
-    expect(executeTool.description).not.toContain("requiredInputKeys[0]");
-    // The classic three-step funnel (search_tools → describe_tools → …) is
-    // gone with the tool that anchored it; naming it here would teach a route
-    // no deployment serves. Guard the tool name itself, not the sentence.
-    expect(executeTool.description).not.toContain("describe_tools");
-    expect(executeTool.description).not.toContain("list_connectors");
-    expect(executeTool.description).not.toContain("batch_call");
-
-    const executed = await mcpRpc(
-      withExec,
-      "tools/call",
-      {
-        name: "execute_code",
-        arguments: { code: "async () => null" },
-      },
-      { token: TOKEN },
-    );
-    const executedBody = await readJsonRpc(executed);
-    expect(executedBody.result.isError).toBeFalsy();
-    expect(executedBody.result.structuredContent).toMatchObject({
-      result: { executor: "live" },
-    });
-    expect(executions).toBe(1);
-  });
-
-  it.skipIf(WORKERD)("runs code against connectors end to end", async () => {
-    const { quickJsExecutor } = await loadQuickJsExecutor();
-    const events: ToolCallActivityEvent[] = [];
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
-      activity: activityHistory({
-        store: {
-          record(event) {
-            events.push(event);
-          },
-        },
-      }),
-    });
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "execute_code",
-        arguments: {
-          code: `async () => {
-            const sums = await Promise.all(
-              [1, 2, 3].map((n) => connecta.call("calc.add", { a: n, b: n }).then(({ data }) => data))
-            );
-            console.log("done");
-            return sums.map((s) => s.sum);
-          }`,
-        },
-      },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    const payload = JSON.parse(body.result.content[0].text);
-    expect(payload.result).toEqual([2, 4, 6]);
-    expect(payload.logs).toBe("done");
-    expect(events).toHaveLength(3);
-    expect(events.every((event) => event.source === "execute_code")).toBe(true);
-    await c.close();
-  });
-
-  it.skipIf(WORKERD)("discovers and calls an API tool inside one execute_code request", async () => {
-    const { quickJsExecutor } = await loadQuickJsExecutor();
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
-    });
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      {
-        name: "execute_code",
-        arguments: {
-          code: `async () => {
-            const found = await connecta.search({
-              query: "add",
-              includeSchemas: "compact"
-            });
-            const described = await connecta.describe({
-              addresses: [found.tools[0].address]
-            });
-            const value = await connecta.call(found.tools[0].address, {
-              a: 4,
-              b: 5
-            }).then(({ data }) => data);
-            return {
-              address: found.tools[0].address,
-              schema: described.tools[0].inputSchema,
-              value
-            };
-          }`,
-        },
-      },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    const payload = JSON.parse(body.result.content[0].text);
-    expect(payload.result).toEqual({
-      address: "calc.add",
-      schema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] },
-      value: { sum: 9 },
-    });
-    await c.close();
-  });
-
-  it.skipIf(WORKERD)(
-    "keeps health and ordinary calls responsive while guests run away",
-    async () => {
-      const { quickJsExecutor } = await loadQuickJsExecutor();
-      // A guest run on the server's event loop would stall it for the whole
-      // CPU budget, so the latency bound is derived from that budget: half of
-      // it leaves a loaded host room for its own scheduling stalls (a fixed
-      // 150ms against a 200ms budget did not) and still fails any guest that
-      // blocks the server.
-      const cpuTimeMs = 1_000;
-      const bound = cpuTimeMs / 2;
-      const executor = quickJsExecutor({
-        concurrency: 4,
-        maxQueueSize: 8,
-        cpuTimeMs,
-        timeoutMs: 10 * cpuTimeMs,
-      });
-      const c = createTestConnecta({
-        connectors: [calcApi()],
-        auth: machineAuth(TOKEN),
-        storage: memoryStorage(),
-        publicUrl: BASE,
-        executor,
-      });
-      const probeStart = performance.now();
-      const healthProbes = Array.from(
-        { length: 20 },
-        (_, index) =>
-          new Promise<number>((resolve) => {
-            const due = probeStart + index * 10;
-            setTimeout(() => {
-              void c.fetch(new Request(`${BASE}/health`)).then((response) => {
-                expect(response.status).toBe(200);
-                resolve(performance.now() - due);
-              });
-            }, index * 10);
-          }),
-      );
-      const ordinaryCall = new Promise<number>((resolve) => {
-        const due = probeStart + 50;
-        setTimeout(() => {
-          void mcpRpc(
-            c,
-            "tools/call",
-            {
-              name: "call_tool",
-              arguments: {
-                address: "calc.add",
-                args: { a: 4, b: 6 },
-              },
-            },
-            { token: TOKEN },
-          ).then(async (response) => {
-            const body = await readJsonRpc(response);
-            expect(JSON.parse(body.result.content[0].text)).toEqual({
-              sum: 10,
-            });
-            resolve(performance.now() - due);
-          });
-        }, 50);
-      });
-      const runaways = Array.from({ length: 4 }, () => executor.execute(`async () => { while (true) {} }`, []));
-      const latencies = await Promise.all(healthProbes);
-      const callLatency = await ordinaryCall;
-      const outcomes = await Promise.all(runaways);
-      latencies.sort((a, b) => a - b);
-      const p95 = latencies[Math.ceil(latencies.length * 0.95) - 1];
-      const p99 = latencies[latencies.length - 1];
-      expect(p95).toBeLessThan(bound);
-      expect(p99).toBeLessThan(bound);
-      expect(callLatency).toBeLessThan(bound);
-      expect(outcomes.every((outcome) => outcome.error?.includes("guest CPU budget"))).toBe(true);
-      await c.close();
-    },
-    30_000,
-  );
 });

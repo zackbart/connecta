@@ -1,6 +1,6 @@
 import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
-import type { CredentialManagementCapability, UiConnector, UiData, UiProblem } from "./model.js";
+import type { UiConnector, UiData, UiProblem } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
 import type { AgentSlot } from "./agents.js";
 
@@ -602,16 +602,6 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
     credentialNoticeFor: null,
     confirming: null,
   };
-}
-
-export function credentialUnavailableCopy(capability?: CredentialManagementCapability): string {
-  if (capability === "no_slots") {
-    return "No connector declares a credential slot. Credentials stay in code.";
-  }
-  if (capability === "vault_not_configured") {
-    return "No credential vault is configured.";
-  }
-  return "Managing credentials needs an interactive sign-in. A bearer token can only view them.";
 }
 
 /**

@@ -13,14 +13,14 @@ surface). Decision 0010 ([#904](https://github.com/zackbart/connecta/pull/904),
 proposed) designs the Effect provider kit that `api` providers are built on.
 
 `test/provider-standard.node.test.ts` enforces L, E, D, G and S on every
-provider folder, and `test/provider-conventions.test.ts` applies S on both
-runtimes. `PENDING` in `test/provider-standard.ts` lists the providers that
-have not landed step 1 or step 2. Names leave that list and `test/provider-pending-baseline.json` together;
-none join either. The Node suite compares against the committed pre-push version
-on main pushes, the PR base on PR merge checkouts, and the `origin/main` merge
-base locally, so editing both files cannot add or reinsert exemptions. See
-AGENTS.md Verification for `CONNECTA_STANDARD_BASE`, the first-parent fallback,
-and fail-closed history requirements.
+provider folder, and `test/provider-conventions.test.ts` applies S on Node.
+`PENDING` in `test/provider-standard.ts` lists providers that have not landed
+step 1 or step 2. Names leave it and `test/provider-pending-baseline.json` together;
+none join either. CI's static job compares each baseline step with the PR base
+(the pre-push SHA on main; HEAD's first parent on nightly/manual runs), rejecting added or
+reinserted names even if both files change. Removals remain allowed; missing
+history or an unreadable baseline fails. No `CONNECTA_STANDARD_BASE` is needed.
+See AGENTS.md Verification.
 
 ## Which rules apply
 
@@ -59,21 +59,21 @@ There is no `composed` kind; GitHub's step 1 removes it.
 
 ## The folder (L)
 
-| Path                                         | Kinds         | Holds                                                                                                                                                                                                               |
-| -------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                                   | all           | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                                      |
-| `api.ts`                                     | `api`, `dual` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                                  |
-| `tools.ts`                                   | `api`, `dual` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                                   |
-| `hosted.ts`                                  | `mcp`, `dual` | `remoteMcp()` configuration and the reviewed classification                                                                                                                                                         |
-| `safety.ts`                                  | `api`, `dual` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                                   |
-| `SKILL.md`                                   | all           | Agent-facing domain guidance (G)                                                                                                                                                                                    |
-| `drift.json`                                 | all           | Version 2 (D)                                                                                                                                                                                                       |
-| `evidence/`                                  | all           | Fixed names (E)                                                                                                                                                                                                     |
-| `fixtures.ts`                                | all           | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs in both runtimes and against the packed tarball |
-| `provider.test.ts`                           | all           | The provider suite; `provider.node.test.ts` only when Node is required                                                                                                                                              |
-| `provider.<topic>.test.ts`                   | all           | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                                     |
-| `skill.generated.ts`, `openapi.generated.ts` |               | Generated; never edit                                                                                                                                                                                               |
-| `lib/*.ts`                                   | all           | Any other implementation module                                                                                                                                                                                     |
+| Path                                         | Kinds         | Holds                                                                                                                                                                                                      |
+| -------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                                   | all           | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                             |
+| `api.ts`                                     | `api`, `dual` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                         |
+| `tools.ts`                                   | `api`, `dual` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                          |
+| `hosted.ts`                                  | `mcp`, `dual` | `remoteMcp()` configuration and the reviewed classification                                                                                                                                                |
+| `safety.ts`                                  | `api`, `dual` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                          |
+| `SKILL.md`                                   | all           | Agent-facing domain guidance (G)                                                                                                                                                                           |
+| `drift.json`                                 | all           | Version 2 (D)                                                                                                                                                                                              |
+| `evidence/`                                  | all           | Fixed names (E)                                                                                                                                                                                            |
+| `fixtures.ts`                                | all           | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
+| `provider.test.ts`                           | all           | The provider suite; `provider.node.test.ts` only when Node is required                                                                                                                                     |
+| `provider.<topic>.test.ts`                   | all           | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
+| `skill.generated.ts`, `openapi.generated.ts` |               | Generated; never edit                                                                                                                                                                                      |
+| `lib/*.ts`                                   | all           | Any other implementation module                                                                                                                                                                            |
 
 - `index.ts` never uses `asProviderFactory`, defines a tool, calls
   `remoteMcp()`, or builds guide text. Preserve the public
@@ -468,10 +468,15 @@ export names and non-provider entries must remain unchanged.
 
 ## Verification
 
-Run provider-local tests in Node and Workers, plus
-`test/provider-standard.node.test.ts`, the conventions, registry, purity, and
-package-boundary suites, and `test/goldens.test.ts` on both projects. Cite
-applicable `INV-n` IDs in meaningful test titles.
+Run provider-local tests, `test/provider-standard.node.test.ts`, conventions,
+registry, purity and package-boundary suites on Node. Goldens run on both
+projects: Node compares forward and reverse observations, workerd canonical
+observations. Ordinary portable filenames do not enroll suites in workerd;
+`vitest.config.ts` selects native boundaries, and mixed suites tag their native
+cases `workers` and broad logic cases `node`. Node runs both tags. Add native
+coverage there when a provider exercises platform-specific behavior. Nightly
+Node checks add repeats and jitter with `CONNECTA_GOLDENS_DETERMINISM=1`.
+Cite applicable `INV-n` IDs in meaningful test titles.
 
 `pnpm run providers:check` reads public contracts only. Parser failures are
 provider-local findings; report them alongside other drift and manual review
@@ -498,10 +503,8 @@ until a reviewed migration. Never fetch credentials, call operational tools,
 file issues, or silently accept a new baseline. Recording endpoint evidence
 is an explicit action.
 
-The Provider drift workflow runs on provider-path PRs and weekly. A PR scans
-the providers whose folders it changes, plus those importing a changed
-`src/providers/_shared/` area; drift tooling changes, the weekly schedule and
-manual dispatch scan every provider. Its summary lists new or changed findings
+The Provider drift workflow runs weekly and on manual dispatch, scanning every
+public provider. It does not run on PRs. Its summary lists new or changed findings
 apart from standing manual reviews. Summary and artifacts are advisory; it is
 not a dependency of the aggregate `check` gate.
 

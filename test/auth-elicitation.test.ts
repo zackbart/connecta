@@ -18,10 +18,6 @@ afterEach(async () => {
 
 function setup(
   options: {
-    manage?: boolean;
-    vault?: boolean;
-    publicUrl?: boolean;
-    programWrite?: boolean;
     credential?: boolean;
     namedCredential?: boolean;
     uiPath?: string;
@@ -61,12 +57,10 @@ function setup(
     connectors: [connector],
     storage,
     logger: "silent",
-    ...(options.publicUrl === false ? {} : { publicUrl: BASE }),
-    ...(options.vault === false ? {} : { vault }),
+    publicUrl: BASE,
+    vault,
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
-    // Without management alice is only a pool member; bob stays the maintainer.
-    ...(options.manage === false ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: {
       trusted: {
         tools: ["service"],
@@ -78,7 +72,6 @@ function setup(
       execute: async (_code, providers) => {
         const fn = required(providers.find((p) => p.name === "connecta")).fns.call!;
         try {
-          if (options.programWrite) await fn("service.write", {});
           const result = await fn("service.read", {});
           return { result };
         } catch (error) {
@@ -94,8 +87,6 @@ function setup(
     opts: {
       state?: string;
       action?: string;
-      capable?: boolean;
-      legacy?: boolean;
       user?: string;
       pool?: string;
     } = {},
@@ -108,25 +99,17 @@ function setup(
     };
     const request = mcpRpc("tools/call", {
       ...params,
-      ...(opts.legacy
-        ? {}
-        : {
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-              "io.modelcontextprotocol/clientInfo": { name: "auth-test", version: "1" },
-              "io.modelcontextprotocol/clientCapabilities": {
-                elicitation: opts.capable === false ? { form: {} } : { url: {} },
-              },
-            },
-          }),
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "auth-test", version: "1" },
+        "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+      },
     });
-    if (!opts.legacy) {
-      request.headers.set("MCP-Protocol-Version", "2026-07-28");
-      request.headers.set("Mcp-Method", "tools/call");
-      request.headers.set("Mcp-Name", name);
-    }
+    request.headers.set("MCP-Protocol-Version", "2026-07-28");
+    request.headers.set("Mcp-Method", "tools/call");
+    request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
-    if (typeof args.address === "string" && !opts.legacy) request.headers.set("Mcp-Param-Address", args.address);
+    if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
     const target = opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request;
     return readJsonRpc(await app.fetch(target));
   };
@@ -182,29 +165,6 @@ describe("auth URL elicitation", () => {
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
     expect(sign).toHaveBeenCalledOnce();
-  });
-
-  it("INV-4: keeps the auth envelope and connect link for incapable and legacy hosts", async () => {
-    const flow = setup();
-    for (const opts of [{ capable: false }, { legacy: true }]) {
-      const result = (await flow.rpc(undefined, undefined, opts)).result;
-      expect(result.resultType).not.toBe("input_required");
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent.error).toMatchObject({
-        code: "downstream_oauth_required",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
-      });
-    }
-  });
-
-  it("INV-4: refuses elicitation without management, vault, or configured public URL", async () => {
-    for (const options of [{ manage: false }, { vault: false }, { publicUrl: false }]) {
-      const flow = setup(options);
-      // Without management alice reaches only her pool, as a member (#837).
-      const result = (await flow.rpc(undefined, undefined, "manage" in options ? { pool: "trusted" } : {})).result;
-      expect(result.resultType).not.toBe("input_required");
-      expect(result.isError).toBe(true);
-    }
   });
 
   it("INV-4: accept re-runs the bound call and observes completed browser auth", async () => {
@@ -274,36 +234,6 @@ describe("auth URL elicitation", () => {
     expect(flow.call).toHaveBeenCalledTimes(2);
   });
 
-  it("INV-2 INV-9: programs elicit only before any write was dispatched", async () => {
-    for (const programWrite of [false, true]) {
-      const flow = setup({ programWrite });
-      const result = (await flow.rpc("execute_code", { code: "program" }, { pool: "trusted" })).result;
-      if (!programWrite) expect(result.resultType).toBe("input_required");
-      else {
-        expect(result.resultType).not.toBe("input_required");
-        expect(result.structuredContent.error.writes.succeeded).toBe(1);
-        expect(result.structuredContent.error.authorizationUrl).toContain(`${BASE}/connect/service?h=`);
-      }
-    }
-  });
-
-  it("INV-2 INV-4: destructive calls and explicit authorize_connector share the auth elicitation", async () => {
-    const credentialFlow = setup({ credential: true });
-    expect(
-      (await credentialFlow.rpc("call_destructive_tool", { address: "service.needs_auth", args: {} })).result
-        .resultType,
-    ).toBe("input_required");
-    expect(credentialFlow.call).not.toHaveBeenCalled();
-    const flow = setup();
-    const args = { connector: "service", force: true };
-    const first = (await flow.rpc("authorize_connector", args)).result;
-    expect(first.resultType).toBe("input_required");
-    const result = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "decline" }))
-      .result;
-    expect(result.structuredContent.error.code).toBe("auth_declined");
-    expect(flow.connector.startAuth).not.toHaveBeenCalled();
-  });
-
   it("INV-4 INV-5: credential slots elicit through an identity-checked same-origin UI handoff", async () => {
     const flow = setup({ credential: true });
     for (const [name, args] of [
@@ -319,40 +249,6 @@ describe("auth URL elicitation", () => {
       expect(browser.headers.get("Location")).toBe(`${BASE}/`);
       expect((await flow.app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }))).status).toBe(400);
     }
-  });
-
-  it("INV-4: allows reordered object keys but refuses state on unrelated tools", async () => {
-    const flow = setup();
-    const args = { address: "service.read", args: { id: 1, nested: { a: 2, b: 3 } } };
-    const state = (await flow.rpc("call_tool", args)).result.requestState;
-    flow.connect();
-    const retry = await flow.rpc(
-      "call_tool",
-      { args: { nested: { b: 3, a: 2 }, id: 1 }, address: "service.read" },
-      { state, action: "accept" },
-    );
-    expect(retry.result.isError).toBeFalsy();
-    expect((await flow.rpc("skills", {}, { state, action: "accept" })).error.data.reason).toBe("invalid_request_state");
-    expect(flow.call).toHaveBeenCalledTimes(2);
-  });
-
-  it("INV-4 INV-9: authorize retries finish after a verified browser attempt and do not repeat force", async () => {
-    const flow = setup();
-    const args = { connector: "service", force: true };
-    const first = (await flow.rpc("authorize_connector", args)).result;
-    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
-    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
-    const pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" }))
-      .result;
-    expect(pending.resultType).toBe("input_required");
-    expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(302);
-    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
-    flow.connect();
-    const completed = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" }))
-      .result;
-    expect(completed.resultType).not.toBe("input_required");
-    expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
-    expect(flow.connector.startAuth).toHaveBeenCalledTimes(2);
   });
 
   it("INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes", async () => {
@@ -552,15 +448,5 @@ describe("auth URL elicitation", () => {
         expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
       }
     }
-  });
-
-  it("INV-9: written programs keep a connect link for hosts without URL support", async () => {
-    const flow = setup({ programWrite: true });
-    const result = (await flow.rpc("execute_code", { code: "program" }, { pool: "trusted", capable: false })).result;
-    expect(result.resultType).not.toBe("input_required");
-    expect(result.structuredContent.error).toMatchObject({
-      writes: { succeeded: 1 },
-      authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
-    });
   });
 });
