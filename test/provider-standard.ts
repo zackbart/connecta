@@ -16,7 +16,7 @@
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
-import { driftRecordProblems } from "../scripts/drift-validate.mjs";
+import { driftRecordProblems, generatedProblems } from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
 export const PENDING = {
@@ -133,7 +133,6 @@ const EVIDENCE_FILES = new Set([
   "review.md",
 ]);
 /** Evidence whose bytes `providers:generate` hashes into drift.json. */
-const HASHED_EVIDENCE = ["catalog.json", "openapi.json", "openapi.document.json", "value-safety.json"];
 const KIND_FILES: Readonly<Record<string, { required: string[]; forbidden: string[] }>> = {
   api: { required: ["api.ts", "tools.ts"], forbidden: ["hosted.ts"] },
   mcp: { required: ["hosted.ts"], forbidden: ["api.ts", "tools.ts", "safety.ts", "openapi.generated.ts"] },
@@ -150,7 +149,6 @@ const CHECK_TYPES = new Set([
 ]);
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const OPERATION = /^(?:GET|HEAD|POST|PUT|PATCH|DELETE) \/\S*$/;
 
 type Json = Record<string, unknown>;
 
@@ -341,29 +339,7 @@ export function driftViolations(
     return ["D1: drift.json needs version 2 and this provider's name"];
   }
   const generated = drift["generated"];
-  if (!record(generated) || Object.keys(generated).some((key) => !["operations", "hosted", "evidence"].includes(key))) {
-    found.push("D2: drift.json needs a generated block of operations, hosted, and evidence only");
-  } else {
-    const operations = generated["operations"];
-    if (provider.kind !== "mcp" && !(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
-      found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
-    }
-    const hosted = generated["hosted"];
-    if (!sortedUnique(hosted) || (provider.kind === "api" ? hosted.length !== 0 : hosted.length === 0)) {
-      found.push(
-        "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
-      );
-    }
-    const evidence = generated["evidence"];
-    const expected = HASHED_EVIDENCE.filter((name) => provider.files.includes(`evidence/${name}`));
-    if (
-      !record(evidence) ||
-      JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expected.sort()) ||
-      !Object.values(evidence).every((digest) => typeof digest === "string" && SHA256.test(digest))
-    ) {
-      found.push("D2: generated.evidence holds one sha256 per hashed evidence file");
-    }
-  }
+  found.push(...generatedProblems(drift, { kind: provider.kind, files: provider.files }));
   const checks = drift["checks"];
   if (!Array.isArray(checks)) return [...found, "D3: drift.json needs a checks array"];
   const operations = new Set(

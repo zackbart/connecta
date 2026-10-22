@@ -1928,8 +1928,8 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
     });
     const report = JSON.parse(reportFor(directory).output);
     expect(report.records.map((entry: any) => [entry.provider, entry.findings[0].detail])).toEqual([
-      ["other", expect.stringContaining("needs the generated operations, hosted, and evidence")],
-      ["vendor", expect.stringContaining("needs the generated operations, hosted, and evidence")],
+      ["other", expect.stringContaining("D2: generated.operations")],
+      ["vendor", expect.stringContaining("D2: drift.json needs a generated block")],
     ]);
   });
 
