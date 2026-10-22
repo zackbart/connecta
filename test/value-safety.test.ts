@@ -48,6 +48,71 @@ const DATA: OpenApiData = {
 const index = new OperationIndex(DATA, { vendor: "acme", title: "Acme" });
 const engine = (table: Omit<ValueSafetyTable, "title">) => valueSafety({ title: "Acme", ...table }, () => index);
 
+// Multi-MiB CPU work can be delayed or slowed by instrumentation and load.
+// This is only a hang guard; character-work counts enforce the actual bound.
+const SCAN_HANG_GUARD_MS = 20_000;
+
+/**
+ * Count explicit character reads and code units scanned/copied by the real
+ * scanner's string operations. Avoid spy call histories for multi-MiB inputs.
+ * Capture is synchronous and restores every descriptor even on failure, so
+ * neither other tests nor output assertions run with instrumented methods.
+ * Native regexp backtracking remains subject to the runner's hang guard.
+ */
+function stringWork<T>(work: () => T): { value: T; units: number } {
+  const native = {
+    charCodeAt: String.prototype.charCodeAt,
+    slice: String.prototype.slice,
+    replace: String.prototype.replace,
+    toLowerCase: String.prototype.toLowerCase,
+  };
+  let units = 0;
+  // Keep per-character reads allocation-free; recording arguments or creating
+  // a rest array for each read would make the measurement dominate the scan.
+  const counted = {
+    charCodeAt(this: string, index: number) {
+      units++;
+      return native.charCodeAt.call(this, index);
+    },
+    slice(this: string, start?: number, end?: number) {
+      const result = native.slice.call(this, start, end);
+      units += result.length;
+      return result;
+    },
+    replace(this: string, ...args: unknown[]) {
+      units += this.length;
+      return Reflect.apply(native.replace, this, args);
+    },
+    toLowerCase(this: string) {
+      units += this.length;
+      return native.toLowerCase.call(this);
+    },
+  };
+  const originals = (Object.keys(native) as Array<keyof typeof native>).map((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, name);
+    if (!descriptor) throw new Error(`Missing String.${name}`);
+    return { name, descriptor };
+  });
+  try {
+    for (const { name, descriptor } of originals)
+      Object.defineProperty(String.prototype, name, { ...descriptor, value: counted[name] });
+    const value = work();
+    return { value, units };
+  } finally {
+    for (const { name, descriptor } of originals) Object.defineProperty(String.prototype, name, descriptor);
+  }
+}
+
+/** Bound observed character work by a fixed number of passes over the input. */
+function linearWork<T>(input: string, work: (text: string) => T): T {
+  const { value, units } = stringWork(() => work(input));
+  expect(units, "the scanner must exercise the work counter").toBeGreaterThan(0);
+  // Include the destination scan, copies and up to four decoding layers,
+  // with fixed setup headroom for the reviewed host policy.
+  expect(units).toBeLessThanOrEqual(input.length * 64 + 1_000);
+  return value;
+}
+
 describe("value-safety engine", () => {
   it("INV-3: refuses a refuse verdict by operation, naming it and the reason", () => {
     const safety = engine({ operations: { "POST /v1/keys": refuse("It mints a key.") } });
@@ -535,9 +600,6 @@ describe("pre-signed links in free text", () => {
     }
   });
 
-  // workerd freezes its clocks during synchronous work, so the bound is
-  // measured on Node; in workerd the scan must still finish within the test's
-  // timeout.
   it.each([
     ["5 MiB of text without a URL", "a".repeat(5 * 1024 * 1024)],
     ["near-URL letters", "abc:/".repeat(400_000)],
@@ -563,15 +625,15 @@ describe("pre-signed links in free text", () => {
     ["external proxy authorities", "[a](https://example.com/?url=https://file.notion.so/a?id=42)".repeat(100_000)],
     ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notion.so/a?b)[redacted]`],
     ["Markdown links followed by the placeholder", "[a](https://file.notion.so/a?b)[redacted]".repeat(100_000)],
-  ])("INV-5: scans %s in linear time", (_, text) => {
-    const started = performance.now();
-    const clean = withheld(text);
-    expect(performance.now() - started).toBeLessThan(2_000);
-    expect(clean.length).toBeGreaterThan(0);
-    const admitting = performance.now();
-    expect(carriesWithheldLink(text, HOSTS)).toBeTypeOf("boolean");
-    expect(performance.now() - admitting).toBeLessThan(2_000);
-  });
+  ])(
+    "INV-5: scans %s in linear time",
+    (_, text) => {
+      const clean = linearWork(text, withheld);
+      expect(clean.length).toBeGreaterThan(0);
+      expect(linearWork(text, (input) => carriesWithheldLink(input, HOSTS))).toBeTypeOf("boolean");
+    },
+    SCAN_HANG_GUARD_MS,
+  );
 });
 
 describe("global embedded REST URL policy (#812)", () => {
@@ -671,11 +733,13 @@ describe("global embedded REST URL policy (#812)", () => {
     ["many signed queries", "[f](https://example.com/a?sig=PRIVATE)".repeat(40_000)],
     ["one long parameter name", `see https://example.com/a?${"a".repeat(2_000_000)}=value`],
     ["many parameter delimiters", `see https://example.com/a?${"?&a&".repeat(400_000)}`],
-  ])("INV-5: scans %s with bounded linear passes", (_, input) => {
-    const started = performance.now();
-    expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
-    expect(performance.now() - started).toBeLessThan(2_000);
-  });
+  ])(
+    "INV-5: scans %s with bounded linear passes",
+    (_, input) => {
+      expect(linearWork(input, withholdEmbeddedUrls)).not.toContain("PRIVATE");
+    },
+    SCAN_HANG_GUARD_MS,
+  );
 });
 
 describe("reviewed text policy and global admission (#846)", () => {
@@ -830,12 +894,17 @@ describe("reviewed text policy and global admission (#846)", () => {
     "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
     "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
     `see https://public.example/a?${"?&a&".repeat(400_000)}`,
-  ])("INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes", (input) => {
-    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
-    const started = performance.now();
-    const clean = safety.redact({ message: input }, "GET", "/v1/things") as any;
-    expect(clean.message).not.toContain("PRIVATE");
-    expect(carriesWithheldLink(clean)).toBe(input.includes("PRIVATE"));
-    expect(performance.now() - started).toBeLessThan(2_000);
-  });
+  ])(
+    "INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes",
+    (input) => {
+      const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+      const clean = linearWork(input, (message) => {
+        const result = safety.redact({ message }, "GET", "/v1/things") as { message: string };
+        return { message: result.message, withheld: carriesWithheldLink(result) };
+      });
+      expect(clean.message).not.toContain("PRIVATE");
+      expect(clean.withheld).toBe(input.includes("PRIVATE"));
+    },
+    SCAN_HANG_GUARD_MS,
+  );
 });
