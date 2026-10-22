@@ -148,9 +148,12 @@ whole-call uncertainty and the separate Q8 write-401 policy.
 Bulk binding uses lossless ordered multimaps, rejects undeclared duplicate
 query/form/JSON identifying keys before fetch, and preserves declared
 multi-value order. Call closure promptly settles paused credential/budget
-Effects and aborts their underlying work; renewal is call-owned and
-interruptible. Request closure closes attached leases, including those
-opened by the Promise bridge. No shared renewal fiber spans requests.
+Effects and aborts their underlying work. Renewal preparation and the call's
+wait are call-owned and interruptible. A dispatched OAuth refresh instead
+belongs to the storage coordinator, which preserves its own bounded deadline
+and fenced rotation commit after the caller leaves. Request closure closes
+attached leases, including those opened by the Promise bridge. No shared
+request-owned renewal fiber spans requests.
 
 The out-of-tree comparison uses #900's harness and fixtures from
 `origin/t3/provider-characterization-goldens` at `3ac58733` against #902's
@@ -313,20 +316,20 @@ the served verdict and `unknownWrite` carries only Q8/whole-call uncertainty.
 Today a call's state lives in side tables keyed on the identity of the context
 object. The table below sorts that state by owner and lifetime:
 
-| State                                                                                           | Today                                                                    | Owner and lifetime                  | B.1                                                                                                   |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Caller                                                                                          | `connector-caller.ts` `callers`                                          | operation (any registry operation)  | `Caller`, in the operation layer                                                                      |
-| Catalog-cache policy, OAuth partition and sealer                                                | `catalog-cache.ts` `settings`, `oauth-partition.ts`, `oauth-sealing.ts`  | operation                           | the operation entry; moved into services by D.4                                                       |
-| Admission permit                                                                                | `call-admission-context.ts` `permits`                                    | call                                | `Budget`, whose `charge` refuses once the call closes                                                 |
-| Served classification                                                                           | A.2's `call-classification.ts`                                           | call                                | `Classification`                                                                                      |
-| Recovery facts                                                                                  | `call-recovery.ts` `facts`, which invocation reads via `dispatchContext` | call, read by invocation afterwards | `Recovery`, which writes into a record the invocation owns                                            |
-| Per-call sent secrets                                                                           | `sent-secrets.ts` `contexts` and `wrappedCredentials`                    | call, included in the request set   | `Secrets`                                                                                             |
-| Credentials                                                                                     | `ctx.credential`, plus the `trackCredentialReads` mutation               | call                                | `Credentials`; every read registers what it returns                                                   |
-| Signal                                                                                          | `ctx.signal`                                                             | call                                | `Signal`                                                                                              |
-| Requests sent                                                                                   | `provider-call.ts`'s request ledger and logical call (#902)              | call                                | the core's `Ledger`, which `api()`'s boundary reads (B.3), beside the kit's `Dispatches` reservations |
-| OAuth grant                                                                                     | `ctx.oauth` and `static-oauth.ts` closures                               | call                                | `Grant` (B.2)                                                                                         |
-| Request set of sent secrets, invocation auth, handoffs, `rejectedScopes`, request-token flights | WeakMaps keyed on `requestScope`                                         | request                             | request-owned; a `RequestScope` service in D.1                                                        |
-| `remoteMcp()` sessions and transports                                                           | `requestScope` finalizers in `remote-mcp.ts`                             | request                             | request-owned; unchanged until D.6                                                                    |
+| State                                                                                           | Today                                                                    | Owner and lifetime                                                 | B.1                                                                                                   |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Caller                                                                                          | `connector-caller.ts` `callers`                                          | operation (any registry operation)                                 | `Caller`, in the operation layer                                                                      |
+| Catalog-cache policy, OAuth partition and sealer                                                | `catalog-cache.ts` `settings`, `oauth-partition.ts`, `oauth-sealing.ts`  | operation                                                          | the operation entry; moved into services by D.4                                                       |
+| Admission permit                                                                                | `call-admission-context.ts` `permits`                                    | call                                                               | `Budget`, whose `charge` refuses once the call closes                                                 |
+| Served classification                                                                           | A.2's `call-classification.ts`                                           | call                                                               | `Classification`                                                                                      |
+| Recovery facts                                                                                  | `call-recovery.ts` `facts`, which invocation reads via `dispatchContext` | call, read by invocation afterwards                                | `Recovery`, which writes into a record the invocation owns                                            |
+| Per-call sent secrets                                                                           | `sent-secrets.ts` `contexts` and `wrappedCredentials`                    | call, included in the request set                                  | `Secrets`                                                                                             |
+| Credentials                                                                                     | `ctx.credential`, plus the `trackCredentialReads` mutation               | call                                                               | `Credentials`; every read registers what it returns                                                   |
+| Signal                                                                                          | `ctx.signal`                                                             | call                                                               | `Signal`                                                                                              |
+| Requests sent                                                                                   | `provider-call.ts`'s request ledger and logical call (#902)              | call                                                               | the core's `Ledger`, which `api()`'s boundary reads (B.3), beside the kit's `Dispatches` reservations |
+| OAuth grant use                                                                                 | `ctx.oauth` and `static-oauth.ts` closures                               | call; dispatched refresh completion belongs to storage coordinator | `Grant` (B.2)                                                                                         |
+| Request set of sent secrets, invocation auth, handoffs, `rejectedScopes`, request-token flights | WeakMaps keyed on `requestScope`                                         | request                                                            | request-owned; a `RequestScope` service in D.1                                                        |
+| `remoteMcp()` sessions and transports                                                           | `requestScope` finalizers in `remote-mcp.ts`                             | request                                                            | request-owned; unchanged until D.6                                                                    |
 
 The defect 0009 names is call state keyed on a context that a `{...ctx}` copy
 replaces. Request-keyed state does not have it, but it needs the same explicit
@@ -457,7 +460,29 @@ explicit finalizer and a closed-state check:
 What a call owns and what its request owns are kept apart:
 
 - **Call-owned:** the lease's capabilities, the dispatch ledger, the grant's
-  use for this call. They close when the call's attempt scope ends.
+  use for this call, renewal preparation and its wait. They close when the
+  call's attempt scope ends. Before an authorization-server token request is
+  dispatched, closing either the call or request stops preparation: no token
+  request or subsequent token/renewal-state write starts. Paused grant reads
+  settle promptly without being released, and late read results cannot resume
+  renewal. A closed capability fails with "This call has ended…".
+- **Storage-coordinator-owned after dispatch:** a refresh-token redemption
+  that has left for the authorization server, its bounded response read and
+  fenced grant commit. Its own 20-second HTTP deadline is independent of call
+  cancellation; Workers receives its completion through `defer`/`waitUntil`.
+  Closing the call or request promptly ends that caller's wait, never aborts
+  the dispatched authorization-server request, and cannot discard an accepted
+  rotation that spent the old refresh token. The closed call consumes no
+  renewal result, changes no ledger renewal fact and sends no resource
+  request or resend. Existing claim/spent-fingerprint CAS fencing still
+  governs the coordinator; an already-issued storage operation cannot be
+  retracted, and an abandoned unsent claim expires without authorizing a send.
+  In particular, `KVStorage.compareAndSet` has no cancellation or transaction
+  hook: a claim, liveness or spent-fingerprint write submitted before closure
+  can linearize after it. Abandoned preparation starts no new writes after
+  closure; submitted writes cannot be rolled back. A late spent CAS remains outstanding and
+  fenced, even though no token request left; re-consent may be required.
+  Removing that fingerprint would weaken protection against a spent token.
 - **Request-owned:** a `remoteMcp()` session or transport, a request-token
   flight, the request's sent-secret set, invocation auth and handoffs. They
   outlive the call that opened them and close when the request scope closes.
@@ -515,8 +540,17 @@ invocation and the registry:
 - "INV-7: closing a call or request promptly settles paused credentials and
   budget without releasing their underlying operations", including the
   Promise bridge's request ownership.
-- "INV-7: closing a call or request aborts paused grant renewal without
-  releasing it or updating renewal state".
+- "INV-7: closing a call or request promptly refuses production OAuth renewal
+  paused before dispatch, with no token request or subsequent state writes",
+  through `api()` static OAuth and the SDK's downstream OAuth grant path.
+  Pauses include the read after claim CAS, liveness-write reply, dispatch-CAS
+  reply, and the final spent CAS both before commit and before its reply.
+  Storage snapshots prove unchanged state after closure except the explicitly
+  submitted late spent CAS; no subsequent write starts in that case either.
+- "INV-5 INV-7 INV-9: closing a call or request after token dispatch promptly
+  refuses the call, leaves the authorization-server request live, and commits
+  its later rotation without consuming it or resending a resource request",
+  including read and write 401s (`test/call-renewal-lifetime.test.ts`).
 - "INV-4 INV-10: discovery, status, and startAuth views carry each request's
   own caller across two pools", through `RegistryView`s for `alice` on `crm`
   and `bob` on `tickets`: catalog-cache's private fallback, `remoteMcp()`'s
@@ -707,15 +741,26 @@ class Grant extends Context.Service<Grant, {
 }>()("connecta/http/Grant") {}
 ```
 
-1. A 401 earns one `refresh(stale)`. Renewal work is call-owned and every
-   await races the call's close signal. Interruption aborts its I/O and prevents
-   later token/renewal-state updates, at both call and request boundaries.
-   Grant implementations use interruptible Effects and forward cancellation
-   to I/O. Coordination across isolates uses storage (`downstream-oauth.ts`),
-   never a request-owned fiber shared across requests. Any future shared
-   renewal work requires explicit deployment ownership under workerd's
-   ownership rule and abort on last-owner close. The 401's body is read under the
-   ceiling first, so nothing stays open while renewing.
+1. A 401 earns one `refresh(stale)`. Renewal preparation and every caller
+   wait are call-owned and race the call's close signal. Before token-request
+   dispatch, call or request closure aborts preparation, sends no token
+   request and starts no later token/renewal-state writes. Late reads cannot
+   resume preparation. After dispatch, the OAuth storage coordinator owns
+   the response and fenced rotation commit under its independent 20-second
+   HTTP deadline, retained through Workers `defer`/`waitUntil`. Closure still
+   promptly fails the caller with "This call has ended…", but never aborts
+   that authorization-server request or strands an accepted rotation. The
+   closed call cannot consume the renewal result, mark its 401 renewed or
+   send/resend a resource request. Cross-isolate coordination uses storage
+   (`downstream-oauth.ts`), never a request-owned fiber shared across
+   requests. Already-issued storage operations may commit after closure;
+   `KVStorage` cannot retract them. They remain fenced: unsent claims expire
+   safely, while a late spent-fingerprint CAS can require re-consent without
+   sending a token request. Abandoned preparation starts no subsequent write
+   after closure. Other
+   grant implementations forward cancellation to their
+   call-owned I/O. The 401's body is read under the ceiling first, so nothing
+   stays open while renewing.
 2. A request that is a read (the call's served classification is `read`, or
    the provider sent it with `{ effect: "read" }`) is replayed once.
    `authenticate` runs again and reads the renewed token. A second 401 runs

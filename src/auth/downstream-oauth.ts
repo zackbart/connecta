@@ -169,13 +169,20 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
   if (signal?.aborted) abort();
   return {
     signal: deadline.signal,
-    run: <T>(operation: () => Promise<T>) =>
-      runEdge(
+    run: <T>(operation: () => Promise<T>) => {
+      // A race's losing Promise may still start. Check before constructing it,
+      // then again before handing a late result back to preparation.
+      if (deadline.signal.aborted) return Promise.reject(aborted(deadline.signal));
+      return runEdge(
         Effect.raceAllFirst<Effect.Effect<T, unknown>>([
           fromSignal(deadline.signal),
           Effect.tryPromise({ try: operation, catch: (error) => error }),
         ]),
-      ),
+      ).then((value) => {
+        if (deadline.signal.aborted) throw aborted(deadline.signal);
+        return value;
+      });
+    },
     close: () => {
       if (closed) return;
       closed = true;
@@ -323,6 +330,7 @@ export class OAuthRefreshCoordinator {
     signal: AbortSignal | undefined,
     defer: ConnectorContext["defer"],
   ): Promise<Response> {
+    if (signal?.aborted) throw aborted(signal);
     const waiting = refreshWait(signal);
     try {
       // A verdict belongs to one refresh; never let an older one decide this.
@@ -334,6 +342,7 @@ export class OAuthRefreshCoordinator {
         const joined = this.flights.get(epoch);
         if (joined) {
           const outcome = await waitForRefreshFlight(joined, signal, waiting.signal);
+          if (signal?.aborted) throw aborted(signal);
           if (outcome.status === "failed") {
             provider.recordRefreshFailure(outcome.verdict);
             throw outcome.error;
@@ -777,7 +786,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly allowAuthorization = true,
     /** Present when the deployment's vault can seal; the grant is then ciphertext. */
     private readonly sealer?: OAuthStateSealer,
-    /** Request ownership for a start; a timed-out SDK hook may still resume. */
+    /** Call/request ownership for SDK hooks; dispatched coordinator commits ignore it. */
     private readonly signal?: AbortSignal,
     /** Stable connector configuration bound to dynamically registered clients. */
     private readonly clientBinding?: string,
@@ -881,7 +890,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const grant = await this.openGrant(raw);
     if (raw !== null && this.sealer && storedGrant(raw)?.body !== undefined && !this.signal?.aborted) {
       const sealed = await this.encodeGrant(grant);
-      if (await this.storage.compareAndSet(GRANT, raw, sealed).catch(() => false)) raw = sealed;
+      if (!this.signal?.aborted && (await this.storage.compareAndSet(GRANT, raw, sealed).catch(() => false)))
+        raw = sealed;
     }
     return { raw, grant };
   }
@@ -900,6 +910,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       body: found.body,
       cleanupPending: true,
     });
+    if (this.signal?.aborted) return null;
     let written: boolean;
     try {
       written = await this.storage.compareAndSet(GRANT, null, encoded);
@@ -931,6 +942,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const { grant } = await this.readGrant();
     if (this.bound && grant.epoch !== this.epoch) throw this.flowSuperseded();
     return grant;
+  }
+
+  /** SDK preparation is call-owned; coordinator reads/commits use boundGrant directly. */
+  private activeGrant(): Promise<Grant> {
+    return runEdge(Effect.tryPromise({ try: () => this.boundGrant(), catch: (error) => error }), {
+      signal: this.signal,
+    });
   }
 
   /**
@@ -1214,6 +1232,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * any dispatched failure requires consent because its token is spent.
    */
   private authorizationRefused(): Error {
+    // The SDK catches a refresh cancellation and falls back to consent. Keep
+    // the ended caller's own reason instead of turning it into an auth verdict.
+    if (this.signal?.aborted) throw aborted(this.signal);
     const failure = this.refreshFailure;
     if (failure?.kind === "contended") return this.refreshContended();
     return new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
@@ -1222,7 +1243,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   // --- the SDK's hooks --------------------------------------------------------
 
   async clientInformation(ctx?: OAuthClientInformationContext): Promise<OAuthClientInformationMixed | undefined> {
-    const { body } = await this.boundGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
+    const { body } = await this.activeGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
     const client = this.clientOptions?.client;
     if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
     if (client) {
@@ -1337,7 +1360,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    const { body } = await this.boundGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
+    const { body } = await this.activeGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
     const state = body.discovery;
     this.assertCredentialFree(state, body);
     this.consentDiscovery = state;
@@ -1371,7 +1396,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * tell a refresh another request completed since.
    */
   async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
-    const grant = await this.boundGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
+    const grant = await this.activeGrant();
+    if (this.signal?.aborted) throw aborted(this.signal);
     const { tokens } = grant.body;
     if (!tokens || (ctx && grant.body.issuer !== ctx.issuer)) return undefined;
     this.seen.tokens = fingerprint(tokens);
@@ -1381,6 +1408,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens, ctx?: OAuthClientInformationContext): Promise<void> {
+    if (this.signal?.aborted) throw aborted(this.signal);
     if (this.refreshFailure?.kind === "dead") throw this.authorizationRefused();
     // The coordinator stored this refresh already, or handed on another's.
     if (this.storedRefresh !== undefined && tokens.access_token === this.storedRefresh) return;
@@ -1407,6 +1435,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
+    if (this.signal?.aborted) throw aborted(this.signal);
     if (!this.allowAuthorization) throw this.authorizationRefused();
     this.consent = { ...this.consent, verifier };
   }
@@ -1636,6 +1665,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * The verifier lives in its consent, which the claim already spent.
    */
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
+    if (this.signal?.aborted) throw aborted(this.signal);
     const fields = {
       all: ["client", "tokens", "discovery"],
       client: ["client"],

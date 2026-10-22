@@ -35,6 +35,7 @@ import {
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+import { duringViewCall } from "../runtime/call.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -441,10 +442,19 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * already rotated in, or else one coordinated refresh.
    */
   const renewedToken = async (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string) => {
-    const current = await provider.tokens(issuerContext);
+    // Only the coordinator's dispatched exchange may survive this call.
+    // Race each preparation read too, and never resume SDK work or consume a
+    // rotated token after closure, even if a storage promise completes late.
+    const live = async <A>(work: () => Promise<A>): Promise<A> => {
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      const value = await duringViewCall(ctx, work);
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      return value;
+    };
+    const current = await live(() => provider.tokens(issuerContext));
     if (current && current.access_token !== spent) return current.access_token;
-    if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
-    const refreshed = await provider.tokens(issuerContext);
+    if ((await live(() => runAuth(provider, ctx))) !== "AUTHORIZED") throw authRequiredError();
+    const refreshed = await live(() => provider.tokens(issuerContext));
     if (!refreshed) throw authRequiredError();
     return refreshed.access_token;
   };
@@ -495,6 +505,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     const signal = init.signal && ctx.signal ? AbortSignal.any([init.signal, ctx.signal]) : (init.signal ?? ctx.signal);
     const send = async (accessToken: string) => {
+      if (signal?.aborted) throw signal.reason;
       sentSecretsFor(ctx).add(accessToken);
       const sent = new Headers(headers);
       sent.set("Authorization", `Bearer ${accessToken}`);
@@ -543,6 +554,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         let renewal: unknown;
         try {
           const fresh = await renewedToken(provider, ctx, tokens.access_token);
+          if (signal?.aborted) throw signal.reason;
           // The call's ledger keeps this 401's verdict, or that renewal
           // replaced the token this request sent (Q8). The same token back
           // renewed nothing.
@@ -558,6 +570,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         );
       }
       const accessToken = await renewedToken(provider, ctx, tokens.access_token);
+      if (signal?.aborted) throw signal.reason;
       renewedAfterUnauthorized(dispatch, tokens.access_token, accessToken);
       const { response: second } = await send(accessToken);
       if (second.status !== 401) return second;
@@ -565,6 +578,11 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       rejectedScopes.add(scopeOf(ctx));
       throw authRequiredError();
     } catch (error) {
+      // The SDK can replace cancellation with its passive-consent refusal,
+      // and write recovery normally replaces errors with a 401 verdict. A
+      // closed capability must still fail promptly with its own close reason;
+      // the invocation's ledger retains the write's uncertainty and handoff.
+      if (signal?.aborted) throw signal.reason;
       if (error instanceof UnauthorizedError) {
         rejectedScopes.add(scopeOf(ctx));
         throw authRequiredError();

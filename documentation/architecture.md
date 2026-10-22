@@ -50,12 +50,28 @@ deployment shapes construct it outside the request handler.
 An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
 runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
 Joined scopes share the outcome while keeping their own request I/O and
-cancellation. A shared-storage CAS lease prevents independent isolates from
+cancellation. Grant use, renewal preparation and the caller's wait belong to
+the call. Closing the call or its request promptly refuses those capabilities
+with "This call has ended…", including paused grant reads. Before token
+dispatch, abandoned preparation sends no authorization-server request and
+starts no later token or renewal-state writes; late reads cannot resume it.
+Already-issued storage operations remain fenced, and abandoned unsent claims
+expire safely. `KVStorage` cannot cancel or retract a submitted CAS: it can
+commit after closure, including the final spent-fingerprint write. Abandoned
+preparation starts no further write or token request; a late spent fingerprint remains outstanding
+and can require re-consent. The coordinator never removes it to reopen a
+possibly spent token. A shared-storage CAS lease prevents independent isolates from
 redeeming the same refresh token concurrently. The holder commits an accepted
 rotation to the grant by CAS before releasing waiters, even when the owner
-cancels after dispatch. The HTTP exchange uses its own 20-second deadline,
+cancels after dispatch. At dispatch, response and commit ownership pass to the
+storage coordinator: the HTTP exchange uses its own 20-second deadline,
 detached from caller cancellation, and the runtime passes its completion and
-commit to Workers `waitUntil`. Contenders read the committed tokens or typed
+commit to Workers `waitUntil`. Closing a call or request promptly ends that
+caller's wait without aborting the dispatched authorization-server request.
+The closed call consumes no renewal result, marks no ledger entry renewed,
+and sends or resends no resource request. This preserves a rotation after its
+refresh token has been spent while keeping call capabilities revoked.
+Contenders read the committed tokens or typed
 verdict. An unsent claim can be taken over after expiry. Dispatch uses a lease CAS
 transition and a CAS of the token fingerprint into permanent spent storage
 before sending. Fingerprint records have no TTL and carry outstanding,
@@ -1926,7 +1942,7 @@ storage is the root's namespaced to its principal.
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
-| Downstream OAuth (`auth/downstream-oauth.ts`)                          | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Call-owned preparation and waits stop at call or request closure; late reads cannot resume renewal. After token dispatch, the storage coordinator owns the response under its independent 20-second HTTP deadline and the fenced grant commit through the runtime deferred-work hook. A closed call fails promptly without consuming the result, marking its ledger renewed or sending/resending a resource request; the dispatched token request and accepted rotation still complete.                                                                                    |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -2123,7 +2139,12 @@ compiling and configuring the real thing.
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
-  request; their credential access comes from the operation. Request closure
+  request; their credential access comes from the operation. OAuth renewal
+  preparation and the caller's wait close with the call; a dispatched refresh's
+  response and fenced rotation commit instead belong to the storage
+  coordinator under its own deadline and deferred-work hook. That completion
+  cannot resume a closed call or resend its resource request
+  (`test/call-renewal-lifetime.test.ts`). Request closure
   revokes views and calls first, then runs every finalizer in reverse order,
   collecting failures. The caller's original cancellation signal is retained
   separately from the lease signal, so normal teardown never looks like caller
