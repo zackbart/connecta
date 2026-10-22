@@ -2448,7 +2448,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const resourceInit = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
       if (!extraHeaders) return init;
       const target = new URL(input instanceof Request ? input.url : String(input));
-      if (target.origin !== new URL(opts.url).origin) return init;
+      const resource = new URL(opts.url);
+      if (target.origin !== resource.origin || target.pathname !== resource.pathname) return init;
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
       for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
       return { ...init, headers };
@@ -2604,13 +2605,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         exchangeFetch(learnedUrlSafeFetch(id, url, trackedFetch)),
         signal,
         ctx.defer,
-        exchangeFetch(learnedUrlSafeFetch(id, url, guardedFetch)),
+        exchangeFetch(learnedUrlSafeFetch(id, url, (input, init) => guardedFetch(input, resourceInit(input, init)))),
       );
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
         fetch: async (input, init) => {
-          init = resourceInit(input, init);
           const response = await coordinatedFetch(input, init);
           if (response.status === 401) {
             let owner: AbortSignal | undefined;

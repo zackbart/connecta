@@ -52,6 +52,7 @@ function setup(
   options: {
     oauth?: boolean;
     overrideRead?: boolean;
+    sameOriginOAuth?: boolean;
     headers?: Record<string, string>;
     refresh?: "rotate" | "dead" | "outage";
     redirects?: "same-origin";
@@ -61,6 +62,7 @@ function setup(
   } = {},
 ) {
   const applied: string[] = [];
+  const authOrigin = options.sameOriginOAuth ? "https://downstream.test" : "https://auth.test";
   const downstream = httpDownstream((server) => {
     server.registerTool(
       "create_item",
@@ -95,18 +97,18 @@ function setup(
       });
     }
     if (url.includes("/.well-known/oauth-protected-resource"))
-      return Response.json({ resource: downstream.url, authorization_servers: ["https://auth.test"] });
-    if (url.startsWith("https://auth.test/.well-known/"))
+      return Response.json({ resource: downstream.url, authorization_servers: [authOrigin] });
+    if (url.startsWith(`${authOrigin}/.well-known/`))
       return Response.json({
-        issuer: "https://auth.test",
-        authorization_endpoint: "https://auth.test/authorize",
-        token_endpoint: "https://auth.test/token",
+        issuer: authOrigin,
+        authorization_endpoint: `${authOrigin}/authorize`,
+        token_endpoint: `${authOrigin}/token`,
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
       });
-    if (url === "https://auth.test/token") {
+    if (url === `${authOrigin}/token`) {
       refreshes++;
       if (options.refresh === "dead") return Response.json({ error: "invalid_grant" }, { status: 400 });
       if (options.refresh === "outage") return new Response("down", { status: 503 });
@@ -196,7 +198,7 @@ function setup(
     seedGrant(
       storage,
       {
-        issuer: "https://auth.test",
+        issuer: authOrigin,
         client: {
           value: {
             client_id: "svc-client",
@@ -265,10 +267,11 @@ function setup(
 
 describe("remote MCP OAuth writes after a 401", () => {
   it("INV-4 INV-9: write-to-read overrides never replay server writes after renewal, reconnect or transport recovery", async () => {
-    for (const [answer, oauth, versionNegotiation] of [
-      [401, true, "legacy"],
-      ["reset", false, "legacy"],
-      ["mismatch", false, "auto"],
+    for (const [answer, oauth, versionNegotiation, sameOriginOAuth] of [
+      [401, true, "legacy", false],
+      [401, true, "legacy", true],
+      ["reset", false, "legacy", false],
+      ["mismatch", false, "auto", false],
     ] as const) {
       if (answer === "reset" || answer === "mismatch") {
         // Model recovery/fallback issuing a fresh JSON-RPC id after failure.
@@ -284,6 +287,7 @@ describe("remote MCP OAuth writes after a 401", () => {
         oauth,
         versionNegotiation,
         overrideRead: true,
+        sameOriginOAuth,
         ...(oauth ? { headers: { "X-Context": "tenant_selector" } } : {}),
       });
       if (oauth) await flow.seedOAuth();
@@ -298,7 +302,7 @@ describe("remote MCP OAuth writes after a 401", () => {
         expect
           .soft(
             flow.requests
-              .filter((request) => request.url.startsWith("https://auth.test"))
+              .filter((request) => request.url.includes("/.well-known/") || request.url.endsWith("/token"))
               .every((request) => !request.headers.has("x-context")),
           )
           .toBe(true);
