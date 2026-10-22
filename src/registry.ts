@@ -65,7 +65,7 @@ import {
   stashLedgerKeys,
   stashExpiryKeys,
 } from "./storage/keys.js";
-import { classifyTool } from "./tool-safety.js";
+import { carryToolClassification, classifyTool } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
@@ -137,7 +137,7 @@ function frozenFacts(tools: ToolDef[]): ToolDef[] {
 export interface RegistryOptions {
   publicUrl?: string | undefined;
   oauthClientName?: string | undefined;
-  classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>> | undefined;
+  classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>> | undefined;
   storage: KVStorage;
   catalogStorage?: KVStorage;
   logger: Logger;
@@ -190,6 +190,14 @@ export interface ResultIdentity {
   origin: string | null;
 }
 
+export interface ProgramResultDependency {
+  /** Catalog metadata needs visibility, not permission to invoke a write. */
+  access?: "catalog";
+  connector: string;
+  tool?: string;
+  classification: "read" | "write";
+}
+
 export interface RegistryView {
   credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
@@ -217,12 +225,11 @@ export interface RegistryView {
   admitCall(id: string, input: { toolName: string; args: unknown; signal?: AbortSignal }): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
   resultIdentity(): ResultIdentity;
-  /** Recheck live auth/grants and pool admission before exposing stored data. */
+  /** One validation pass: admit once, then check every dependency under that scope. */
   recheckResultAccess(
-    address: string | undefined,
+    dependencies: readonly ProgramResultDependency[],
     classification: "read" | "write",
     signal?: AbortSignal,
-    access?: "catalog",
   ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
@@ -261,12 +268,7 @@ export interface RegistryScope {
   principalKey?: string;
   endpoint?: string;
   origin?: string | null;
-  currentResultAccess?: (
-    address: string | undefined,
-    classification: "read" | "write",
-    signal?: AbortSignal,
-    access?: "catalog",
-  ) => Promise<boolean>;
+  currentResultAccess?: RegistryView["recheckResultAccess"];
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
 }
@@ -417,10 +419,11 @@ export class Registry implements RegistryView {
   private readonly catalogAccess = new Map<string, CatalogAccessObservation>();
   /** Bounded tokens isolating count-only observations by catalog identity. */
   private readonly catalogObservationPartitions = new Map<string, object>();
+  private readonly overrideWarningCatalogs = new WeakMap<object, string>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>>;
+  private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>>;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private readonly oauthPartition = {};
@@ -489,8 +492,8 @@ export class Registry implements RegistryView {
     Object.freeze(this.classification);
     for (const [id, overrides] of Object.entries(this.classification)) {
       for (const [name, verdict] of Object.entries(overrides)) {
-        if (!name || (verdict !== "read" && verdict !== "write")) {
-          throw new Error(`ConnectaConfig.classification.${id}.${name}: expected "read" or "write"`);
+        if (!name || (verdict !== "read" && verdict !== "write" && verdict !== "hidden")) {
+          throw new Error(`ConnectaConfig.classification.${id}.${name}: expected "read", "write", or "hidden"`);
         }
       }
       const connector = this.connectors.get(id);
@@ -966,10 +969,9 @@ export class Registry implements RegistryView {
   }
 
   recheckResultAccess(
-    _address: string | undefined,
+    _dependencies: readonly ProgramResultDependency[],
     _classification: "read" | "write",
     _signal?: AbortSignal,
-    _access?: "catalog",
   ): Promise<boolean> {
     return Promise.resolve(true);
   }
@@ -1124,21 +1126,25 @@ export class Registry implements RegistryView {
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
     const overrides = this.classification[id];
-    this.validateClassification(id, accepted, overrides);
+    this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
+    const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
     const review = catalogReviewOf(connector);
-    return carryCatalogFreshness(
-      tools,
-      review
-        ? await classifyCatalog(review, id, accepted, this.opts.logger, overrides, verification)
-        : accepted.map((tool) => this.publishUnreviewedTool(id, tool)),
-    );
+    const verdicts =
+      overrides &&
+      Object.fromEntries(
+        Object.entries(overrides).filter((entry): entry is [string, "read" | "write"] => entry[1] !== "hidden"),
+      );
+    const served = review
+      ? await classifyCatalog(review, id, visible, this.opts.logger, verdicts, verification)
+      : visible.map((tool) => this.publishUnreviewedTool(id, tool));
+    return carryCatalogFreshness(tools, served);
   }
 
   private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
-    return {
+    return carryToolClassification(tool, {
       ...structuredClone(tool),
-      classification: classifyTool(tool, override),
+      classification: classifyTool(tool, override === "hidden" ? undefined : override),
       ...(override !== undefined
         ? {
             annotations: {
@@ -1148,23 +1154,44 @@ export class Registry implements RegistryView {
             },
           }
         : {}),
-    };
+    });
   }
 
   /** Construction-only view for the secret-free static config description. */
   describeStaticTools(id: string): ToolDef[] | undefined {
     const tools = this.connectors.get(id)?.staticTools;
-    return tools?.map((tool) => this.publishUnreviewedTool(id, tool));
+    return tools
+      ?.filter((tool) => this.classification[id]?.[tool.name] !== "hidden")
+      .map((tool) => this.publishUnreviewedTool(id, tool));
   }
 
   private validateClassification(
     id: string,
     tools: readonly ToolDef[],
-    overrides?: Readonly<Record<string, "read" | "write">>,
+    overrides?: Readonly<Record<string, "read" | "write" | "hidden">>,
+    partition?: object,
   ): void {
+    if (!overrides) return;
+    if (partition) {
+      const catalog = JSON.stringify(tools);
+      if (this.overrideWarningCatalogs.get(partition) === catalog) return;
+      this.overrideWarningCatalogs.set(partition, catalog);
+    }
     const known = new Set(tools.map((tool) => tool.name));
     for (const name of Object.keys(overrides ?? {})) {
-      if (!known.has(name)) throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
+      if (known.has(name)) continue;
+      if (this.connectors.get(id)?.staticTools) {
+        throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
+      }
+      // Only deployment-authored names, never downstream text. JSON quoting
+      // prevents control characters from forging operator log lines.
+      const quoted = JSON.stringify(`${id}.${name}`).replace(
+        /[\u2028\u2029]/g,
+        (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
+      );
+      this.opts.logger.warn(
+        `classification override ${quoted} is dormant because the runtime catalog lists no such tool`,
+      );
     }
   }
 
@@ -1431,12 +1458,11 @@ class ScopedRegistryView implements RegistryView {
   }
 
   recheckResultAccess(
-    address: string | undefined,
+    dependencies: readonly ProgramResultDependency[],
     classification: "read" | "write",
     signal?: AbortSignal,
-    access?: "catalog",
   ): Promise<boolean> {
-    return this.scope.currentResultAccess?.(address, classification, signal, access) ?? Promise.resolve(true);
+    return this.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true);
   }
 
   resultsStorage(): KVStorage {

@@ -39,6 +39,7 @@ const WORKERS_SUITES = [
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/unhandled-rejections.test.ts",
   // Native response reads can print sensitive downstream text below JS sinks.
@@ -57,6 +58,7 @@ const WORKERS_SUITES = [
   "test/goldens.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
+  "test/{http-kit,http-hatch,http-provider,http-tithely-reference}.test.ts",
   "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
 ];
 

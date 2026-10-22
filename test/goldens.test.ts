@@ -19,9 +19,6 @@ const specs = import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", { import: "def
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
 const providerFolders = Object.keys(import.meta.glob("../src/providers/*/index.ts")).map((path) => path.split("/")[3]!);
 
-/** Maintained providers with no `api()` surface: hosted remote MCP only. */
-const REMOTE_MCP_ONLY = ["basecamp", "intercom", "linear", "revenuecat", "wispr-flow"];
-
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 const updating = env.CONNECTA_GOLDENS_UPDATE === "1";
 const workerd = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
@@ -36,7 +33,7 @@ const byProvider = Object.values(specs)
 describe("characterization goldens", () => {
   it.skipIf(only)("cover every maintained api() provider", () => {
     const covered = Object.values(specs).map((spec) => spec.provider);
-    expect([...covered, ...REMOTE_MCP_ONLY].sort()).toEqual([...providerFolders].sort());
+    expect([...covered].sort()).toEqual([...providerFolders].sort());
     for (const [path, spec] of Object.entries(specs)) expect(path).toBe(`./goldens/${spec.provider}/spec.ts`);
     // No golden outlives its spec, and no folder holds a file the harness does not write.
     const expected = Object.values(specs).flatMap((spec) =>

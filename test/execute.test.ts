@@ -895,7 +895,12 @@ it.each([undefined, 30])(
   },
 );
 
-it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storage reads after %s", async (ending) => {
+it.each([
+  { ending: "cancel", stage: "result storage" },
+  { ending: "deadline", stage: "result storage" },
+  { ending: "cancel", stage: "access validation" },
+  { ending: "deadline", stage: "access validation" },
+])("INV-7: guest paging stops during $stage after $ending", async ({ ending, stage }) => {
   const inner = memoryStorage();
   let resultId = "",
     blocking = false;
@@ -915,7 +920,7 @@ it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storag
     async get(key: string) {
       if (blocking && key.includes(resultId)) {
         reads.push(key);
-        if (reads.length === 1) {
+        if (reads.length === 1 && stage === "result storage") {
           entered();
           await blocked;
           completed();
@@ -947,8 +952,21 @@ it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storag
   resultId = (required(direct.structuredContent).data as { resultId: string }).resultId;
   blocking = true;
   const controller = new AbortController();
+  const pagingRegistry =
+    stage === "access validation"
+      ? registry.scoped({
+          connectorIds: "all",
+          currentResultAccess: async (_dependencies, _classification, signal) => {
+            entered();
+            await blocked;
+            completed();
+            signal?.throwIfAborted();
+            return true;
+          },
+        })
+      : registry;
   const execute = createExecuteTool(
-    registry,
+    pagingRegistry,
     BASE,
     scriptedExecutor((fns) => required(fns.result)(resultId, { offset: 48_000 })),
     silentLogger,
@@ -962,6 +980,10 @@ it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storag
   expect(response.isError).toBe(true);
   const code = (required(response.structuredContent).error as { code: string }).code;
   expect(ending === "cancel" ? ["cancelled", "executor_cancelled"] : ["timeout"]).toContain(code);
+  if (ending === "deadline") {
+    expect(response.structuredContent).toMatchObject({ error: { details: { stage } } });
+    expect((required(response.structuredContent).error as { message: string }).message).toContain(`during ${stage}`);
+  }
   release();
   await done;
   await new Promise((resolve) => setTimeout(resolve, 5));

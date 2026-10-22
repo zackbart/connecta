@@ -355,8 +355,8 @@ function resent(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
   if (own === undefined) {
     return new ConnectorCallError(
       "connector_call_failed",
-      `This call had already sent its write to ${vendor.provider}` +
-        `${first.state === "answered" ? `, which answered HTTP ${first.status}` : ""}. ${RESEND}`,
+      `The ${JSON.stringify(first.step ?? "write")} write step's slot is already taken. ` +
+        `Declare a separate writeSteps entry for each request the tool must send. ${RESEND}`,
       { retryable: false },
     );
   }

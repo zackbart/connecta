@@ -7,7 +7,7 @@ import { parseExpressionAt, type Expression } from "acorn";
 export type Parameters = Readonly<Record<string, string>> | ReadonlyArray<readonly [string, string]>;
 
 export interface WriteRequest {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   readonly template: string;
   readonly query?: Parameters;

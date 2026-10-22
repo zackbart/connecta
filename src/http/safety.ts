@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.4). Unreachable from src/index.ts.
+// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 //
 // The one value-safety boundary of a kit connection. `connect` requires it,
 // and `Send` hands a provider nothing it has not passed: a named tool, a
@@ -11,9 +11,15 @@
 // a request never sent can still sit in a vendor's error prose, so
 // sent-secret redaction cannot stand in for it.
 
-import type { OperationRef } from "./errors.js";
+import { Effect } from "effect";
+import { ConnectorCallError } from "../errors.js";
+import type { OperationIndex } from "../providers/_shared/rest/operation-index.js";
+import type { ValueSafety } from "../providers/_shared/rest/value-safety.js";
+import { Refusal, type OperationRef } from "./errors.js";
 
 export interface ResultSafety {
+  /** Resolve the actual method and path before a path-addressed request can authenticate or send. */
+  readonly resolve: (method: string, path: string) => Effect.Effect<OperationRef, Refusal>;
   /** One answer made safe to read: the vendor's reviewed redaction, then the sensitive-field choice. */
   readonly redact: (data: unknown, operation: OperationRef) => unknown;
   /** Whether a failure of this operation withholds the vendor's text; codes and statuses still route. */
@@ -27,10 +33,12 @@ export interface SafetyOptions {
    * so in `review`.
    */
   readonly reviewed?: {
+    /** The pinned index's canonical operation for an actual path; throws on an unknown path. */
+    readonly resolve?: (method: string, path: string) => OperationRef;
     readonly redact: (data: unknown, operation: OperationRef) => unknown;
     readonly withholdsErrors: (operation: OperationRef) => boolean;
   };
-  /** Why a vendor with no reviewed table needs none. */
+  /** A global review permitting unindexed paths, including why a vendor with no reviewed table needs none. */
   readonly review?: string;
   /**
    * A.2's privacy projection: the provider's sensitive field names, dropped
@@ -42,7 +50,8 @@ export interface SafetyOptions {
 
 /** Refuses at construction a connection with neither a reviewed table nor a reason (INV-11). */
 export function resultSafety(options: SafetyOptions): ResultSafety {
-  if (!options.reviewed && !options.review?.trim()) {
+  const review = options.review?.trim();
+  if (!options.reviewed && !review) {
     throw new Error("A kit connection needs a reviewed value-safety table, or a review saying why it has none.");
   }
   const { choice, names } = options.sensitiveFields;
@@ -59,10 +68,47 @@ export function resultSafety(options: SafetyOptions): ResultSafety {
   };
   const reviewed = options.reviewed;
   return {
+    resolve: (method, path) =>
+      Effect.try({
+        try: () => {
+          if (reviewed?.resolve) return reviewed.resolve(method, path);
+          if (review) return { method, template: path };
+          throw new ConnectorCallError("invalid_args", "A reviewed path request needs a canonical operation index.");
+        },
+        catch: (error) => error,
+      }).pipe(
+        Effect.catch((error) =>
+          error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+        ),
+      ),
     redact: (data, operation) => {
       const safe = reviewed ? reviewed.redact(data, operation) : data;
       return dropped.size > 0 ? strip(safe) : safe;
     },
     withholdsErrors: (operation) => reviewed?.withholdsErrors(operation) === true,
+  };
+}
+
+/** Bind the REST value-safety table to its pinned index; unknown operations never bypass its review. */
+export function restSafety(reviewed: ValueSafety, index: OperationIndex): NonNullable<SafetyOptions["reviewed"]> {
+  const indexed = (operation: OperationRef) =>
+    index.operation(operation.method, operation.template) ??
+    index.operation(operation.method, operation.template.replace(/\/:([^/]+)/g, "/{$1}"));
+  return {
+    resolve: (method, path) => {
+      const { op } = index.resolve(method, path);
+      const refusal = reviewed.refusal(op.method, op.path);
+      if (refusal) throw new ConnectorCallError("invalid_args", refusal);
+      return { method: op.method, template: op.path };
+    },
+    redact: (data, operation) => {
+      const op = indexed(operation);
+      if (!op) throw new Error("A reviewed answer has no canonical operation in its index.");
+      return reviewed.redact(data, op.method, op.path);
+    },
+    withholdsErrors: (operation) => {
+      const op = indexed(operation);
+      return op ? reviewed.withholdsErrors(op) : true;
+    },
   };
 }

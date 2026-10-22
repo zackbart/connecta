@@ -21,13 +21,9 @@ const files = [
   ...readdirSync(KIT)
     .filter((name) => name.endsWith(".ts"))
     .map((name) => join(KIT, name)),
-  ...readdirSync(PROVIDERS, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .flatMap((entry) =>
-      readdirSync(join(PROVIDERS, entry.name))
-        .filter((name) => name === "kit-prototype.ts")
-        .map((name) => join(PROVIDERS, entry.name, name)),
-    ),
+  ...readdirSync(PROVIDERS, { recursive: true })
+    .filter((name): name is string => typeof name === "string" && name.endsWith(".ts") && !name.endsWith(".test.ts"))
+    .map((name) => join(PROVIDERS, name)),
 ];
 
 const UNSTABLE_AREAS = /node_modules\/effect\/dist\/(http|http-api)\//;

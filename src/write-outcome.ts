@@ -130,7 +130,8 @@ export function providerCallResult(
  * every `remoteMcp().callTool()` write, direct or served. Nothing passes a
  * direct write's failure on ahead of it, the caller's own abort included.
  *
- * The served verdict outranks every transport default and replay-safety hint.
+ * The served verdict outranks transport defaults. A remote MCP dispatch's
+ * source-write ledger mark additionally requires write outcome accounting.
  * Dispatch facts come from the transport, never from a provider's
  * interpretation of its HTTP method. A write is a known failure only on
  * refusal provenance recorded where the evidence was observed: (a) the
@@ -167,7 +168,7 @@ export function providerCallFailure(
   },
 ): unknown {
   const served = callClassification(ctx);
-  if ((served ?? facts.fallback) !== "write") return error;
+  if ((served ?? facts.fallback) !== "write" && facts.request?.sourceWrite !== true) return error;
   const requests = providerRequests(ctx);
   // Guarded transports collect facts; only api() knows when the logical call
   // has ended. Google may add phases or recovery words in the meantime.

@@ -1,5 +1,10 @@
 import { grantFromOAuth } from "../../../src/http/oauth.js";
-import { Context, Effect } from "effect";
+import { defineApiProvider } from "../../../src/http/provider.js";
+import { get, vendor } from "../../../src/http/vendor.js";
+import { Refusal } from "../../../src/http/errors.js";
+import { Context, Effect, Schema } from "effect";
+import { optionsOf } from "../../../src/config-schema.js";
+import { PROVIDER_COMMON, type ProviderOptions } from "../../../src/provider.js";
 import { expect, vi } from "vitest";
 import { z } from "zod";
 import { api, type ApiHandlerContext } from "../../../src/connectors/api.js";
@@ -176,6 +181,60 @@ function credential(name: "ctx.credential.get" | "ctx.credential.getAll" | "Cred
         : name.endsWith("getAll")
           ? call.credential!.getAll()
           : call.credential!.get(),
+    );
+  };
+}
+
+/** The provider probe's Effect work is also covered at its outer Promise edge. */
+function providerProbe(named: boolean): Entry["create"] {
+  return async (held, owner) => {
+    held.installCrypto();
+    const probe = get("probe", "/items", { success: Schema.Unknown });
+    const connector = defineApiProvider({
+      name: "tickets",
+      title: "Tickets",
+      skill: { content: "Read tickets.", instructionsHeading: "Workspace instructions" },
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+      vendor: vendor("tickets", probe),
+      baseUrl: () => ORIGIN,
+      maxResponseBytes: 1024,
+      credential: { label: "Token" },
+      authenticate: Effect.gen(function* () {
+        const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
+        yield* Effect.promise(async () => {
+          if (held.name === "storage.get") await held.storage.get("fixture");
+          else if (held.name === "storage.put") await held.storage.set("fixture", "submitted");
+          else if (held.name === "storage.CAS") await held.storage.compareAndSet("fixture", null, "submitted");
+          else if (held.name.startsWith("crypto.")) await cryptoWork(held);
+          else await held.at("authenticate", undefined);
+        });
+        return { Authorization: `Bearer ${values?.["value"]}` };
+      }),
+      errors: {
+        provider: "Tickets",
+        facts: () => ({}),
+        detail: () => "Tickets refused the probe.",
+        statuses: {
+          401: () => ({ code: "auth_required" }),
+          403: () => ({ code: "provider_permission_denied" }),
+          404: () => ({ code: "not_found" }),
+        },
+        unreadable: "Tickets returned unreadable JSON.",
+      },
+      safety: () => ({ review: "Fixture replies contain no secrets.", sensitiveFields: { names: [], choice: "drop" } }),
+      result: (body) =>
+        Effect.promise(async () => {
+          await held.at("mapper", undefined);
+          return body;
+        }),
+      probe: { operation: probe, request: {}, describe: () => "Candidate accepted." },
+      guide: () => ({ context: [] }),
+      tools: () => [],
+    })("tickets", { purpose: "Read tickets" });
+    vi.stubGlobal("fetch", (_input: unknown, init?: RequestInit) => held.response(init));
+    const { ctx } = view(connector, held, owner);
+    return direct(ctx, () =>
+      named ? connector.testCredentials!({ value: SECRET }, ctx) : connector.testCredential!(SECRET, ctx),
     );
   };
 }
@@ -633,6 +692,16 @@ export const ENTRIES: readonly Entry[] = [
   { name: "ctx.fetch.derivedSignal", seams: ["fetch"], create: apiHandler("ctx.fetch.derivedSignal") },
   { name: "api.testCredential", seams: HANDLER_SEAMS, create: apiHandler("api.testCredential") },
   { name: "api.testCredentials", seams: HANDLER_SEAMS, create: apiHandler("api.testCredentials") },
+  {
+    name: "defineApiProvider.testCredential",
+    seams: ["authenticate", "fetch", "mapper", ...HANDLER_SEAMS.slice(1)],
+    create: providerProbe(false),
+  },
+  {
+    name: "defineApiProvider.testCredentials",
+    seams: ["authenticate", "fetch", "mapper", ...HANDLER_SEAMS.slice(1)],
+    create: providerProbe(true),
+  },
   { name: "ctx.credential.get", seams: ["storage.get"], create: credential("ctx.credential.get") },
   { name: "ctx.credential.getAll", seams: ["storage.get"], create: credential("ctx.credential.getAll") },
   { name: "Credentials.values", seams: ["storage.get"], create: credential("Credentials.values") },

@@ -1,8 +1,0 @@
-{
-  "notion": [
-    [
-      "- **429** carries a retry window. Notion allows each integration 180 requests\n  a minute (600 on Business and Enterprise) plus a budget shared by the whole\n  workspace; Connecta admits 180 calls a minute, three at a time, per runtime.\n",
-      "- **429** carries a retry window. Notion's [request limits](https://developers.notion.com/reference/request-limits)\n  allow 600 requests a minute per connection on Business and Enterprise and\n  180 on other plans, plus a workspace-wide limit shared by all connections.\n  Connecta defaults to 180 calls a minute, three at a time, per runtime.\n  A token connector's optional `callAdmission` replaces that whole policy;\n  account for other runtime traffic and tools that make multiple HTTP requests.\n"
-    ]
-  ]
-}

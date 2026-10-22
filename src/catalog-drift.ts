@@ -1,7 +1,7 @@
 // Web-API only, like the rest of the core: a manifest comparison that ran on
 // Node but not on Workers would leave half the deployments unable to tell a
 // stale allowlist from a current one.
-import { classifyTool } from "./tool-safety.js";
+import { carryToolClassification, classifyTool } from "./tool-safety.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type {
   CatalogDriftCounts,
@@ -446,27 +446,25 @@ function servedTool(
   lapsed: ReadonlySet<string>,
   override?: "read" | "write",
 ): ToolDef {
-  const definition = structuredClone(fact);
   const reviewed = catalog.tools.get(fact.name);
-  definition.classification = classifyTool(
-    fact,
-    override,
-    reviewed
-      ? {
-          verdict: PUBLIC_VERDICTS[reviewed.verdict],
-          stale: lapsed.has(fact.name),
-        }
-      : undefined,
-  );
+  const review = reviewed
+    ? {
+        verdict: PUBLIC_VERDICTS[reviewed.verdict],
+        stale: lapsed.has(fact.name),
+      }
+    : undefined;
+  const definition = carryToolClassification(fact, structuredClone(fact), review);
+  definition.classification = classifyTool(fact, override, review);
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
-  const annotate = (annotations: ToolAnnotations): ToolDef => ({
-    ...definition,
-    annotations:
-      override === undefined
-        ? annotations
-        : { ...annotations, readOnlyHint: override === "read", destructiveHint: override === "write" },
-  });
+  const annotate = (annotations: ToolAnnotations): ToolDef =>
+    carryToolClassification(definition, {
+      ...definition,
+      annotations:
+        override === undefined
+          ? annotations
+          : { ...annotations, readOnlyHint: override === "read", destructiveHint: override === "write" },
+    });
   if (record?.verdict === "destructive") {
     return annotate({ ...downstream, readOnlyHint: false, destructiveHint: true });
   }

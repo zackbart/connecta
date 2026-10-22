@@ -27,12 +27,18 @@ See AGENTS.md Verification.
 - **A new provider** meets the whole standard from its first commit. It never
   joins `PENDING`; the suite fails an off-standard new folder, and
   `providers:generate` refuses one that breaks D or G.
-  **Transitional:** `providers:generate` writes `drift.json`'s `generated`
-  block and the Conventions section (S.1). Until B.4 (the kit) lands, no `api`
-  or `dual` provider can be built on the kit, and no definition carries the
-  kit facts (`kit`: the operation manifest, page size, hatch verdicts) that
-  `generated.operations` and the paging and hatch Conventions read. Do not add
-  an `api` or `dual` provider before then.
+  Use `defineApiProvider` from `src/http/provider.ts` for a new API
+  implementation: it builds on `defineProvider`, validates construction,
+  and derives `kit.operations`, page size and hatch verdicts for generation.
+  Import kit modules through their explicit source paths, never the root.
+  The kit remains internal; deployment factories return ordinary Connectors
+  and published declarations must name no Effect type. B.5's Tithe.ly gate
+  must pass before Phase C migrations begin.
+  Reviewed path calls need an indexed safety resolver; a caller-supplied
+  template never establishes the operation's policy. Use an explicit global
+  review only when the provider permits unindexed paths. Step-1 migrations
+  may return their complete legacy usage guide from the helper, preserving
+  fragments and option-dependent lines without changing `SKILL.md`.
 - **A migration PR** is step 1 or step 2 for one provider, never both. See
   [Migrating a provider](#migrating-a-provider).
 - **A change to a provider still in `PENDING`** keeps its current shape. See
@@ -121,14 +127,6 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   automated, and what to compare), and `lastVerified` (`YYYY-MM-DD`).
   `evidence` holds facts only (URLs, digests, counts, names); narrative goes
   to `evidence/review.md`.
-- Every `mcp-catalog` check declares `catalog: "evidence/catalog.json"`. That
-  capture preserves names and all four behavioral hints/annotations, including
-  absent hints, independently of served classification. The five Google `api`
-  providers with hosted observations keep those captures while
-  `generated.hosted` is empty. Forms retains its manual hosted-absence check
-  and review narrative, without inventing a catalog. `generated.evidence`
-  hashes captures; drift compares names AND hints.
-  Accept catalog changes only by explicit review, never by `--record`.
 - No hand-kept lists: no `reviewed` names, and `endpoints` and
   `versioned-endpoints` rows are `{ operation, page?, specRevision, contract }`,
   keyed by an `operation` from `generated.operations`, with digests written by
@@ -139,7 +137,7 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   without `contract`: `providers:generate` accepts a row awaiting its digest,
   `providers:check --record --provider <name>` writes it, and the standard
   suite refuses a committed row without one.
-- `mcp-docs` and `oauth-discovery` checks compare documented names with
+- `mcp-docs` checks compare documented names with
   `generated.hosted`; `reviewedAccess` may name only those.
 - A record must also be one `providers:check` can read:
   `scripts/drift-validate.mjs` is the one offline validator, shared by
@@ -487,10 +485,7 @@ Cite applicable `INV-n` IDs in meaningful test titles.
 
 `pnpm run providers:check` reads public contracts only. Parser failures are
 provider-local findings; report them alongside other drift and manual review
-requirements. The `mcp-catalog` check compares credential-free public
-`tools/list` names and four behavioral hints against reviewed evidence.
-Catalog access does not prove operational auth or enable a preset. Recording
-never accepts catalog changes. For a categorized documentation inventory,
+requirements. For a categorized documentation inventory,
 retain the current category/name capture in `inventory.categories`. Explicitly
 reviewed tools absent from the current reference may remain in the runtime
 classification and in `reviewed` (`generated.hosted` in version 2); name those

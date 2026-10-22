@@ -1366,10 +1366,13 @@ rejected, the 401's verdict stays:
 `downstream_oauth_required`, never retryable, with `reconciliationRequired`
 and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
-once more. The invocation's
-classification decides; a direct call outside one uses the dispatched
-definition, a reviewed write verdict, or the tool's hints, and fails closed as
-a write.
+once more. MCP sends a tool only once when either its effective classification
+or its original server hints say write. A deployment write-to-read override
+cannot make a server-declared write replayable. Its failure after possible
+dispatch is also an unknown outcome, non-retryable and without wait advice;
+a proven unsent failure retains its own recovery advice. A direct call outside an
+invocation uses the dispatched definition, a reviewed write verdict, or the
+tool's hints, and fails closed as a write.
 
 A remote MCP tool call that loses its internal dispatch record is refused
 before sending unless active calls for that tool prove it is a read. A
@@ -2301,9 +2304,9 @@ path, without credentials or a fragment. Its `client_id` must equal its URL,
 and its metadata must include the deployment's exact callback and public-client
 authentication. Changing from an external document to the self-hosted URL needs
 one Disconnect and reconnect because tokens belong to the old client ID.
-`basecamp()` now defaults to the self-hosted document and accepts an external
-URL override. Basecamp restricts DCR for HTTPS callbacks, so it needs a public
-HTTPS deployment or an external document.
+Basecamp restricts DCR for HTTPS callbacks, so its generic `remoteMcp()` entry
+needs a public HTTPS deployment or an external document. Preserve its client
+identity when following the [hosted MCP migration guide](./hosted-mcp-migration.md).
 
 For a pre-registered client, use:
 

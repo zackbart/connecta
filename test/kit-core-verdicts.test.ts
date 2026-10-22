@@ -527,6 +527,7 @@ const ROWS: readonly Row[] = [
 describe("the kit and today's api() core reach one verdict (decision 0010)", () => {
   it.each(ROWS.map((row) => [row.name, row] as const))(
     "INV-9: %s",
+    { ...NODE, timeout: 30_000 },
     async (_name, row) => {
       const family: Family = FAMILIES[row.family];
       const sides = { core: family.core(), kit: family.kit() };
@@ -551,6 +552,6 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
         expect(seen.kit.sent).toEqual(["POST /v1/customers key=case-key-1"]);
       }
     },
-    30_000,
   );
 });
+import { NODE } from "./fixtures/runtime-tags.js";

@@ -152,6 +152,8 @@ it("INV-9: core-classified writes reserve across Send, direct-client retries and
         const tool = read(connection, {
           name: "run",
           description: "Read tickets.",
+          review:
+            "The fixture deliberately declares a reviewed POST read; the core must still reserve it as a physical write.",
           input: Schema.Struct({}),
           output: Schema.Unknown,
           ...("noCapacity" in scenario ? { writeSteps: {} } : {}),
