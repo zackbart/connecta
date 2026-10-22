@@ -794,11 +794,19 @@ describe("status UI", () => {
   it("bounds a custom activity-label resolver that never settles", async () => {
     vi.useFakeTimers();
     try {
+      let enterResolver!: () => void;
+      const resolverStarted = new Promise<void>((resolve) => {
+        enterResolver = resolve;
+      });
+      const resolveLabel = vi.fn(() => {
+        enterResolver();
+        return new Promise<string | undefined>(() => {});
+      });
       const auth: InboundAuth = {
         interactiveOperator: true,
         kind: "oidc",
         activityActorNamespace: "https://identity.example",
-        activityActorLabel: vi.fn(() => new Promise<string | undefined>(() => {})),
+        activityActorLabel: resolveLabel,
         authorize: () => ({ ok: true, userId: "operator" }),
       };
       const event: ToolCallActivityEvent = {
@@ -841,12 +849,10 @@ describe("status UI", () => {
           headers: { Authorization: "Bearer operator" },
         }),
       );
-      // Authorization now derives the identity partition before filtering.
-      // Start the resolver before advancing its request-owned deadline.
-      if ("activityActorLabel" in auth && vi.isMockFunction(auth.activityActorLabel)) {
-        for (let turn = 0; turn < 200 && auth.activityActorLabel.mock.calls.length === 0; turn++)
-          await vi.advanceTimersByTimeAsync(1);
-      }
+      // Authorization includes native async work. Wait for actual resolver
+      // entry without spending any of its request-owned virtual deadline.
+      await resolverStarted;
+      expect(resolveLabel).toHaveBeenCalledExactlyOnceWith("local-user");
       await vi.advanceTimersByTimeAsync(1_500);
       const response = await pending;
       const page = (await response.json()) as ActivityReadPage;
