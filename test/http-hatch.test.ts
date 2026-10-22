@@ -7,7 +7,7 @@ import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { hatch } from "../src/http/hatch.js";
-import { resultSafety } from "../src/http/safety.js";
+import { restSafety, resultSafety } from "../src/http/safety.js";
 import { connect, get, vendor } from "../src/http/vendor.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
@@ -134,13 +134,7 @@ function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]
     {
       errors: ERRORS,
       safety: resultSafety({
-        reviewed: {
-          redact: (data, op) => reviewed.redact(data, op.method, op.template),
-          withholdsErrors: (op) => {
-            const indexed = index.operation(op.method, op.template);
-            return indexed ? reviewed.withholdsErrors(indexed) : true;
-          },
-        },
+        reviewed: restSafety(reviewed, index),
         sensitiveFields: { names: ["email"], choice: "drop" },
       }),
     },

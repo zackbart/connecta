@@ -86,10 +86,10 @@ export function offset<Row, R>(options: {
     limit: number,
   ) => Effect.Effect<{ readonly rows: readonly Row[]; readonly total?: number }, HttpFailure, R>;
 }): Effect.Effect<Page<Row>, HttpFailure, R> {
-  return Effect.suspend(() => {
-    position(options.offset, 0);
-    position(options.limit, 1);
-    return Effect.map(options.fetch(options.offset, options.limit), ({ rows, total }) => {
+  return Effect.gen(function* () {
+    yield* position(options.offset, 0);
+    yield* position(options.limit, 1);
+    return yield* Effect.map(options.fetch(options.offset, options.limit), ({ rows, total }) => {
       const next = options.offset + rows.length;
       const hasMore = rows.length > 0 && (total === undefined ? rows.length >= options.limit : next < total);
       return { rows, page: { hasMore, nextCursor: hasMore ? String(next) : null } };
@@ -110,10 +110,10 @@ export function page<Row, R>(options: {
     R
   >;
 }): Effect.Effect<Page<Row>, HttpFailure, R> {
-  return Effect.suspend(() => {
-    position(options.page, 1);
-    position(options.limit, 1);
-    return Effect.map(options.fetch(options.page, options.limit), ({ rows, hasMore, totalPages }) => {
+  return Effect.gen(function* () {
+    yield* position(options.page, 1);
+    yield* position(options.limit, 1);
+    return yield* Effect.map(options.fetch(options.page, options.limit), ({ rows, hasMore, totalPages }) => {
       const more = hasMore ?? (totalPages === undefined ? rows.length >= options.limit : options.page < totalPages);
       return { rows, page: { hasMore: more, nextCursor: more ? String(options.page + 1) : null } };
     });
@@ -151,9 +151,17 @@ export function link<Row, R>(options: {
   });
 }
 
-function position(value: number, minimum: number): void {
-  if (!Number.isSafeInteger(value) || value < minimum)
-    throw new Error("Paging positions and limits must be whole numbers within their bounds.");
+function position(value: number, minimum: number): Effect.Effect<void, Refusal> {
+  return Number.isSafeInteger(value) && value >= minimum
+    ? Effect.void
+    : Effect.fail(
+        new Refusal({
+          error: new ConnectorCallError(
+            "invalid_args",
+            "Paging positions and limits must be whole numbers within their bounds.",
+          ),
+        }),
+      );
 }
 
 function badPage(message: string): Effect.Effect<never, Refusal> {

@@ -40,7 +40,7 @@ import {
 import { Integer, catalogSchema, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
 import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
 import { allRows, boundCursor, lookahead, token, offset, page, link } from "../src/http/paging.js";
-import { resultSafety } from "../src/http/safety.js";
+import { restSafety, resultSafety } from "../src/http/safety.js";
 import {
   Budget,
   Caller,
@@ -81,6 +81,8 @@ import {
   type Connection,
 } from "../src/http/vendor.js";
 import { kitTools } from "../src/providers/tithely/kit-prototype.js";
+import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
+import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { TITHELY_API_BASE_URLS } from "../src/providers/tithely/index.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
@@ -834,27 +836,43 @@ describe("paging (decision 0010, B.4)", () => {
       link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [] }) }),
     ])
       expect(await runEdge(strategy)).toEqual({ rows: [], page: { hasMore: false, nextCursor: null } });
-    for (const next of [
-      "https://other.example/v1/items?cursor=x",
-      "/v2/items?cursor=x",
-      "/v1/items",
-      "/v1/items?cursor=x&cursor=y",
-      "https://alice@api.acme.example/v1/items?cursor=x",
-    ]) {
-      const result = await runEdge(
-        Effect.result(
-          link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [], next }) }),
-        ),
-      );
-      expect(result._tag, next).toBe("Failure");
+    for (const [strategy, code] of [
+      ...[
+        "https://other.example/v1/items?cursor=x",
+        "/v2/items?cursor=x",
+        "https://api.acme.example/v1evil?cursor=x",
+        "/v1/%2e%2e/items?cursor=x",
+        "/v1/items",
+        "/v1/items?cursor=x&cursor=y",
+        "https://alice@api.acme.example/v1/items?cursor=x",
+      ].map(
+        (next) =>
+          [
+            link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [], next }) }),
+            "connector_call_failed",
+          ] as const,
+      ),
+      [token({ fetch: () => Effect.succeed({ rows: [], hasMore: true, nextCursor: null }) }), "connector_call_failed"],
+      ...[NaN, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1].flatMap(
+        (position) =>
+          [
+            [
+              offset({ offset: position, limit: 1, fetch: () => Effect.die("Invalid offset reached fetch.") }),
+              "invalid_args",
+            ],
+            [
+              page({ page: position, limit: 1, fetch: () => Effect.die("Invalid page reached fetch.") }),
+              "invalid_args",
+            ],
+          ] as const,
+      ),
+      [page({ page: 0, limit: 1, fetch: () => Effect.die("Invalid page reached fetch.") }), "invalid_args"],
+      [offset({ offset: 0, limit: 0, fetch: () => Effect.die("Invalid limit reached fetch.") }), "invalid_args"],
+      [page({ page: 1, limit: 0, fetch: () => Effect.die("Invalid limit reached fetch.") }), "invalid_args"],
+    ] as const) {
+      const result = await runEdge(Effect.result(strategy));
+      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "Refusal", error: { code } } });
     }
-    expect(
-      (
-        await runEdge(
-          Effect.result(token({ fetch: () => Effect.succeed({ rows: [], hasMore: true, nextCursor: null }) })),
-        )
-      )._tag,
-    ).toBe("Failure");
   });
 });
 
@@ -956,6 +974,7 @@ function acme(
     sensitive?: "drop" | "return";
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
+    result?: Parameters<typeof connect>[2]["result"];
   } = {},
 ) {
   const guarded = guardedClient({
@@ -967,6 +986,7 @@ function acme(
   return connect(ACME_API, options.refresh ? refreshOnce(guarded as never) : guarded, {
     errors: VENDOR,
     safety: resultSafety({
+      review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
       reviewed: {
         // The review: a key's `token` is a credential wherever it appears.
         redact: (data) =>
@@ -977,6 +997,7 @@ function acme(
       },
       sensitiveFields: { names: ["owner"], choice: options.sensitive ?? "drop" },
     }),
+    ...(options.result ? { result: options.result } : {}),
   }) as Connection;
 }
 
@@ -1001,9 +1022,23 @@ describe("value-safety boundary (decision 0010, B.4)", () => {
 
   it("INV-5: puts a hatch's path-addressed answer through the same boundary, and the deployment alone can return sensitive fields", async () => {
     for (const choice of ["drop", "return"] as const) {
-      answers.push(() => Response.json([{ token: "sk_live_secret_9", owner: "alice@example.com" }]));
+      answers.push(() =>
+        Response.json([{ token: "sk_live_secret_9", owner: "alice@example.com" }], {
+          headers: { "x-echo": "Bearer sk_test_0123456789", Link: '</v1/keys?cursor=next>; rel="next"' },
+        }),
+      );
       const answer = await runEdge(
-        acme({ sensitive: choice })
+        acme({
+          sensitive: choice,
+          result: (body, { headers }) =>
+            Effect.sync(() => {
+              expect(headers.get("x-echo")).toBe("[redacted]");
+              expect(headers.get("x-echo")?.slice(16, 22)).not.toContain("012345");
+              expect(headers.get("link")).toBe('</v1/keys?cursor=next>; rel="next"');
+              expect(headers.get("content-type")).toBe("application/json");
+              return body;
+            }),
+        })
           .sendPath({ method: "GET", path: "/keys", template: "/keys" })
           .pipe(Effect.provideContext(services())),
       );
@@ -1011,7 +1046,91 @@ describe("value-safety boundary (decision 0010, B.4)", () => {
         { token: "[redacted]", ...(choice === "return" ? { owner: "alice@example.com" } : {}) },
       ]);
     }
-    for (const tagged of [true, false]) {
+    const index = new OperationIndex(
+      {
+        source: "https://api.acme.example/openapi.json",
+        revision: "fixture",
+        digest: "sha256:fixture",
+        version: "1",
+        servers: [OPTIONS.baseUrl],
+        tags: ["secrets"],
+        ops: [["GET", "/secrets/{id}", "secret", "Get secret", 0]],
+        details: '{"d":[],"o":[0]}',
+      },
+      { vendor: "acme", title: "Acme" },
+    );
+    const reviewed = valueSafety(
+      {
+        title: "Acme",
+        operations: {
+          "GET /secrets/{id}": { verdict: "redact", reason: "A stored secret value.", paths: ["value"] },
+        },
+      },
+      () => index,
+    );
+    for (const [binding, path, sends] of [
+      ["missing", "/secrets/1", 0],
+      ["blank-review", "/secrets/1", 0],
+      ["indexed", "/secrets/1", 1],
+      ["indexed", "/secrets/1/unknown", 0],
+    ] as const) {
+      let authenticated = 0;
+      const connection = connect(
+        ACME_API,
+        guardedClient({
+          ...OPTIONS,
+          authenticate: Effect.sync(() => {
+            authenticated++;
+            return {};
+          }),
+        }),
+        {
+          errors: {
+            ...VENDOR,
+            detail: ({ withheld, body }) => (withheld ? "Vendor text withheld." : JSON.stringify(body)),
+          },
+          safety: resultSafety({
+            ...(binding === "blank-review" ? { review: " " } : {}),
+            reviewed:
+              binding === "indexed"
+                ? restSafety(reviewed, index)
+                : {
+                    redact: (data, op) => reviewed.redact(data, op.method, op.template),
+                    withholdsErrors: (op) => op.template === "/secrets/{id}",
+                  },
+            sensitiveFields: { names: [], choice: "drop" },
+          }),
+        },
+      );
+      const tool = read(connection, {
+        name: "legacy_path",
+        description: "A path without a canonical template.",
+        input: Schema.Struct({ path: Schema.String }),
+        output: Schema.Unknown,
+        run: ({ path }) =>
+          connection.sendPath({ method: "GET", path, template: path }).pipe(Effect.map(({ data }) => data)),
+      });
+      for (const status of [200, 400]) {
+        sent = [];
+        answers = [() => Response.json({ value: "stored-secret-never-sent" }, { status })];
+        const result = await through(tool, { path });
+        expect(JSON.stringify(result)).not.toContain("stored-secret-never-sent");
+        if (sends === 0) expect(result.error).toMatchObject({ code: "invalid_args" });
+        else if (status === 200) expect(result.value).toEqual({ value: "[redacted]" });
+        else expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
+        expect(sent).toHaveLength(sends);
+      }
+      expect(authenticated).toBe(sends * 2);
+    }
+    answers = [];
+    for (const tagged of [
+      "StatusFailure",
+      "SpoofedStatusFailure",
+      "UnreadableBody",
+      "Refusal",
+      "RequestRefused",
+      "ResponseTooLarge",
+    ] as const) {
       const connection = connect(ACME_API, guardedClient(OPTIONS), {
         errors: {
           ...VENDOR,
@@ -1021,20 +1140,33 @@ describe("value-safety boundary (decision 0010, B.4)", () => {
           },
         },
         safety: resultSafety({
-          reviewed: { redact: (data) => data, withholdsErrors: () => true },
+          reviewed: { redact: (data) => data, withholdsErrors: (op) => op.template === "/keys" },
           sensitiveFields: { names: [], choice: "drop" },
         }),
-        result: (_body, answer) =>
-          tagged
-            ? Effect.fail(
+        result: (_body, answer) => {
+          switch (tagged) {
+            case "StatusFailure":
+            case "SpoofedStatusFailure":
+              return Effect.fail(
                 new StatusFailure({
                   status: 400,
                   headers: answer.headers,
-                  operation: answer.operation,
+                  operation: tagged === "StatusFailure" ? answer.operation : { method: "GET", template: "/public" },
                   body: { message: "stored-secret-never-sent" },
                 }),
-              )
-            : Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", "stored-secret-never-sent") })),
+              );
+            case "UnreadableBody":
+              return Effect.fail(new UnreadableBody());
+            case "Refusal":
+              return Effect.fail(
+                new Refusal({ error: new ConnectorCallError("invalid_args", "stored-secret-never-sent") }),
+              );
+            case "RequestRefused":
+              return Effect.fail(new RequestRefused({ message: "stored-secret-never-sent" }));
+            case "ResponseTooLarge":
+              return Effect.fail(new ResponseTooLarge({ detail: "stored-secret-never-sent" }));
+          }
+        },
       });
       const tool = read(connection, {
         name: "withheld",
@@ -1046,7 +1178,14 @@ describe("value-safety boundary (decision 0010, B.4)", () => {
       const result = await through(tool, {});
       expect(result).toHaveProperty("error");
       expect(String(result.error)).not.toContain("stored-secret-never-sent");
-      if (tagged) expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
+      if (tagged === "StatusFailure" || tagged === "SpoofedStatusFailure")
+        expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
+      else if (tagged === "UnreadableBody")
+        expect(result.error).toMatchObject({ code: "connector_call_failed", message: VENDOR.unreadable });
+      else
+        expect(result.error).toMatchObject({
+          message: expect.stringContaining("text is withheld"),
+        });
     }
   });
 
