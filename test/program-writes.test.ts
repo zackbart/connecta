@@ -2,7 +2,7 @@ import { classifyWriteOutcome } from "../src/program-writes.js";
 import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
 // Program writes on writable and read-only endpoints, with one attempt and
 // bounded outcome accounting.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
@@ -10,6 +10,8 @@ import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta, customExecutor } from "../src/index.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -465,7 +467,9 @@ describe("writable-endpoint programs (#706, #820)", () => {
       createConnecta({ readOnly: false, connectors: [notes], executor, logger: "silent", ...(options as object) });
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
-    expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow('must be "read" or "write"');
+    expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow(
+      'must be "read", "write", or "hidden"',
+    );
     expect(() => construct({ readOnly: "yes" })).toThrow("ConnectaConfig.readOnly must be true or false");
     expect(() => construct({ pools: { named: { tools: ["notes"], readOnly: 1 } } })).toThrow(
       "ConnectaConfig.pools.named.readOnly must be true or false",
@@ -475,24 +479,94 @@ describe("writable-endpoint programs (#706, #820)", () => {
 });
 
 describe("classification and pool endpoints (#706)", () => {
+  it("INV-2 INV-4: hidden tools disappear from discovery and refuse guessed calls on every surface", async () => {
+    for (const [staticCatalog, reviewed, readOnly] of [
+      [true, false, false],
+      [false, false, false],
+      [false, true, false],
+      [false, false, true],
+    ]) {
+      const calls: string[] = [];
+      const raw = ["visible", "hidden"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+      const connector: Connector = {
+        id: "notes",
+        ...(staticCatalog ? { staticTools: raw } : {}),
+        ...(reviewed ? { classification: { tools: { visible: "read", hidden: "read" } } as const } : {}),
+        listTools: async () => raw,
+        callTool: async (name) => {
+          calls.push(name);
+          return {};
+        },
+      };
+      const registry = makeRegistry([connector], { classification: { notes: { hidden: "hidden" } } });
+      const catalog = new CatalogService(registry, BASE, { readOnly });
+      expect((await catalog.search({})).entries.map((entry) => entry.tool.name)).toEqual(["visible"]);
+      expect(await catalog.describe({ address: "notes.hidden", format: "json" })).toMatchObject([
+        { errorDetails: { code: "unknown_tool" } },
+      ]);
+      const tools = createMetaTools(registry, BASE, { readOnly });
+      for (const call of [tools.callTool, tools.callDestructiveTool]) {
+        const refused = await call({ address: "notes.hidden", args: { classification: { hidden: "read" } } });
+        expect(refused.isError).toBe(true);
+      }
+      const service = new InvocationService(registry, catalog);
+      expect((await service.invoke("notes.hidden", {}, { source: "execute_code", readOnly })).ok).toBe(false);
+      expect(calls).toEqual([]);
+      expect(raw.map((tool) => tool.name)).toEqual(["visible", "hidden"]);
+    }
+  });
+
+  it("INV-1 INV-11: absent runtime overrides stay dormant and apply on return; static typos fail construction", async () => {
+    for (const verdict of ["read", "write", "hidden"] as const) {
+      let present = false;
+      const raw = { name: "returning", annotations: { readOnlyHint: true } };
+      const logger = { ...silentLogger, warn: vi.fn() };
+      const connector: Connector = {
+        id: "notes",
+        listTools: async () => (present ? [raw] : []),
+        callTool: async () => null,
+      };
+      const classification = { notes: { returning: verdict } };
+      expect(() => makeRegistry([{ ...connector, staticTools: [] }], { classification })).toThrow(
+        'has no tool "returning"',
+      );
+      const registry = makeRegistry([connector], { classification, logger });
+      expect(await registry.getTools("notes", BASE, {})).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"notes.returning" is dormant'));
+      present = true;
+      const tools = await registry.getTools("notes", BASE, {});
+      expect(tools.map((tool) => tool.classification)).toEqual(verdict === "hidden" ? [] : [verdict]);
+    }
+  });
+
   it("INV-1 INV-3: publishes isolated verdicts without persisting or trusting a downstream verdict", async () => {
     const storage = memoryStorage();
+    const hintCases: [ToolDef["annotations"], "read" | "write"][] = [
+      [undefined, "write"],
+      [{ readOnlyHint: false }, "write"],
+      [{ destructiveHint: false }, "write"],
+      [{ readOnlyHint: true }, "read"],
+      [{ readOnlyHint: true, destructiveHint: false }, "read"],
+      [{ readOnlyHint: true, destructiveHint: true }, "write"],
+    ];
     const raw: ToolDef[] = [
       { name: "mislabeled", annotations: { readOnlyHint: true } },
       { name: "mixed", annotations: { readOnlyHint: false } },
       { name: "constructor", classification: "read" },
+      ...hintCases.map(([annotations], index) => ({ name: `hint_${index}`, ...(annotations ? { annotations } : {}) })),
     ];
     const connector: Connector = { id: "test", listTools: async () => raw, callTool: async () => ({ ok: true }) };
     const overrides = { test: { mislabeled: "write" as const, mixed: "read" as const } };
     const registry = makeRegistry([connector], { storage, classification: overrides });
     overrides.test.mixed = "write" as never;
     const first = await registry.getTools("test", BASE, {});
-    expect(first.map((tool) => tool.classification)).toEqual(["write", "read", "write"]);
+    const expected = ["write", "read", "write", ...hintCases.map(([, verdict]) => verdict)];
+    expect(first.map((tool) => tool.classification)).toEqual(expected);
     first[0]!.classification = "read";
     first[1]!.annotations!.readOnlyHint = false;
     raw[0]!.annotations!.readOnlyHint = false;
     const second = await registry.getTools("test", BASE, {});
-    expect(second.map((tool) => tool.classification)).toEqual(["write", "read", "write"]);
+    expect(second.map((tool) => tool.classification)).toEqual(expected);
     expect(second[1]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     for (const key of await storage.list("")) {
       expect(await storage.get(key)).not.toContain('"classification"');
@@ -537,17 +611,6 @@ describe("classification and pool endpoints (#706)", () => {
       "write",
       "write",
     ]);
-  });
-
-  it("INV-11 INV-8: refuses an entire remote catalog with an unknown override", async () => {
-    const connector: Connector = {
-      id: "remote",
-      listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
-      callTool: async () => null,
-    };
-    const registry = makeRegistry([connector], { classification: { remote: { missing: "read" } } });
-    await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
-    await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
   });
 });
 

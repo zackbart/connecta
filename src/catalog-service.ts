@@ -1,5 +1,6 @@
 import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
+import { cloneTool } from "./tool-safety.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
 import {
@@ -732,7 +733,7 @@ export class CatalogService {
                 timeoutMs: this.probeTimeoutMs,
                 ...(this.defer ? { defer: this.defer } : {}),
               })
-              .then((tools) => carryCatalogFreshness(tools, structuredClone(tools))),
+              .then((tools) => carryCatalogFreshness(tools, tools.map(cloneTool))),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
@@ -744,7 +745,7 @@ export class CatalogService {
         this.catalogs.set(id, started);
         read = started;
       }
-      return Effect.map(read.join(callOptions.signal), (tools) => carryCatalogFreshness(tools, structuredClone(tools)));
+      return Effect.map(read.join(callOptions.signal), (tools) => carryCatalogFreshness(tools, tools.map(cloneTool)));
     });
   }
 

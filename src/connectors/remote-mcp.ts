@@ -112,13 +112,13 @@ import {
   downstreamWriteContinuation,
 } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
-import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
+import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { classifyTool } from "../tool-safety.js";
+import { classifyTool, sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
   recordProviderResponse,
@@ -258,6 +258,12 @@ export interface RemoteMcpOptions {
   skills?: boolean;
   auth?: RemoteMcpAuth;
   /**
+   * Non-secret resource context headers. Never credentials: use auth for those.
+   * Auth-owned, HTTP transport/session, OAuth client-auth and mirrored tool
+   * headers are reserved. Cannot be combined with inline headers auth.
+   */
+  headers?: Record<string, string>;
+  /**
    * Reviewed read/write verdicts for this downstream's tools, by exact name.
    * Validated at construction. A listed read fills downstream silence but
    * never overrules an explicit write annotation; a listed write or
@@ -331,7 +337,46 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   auth: REMOTE_MCP_AUTH,
+  headers: strings(),
 });
+
+/** Extra headers are immutable code configuration, not another auth channel. */
+function extraResourceHeaders(id: string, opts: RemoteMcpOptions): Readonly<Record<string, string>> | undefined {
+  if (opts.headers === undefined) return undefined;
+  const refuse = () =>
+    new Error(
+      `remoteMcp(${JSON.stringify(id)}).headers requires non-secret resource headers without reserved or auth-owned names; use auth for credentials.`,
+    );
+  if (opts.auth?.type === "headers") throw refuse();
+  const authNames = new Set([
+    "authorization",
+    ...(opts.auth?.type === "credential" ? [opts.auth.header?.trim().toLowerCase() || "authorization"] : []),
+    ...(opts.auth?.type === "request" ? Object.keys(opts.auth.headers ?? {}).map((name) => name.toLowerCase()) : []),
+  ]);
+  const normalized: Record<string, string> = Object.create(null);
+  for (const [name, value] of Object.entries(opts.headers)) {
+    const lower = name.toLowerCase();
+    if (
+      !HEADER_NAME_TOKEN.test(name) ||
+      typeof value !== "string" ||
+      /[\r\n]/.test(value) ||
+      Object.hasOwn(normalized, lower) ||
+      authNames.has(lower) ||
+      /^(?:accept|cookie|host|origin|connection|keep-alive|proxy-authenticate|proxy-authorization|te|trailer|transfer-encoding|upgrade|last-event-id|dpop|www-authenticate)$/.test(
+        lower,
+      ) ||
+      /^(?:content-|mcp-)/.test(lower) ||
+      /(?:api[-_]?key|token|secret|password|credential|authorization|signature|session)/.test(lower)
+    )
+      throw refuse();
+    try {
+      normalized[lower] = new Headers({ [lower]: value }).get(lower)!;
+    } catch {
+      throw refuse();
+    }
+  }
+  return Object.freeze(Object.fromEntries(Object.entries(normalized).sort(([a], [b]) => a.localeCompare(b))));
+}
 
 /**
  * How long a downstream gets to answer the session-termination DELETE before
@@ -1570,6 +1615,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `remoteMcp(${JSON.stringify(id)}).callAdmission`);
+  const extraHeaders = extraResourceHeaders(id, opts);
   const skillsEnabled = opts.skills;
   if (skillsEnabled !== undefined && typeof skillsEnabled !== "boolean") {
     throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);
@@ -2121,6 +2167,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   /** Wrap the public request seam, before listTools aggregates or auto-caches.
    * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
    * an advertised successor is never proof of a complete catalog (INV-8). */
+  const assertExtraHeaderDeclarations = (tools: readonly Tool[]): void => {
+    if (!extraHeaders || Object.keys(extraHeaders).length === 0) return;
+    const pending: unknown[] = tools.map((tool) => tool.inputSchema);
+    while (pending.length) {
+      const node = pending.pop();
+      if (!node || typeof node !== "object") continue;
+      const schema = node as Record<string, unknown>;
+      const name = schema["x-mcp-header"];
+      if (typeof name === "string" && Object.hasOwn(extraHeaders, name.toLowerCase())) {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "Downstream tool header conflicts with a configured resource header.",
+          { retryable: false },
+        );
+      }
+      for (const child of Object.values(schema)) pending.push(child);
+    }
+  };
   const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
   const installCatalogIntake = (
     client: Client,
@@ -2230,6 +2294,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw error;
       }
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
+      if (method === "tools/list") assertExtraHeaderDeclarations((page as ListToolsResult).tools);
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
@@ -2380,6 +2445,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     /** A code exchange never transfers ownership to the refresh coordinator. */
     exchangeOnly = false,
   ): Transport => {
+    const resourceInit = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
+      if (!extraHeaders) return init;
+      const target = new URL(input instanceof Request ? input.url : String(input));
+      if (target.origin !== new URL(opts.url).origin) return init;
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
+      return { ...init, headers };
+    };
     const initiatingSignal = ctx.signal;
     ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
@@ -2537,6 +2610,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
         fetch: async (input, init) => {
+          init = resourceInit(input, init);
           const response = await coordinatedFetch(input, init);
           if (response.status === 401) {
             let owner: AbortSignal | undefined;
@@ -2570,7 +2644,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return sendingEachWriteOnce(
       new StreamableHTTPClientTransport(url, {
         ...(headers ? { requestInit: { headers } } : {}),
-        fetch: guardedFetch,
+        fetch: (input, init) => guardedFetch(input, resourceInit(input, init)),
       }),
       flights,
       untrackedRead,
@@ -2874,6 +2948,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               opts.versionNegotiation ?? "auto",
               opts.auth?.type,
               opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              ...(extraHeaders ? [extraHeaders] : []),
               credentialHeader,
               credentialScheme,
               opts.authScope ?? "shared",
@@ -2900,6 +2975,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               url: new URL(opts.url).href,
               auth: opts.auth?.type ?? null,
               headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              ...(extraHeaders ? { extraHeaders } : {}),
               credentialHeader,
               credentialScheme,
               authScope: opts.authScope ?? "shared",
@@ -3106,6 +3182,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               ...(describedClientMetadataUrl !== undefined ? { clientMetadataUrl: describedClientMetadataUrl } : {}),
             }
           : { mode: "none" };
+  if (extraHeaders)
+    authDescription.headerNames = [...new Set([...(authDescription.headerNames ?? []), ...Object.keys(extraHeaders)])];
   const endpoint = describedEndpoint(opts.url);
 
   const optionSources = Object.freeze({
@@ -3309,6 +3387,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       listingContexts.set(options, ctx);
       try {
         const result = await client.listTools(undefined, options);
+        assertExtraHeaderDeclarations(result.tools);
         clean = redactCatalog(ctx, result.tools);
       } catch (err) {
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
@@ -3379,7 +3458,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           const reviewed = classification?.tools[name];
           const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
           const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
+          // Deployment overrides affect exposure, never the server hints' replay safety.
+          const serverWrite = definition
+            ? sourceClassification(definition) === "write"
+            : state.toolDefinitions.has(name) &&
+              classifyTool({ name, ...(annotations ? { annotations } : {}) }) === "write";
           const write =
+            serverWrite ||
             (callClassification(ctx) ??
               definition?.classification ??
               (verdict !== undefined && verdict !== "read"
@@ -3794,6 +3879,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (opts.auth?.type === "headers") {
       for (const value of Object.values(opts.auth.headers)) secrets.header(value);
     }
+    for (const value of Object.values(extraHeaders ?? {})) secrets.header(value);
     const state = entryFor(ctx);
     let active = activeContexts.get(state);
     if (!active) {

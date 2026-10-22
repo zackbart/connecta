@@ -293,11 +293,42 @@ also supports OAuth, static headers, and request-local token resolution. Use
 for those cases. Secrets belong in deployment secret storage or the vault,
 not source literals.
 
+Use optional top-level `headers` for non-secret resource context:
+`remoteMcp("crm", { url: "https://crm.example/mcp", headers: {
+"X-MCP-Toolsets": "tickets,notes" }, readOnly: true })`. These headers apply to
+MCP handshake, catalog and call requests at the resource origin, never OAuth
+metadata, token or registration requests. Values are included in cache and
+negotiation identities and are redacted if echoed; configuration descriptions
+show only names. Never put credentials here. Use `auth` for secrets. Extra
+headers cannot be combined with `auth.type: "headers"`, collide with an
+auth-owned or `x-mcp-header` mirrored name, or set HTTP transport/session headers
+(`Accept`, `Cookie`, `Host`, `Content-*`, hop-by-hop headers, `Last-Event-ID`,
+`Mcp-*`), OAuth client-auth headers, or credential-named headers such as
+`X-Api-Key`. Names are case-insensitive.
+
+Runtime-discovered tools default to read exactly when `readOnlyHint === true &&
+destructiveHint !== true`; otherwise they are writes. Override individual tools
+only in deployment code through the existing `classification` map:
+
+```ts
+classification: {
+  crm: { list_tickets: "read", update_ticket: "write", internal_export: "hidden" },
+},
+```
+
+`"write"` requires the host's approval path. `"hidden"` omits a tool from search
+and describe and refuses guessed-name calls, including programs. An absent
+runtime tool leaves its override dormant with an operator warning; the override
+applies if that exact name returns. Unknown static tool names fail construction.
+No argument can change these rules. A write-to-read override changes exposure
+and approval, but a server-declared write still gets one wire attempt across
+OAuth renewal, reconnect and transport recovery. Connector `readOnly` remains
+optional and composes with endpoint policy.
+
 Remote catalogs evolve. Discovery, direct calls, and program calls all enforce
-classification against the current catalog. Missing or contradictory read hints
-fail closed as writes. `classify` can supply a reviewed per-tool verdict;
-schema changes can invalidate a reviewed read. Exact deployment classification
-overrides take precedence. See
+classification against the current catalog. `classify` and existing provider
+reviews remain supported during migration; schema changes can invalidate a
+reviewed read. Exact deployment classification overrides take precedence. See
 [reviewed classification](./architecture.md#providers-and-reviewed-classification)
 for precedence, schema digests, and `unlisted: "hide"`. Review the behavior
 before declaring a read, and do not use classification to bypass provider target

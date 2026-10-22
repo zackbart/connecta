@@ -1055,13 +1055,17 @@ all calls this deployment can make through it.
 
 | Precedence | Evidence                                                 | Result                                                                                                                                           |
 | ---------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1          | Exact deployment `classification[connectorId][toolName]` | `read` or `write`, even over a stale provider review                                                                                             |
+| 1          | Exact deployment `classification[connectorId][toolName]` | `read`, `write`, or `hidden`, even over a stale provider review                                                                                  |
 | 2          | `Connector.classification` provider review               | Reviewed writes remain writes; a stale schema digest makes a read a write; an explicit downstream contradiction also invalidates a reviewed read |
 | 3          | Downstream annotations                                   | Read only when `readOnlyHint === true && destructiveHint !== true`; otherwise write                                                              |
 
 Unknown connector override keys fail construction. Unknown static tool keys
-fail construction; unknown remote tool keys fail publication of the whole
-catalog. Overrides are exact tool names, including names containing dots.
+fail construction. An absent runtime-discovered tool leaves its override
+dormant and emits an operator warning; the override applies if the name returns.
+Hidden tools are absent from search and describe and refuse every call, including
+a guessed name. `"write"` selects the host approval path. MCP recovery sends a
+tool only once when either its effective class or its original server hints say
+write, even when an override changes write to read. Overrides are exact tool names, including names containing dots.
 They are never inferred from descriptions or arguments.
 
 **W9.** Programs on a writable endpoint may write. A dispatched write is awaited even

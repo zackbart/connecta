@@ -51,6 +51,8 @@ type Answer =
 function setup(
   options: {
     oauth?: boolean;
+    overrideRead?: boolean;
+    headers?: Record<string, string>;
     refresh?: "rotate" | "dead" | "outage";
     redirects?: "same-origin";
     versionNegotiation?: "legacy" | "auto";
@@ -76,6 +78,7 @@ function setup(
   /** Every tools/call POST that left connecta, by tool name and bearer token. */
   const sent: Array<{ name: string; authorization: string | null }> = [];
   let refreshes = 0;
+  const requests: { url: string; headers: Headers }[] = [];
   /** How the next tools/call per tool is answered; "pass" lets it through. */
   const answers = new Map<string, Answer>();
   /** The Last-Event-ID of each resumed stream, and the answer it carries. */
@@ -83,6 +86,7 @@ function setup(
   let pendingAnswer: string | undefined;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
+    requests.push({ url, headers: new Headers(init?.headers) });
     const lastEventId = init?.method === "GET" ? new Headers(init.headers).get("last-event-id") : null;
     if (lastEventId) {
       resumed.push(lastEventId);
@@ -178,11 +182,15 @@ function setup(
     url: downstream.url,
     versionNegotiation: options.versionNegotiation ?? "legacy",
     ...(options.redirects ? { redirects: options.redirects } : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
     auth: options.oauth
       ? { type: "oauth" }
       : { type: "headers", headers: { Authorization: "Bearer HEADER_CREDENTIAL" } },
   });
-  const registry = makeRegistry([connector], { storage });
+  const registry = makeRegistry([connector], {
+    storage,
+    ...(options.overrideRead ? { classification: { svc: { create_item: "read" } } } : {}),
+  });
   const tools = createMetaTools(registry, BASE);
   const seedOAuth = () =>
     seedGrant(
@@ -204,7 +212,7 @@ function setup(
   const outcome = async (tool: "create_item" | "list_items", args: Record<string, unknown> = {}) => {
     const address = `svc.${tool}`;
     const result =
-      tool === "create_item"
+      tool === "create_item" && !options.overrideRead
         ? await tools.callDestructiveTool({ address, args })
         : await tools.callTool({ address, args });
     return JSON.parse(result.content[0]!.text) as {
@@ -240,6 +248,7 @@ function setup(
   };
   return {
     outcome,
+    requests,
     program,
     connector,
     context: (options?: { signal?: AbortSignal; timeoutMs?: number }) =>
@@ -255,6 +264,57 @@ function setup(
 }
 
 describe("remote MCP OAuth writes after a 401", () => {
+  it("INV-4 INV-9: write-to-read overrides never replay server writes after renewal, reconnect or transport recovery", async () => {
+    for (const [answer, oauth, versionNegotiation] of [
+      [401, true, "legacy"],
+      ["reset", false, "legacy"],
+      ["mismatch", false, "auto"],
+    ] as const) {
+      if (answer === "reset" || answer === "mismatch") {
+        // Model recovery/fallback issuing a fresh JSON-RPC id after failure.
+        vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, params, options) {
+          try {
+            return (await this.request({ method: "tools/call", params }, options)) as never;
+          } catch {
+            return (await this.request({ method: "tools/call", params }, options)) as never;
+          }
+        });
+      }
+      const flow = setup({
+        oauth,
+        versionNegotiation,
+        overrideRead: true,
+        ...(oauth ? { headers: { "X-Context": "tenant_selector" } } : {}),
+      });
+      if (oauth) await flow.seedOAuth();
+      flow.answers.set("create_item", answer);
+      const failed = await flow.outcome("create_item", { id: 1 });
+      expect.soft(failed.error, String(answer)).toBeDefined();
+      if (answer === 401) expect.soft(failed.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect.soft(flow.sent("create_item"), String(answer)).toHaveLength(1);
+      expect.soft(flow.applied).toEqual(answer === 401 ? [] : ["create_item 1"]);
+      expect.soft(flow.refreshes()).toBe(oauth ? 1 : 0);
+      if (oauth) {
+        expect
+          .soft(
+            flow.requests
+              .filter((request) => request.url.startsWith("https://auth.test"))
+              .every((request) => !request.headers.has("x-context")),
+          )
+          .toBe(true);
+        expect
+          .soft(
+            flow.requests
+              .filter((request) => request.url.endsWith("/mcp"))
+              .every((request) => request.headers.get("x-context") === "tenant_selector"),
+          )
+          .toBe(true);
+      }
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("INV-9: sends an ordinary write once, refreshes the grant, and lets a deliberate repeat use it", async () => {
     const flow = setup({ oauth: true });
     await flow.seedOAuth();

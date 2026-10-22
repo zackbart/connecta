@@ -38,9 +38,12 @@ Static bearer secrets are retired.
 Each ID must appear in at least one passing Vitest test title under `test/` or `src/providers/<name>/`.
 The full Node run checks the executed test tree, including runtime skips.
 
-- **INV-1: Fail-closed classification.** Missing, false, or contradictory
-  read annotations classify as writes unless deployment config or a current
-  provider review supplies a verdict. Stale reviewed schemas fail closed.
+- **INV-1: Fail-closed classification.** A runtime-discovered tool is a read exactly when
+  `readOnlyHint === true` and `destructiveHint !== true`; otherwise it is a write.
+  Deployment code may override a tool to read, write, or hidden. Hidden tools
+  cannot be discovered or called. An override never relaxes the server's
+  hint-derived replay safety. Current provider reviews remain supported until
+  their migration; stale reviewed schemas fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
   pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
   tools from search and describe and refuses every write call on every path

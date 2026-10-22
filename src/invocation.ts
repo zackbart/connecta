@@ -1,6 +1,6 @@
 import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { writeRefusal } from "./tool-safety.js";
+import { cloneTool, writeRefusal } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
@@ -843,7 +843,7 @@ export class InvocationService {
               );
               // Reflect.apply, never the function's own `call` or `apply`
               // property, which anyone holding the function could replace.
-              const options = { definition: structuredClone(target.definition), ...defined({ input }) };
+              const options = { definition: cloneTool(target.definition), ...defined({ input }) };
               const entry = callEntry(connector, callTool);
               if (entry)
                 return yield* entry(target.toolName, args ?? {}, options).pipe(

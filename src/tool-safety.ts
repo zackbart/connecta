@@ -19,6 +19,23 @@ export function classifyTool(
     : "write";
 }
 
+// Raw hint provenance is request-local policy metadata, never catalog data.
+// Keep it through host-owned clones without exposing it to tools or storage.
+const sourceClassifications = new WeakMap<ToolDef, "read" | "write">();
+
+export function sourceClassification(tool: ToolDef): "read" | "write" {
+  return sourceClassifications.get(tool) ?? classifyTool(tool);
+}
+
+export function carryToolClassification(source: ToolDef, served: ToolDef): ToolDef {
+  sourceClassifications.set(served, sourceClassification(source));
+  return served;
+}
+
+export function cloneTool(tool: ToolDef): ToolDef {
+  return carryToolClassification(tool, structuredClone(tool));
+}
+
 /**
  * The only permission decision for a connector call. Approval is client-owned.
  * A read-only endpoint refuses every write on every surface; a writable one

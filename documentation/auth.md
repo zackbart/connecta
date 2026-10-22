@@ -1366,10 +1366,11 @@ rejected, the 401's verdict stays:
 `downstream_oauth_required`, never retryable, with `reconciliationRequired`
 and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
-once more. The invocation's
-classification decides; a direct call outside one uses the dispatched
-definition, a reviewed write verdict, or the tool's hints, and fails closed as
-a write.
+once more. MCP sends a tool only once when either its effective classification
+or its original server hints say write. A deployment write-to-read override
+cannot make a server-declared write replayable. A direct call outside an
+invocation uses the dispatched definition, a reviewed write verdict, or the
+tool's hints, and fails closed as a write.
 
 A remote MCP tool call that loses its internal dispatch record is refused
 before sending unless active calls for that tool prove it is a read. A
