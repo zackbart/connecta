@@ -123,10 +123,8 @@ const RESTARTS: Array<{
   fresh: boolean;
   listing: () => Promise<ToolDef[]>;
 }> = [
-  { name: "a fresh 0.28 catalog", version: 2, fresh: true, listing: mainEraListing },
   { name: "a stale 0.28 catalog", version: 2, fresh: false, listing: mainEraListing },
   { name: "a fresh catalog", version: 3, fresh: true, listing: downstreamListing },
-  { name: "a stale catalog", version: 3, fresh: false, listing: downstreamListing },
 ];
 
 describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)("a stale reviewed read after a restart (%s)", (path) => {

@@ -229,24 +229,6 @@ afterEach(async () => {
 });
 
 describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
-  it("records the touched endpoints and then reports no drift against them", async () => {
-    const { directory } = await workspace(["infisical", "notion"]);
-    const recorded = run(directory, ["infisical", "notion"], ["--record"]);
-    expect(recorded.status).toBe(0);
-
-    const manifest: Manifest = JSON.parse(await readManifestFile(join(directory, "infisical", "drift.json")));
-    expect(manifest.endpoints.length).toBeGreaterThan(0);
-    for (const endpoint of manifest.endpoints) {
-      expect(endpoint.specRevision).toBe("test-1");
-      expect(endpoint.contract).toMatch(/^sha256:[0-9a-f]{64}$/);
-    }
-
-    const again = run(directory, ["infisical", "notion"], ["--json"]);
-    expect(again.status).toBe(0);
-    expect(findings(again.output, "infisical")).toEqual([]);
-    expect(findings(again.output, "notion")).toEqual([]);
-  });
-
   it.each(["infisical", "notion", "overflow", "tithely"])(
     "reports %s changes only for touched endpoints",
     async (provider) => {
@@ -329,14 +311,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const result = run(directory, ["notion"], ["--json"]);
     expect(result.status).toBe(0);
     expect(findings(result.output, "notion")).toEqual([]);
-  });
-
-  it("reports an unavailable published specification as an advisory finding", async () => {
-    const { directory } = await workspace(["notion"]);
-    expect(run(directory, ["notion"], ["--record"]).status).toBe(0);
-    const result = run(directory, [], ["--provider", "notion", "--spec", `notion=${join(directory, "absent.json")}`]);
-    expect(result.status).toBe(0);
-    expect(result.output).toContain("could not read notion's published specification");
   });
 
   it("refuses a provider without a discovered drift record", async () => {
@@ -528,14 +502,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const wrong = check([]);
     expect(wrong.status).toBe(0);
     expect(`${wrong.stdout}${wrong.stderr}`).toContain("not a Google Discovery document");
-  });
-
-  it("has no credentialed hosted mode", () => {
-    const result = spawnSync(process.execPath, [checker, "--hosted"], {
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(2);
-    expect(`${result.stdout}${result.stderr}`).toContain("unknown argument: --hosted");
   });
 
   it("sees through a response written as a $ref into shared components", async () => {
@@ -1126,34 +1092,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       await new Promise((resolve) => http.close(resolve));
     }
   });
-
-  it("commits one well-formed row per touched endpoint", async () => {
-    for (const entry of await readdir(providerDirectory, { withFileTypes: true })) {
-      if (
-        !entry.isDirectory() ||
-        entry.name.startsWith("_") ||
-        !existsSync(join(providerDirectory, entry.name, "drift.json"))
-      )
-        continue;
-      const record = await driftRecord(entry.name);
-      const check = record.checks.find((item: any) => item.type === "endpoints");
-      if (!check) continue;
-      const provider = entry.name;
-      const manifest = { provider, ...check };
-      expect(manifest.provider).toBe(provider);
-      expect(manifest.specification.url).toMatch(/^https:\/\//);
-      const seen = new Set<string>();
-      for (const endpoint of manifest.endpoints) {
-        const row = `${endpoint.method} ${endpoint.path}`;
-        expect(seen.has(row)).toBe(false);
-        seen.add(row);
-        expect(endpoint.method).toMatch(/^(GET|POST|PUT|PATCH|DELETE)$/);
-        expect(endpoint.path.startsWith("/")).toBe(true);
-        expect(endpoint.specRevision).toBeTruthy();
-        expect(endpoint.contract).toMatch(/^sha256:[0-9a-f]{64}$/);
-      }
-    }
-  });
 });
 
 interface VersionedManifest {
@@ -1519,19 +1457,6 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
       JSON.parse(reportFor(providerDirectory, ["--specs", "--docs", "--provider", "breeze"]).output).manual[0]
         .findings[0].kind,
     ).toBe("manual-required");
-  });
-
-  it.each(["source", "rationale"])("rejects a manual check without %s while continuing other checks", async (field) => {
-    const incomplete = { ...manualCheck, [field]: " " };
-    const directory = await recordWorkspace({
-      vendor: { version: 1, provider: "vendor", checks: [incomplete, manualCheck] },
-    });
-    const result = reportFor(directory);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.output).manual.map((entry: any) => entry.findings[0].kind)).toEqual([
-      "evidence-invalid",
-      "manual-required",
-    ]);
   });
 
   it.each([

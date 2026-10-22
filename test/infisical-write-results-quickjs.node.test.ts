@@ -19,14 +19,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.each(infisicalRecoveryCases)(
-  "omits free text from $name QuickJS caught errors and final program errors (INV-5, INV-9)",
-  async (testCase) => {
-    await checkInfisicalRecovery(testCase, executor);
-  },
-);
+// The full case matrices run in-process in src/providers/infisical/security.test.ts;
+// here one case per family proves the same omission through a real QuickJS program.
+it.each(
+  infisicalRecoveryCases.filter((testCase) =>
+    ["create with value and comment", "comment-only update"].includes(testCase.name),
+  ),
+)("omits free text from $name QuickJS caught errors and final program errors (INV-5, INV-9)", async (testCase) => {
+  await checkInfisicalRecovery(testCase, executor);
+});
 
-it.each(infisicalResultCases)(
+it.each(
+  infisicalResultCases.filter((testCase) =>
+    ["create_secret free text", "get_secret explicit value and comment read"].includes(testCase.name),
+  ),
+)(
   "projects identifiers or explicitly reads values for $name in QuickJS returns and guest logs (INV-5)",
   async (testCase) => {
     await checkInfisicalResult(testCase, executor);

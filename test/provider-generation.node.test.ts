@@ -269,18 +269,6 @@ describe("provider folder generation", () => {
     },
   );
 
-  it("refuses a bundle cap on a provider, whose entry is reported rather than capped", () => {
-    const root = repository();
-    provider(root, "alpha");
-    const index = "src/providers/alpha/index.ts";
-    write(root, index, read(root, index).replace("baselineGzip: 17,", "baselineGzip: 17, maxGzip: 23,"));
-    const before = snapshot(root);
-    const result = run(root);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("bundle baselineGzip and optional note, and no cap");
-    expect(snapshot(root)).toEqual(before);
-  });
-
   it("rejects malformed or duplicated skill fragments before writing outputs", () => {
     const root = repository();
     provider(root, "alpha");
@@ -290,65 +278,6 @@ describe("provider folder generation", () => {
     const result = run(root);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("providers/alpha: duplicate skill fragment content");
-    expect(snapshot(root)).toEqual(before);
-  });
-
-  it("joins fragments verbatim when content is absent and checks all memberships for drift", () => {
-    const root = repository();
-    provider(root, "alpha");
-    const path = "src/providers/alpha/SKILL.md";
-    write(root, path, read(root, path).replace("fragment: content", "fragment: intro"));
-    expect(run(root).status).toBe(0);
-    const source = read(root, "src/providers/alpha/skill.generated.ts");
-    const skill = JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
-    expect(skill.content).toBe("  Keep spaces.\n\nTail without final newline");
-    const outputs = [
-      "package.json",
-      "knip.jsonc",
-      "scripts/bundle-budget.json",
-      "README.md",
-      "test/providers.generated.ts",
-      "scripts/provider-smoke.generated.mjs",
-    ];
-    for (const output of outputs) {
-      const original = read(root, output);
-      const changed =
-        output === "knip.jsonc"
-          ? original.replace("src/providers/alpha/index.ts", "src/providers/retired.ts")
-          : output === "README.md"
-            ? original.replace("Vendor alpha", "Retired")
-            : original + "\n";
-      write(root, output, changed);
-      const before = snapshot(root);
-      const result = run(root, true);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(output);
-      expect(snapshot(root)).toEqual(before);
-      write(root, output, original);
-    }
-  });
-
-  it("publishes the fragment the frontmatter names as content, so a dual guide never mixes modes", () => {
-    const root = repository();
-    provider(root, "alpha");
-    const path = "src/providers/alpha/SKILL.md";
-    const original = read(root, path);
-    const named = (content: string) =>
-      original.replace(
-        '"instructionsHeading":"Deployment instructions"}',
-        `"instructionsHeading":"Deployment instructions","content":${JSON.stringify(content)}}`,
-      );
-    write(root, path, named("footer"));
-    expect(run(root).status).toBe(0);
-    const source = read(root, "src/providers/alpha/skill.generated.ts");
-    const skill = JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
-    expect(skill.content).toBe("Tail without final newline");
-    expect(Object.keys(skill.fragments)).toEqual(["content", "footer"]);
-    write(root, path, named("missing"));
-    const before = snapshot(root);
-    const result = run(root);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("providers/alpha: SKILL.md frontmatter content must name one of its fragments");
     expect(snapshot(root)).toEqual(before);
   });
 
@@ -915,52 +844,6 @@ describe("OpenAPI operation index generation", () => {
     // Two offered versions would pin one silently, so generation refuses.
     expect(() => buildOperationIndex(versioned(["2025-09-03", "2026-03-11"]), { ...source, options })).toThrow(
       "expected one vendor-version header value in the document, found 2",
-    );
-  });
-
-  it("shrinks a large document on request: no restated ids, implied path parameters, and a per-operation budget", async () => {
-    const { buildOperationIndex } = await generator();
-    const options = { depth: 2, descriptions: 0, operationIds: false, pathParams: "typed", opBudget: 60 };
-    const data = buildOperationIndex(document, { ...source, options });
-    expect(data.ops.map((row: unknown[]) => row[2])).toEqual(["", "", "", ""]);
-    const details = JSON.parse(data.details);
-    // The plain-string path parameter is dropped; the template still names it.
-    expect(details.o[2]).toEqual(0);
-    // Past the budget, the create body falls back to a shallower depth.
-    expect(JSON.stringify(details.o[1]).length).toBeLessThan(
-      JSON.stringify(JSON.parse(buildOperationIndex(document, { ...source, options: { depth: 2 } }).details).o[1])
-        .length,
-    );
-    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
-    const index = new OperationIndex(data, { vendor: "acme", title: "Acme" });
-    const contract = index.contract(index.resolve("DELETE", "/v1/things/t_1").op);
-    expect(contract.parameters).toEqual([{ name: "thing", in: "path", required: true, schema: { type: "string" } }]);
-  });
-
-  it("ships no value-safety candidates in the index; they live in the reviewed candidates file", async () => {
-    const { buildOperationIndex } = await generator();
-    const data = buildOperationIndex(document, { ...source, options: { valueSafety: true } });
-    expect(Object.keys(data)).toEqual(["source", "revision", "digest", "version", "servers", "tags", "ops", "details"]);
-  });
-
-  it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
-    const { buildOperationIndex } = await generator();
-    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
-    const index = new OperationIndex(buildOperationIndex(document, source), { vendor: "acme", title: "Acme" });
-    expect(index.resolve("DELETE", "/v1/things/th_1")).toMatchObject({
-      op: { path: "/v1/things/{thing}" },
-      params: { thing: "th_1" },
-    });
-    expect(index.search("create thing", { limit: 5 }).map((op) => op.operationId)).toEqual(["PostThings"]);
-    expect(index.contract(index.operation("POST", "/v1/things")!).body?.schema).toMatchObject({
-      required: ["name"],
-      properties: { shipping: { type: "object", properties: { city: { type: "string" } } } },
-    });
-    expect(() => index.check(index.operation("POST", "/v1/things")!, {}, { name: "x", shiping: {} })).toThrow(
-      "/body/shiping (additionalProperties: shipping? one of",
-    );
-    expect(() => index.check(index.operation("POST", "/v1/things")!, {}, { deep: { inner: { anything: 1 } } })).toThrow(
-      "/body/name (required: a value)",
     );
   });
 

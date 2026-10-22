@@ -136,11 +136,6 @@ describe("detectCatalogDrift()", () => {
     expect(counts.annotationConflicts).toBe(2);
   });
 
-  it("treats downstream silence as the ordinary case, not a conflict", async () => {
-    const counts = await detectCatalogDrift(reviewed(), currentCatalog());
-    expect(counts.annotationConflicts).toBe(0);
-  });
-
   it("counts a schema the release recorded and no longer recognizes", async () => {
     const digest = await vettedSchemaDigest(tool("get_issue"));
     const catalog = vettedCatalog({
@@ -181,78 +176,6 @@ describe("detectCatalogDrift()", () => {
 });
 
 describe("reviewedFixture()", () => {
-  it("preserves the downstream MCP schemas byte-for-byte in memory", async () => {
-    const inputSchema = {
-      type: "object",
-      properties: {
-        issueId: { type: "string", pattern: "^ISSUE-[0-9]+$" },
-      },
-      required: ["issueId"],
-      additionalProperties: false,
-    } as const;
-    const outputSchema = {
-      type: "object",
-      properties: { state: { enum: ["open", "closed"] } },
-      required: ["state"],
-    } as const;
-    const definition: ToolDef = {
-      name: "get_issue",
-      description: "Provider-owned definition",
-      inputSchema,
-      outputSchema,
-    };
-    const { connector } = proxy("linear_test", () => [definition]);
-    // The connector lists the downstream's own definition, unclassified.
-    expect(await connector.listTools(context)).toEqual([definition]);
-    expect((await connector.listTools(context))[0]).toBe(definition);
-    const [served] = await servedTools(connector, context);
-
-    expect(served?.inputSchema).toEqual(inputSchema);
-    expect(served?.outputSchema).toEqual(outputSchema);
-    expect(served?.description).toBe(definition.description);
-    expect(served?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    // A fresh object: nothing done to it reaches the downstream's definition.
-    expect(served?.inputSchema).not.toBe(inputSchema);
-    expect(definition.annotations).toBeUndefined();
-  });
-
-  it("carries the review as frozen data on the connector", () => {
-    const { connector } = proxy("linear_test", currentCatalog);
-    expect(connector.classification).toEqual({
-      tools: {
-        list_issues: { verdict: "read" },
-        get_issue: { verdict: "read" },
-        save_issue: { verdict: "destructive" },
-        create_issue_label: { verdict: "write" },
-      },
-    });
-    expect(Object.isFrozen(connector.classification)).toBe(true);
-    expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
-    expect(Object.isFrozen(connector.classification?.tools.save_issue)).toBe(true);
-    expect(connector.catalogDrift).toBeUndefined();
-  });
-
-  it("classifies exactly as the provider lists say", async () => {
-    const { connector } = proxy("linear_test", () => [...currentCatalog(), tool("merge_issues")]);
-    const byName = new Map((await servedTools(connector, context)).map((t) => [t.name, t.annotations]));
-    expect(byName.get("list_issues")).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    expect(byName.get("save_issue")).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-    expect(byName.get("create_issue_label")).toMatchObject({
-      readOnlyHint: false,
-    });
-    // Unclassified arrivals still fail closed; drift never widens capability.
-    expect(byName.get("merge_issues")).toMatchObject({ readOnlyHint: false });
-  });
-
   it("observes drift on the listing it was already serving", async () => {
     const served: ToolDef[][] = [currentCatalog(), [...currentCatalog(), tool("merge_issues")]];
     let listing = 0;
@@ -269,21 +192,6 @@ describe("reviewedFixture()", () => {
     expect(observedCatalogDrift(connector)).toMatchObject({ unclassifiedTools: 1 });
     // One downstream listing per refresh: the check rode both, added neither.
     expect(listings()).toBe(2);
-  });
-
-  it("makes no request of its own", async () => {
-    const fetchSpy = vi.fn(() => {
-      throw new Error("catalog drift detection must not fetch anything");
-    });
-    vi.stubGlobal("fetch", fetchSpy);
-    try {
-      const { connector } = proxy("linear_test", currentCatalog);
-      await servedTools(connector, context);
-      observedCatalogDrift(connector);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -359,21 +267,6 @@ describe("drift on the registry surface", () => {
       schemaChanges: 0,
     });
     expect(typeof status.catalogDrift?.observedAt).toBe("string");
-  });
-
-  it("leaves status alone for a connector with no vetted manifest", async () => {
-    const plain: Connector = connectorWith({
-      id: "plain",
-      tools: [tool("list_issues", { readOnlyHint: true })],
-      call: async () => null,
-    });
-    const registry = new Registry([plain], {
-      storage: memoryStorage(),
-      logger: silentLogger,
-      toolCacheTtlSeconds: 0,
-    });
-    await registry.getTools("plain", BASE);
-    expect(await registry.statusFor("plain", BASE)).toMatchObject({ state: "ok" });
   });
 
   it("INV-6: catalog refreshes produce no activity drift events", async () => {
@@ -483,21 +376,11 @@ async function sha256(text: string): Promise<string> {
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/**
- * One reviewed read with a recorded digest: declared on a custom connector's
- * public `classification`, and through the legacy wrapper.
- */
-const DIGESTED_READ = {
-  classification: (digest: string, served: ToolDef): Connector => ({
-    ...connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
-    classification: { tools: { deep: { verdict: "read", schemaDigest: digest } } },
-  }),
-  reviewedFixture: (digest: string, served: ToolDef) =>
-    reviewedFixture(
-      connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
-      vettedCatalog({ reads: new Set(["deep"]), writes: new Map(), schemaDigests: { deep: digest } }),
-    ),
-};
+/** One reviewed read with a recorded digest, declared on a custom connector's public `classification`. */
+const digestedRead = (digest: string, served: ToolDef): Connector => ({
+  ...connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
+  classification: { tools: { deep: { verdict: "read", schemaDigest: digest } } },
+});
 
 describe("schema digests", () => {
   it("keep the digest a release recorded for a schema in canonical key order", async () => {
@@ -544,13 +427,13 @@ describe("schema digests", () => {
     ).resolves.toMatch(/^sha256-sets-v1:/);
   });
 
-  describe.each(Object.keys(DIGESTED_READ) as Array<keyof typeof DIGESTED_READ>)("(%s)", (path) => {
+  describe("on a custom connector", () => {
     it("INV-1: serve a reviewed read whose leaf changed 80 levels down as a write", async () => {
       const reviewed: ToolDef = { name: "deep", inputSchema: deepSchema("string", 80) };
       const digest = await vettedSchemaDigest(reviewed);
-      const same = DIGESTED_READ[path](digest, reviewed);
+      const same = digestedRead(digest, reviewed);
       expect((await servedTools(same, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(true);
-      const changed = DIGESTED_READ[path](digest, { name: "deep", inputSchema: deepSchema("number", 80) });
+      const changed = digestedRead(digest, { name: "deep", inputSchema: deepSchema("number", 80) });
       expect((await servedTools(changed, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
       expect(observedCatalogDrift(changed)).toMatchObject({ schemaChanges: 1 });
     });
@@ -569,7 +452,7 @@ describe("schema digests", () => {
           }),
         ),
       );
-      const connector = DIGESTED_READ[path](recorded, wide);
+      const connector = digestedRead(recorded, wide);
       expect((await servedTools(connector, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
     });
   });

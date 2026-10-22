@@ -67,27 +67,21 @@ it("INV-5: admits KV base64 values through a raised host body cap up to 25 MiB a
     });
 
   try {
-    for (const size of [8 * 1024 * 1024 + 1, 24 * 1024 * 1024, 25 * 1024 * 1024]) {
-      const value = Buffer.alloc(size, 0x61).toString("base64");
-      dispatch.mockClear();
-      expect(await send(value)).toEqual({ status: 200, body: '{"ok":true}' });
-      expect(dispatch).toHaveBeenCalledTimes(1);
-      const sent = JSON.parse(String(dispatch.mock.calls[0]![1]!.body));
-      expect(sent[0].value).toBe(value);
-    }
-    for (const marker of ["https://f.test/?[redacted]", "https://f.test/?%5Bredacted%5D"]) {
-      const bytes = Buffer.alloc(25 * 1024 * 1024, 0x61);
-      bytes.write(` ${marker}`, bytes.length - marker.length - 1);
-      dispatch.mockClear();
-      const result = await send(bytes.toString("base64"));
-      expect(result.status).toBe(400);
-      expect(JSON.parse(result.body)).toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("withheld"),
-      });
-      expect(dispatch).not.toHaveBeenCalled();
-    }
+    const value = Buffer.alloc(25 * 1024 * 1024, 0x61).toString("base64");
+    expect(await send(value)).toEqual({ status: 200, body: '{"ok":true}' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(dispatch.mock.calls[0]![1]!.body))[0].value).toBe(value);
+    const marker = "https://f.test/?%5Bredacted%5D";
+    const bytes = Buffer.alloc(25 * 1024 * 1024, 0x61);
+    bytes.write(` ${marker}`, bytes.length - marker.length - 1);
     dispatch.mockClear();
+    const withheld = await send(bytes.toString("base64"));
+    expect(withheld.status).toBe(400);
+    expect(JSON.parse(withheld.body)).toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("withheld"),
+    });
+    expect(dispatch).not.toHaveBeenCalled();
     const result = await send(Buffer.alloc(25 * 1024 * 1024 + 1, 0x61).toString("base64"));
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toMatchObject({

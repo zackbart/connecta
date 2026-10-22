@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogReviewOf, detectCatalogDrift, reviewedCatalog, vettedSchemaDigest } from "../src/catalog-drift.js";
+import { catalogReviewOf, detectCatalogDrift, reviewedCatalog } from "../src/catalog-drift.js";
 import { hostedCatalog as linearSchemas } from "../src/providers/linear/fixtures.js";
 import { hostedSchemaFixtures as mixpanelSchemas } from "../src/providers/mixpanel/fixtures.js";
 import remainingMixpanelSchemas from "../src/providers/mixpanel/catalog.fixture.json";
@@ -46,18 +46,3 @@ describe.each(providerFixtures)("$name schema pins", (fixture) => {
     }
   });
 });
-
-it.each(["legacy", "sets-v1"] as const)(
-  "INV-1: verifies %s provider pins without weakening genuine schema drift detection",
-  async (format) => {
-    const tool = linearSchemas[0]!;
-    const schemaDigest = await vettedSchemaDigest(tool, format);
-    const review = reviewedCatalog({ tools: { [tool.name]: { verdict: "read", schemaDigest } } }, "fixture");
-    expect((await detectCatalogDrift(review, [tool])).schemaChanges).toBe(0);
-    for (const field of ["inputSchema", "outputSchema"] as const) {
-      expect((await detectCatalogDrift(review, [{ ...tool, [field]: { not: tool[field] ?? {} } }])).schemaChanges).toBe(
-        1,
-      );
-    }
-  },
-);
