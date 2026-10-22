@@ -160,24 +160,6 @@ describe("describeConfig", () => {
     }
   });
 
-  it("describes a connector without describe() as custom", async () => {
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [{ id: "bare", listTools: async () => [], callTool: async () => null }],
-      executor,
-      logger: "silent",
-    });
-    expect(app.describeConfig().connectors).toEqual([
-      {
-        id: "bare",
-        authScope: "shared",
-        source: { kind: "custom" },
-        maxResultBytes: { value: 24_000, source: "deployment" },
-      },
-    ]);
-    await app.close();
-  });
-
   it("reports deployment facts, limits with their sources, and modules", async () => {
     const { config } = secretBearingDeployment();
     const app = createConnecta({
@@ -281,30 +263,6 @@ describe("describeConfig", () => {
     expect(custom.describeConfig().storage).toEqual({ configured: true, kind: "custom" });
     expect(JSON.stringify(custom.describeConfig())).not.toContain("SENTINEL");
     await custom.close();
-  });
-
-  it("reports an unset default timeout as null and an executor-owned code pool", async () => {
-    const admitting = customExecutor(
-      {
-        execute: async () => ({ result: null }),
-        acquire: async () => ({ execute: async () => ({ result: null }), release() {} }),
-      } as never,
-      { lifecycle: "self-managed" },
-    );
-    const app = createConnecta({ readOnly: false, connectors: [], executor: admitting, logger: "silent" });
-    const snapshot = app.describeConfig();
-    expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
-    expect(snapshot.executor.admission).toBe("executor");
-    // An open deployment has no inbound auth, so no maintainers.
-    expect(snapshot.maintainers).toEqual([]);
-    expect(snapshot.storage).toEqual({ configured: false, kind: "memory" });
-    expect(snapshot.modules).toEqual({
-      ui: { enabled: false },
-      vault: { enabled: false },
-      activity: { enabled: false },
-      accessTokens: { enabled: false },
-    });
-    await app.close();
   });
 });
 

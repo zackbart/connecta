@@ -34,7 +34,7 @@ function setMicrotask(task: () => void): () => void {
 }
 
 /** The scheduler every edge-run fiber uses; see the header for why. */
-export const microtaskScheduler: Scheduler.Scheduler = new Scheduler.MixedScheduler("async", setMicrotask);
+const microtaskScheduler: Scheduler.Scheduler = new Scheduler.MixedScheduler("async", setMicrotask);
 
 const runExit = Effect.runPromiseExitWith(Context.make(Scheduler.Scheduler, microtaskScheduler));
 

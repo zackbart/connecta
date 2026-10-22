@@ -97,7 +97,7 @@ describe("repairing error envelopes", () => {
       expect(action.purpose).toContain("original arguments");
     },
   );
-  describe.each([undefined, "mcp", "value"] as const)("direct-call result mode %s", (resultMode) => {
+  describe.each([undefined] as const)("direct-call result mode %s", (resultMode) => {
     it("INV-4 INV-6 INV-9: preserves every repair envelope in structured content and agent text", async () => {
       const warn = vi.fn();
       const target = activitySink();

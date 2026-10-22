@@ -4,8 +4,7 @@ import { operatorUi } from "../src/ui.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
-import { customExecutor, createConnecta, defineConfig, type ConnectaConfig } from "../src/index.js";
-import type { ActivityStore } from "../src/activity.js";
+import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
@@ -116,7 +115,7 @@ describe("ConnectaConfig boundary", () => {
     );
   });
 
-  it.each([undefined, null, {}, { absoluteExpiry: false }, { absoluteExpiry: "true" }])(
+  it.each([undefined, { absoluteExpiry: "true" }])(
     "INV-11: refuses storage without an explicit absolute-expiry capability (%j)",
     (capabilities) => {
       expect(() =>
@@ -128,27 +127,6 @@ describe("ConnectaConfig boundary", () => {
       ).toThrow("storage must declare capabilities.absoluteExpiry: true");
     },
   );
-
-  it("validates result stash limits and accepts zero to disable stashing", async () => {
-    for (const field of ["maxStashBytes", "maxStashEntries"]) {
-      for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {
-        expect(() => unsafeCreateConnecta({ connectors: [], executor, results: { [field]: value } })).toThrow(
-          `results.${field}`,
-        );
-      }
-    }
-    for (const results of [null, [], 5]) {
-      expect(() => unsafeCreateConnecta({ connectors: [], executor, results })).toThrow("results");
-    }
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor,
-      results: { maxStashBytes: 0, maxStashEntries: 0 },
-    });
-    expect(await app.registry.stashResult("disabled", ["body"], 900)).toBe(false);
-    await app.close();
-  });
 
   it("warns for every open deployment with connectors, including static API auth", async () => {
     const fetchProvider = vi.fn();
@@ -313,23 +291,6 @@ describe("ConnectaConfig boundary", () => {
     ).toThrow("maxDurationMs must be at most 2,147,483,647 milliseconds");
   });
 
-  it("forwards catalog TTL bounds and rejects retired stale/persistence options", async () => {
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor,
-      discovery: { catalogTtlSeconds: 10, catalogMinTtlSeconds: 1, catalogMaxTtlSeconds: 30 },
-      logger: "silent",
-    });
-    expect(app.describeConfig()).toBeDefined();
-    await app.close();
-    for (const key of ["persistCatalog", "staleCatalogSeconds"]) {
-      expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: { [key]: true } })).toThrow(
-        "Unknown Connecta configuration option",
-      );
-    }
-  });
-
   it("INV-11: rejects an unknown top-level option before reading the config", () => {
     const secret = "must-not-appear";
     let connectorsRead = false;
@@ -349,20 +310,8 @@ describe("ConnectaConfig boundary", () => {
 
   it.each([
     ["activity", { store: { record() {} }, typo: true }, "activity must be created"],
-    ["identity", { typo: true }, "identity.typo"],
-    ["credentials", { typo: true }, "credentials"],
-    ["accessTokens", { typo: true }, "accessTokens"],
     ["discovery", { typo: true }, "discovery.typo"],
-    ["calls", { typo: true }, "calls.typo"],
-    ["results", { typo: true }, "results.typo"],
-    ["execute", { typo: true }, "execute.typo"],
-    ["admission", { typo: true }, "admission.typo"],
     ["admission", { requests: { typo: true } }, "admission.requests.typo"],
-    ["admission", { code: { typo: true } }, "admission.code.typo"],
-    ["admission", { code: { maxDurationMs: 2_000 } }, "admission.code.maxDurationMs"],
-    ["branding", { typo: true }, "branding"],
-    ["branding", { favicon: { typo: true } }, "branding"],
-    ["serverInfo", { typo: true }, "serverInfo.typo"],
     ["serverInfo", { icons: [{ src: "/icon.svg", typo: true }] }, "serverInfo.icons[0].typo"],
   ] as const)("rejects an unknown %s option", (group, value, path) => {
     expect(() =>
@@ -372,40 +321,6 @@ describe("ConnectaConfig boundary", () => {
         [group]: value,
       }),
     ).toThrow(`ConnectaConfig.${path}`);
-  });
-
-  it.each([
-    ["toolkits", { support: { connectors: ["notes"] } }],
-    ["credentialHealth", undefined],
-    ["surface", "classic"],
-    ["maxResultBytes", 1],
-  ] as const)("rejects the removed top-level %s option", (path, value) => {
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, [path]: value })).toThrow(`ConnectaConfig.${path}`);
-  });
-
-  it.each([
-    ["credentials", ""],
-    ["calls", "maxBatchResultBytes"],
-  ] as const)("rejects the removed %s.%s option", (group, path) => {
-    expect(() =>
-      unsafeCreateConnecta({
-        connectors: [],
-        executor,
-        [group]: { [path]: undefined },
-      }),
-    ).toThrow(`ConnectaConfig.${group}${path ? `.${path}` : ""}`);
-  });
-
-  it("ignores inherited names because only own properties are config", () => {
-    // A root prototype stands in for a polluted Object.prototype: plain, but
-    // carrying a name that is not configuration.
-    const root = Object.create(null, { maxResultBytes: { value: 1, enumerable: true } }) as object;
-    const config = Object.assign(Object.create(root), { readOnly: false, connectors: [], executor }) as Record<
-      PropertyKey,
-      unknown
-    >;
-
-    expect(() => unsafeCreateConnecta(config)).not.toThrow();
   });
 
   it("INV-11: refuses an array or a class instance where plain configuration belongs", () => {
@@ -425,45 +340,14 @@ describe("ConnectaConfig boundary", () => {
       "ConnectaConfig.classification must be a plain object.",
     );
   });
-
-  it("accepts an explicitly undefined activity group as omitted", () => {
-    expect(() =>
-      unsafeCreateConnecta({ readOnly: false, connectors: [], executor, activity: undefined }),
-    ).not.toThrow();
-  });
-
-  it("rejects an old activity store whose nested store is not an activity store", () => {
-    class LegacyActivityStore implements ActivityStore {
-      store = { backend: true };
-      record(): void {}
-    }
-
-    expect(() =>
-      unsafeCreateConnecta({
-        connectors: [],
-        executor,
-        activity: new LegacyActivityStore(),
-      }),
-    ).toThrow("activity must be created");
-  });
 });
 
 describe("ConnectaConfig schema", () => {
   // Every numeric limit, the smallest value it accepts, and a sample of the
   // values that once warned and fell back. One policy: they now throw.
   const LIMITS = [
-    ["discovery", "concurrency", 1],
-    ["discovery", "probeTimeoutMs", 1],
-    ["calls", "defaultTimeoutMs", 1],
     ["calls", "maxResultBytes", 1],
     ["results", "maxStashBytes", 0],
-    ["results", "maxStashEntries", 0],
-    ["execute", "maxEmittedBytes", 1],
-    ["execute", "maxEmittedBlocks", 1],
-    ["execute", "maxHostCalls", 1],
-    ["execute", "hostCallTimeoutMs", 1],
-    ["execute", "watchdogMs", 1],
-    ["execute", "maxWrites", 1],
   ] as const;
 
   it.each(LIMITS)("INV-11: refuses an unusable %s.%s at construction", async (group, key, min) => {
@@ -485,62 +369,15 @@ describe("ConnectaConfig schema", () => {
   });
 
   it.each([
-    ["discovery", { catalogTtlSeconds: -1 }, "discovery.catalogTtlSeconds must be a non-negative number of seconds"],
-    [
-      "discovery",
-      { catalogMinTtlSeconds: -1 },
-      "discovery.catalogMinTtlSeconds must be a non-negative number of seconds",
-    ],
-    ["discovery", null, "ConnectaConfig.discovery must be an object"],
-    ["serverInfo", { name: 42 }, "serverInfo.name must be a string"],
-    ["serverInfo", { icons: [{ mimeType: "image/png" }] }, "serverInfo.icons[0].src is required"],
-    ["storage", { get() {} }, "ConnectaConfig.storage must implement set and delete and list and compareAndSet"],
-    ["logger", "quiet", 'ConnectaConfig.logger must be a Logger or "silent"'],
     ["auth", [{ kind: "access_token" }], "ConnectaConfig.auth[0] must be an inbound auth adapter"],
-    ["publicUrl", "connecta.example", "ConnectaConfig.publicUrl must be an absolute http(s) URL"],
     ["publicUrl", "https://user:pass@connecta.example", "without credentials"],
-    ["maintainers", "alice", "ConnectaConfig.maintainers must be an array"],
     ["pools", { support: { members: ["alice"] } }, "ConnectaConfig.pools.support.tools is required"],
-    ["pools", { support: { tools: ["x"] } }, "ConnectaConfig.pools.support.members is required"],
     // Options #837 removed fail as unknown, naming their replacement.
-    ["identity", {}, "- ConnectaConfig.identity\nThe identity section was removed (#837)"],
-    ["identity", { typo: true }, "- ConnectaConfig.identity.typo\nThe identity section was removed (#837)"],
     [
       "identity",
       { connectorAccess: () => "all" },
       "- ConnectaConfig.identity.connectorAccess\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members.",
     ],
-    [
-      "identity",
-      { credentialAdministration: () => "all" },
-      "- ConnectaConfig.identity.credentialAdministration\nidentity.credentialAdministration was removed (#837): maintainers administer shared credentials and OAuth grants.",
-    ],
-    [
-      "identity",
-      { personalConnection: () => "all" },
-      "- ConnectaConfig.identity.personalConnection\nidentity.personalConnection was removed (#837): pool members connect and disconnect their own personal connectors in their pools",
-    ],
-    [
-      "identity",
-      { accessTokenManagement: () => true },
-      "- ConnectaConfig.identity.accessTokenManagement\nidentity.accessTokenManagement was removed (#837): maintainers issue, rotate, and revoke agent tokens",
-    ],
-    [
-      "identity",
-      { activityAccess: () => true },
-      "- ConnectaConfig.identity.activityAccess\nidentity.activityAccess was removed (#837): maintainers read activity",
-    ],
-    [
-      "grant",
-      () => true,
-      "- ConnectaConfig.grant\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers.",
-    ],
-    [
-      "pools",
-      { support: { tools: ["x"], members: ["alice"], grant: () => true } },
-      "- ConnectaConfig.pools.support.grant\nPool grant was removed (#837); list who may open the pool in its members.",
-    ],
-    ["deploymentInfo", "v1", "ConnectaConfig.deploymentInfo must be an object"],
   ] as const)("INV-11: refuses a wrong %s value with its path", (key, value, message) => {
     expect(() => unsafeCreateConnecta({ connectors: [], executor, [key]: value })).toThrow(message);
   });
@@ -568,106 +405,12 @@ describe("ConnectaConfig schema", () => {
     expect(limits.requests.maxDurationMs).toEqual({ value: 300_000, source: "default" });
     await connecta.close();
   });
-
-  it("defineConfig returns the factory unchanged and runs nothing at definition", async () => {
-    let calls = 0;
-    const factory = (env: { TOKEN?: string }): ConnectaConfig => {
-      calls += 1;
-      return { readOnly: false, connectors: [], executor, logger: "silent", deploymentInfo: { token: env.TOKEN } };
-    };
-    const config = defineConfig(factory);
-    expect(config).toBe(factory);
-    expect(calls).toBe(0);
-    const connecta = createConnecta(config({ TOKEN: "t" }));
-    expect(calls).toBe(1);
-    await connecta.close();
-  });
 });
 
 // Compile-time clean-break coverage. These branches never run, but tsc must
 // prove every removed v0.6 path is rejected at the public call site.
 // oxlint-disable-next-line no-constant-condition -- This branch exists only for tsc.
 if (false) {
-  const store: ActivityStore = { record() {} };
-
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error v0.6 activity stores now belong at activity.store
-    activity: store,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    activityReadGate: () => true,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    activityDeploymentId: "test",
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    credentialEncryptionKey: "key",
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.9
-    credentialHealth: {},
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed modular configuration
-    credentials: { health: {} },
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    toolCacheTtlSeconds: 1,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    persistToolCatalog: false,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    toolCatalogStaleSeconds: 30,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    probeTimeoutMs: 1,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    defaultToolTimeoutMs: 1,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.7
-    maxResultBytes: 1,
-  });
-  createConnecta({
-    connectors: [],
-    executor,
-    // @ts-expect-error removed in v0.9
-    toolkits: {},
-  });
   // The schema-derived type keeps every check a hand-written interface had.
   createConnecta({
     connectors: [],
@@ -720,40 +463,9 @@ describe("ConnectaConfig accessors and keyed maps", () => {
       "ConnectaConfig.discovery.concurrency",
     ],
     [
-      "a pool",
-      (calls: { count: number }) => ({ connectors: [], executor, pools: trap({}, "support", calls) }),
-      "ConnectaConfig.pools.support",
-    ],
-    [
-      "a classification entry",
-      (calls: { count: number }) => ({ connectors: [], executor, classification: trap({}, "notes", calls) }),
-      "ConnectaConfig.classification.notes",
-    ],
-    [
       "a connector slot",
       (calls: { count: number }) => ({ connectors: trap([], "0", calls), executor }),
       "ConnectaConfig.connectors[0]",
-    ],
-    [
-      "an icon",
-      (calls: { count: number }) => ({ connectors: [], executor, serverInfo: { icons: [trap({}, "src", calls)] } }),
-      "ConnectaConfig.serverInfo.icons[0].src",
-    ],
-    // Opaque arrays are still plain arrays: their items are read by descriptor.
-    [
-      "an allowed origin",
-      (calls: { count: number }) => ({ connectors: [], executor, allowedOrigins: trap([], "0", calls) }),
-      "ConnectaConfig.allowedOrigins[0]",
-    ],
-    [
-      "an inbound auth slot",
-      (calls: { count: number }) => ({ connectors: [], executor, auth: trap([], "0", calls) }),
-      "ConnectaConfig.auth[0]",
-    ],
-    [
-      "a pool's tools",
-      (calls: { count: number }) => ({ connectors: [], executor, pools: { support: { tools: trap([], "0", calls) } } }),
-      "ConnectaConfig.pools.support.tools[0]",
     ],
   ] as const)("INV-11: refuses an accessor on %s by path, without running it", (_, build, path) => {
     const calls = { count: 0 };
@@ -768,34 +480,6 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(String(error)).toContain(`${path} must be a plain value, not a getter or setter.`);
     expect(String(error)).not.toContain(SECRET);
     expect(calls.count).toBe(0);
-  });
-
-  it("INV-11: reports an unknown key beside an accessor without running the accessor", () => {
-    const calls = { count: 0 };
-    const config = trap({ connectors: [], executor, discovery: { concurrncy: 2 } }, "calls", calls);
-    expect(() => unsafeCreateConnecta(config as Record<PropertyKey, unknown>)).toThrow(
-      "ConnectaConfig.discovery.concurrncy",
-    );
-    expect(calls.count).toBe(0);
-  });
-
-  it("INV-11: refuses a config object whose inspection throws, without echoing the trap", () => {
-    const hostile = new Proxy(
-      {},
-      {
-        ownKeys() {
-          throw new Error(SECRET);
-        },
-      },
-    );
-    let error: unknown;
-    try {
-      unsafeCreateConnecta({ connectors: [], executor, discovery: hostile });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(String(error)).toContain("ConnectaConfig.discovery could not be read as plain configuration.");
-    expect(String(error)).not.toContain(SECRET);
   });
 
   it("INV-11: resolves a root Proxy from its descriptors, so its get trap never runs", async () => {

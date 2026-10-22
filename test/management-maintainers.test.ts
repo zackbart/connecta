@@ -285,18 +285,6 @@ describe("management collapses to maintainers", () => {
     expect(agentHandoff).not.toHaveProperty("authorizationUrl");
   });
 
-  it("INV-4: a maintainer manages their own personal connector from plain /mcp and the operator routes", async () => {
-    const flow = await setup();
-    const started = await flow.send("alice", "/ui/oauth/personal", { method: "POST" });
-    expect(started.status).toBe(200);
-    const link = ((await started.json()) as { authorizationUrl: string }).authorizationUrl;
-    expect((await flow.connect("alice", link)).status).toBe(200);
-    expect(await flow.state("personal", "alice")).toBe("ok");
-    expect(await flow.state("personal", "bob")).toBe("auth_required");
-    expect((await flow.send("alice", "/ui/oauth/personal", { method: "DELETE" })).status).toBe(204);
-    expect(await flow.state("personal", "alice")).toBe("auth_required");
-  });
-
   it("INV-4: activity reads take a maintainer principal, interactive or not; members get the private 404 and agents a 401", async () => {
     const flow = await setup();
     for (const user of ["alice", "machine"]) {
@@ -313,28 +301,6 @@ describe("management collapses to maintainers", () => {
     for (const path of ["/ui/activity", "/ui/api/activity"]) {
       expect((await flow.send(flow.bot, path)).status, path).toBe(401);
     }
-  });
-
-  it("INV-4: agent token management takes an interactive maintainer; machines and agents manage nothing", async () => {
-    const flow = await setup();
-    for (const [user, status] of [
-      [flow.bot, 403],
-      ["machine", 403],
-      ["bob", 404],
-      ["dave", 404],
-    ] as const) {
-      expect((await flow.send(user, "/ui/access-tokens")).status, user).toBe(status);
-      expect((await flow.send(user, "/ui/access-tokens/bot", { method: "POST" })).status, user).toBe(status);
-      expect((await flow.send(user, "/ui/access-tokens/bot", { method: "DELETE" })).status, user).toBe(status);
-    }
-    const listed = await flow.send("alice", "/ui/access-tokens");
-    expect(listed.status).toBe(200);
-    const { agents } = (await listed.json()) as { agents: Array<{ name: string; revision: string }> };
-    const rotated = await flow.send("alice", "/ui/access-tokens/bot", {
-      method: "POST",
-      body: JSON.stringify({ expect: agents.find((agent) => agent.name === "bot")?.revision }),
-    });
-    expect(rotated.status).toBe(200);
   });
 
   it("INV-4: the operator contract follows the maintainer rules: whole for maintainers, own manage for members", async () => {

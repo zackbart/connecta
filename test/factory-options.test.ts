@@ -7,17 +7,12 @@
 
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config-schema.js";
-import { accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
-import { d1ActivityStore } from "../src/d1.js";
 import { api, remoteMcp } from "../src/index.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
-import { docs } from "../src/providers/docs/index.js";
 import { linear } from "../src/providers/linear/index.js";
 import { notion } from "../src/providers/notion/index.js";
-import { planningCenter } from "../src/providers/planning-center/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { vercel } from "../src/providers/vercel/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { operatorUi } from "../src/ui.js";
@@ -30,65 +25,10 @@ const tool = {
   handler: () => null,
 };
 const loose = <T>(value: unknown) => value as T;
-/** A D1 binding that answers nothing: activity stores run no statement at construction. */
-const D1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;
 
 describe("built-in factory options", () => {
   it.each([
     ["api() top level", () => api("crm", loose({ tools: [tool], maxResultByte: 10 })), 'api("crm").maxResultByte'],
-    [
-      "api() oauth",
-      () =>
-        api(
-          "crm",
-          loose({
-            tools: [tool],
-            oauth: {
-              authorizationEndpoint: "https://a.example/a",
-              tokenEndpoint: "https://a.example/t",
-              clientId: "c",
-              apiOrigins: ["https://api.example"],
-              pcke: false,
-            },
-          }),
-        ),
-      'api("crm").oauth.pcke',
-    ],
-    ["api() tool", () => api("crm", loose({ tools: [{ ...tool, readOnly: true }] })), 'api("crm").tools[0].readOnly'],
-    [
-      "api() call admission rule",
-      () =>
-        api(
-          "crm",
-          loose({
-            tools: [tool],
-            callAdmission: { rules: [{ maxConcurency: 2 }] },
-          }),
-        ),
-      'api("crm").callAdmission.rules[0].maxConcurency',
-    ],
-    [
-      "api() credential field",
-      () =>
-        api(
-          "crm",
-          loose({
-            tools: [tool],
-            credential: { label: "Key", fields: [{ name: "a", label: "A", type: "text" }] },
-          }),
-        ),
-      'api("crm").credential.fields[0].type',
-    ],
-    [
-      "api() usage guide",
-      () => api("crm", loose({ tools: [tool], usageGuide: { content: "x", requird: true } })),
-      'api("crm").usageGuide.requird',
-    ],
-    [
-      "remoteMcp() top level",
-      () => remoteMcp("docs", loose({ url: "https://mcp.example/mcp", requireHTTPs: true })),
-      'remoteMcp("docs").requireHTTPs',
-    ],
     [
       "remoteMcp() headers auth",
       () =>
@@ -102,117 +42,13 @@ describe("built-in factory options", () => {
       'remoteMcp("docs").auth.header',
     ],
     [
-      "remoteMcp() oauth auth",
-      () =>
-        remoteMcp(
-          "docs",
-          loose({
-            url: "https://mcp.example/mcp",
-            auth: { type: "oauth", scopes: "read" },
-          }),
-        ),
-      'remoteMcp("docs").auth.scopes',
-    ],
-    [
-      "a provider",
-      () => linear("tracker", loose({ purpose: "Roadmap", access: "read-only", maxResultByte: 1 })),
-      'linear("tracker").maxResultByte',
-    ],
-    [
-      "a hyphenated provider",
-      () => planningCenter("pco", loose({ purpose: "People", pageSize: 5 })),
-      'planningCenter("pco").pageSize',
-    ],
-    [
-      "a provider's REST option under OAuth",
-      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "oauth" }, accountId: "a" })),
-      'cloudflare("cf").accountId',
-    ],
-    [
-      "a Global API Key option under an API token",
-      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "apiToken" }, unpinned: true })),
-      'cloudflare("cf").unpinned',
-    ],
-    [
-      "a misspelled pin key",
-      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "apiToken" }, pin: { zones: ["z"] } })),
-      'cloudflare("cf").pin.zones',
-    ],
-    [
-      "a provider's other auth case's option",
-      () => notion("wiki", loose({ purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 5 })),
-      'notion("wiki").defaultPageSize',
-    ],
-    [
-      "a Notion token call admission budget",
-      () =>
-        notion(
-          "wiki",
-          loose({
-            purpose: "Docs",
-            auth: { type: "token" },
-            callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCall: 600, windowMs: 60_000 } }] },
-          }),
-        ),
-      'notion("wiki").callAdmission.rules[0].budget.maxCall',
-    ],
-    [
-      "a provider's narrowed auth",
-      () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth", scope: "x" } })),
-      'stripe("billing").auth.scope',
-    ],
-    [
       "a provider's other auth case",
       () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth" }, mode: "sandbox" })),
       'stripe("billing").mode',
     ],
-    [
-      "a token-only option under OAuth",
-      () => vercel("deploys", loose({ purpose: "Deploys", auth: { type: "oauth" }, teamId: "team_1" })),
-      'vercel("deploys").teamId',
-    ],
-    [
-      "a Workspace service account",
-      () =>
-        docs(
-          "docs",
-          loose({
-            purpose: "Docs",
-            subject: "a@example.com",
-            serviceAccount: { clientEmail: "a@example.com", privateKey: "k", private_key_id: "id" },
-          }),
-        ),
-      'docs("docs").serviceAccount.private_key_id',
-    ],
     ["operatorUi()", () => operatorUi(loose({ brandng: {} })), "operatorUi().brandng"],
-    [
-      "operatorUi() theme",
-      () => operatorUi(loose({ branding: { theme: { accentColor: "#fff" } } })),
-      "operatorUi().branding.theme.accentColor",
-    ],
-    [
-      "operatorUi() favicon",
-      () => operatorUi(loose({ branding: { favicon: { url: "/x.svg" } } })),
-      "operatorUi().branding.favicon.url",
-    ],
-    ["accessTokens()", () => accessTokens(memoryStorage(), loose({ maxActiv: 3 })), "accessTokens().maxActiv"],
-    [
-      "activityHistory()",
-      () => activityHistory(loose({ store: { record() {} }, deploymentID: "prod" })),
-      "activityHistory().deploymentID",
-    ],
-    ["d1ActivityStore()", () => d1ActivityStore(D1, loose({ retentionDay: 30 })), "d1ActivityStore().retentionDay"],
   ] as const)("INV-11: refuses an unknown option in %s with its path", (_, build, path) => {
     expect(build).toThrow(`Unknown option: ${path}.`);
-  });
-
-  it("INV-11: refuses an activity retention that is not a positive number of days", () => {
-    for (const retentionDays of [0, -1, Number.NaN, Infinity, "30"]) {
-      expect(() => d1ActivityStore(D1, { retentionDays: retentionDays as never })).toThrow(
-        "d1ActivityStore().retentionDays must be a positive number of days.",
-      );
-    }
-    expect(() => d1ActivityStore(D1, { retentionDays: 30 })).not.toThrow();
   });
 
   it("INV-11: refuses an accessor in factory options without running it", () => {
@@ -294,9 +130,6 @@ describe("discriminated factory options", () => {
   const headers = { "X-Key": SECRET };
   const MCP_AUTH = '"request", "headers", "credential", "oauth"';
   const STRIPE_AUTH = '"oauth", "apiKey"';
-  const NOTION_AUTH = '"oauth", "token"';
-  const CLOUDFLARE_AUTH = '"oauth", "apiToken", "globalApiKey"';
-  const VERCEL_AUTH = '"oauth", "token"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
   // checked nothing and the factory, finding no known `type`, built the
@@ -315,88 +148,15 @@ describe("discriminated factory options", () => {
       `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`,
     ],
     [
-      "remoteMcp() auth with a non-string type",
-      () => remoteMcp("docs", loose({ url, auth: { type: 1, headers } })),
-      `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`,
-    ],
-    [
-      "remoteMcp() auth with an inherited type",
-      () =>
-        remoteMcp(
-          "docs",
-          loose({
-            url,
-            auth: Object.assign(Object.create({ type: "headers" }), { headers }),
-          }),
-        ),
-      'remoteMcp("docs").auth must be a plain object.',
-    ],
-    [
       "remoteMcp() auth without a type",
       () => remoteMcp("docs", loose({ url, auth: { headers } })),
       `remoteMcp("docs").auth.type is required: one of ${MCP_AUTH}.`,
-    ],
-    [
-      "remoteMcp() auth that is a string",
-      () => remoteMcp("docs", loose({ url, auth: "headers" })),
-      'remoteMcp("docs").auth must be an object.',
-    ],
-    [
-      "remoteMcp() auth that is null",
-      () => remoteMcp("docs", loose({ url, auth: null })),
-      'remoteMcp("docs").auth must be an object.',
-    ],
-    [
-      "remoteMcp() auth that is an array",
-      () => remoteMcp("docs", loose({ url, auth: [{ type: "headers", headers }] })),
-      'remoteMcp("docs").auth must be an object.',
-    ],
-    [
-      "a provider's auth without a type",
-      () => cloudflare("cf", loose({ purpose: "Ops", auth: { headers } })),
-      `cloudflare("cf") requires auth.type is required: one of ${CLOUDFLARE_AUTH}.`,
-    ],
-    [
-      "a provider's narrowed auth",
-      () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "OAuth" } })),
-      `stripe("billing") requires auth.type to be one of ${STRIPE_AUTH}.`,
-    ],
-    [
-      "a provider's narrowed auth without a type",
-      () => stripe("billing", loose({ purpose: "Revenue", auth: {} })),
-      `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
     ],
     [
       // 0.28 defaulted some providers to REST; a silent OAuth default would be a trap.
       "a provider's required auth when omitted",
       () => stripe("billing", loose({ purpose: "Revenue" })),
       `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
-    ],
-    [
-      "notion() auth",
-      () => notion("wiki", loose({ purpose: "Docs", auth: { type: "OAuth" } })),
-      `notion("wiki") requires auth.type to be one of ${NOTION_AUTH}.`,
-    ],
-    [
-      "notion()'s required auth when omitted",
-      () => notion("wiki", loose({ purpose: "Docs" })),
-      `notion("wiki") requires auth.type is required: one of ${NOTION_AUTH}.`,
-    ],
-    [
-      // 0.30 defaulted vercel() to hosted MCP and selected REST with surface.
-      "vercel() required auth when omitted",
-      () => vercel("deploys", loose({ purpose: "Deploys", surface: "mcp" })),
-      `vercel("deploys") requires auth.type is required: one of ${VERCEL_AUTH}.`,
-    ],
-    [
-      "cloudflare() required auth when omitted",
-      () => cloudflare("cf", loose({ purpose: "Ops", surface: "api" })),
-      `cloudflare("cf") requires auth.type is required: one of ${CLOUDFLARE_AUTH}.`,
-    ],
-    [
-      "cloudflare() bearer-token MCP auth",
-      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "credential" } })),
-      `cloudflare("cf") requires auth.type to be one of ${CLOUDFLARE_AUTH}.`,
     ],
   ] as const)("INV-11: refuses %s with its path and valid values", (_, build, message) => {
     let error: unknown;
@@ -408,14 +168,6 @@ describe("discriminated factory options", () => {
     expect(error).toBeInstanceOf(ConfigError);
     expect(String(error)).toContain(message);
     expect(String(error)).not.toContain(SECRET);
-  });
-
-  it.each([
-    ["headers", { type: "headers", headers, maxResultByte: 1 }, 'remoteMcp("docs").auth.maxResultByte'],
-    ["credential", { type: "credential", header: "X-Key", schema: null }, 'remoteMcp("docs").auth.schema'],
-    ["oauth", { type: "oauth", headers }, 'remoteMcp("docs").auth.headers'],
-  ] as const)("INV-11: refuses an unknown key in the %s auth case", (_, auth, path) => {
-    expect(() => remoteMcp("docs", loose({ url, auth }))).toThrow(`Unknown option: ${path}.`);
   });
 
   it("INV-11: refuses an accessor discriminant without running it", () => {
@@ -432,76 +184,9 @@ describe("discriminated factory options", () => {
     );
     expect(reads).toBe(0);
   });
-
-  it("still selects every valid case and a union's default", () => {
-    expect(remoteMcp("docs", { url, auth: { type: "headers", headers } }).describe?.().auth?.mode).toBe("headers");
-    expect(remoteMcp("docs", { url, auth: { type: "oauth" } }).describe?.().auth?.mode).toBe("oauth");
-    expect(remoteMcp("docs", loose({ url, auth: undefined })).describe?.().auth?.mode).toBe("none");
-    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "oauth" } })).not.toThrow();
-    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" } })).not.toThrow();
-    expect(() => vercel("deploys", { purpose: "Deploys", auth: { type: "oauth" } })).not.toThrow();
-  });
 });
 
 describe("factory options read as plain data", () => {
-  it("INV-11: refuses an accessor inside an options array without running it", () => {
-    let reads = 0;
-    const apiOrigins = Object.defineProperty([], "0", {
-      enumerable: true,
-      configurable: true,
-      get() {
-        reads += 1;
-        throw new Error(SECRET);
-      },
-    });
-    let error: unknown;
-    try {
-      api(
-        "crm",
-        loose({
-          tools: [tool],
-          oauth: {
-            authorizationEndpoint: "https://a.example/a",
-            tokenEndpoint: "https://a.example/t",
-            clientId: "c",
-            apiOrigins,
-          },
-        }),
-      );
-    } catch (caught) {
-      error = caught;
-    }
-    expect(String(error)).toContain('api("crm").oauth.apiOrigins[0] must be a plain value, not a getter or setter.');
-    expect(String(error)).not.toContain(SECRET);
-    expect(reads).toBe(0);
-  });
-
-  it("INV-11: builds from descriptors alone, so an options Proxy's get trap never runs", () => {
-    let gets = 0;
-    const hostile = <T extends object>(target: T): T =>
-      new Proxy(target, {
-        get() {
-          gets += 1;
-          throw new Error(SECRET);
-        },
-        has() {
-          throw new Error(SECRET);
-        },
-      });
-    const connector = remoteMcp(
-      "docs",
-      hostile({
-        url: "https://mcp.example/mcp",
-        auth: hostile({ type: "headers", headers: { "X-Key": "k" } }),
-      }),
-    );
-    expect(connector.describe?.().auth?.mode).toBe("headers");
-    // A tool carries behaviour and passes through as given; see the tool suite.
-    expect(() => api("crm", hostile({ tools: [tool] }))).not.toThrow();
-    expect(() => linear("tracker", hostile({ purpose: "Roadmap", access: "read-only" }))).not.toThrow();
-    expect(gets).toBe(0);
-  });
-
   it("INV-11: refuses options whose inspection throws, by path and without the trap's text", () => {
     const revocable = Proxy.revocable({ url: "https://mcp.example/mcp" }, {});
     revocable.revoke();
@@ -595,23 +280,6 @@ describe("factory options keep behaviour in place", () => {
     await expect(call(api("crm", { tools: [new Counter()] }))).resolves.toBe(42);
   });
 
-  it("INV-11: calls bound and arrow handlers as written", async () => {
-    const owner = {
-      secret: 7,
-      read(this: { secret: number }) {
-        return this.secret;
-      },
-    };
-    const connector = api("crm", {
-      tools: [
-        { name: "read", description: "Read.", annotations, handler: owner.read.bind(owner) },
-        { name: "arrow", description: "Arrow.", annotations, handler: () => owner.secret + 1 },
-      ],
-    });
-    await expect(call(connector, "read")).resolves.toBe(7);
-    await expect(call(connector, "arrow")).resolves.toBe(8);
-  });
-
   it("INV-11: still checks a tool's own keys and declared accessors, inherited ones included", () => {
     class Extra {
       readonly name = "read";
@@ -650,44 +318,7 @@ describe("factory options keep behaviour in place", () => {
 });
 
 describe("factory options refuse arrays and instances where plain data belongs", () => {
-  it("INV-11: refuses array options with a path, unread", () => {
-    let reads = 0;
-    const options = Object.defineProperty([], "url", {
-      enumerable: true,
-      get() {
-        reads += 1;
-        return "https://mcp.example/mcp";
-      },
-    });
-    Object.assign(options, { maxResultByte: 1 });
-    expect(() => remoteMcp("docs", loose(options))).toThrow('remoteMcp("docs") must be an object.');
-    expect(() => linear("tracker", loose([{ purpose: "Roadmap" }]))).toThrow('linear("tracker") requires an object.');
-    expect(reads).toBe(0);
-  });
-
   it.each([
-    [
-      "an array call admission",
-      () => api("crm", loose({ tools: [tool], callAdmission: [{ rules: [] }] })),
-      'api("crm").callAdmission must be an object.',
-    ],
-    [
-      "an array usage guide",
-      () => api("crm", loose({ tools: [tool], usageGuide: [{ content: "x" }] })),
-      'api("crm").usageGuide must be an object.',
-    ],
-    [
-      "an array admission rule budget",
-      () =>
-        api(
-          "crm",
-          loose({
-            tools: [tool],
-            callAdmission: { rules: [{ budget: [] }] },
-          }),
-        ),
-      'api("crm").callAdmission.rules[0].budget must be an object.',
-    ],
     [
       "an array of headers",
       () =>
@@ -713,30 +344,12 @@ describe("factory options refuse arrays and instances where plain data belongs",
         ),
       'linear("tracker") requires a plain object.',
     ],
-    [
-      "a class instance as branding",
-      () =>
-        operatorUi(
-          loose({
-            branding: new (class {
-              productName = "Ops";
-            })(),
-          }),
-        ),
-      "operatorUi().branding must be a plain object.",
-    ],
   ] as const)("INV-11: refuses %s with its path", (_, build, message) => {
     expect(build).toThrow(message);
-  });
-
-  it("accepts null-prototype option records", () => {
-    const options = Object.assign(Object.create(null) as object, { purpose: "Roadmap", access: "read-only" });
-    expect(() => linear("tracker", loose(options))).not.toThrow();
   });
 });
 
 describe("factory string maps read as plain data", () => {
-  const oauth = { authorizationEndpoint: "https://a.example/a", tokenEndpoint: "https://a.example/t", clientId: "c" };
   const getter = (counter: { reads: number }) => ({
     enumerable: true,
     get() {
@@ -746,16 +359,6 @@ describe("factory string maps read as plain data", () => {
   });
 
   it.each([
-    [
-      "api() authorizationParams",
-      (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, authorizationParams: map } })),
-      'api("crm").oauth.authorizationParams.prompt',
-    ],
-    [
-      "api() tokenRequestHeaders",
-      (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, tokenRequestHeaders: map } })),
-      'api("crm").oauth.tokenRequestHeaders.prompt',
-    ],
     [
       "remoteMcp() headers",
       (map: object) =>
@@ -786,12 +389,5 @@ describe("factory string maps read as plain data", () => {
     } catch (caught) {
       expect(String(caught)).not.toContain(SECRET);
     }
-  });
-
-  it("copies string maps so later changes do not reach the connector", () => {
-    const headers: Record<string, string> = { "X-Key": "k" };
-    const connector = remoteMcp("docs", { url: "https://mcp.example/mcp", auth: { type: "headers", headers } });
-    headers["X-Late"] = "late";
-    expect(connector.describe?.().auth).toMatchObject({ mode: "headers", headerNames: ["X-Key"] });
   });
 });

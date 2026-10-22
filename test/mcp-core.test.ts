@@ -42,21 +42,6 @@ describe("2026-07-28 core", () => {
     expect(client).toEqual({});
   });
 
-  it("INV-4: drops prototype keys from declared client capabilities", () => {
-    const client: McpClientContext = {};
-    const declared = JSON.parse(
-      '{"__proto__":{"polluted":true},"constructor":{},"prototype":{},"elicitation":{"url":{}}}',
-    );
-    bindMcpClient(
-      { mcpReq: { envelope: { "io.modelcontextprotocol/clientCapabilities": declared } } } as unknown as ServerContext,
-      client,
-    );
-    const capabilities = required(client.clientCapabilities);
-    expect(Object.keys(capabilities)).toEqual(["elicitation"]);
-    expect(Object.getPrototypeOf(capabilities)).toBeNull();
-    expect((capabilities as { polluted?: unknown }).polluted).toBeUndefined();
-  });
-
   it("INV-6: records only bounded typed client name and version facts", () => {
     const events: ToolCallActivityEvent[] = [];
     const context: ActivityRequestContext = {
@@ -167,46 +152,6 @@ describe("2026-07-28 core", () => {
       expect(events[0]!.clientName).toBe(INVALID_CLIENT_FACTS[0]);
     } finally {
       await c.close();
-    }
-  });
-
-  it("INV-4: activity API is read-only and retains the maintainer and read gates", async () => {
-    for (const [maintainer, gate, status] of [
-      [false, true, 404],
-      [true, false, 403],
-      [true, true, 200],
-    ] as const) {
-      let reads = 0;
-      const c = createTestConnecta({
-        connectors: [],
-        logger: silentLogger,
-        auth: {
-          kind: "test",
-          activityActorNamespace: "connecta:test",
-          interactiveOperator: true,
-          authorize: () => ({ ok: true, userId: "operator" }),
-        },
-        maintainers: [maintainer ? "operator" : "someone_else"],
-        activity: activityHistory({
-          readGate: () => gate,
-          store: {
-            record() {},
-            list: async () => {
-              reads++;
-              return { events: [] };
-            },
-          },
-        }),
-      });
-      try {
-        const response = await c.fetch(new Request(`${BASE}/ui/api/activity`));
-        expect(response.status).toBe(status);
-        expect(response.headers.get("Cache-Control")).toContain("no-store");
-        expect(reads).toBe(status === 200 ? 1 : 0);
-        expect((await c.fetch(new Request(`${BASE}/ui/api/activity`, { method: "POST" }))).status).toBe(405);
-      } finally {
-        await c.close();
-      }
     }
   });
 

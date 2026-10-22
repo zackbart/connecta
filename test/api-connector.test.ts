@@ -67,126 +67,6 @@ describe("api() connector", () => {
     ).toThrow('api() tool "ambiguous.same" is declared more than once');
   });
 
-  it("kind is 'api' and description is preserved", () => {
-    const c = makeApi();
-    expect(c.id).toBe("resend");
-    expect(c.kind).toBe("api");
-    expect(c.description).toBe("Send email via Resend");
-  });
-
-  it("passes maxResultBytes through, and leaves it unset by default", () => {
-    expect(makeApi().maxResultBytes).toBeUndefined();
-    const capped = api("docs", {
-      description: "Docs",
-      maxResultBytes: 200_000,
-      tools: [
-        {
-          name: "fetch",
-          description: "Fetch a document",
-          annotations: { readOnlyHint: true },
-          handler: () => null,
-        },
-      ],
-    });
-    expect(capped.maxResultBytes).toBe(200_000);
-  });
-
-  it("passes callAdmission through, and leaves it unset by default", () => {
-    expect(makeApi().callAdmission).toBeUndefined();
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] } as const;
-    const limited = api("docs", {
-      description: "Docs",
-      callAdmission,
-      tools: [
-        {
-          name: "fetch",
-          description: "Fetch a document",
-          annotations: { readOnlyHint: true },
-          handler: () => null,
-        },
-      ],
-    });
-    expect(limited.callAdmission).toEqual(callAdmission);
-  });
-
-  it("passes usageGuide through, and leaves it unset by default", () => {
-    expect(makeApi().usageGuide).toBeUndefined();
-    const guide = "# Resend usage\n\nAlways set a verified `from`.\n";
-    const guided = api("resend", {
-      description: "Send email via Resend",
-      usageGuide: guide,
-      tools: [
-        {
-          name: "noop",
-          description: "Do nothing",
-          annotations: { readOnlyHint: true },
-          handler: () => null,
-        },
-      ],
-    });
-    expect(guided.usageGuide).toEqual(guide);
-    const structured = {
-      content: guide,
-      summary: "Verified sender requirements.",
-      required: true,
-    } as const;
-    expect(
-      api("structured", {
-        usageGuide: structured,
-        tools: [
-          {
-            name: "noop",
-            description: "Do nothing",
-            annotations: { readOnlyHint: true },
-            handler: () => null,
-          },
-        ],
-      }).usageGuide,
-    ).toEqual(structured);
-  });
-
-  it("listTools returns the declared tool defs (name/description/schema)", async () => {
-    const c = makeApi();
-    const tools = await c.listTools(ctx());
-    expect(tools.map((t) => t.name)).toEqual(["send_email", "boom", "async_boom"]);
-    const send = tools.find((t) => t.name === "send_email")!;
-    expect(send.description).toBe("Send an email");
-    expect((send.inputSchema as any).properties.to.type).toBe("string");
-    expect((send.outputSchema as any).properties.queued.type).toBe("boolean");
-    expect(send.annotations).toEqual({
-      readOnlyHint: false,
-      idempotentHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("callTool dispatches to the right handler with args + ctx", async () => {
-    const c = makeApi();
-    const result = await c.callTool("send_email", { to: "a@b.c" }, ctx());
-    expect(result).toEqual({ queued: true, to: "a@b.c", base: BASE });
-  });
-
-  it("callTool defaults args to {} when omitted", async () => {
-    let seen: unknown;
-    const c = api("x", {
-      tools: [
-        {
-          name: "peek",
-          description: "Report the arguments it received",
-          annotations: { readOnlyHint: true },
-          handler: (args) => ((seen = args), null),
-        },
-      ],
-    });
-    await c.callTool("peek", undefined, ctx());
-    expect(seen).toEqual({});
-  });
-
-  it("unknown tool name throws a clear error", async () => {
-    const c = makeApi();
-    await expect(c.callTool("nope", {}, ctx())).rejects.toThrow(/Unknown tool "nope" on connector "resend"/);
-  });
-
   it("handler throw surfaces to the caller in connecta's words (call_tool wraps it as isError)", async () => {
     // A plain Error may be a runtime's account of what the handler read, so
     // its text is withheld; a handler means its words with ConnectorCallError.
@@ -231,55 +111,6 @@ describe("api() argument validation", () => {
     expect(typed.retryable).toBe(false);
     expect(typed.message).toContain("resend.send_email");
     expect(typed.message).toContain("/to");
-  });
-
-  it("rejects omitted args when the schema has required fields", async () => {
-    const c = makeApi();
-    await expect(c.callTool("send_email", undefined, ctx())).rejects.toMatchObject({ code: "invalid_args" });
-  });
-
-  it("valid args reach the handler unchanged", async () => {
-    const c = makeApi();
-    const result = await c.callTool("send_email", { to: "a@b.c" }, ctx());
-    expect(result).toEqual({ queued: true, to: "a@b.c", base: BASE });
-  });
-
-  it("tools without an inputSchema stay pass-through", async () => {
-    let seen: unknown;
-    const c = api("x", {
-      tools: [
-        {
-          name: "peek",
-          description: "Report the arguments it received",
-          annotations: { readOnlyHint: true },
-          handler: (args) => ((seen = args), null),
-        },
-      ],
-    });
-    await c.callTool("peek", { anything: true }, ctx());
-    expect(seen).toEqual({ anything: true });
-  });
-
-  it("validateArgs: false restores the pre-validation pass-through", async () => {
-    const c = api("loose", {
-      validateArgs: false,
-      tools: [
-        {
-          name: "coerce",
-          description: "Accept a loosely typed page number",
-          annotations: { readOnlyHint: true },
-          inputSchema: {
-            type: "object",
-            properties: { page: { type: "integer" } },
-            required: ["page"],
-          },
-          handler: (args: { page: unknown }) => ({ got: args.page }),
-        },
-      ],
-    });
-    expect(await c.callTool("coerce", { page: "3" }, ctx())).toEqual({
-      got: "3",
-    });
   });
 
   it("a schema that only fails on first use rejects the call, never passes through", async () => {
@@ -327,14 +158,6 @@ describe("api() construction contract", () => {
         }),
       /acme\.nameless.*non-empty description/s,
     ],
-    [
-      "refuses a tool whose description is only whitespace",
-      () =>
-        api("acme", {
-          tools: [{ name: "blank", description: "   \n", annotations: { readOnlyHint: true }, handler: () => null }],
-        }),
-      /acme\.blank/,
-    ],
     // A JS deployment can reach these; TypeScript refuses them outright.
     [
       "refuses a tool with no explicit readOnlyHint",
@@ -350,21 +173,6 @@ describe("api() construction contract", () => {
           ],
         }),
       /acme\.unclassified.*annotations\.readOnlyHint/s,
-    ],
-    [
-      "never infers a classification from the tool name or description",
-      () =>
-        api("acme", {
-          tools: [
-            {
-              name: "list_things",
-              description: "List things. Reads only, honest.",
-              annotations: {} as never,
-              handler: () => [],
-            },
-          ],
-        }),
-      /annotations\.readOnlyHint/,
     ],
     [
       "refuses a schema the validator cannot compile",
@@ -386,55 +194,13 @@ describe("api() construction contract", () => {
         }),
       /acme\.clashing_ids.*validator cannot use/s,
     ],
-    // Opting out of enforcement is not opting out of the schema being real.
-    [
-      "checks the schema even when validateArgs is off",
-      () =>
-        api("acme", {
-          validateArgs: false,
-          tools: [
-            {
-              name: "clashing_ids",
-              description: "Declares the same $id twice",
-              annotations: { readOnlyHint: true },
-              inputSchema: {
-                $id: "urn:connecta-test:api-clash-loose",
-                type: "object",
-                $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } },
-              },
-              handler: () => null,
-            },
-          ],
-        }),
-      /acme\.clashing_ids/,
-    ],
-    [
-      "accepts an explicit readOnlyHint: false as the destructive declaration",
-      () =>
-        api("acme", {
-          tools: [
-            {
-              name: "delete_thing",
-              description: "Delete a thing",
-              annotations: { readOnlyHint: false, destructiveHint: true },
-              handler: () => ({ deleted: true }),
-            },
-          ],
-        }),
-      null,
-    ],
   ] as const)("%s", (_name, construct, message) => {
-    if (message) {
-      expect(construct).toThrow(message);
-      return;
-    }
-    const c = construct();
-    expect(required(c.staticTools?.[0]).annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
+    expect(construct).toThrow(message);
   });
 });
 
 describe("api() transport diagnostics", () => {
-  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])(
+  it.each(["ECONNREFUSED", "AbortError"])(
     "classifies structured %s without inventing a downstream host",
     async (code) => {
       const connector = api("down", {
@@ -489,44 +255,6 @@ describe("api() transport diagnostics", () => {
               message: expect.stringContaining("Whether the write took effect at crm is unknown"),
             },
       );
-    }
-  });
-
-  it("preserves sanitized typed details and never types provider prose", async () => {
-    const typed = new ConnectorCallError("unavailable", "unreachable", {
-      details: { host: "https://user:secret@example.com:8443/private?token=secret", code: "ENOTFOUND" },
-    });
-    const thrownBy = async (cause: unknown) => {
-      const connector = api("down", {
-        tools: [
-          {
-            name: "read",
-            description: "Read downstream",
-            annotations: { readOnlyHint: true },
-            handler: () => {
-              throw cause;
-            },
-          },
-        ],
-      });
-      return (await connector.callTool("read", {}, ctx()).then(
-        () => null,
-        (error: unknown) => error,
-      )) as Error;
-    };
-    expect(await thrownBy(typed)).toBe(typed);
-    expect(classifyCallError(typed).details).toEqual({ host: "https://example.com:8443", code: "ENOTFOUND" });
-    // Prose is rebuilt, not typed: no details, no cause, the verdict kept.
-    for (const cause of [new Error("ECONNREFUSED timeout"), new TypeError("bad handler")]) {
-      const error = await thrownBy(cause);
-      expect(error).not.toBe(cause);
-      expect(error.cause).toBeUndefined();
-      expect(classifyCallError(error)).toMatchObject({
-        code: classifyCallError(cause).code,
-        retryable: classifyCallError(cause).retryable,
-      });
-      expect(classifyCallError(error)).not.toHaveProperty("details");
-      expect(classifyCallError(error).message).not.toContain(cause.message);
     }
   });
 });

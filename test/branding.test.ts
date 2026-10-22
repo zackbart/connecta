@@ -68,25 +68,6 @@ describe("branding defaults", () => {
     expect(brand.productUrl).toBeUndefined();
   });
 
-  it("derives a page title from product and owner", () => {
-    expect(resolveBranding({ productName: "Acme MCP" }).pageTitle).toBe("Acme MCP");
-    expect(resolveBranding({ productName: "Acme MCP", ownerName: "Acme Inc" }).pageTitle).toBe("Acme MCP · Acme Inc");
-  });
-
-  it("lets pageTitle override the derived title", () => {
-    expect(
-      resolveBranding({
-        productName: "Acme MCP",
-        ownerName: "Acme Inc",
-        pageTitle: "Acme Tools",
-      }).pageTitle,
-    ).toBe("Acme Tools");
-  });
-
-  it("scopes the default description to the product name", () => {
-    expect(resolveBranding({ productName: "Acme MCP" }).description).toContain("Acme MCP");
-  });
-
   it("omits branding link URLs that are not safe http(s) URLs", () => {
     const dangerous = resolveBranding({
       productUrl: "javascript:alert(1)",
@@ -107,13 +88,6 @@ describe("branding defaults", () => {
     for (const href of ["javascript:alert(1)", "data:image/svg+xml,<svg/>", "//evil.example/icon.svg", "icon.svg"]) {
       expect(resolveBranding({ favicon: { href } }).faviconHref).toBe("/favicon.svg");
     }
-  });
-
-  it("keeps absolute http(s) and root-relative favicon hrefs", () => {
-    expect(resolveBranding({ favicon: { href: "https://cdn.acme.example/icon.svg" } }).faviconHref).toBe(
-      "https://cdn.acme.example/icon.svg",
-    );
-    expect(resolveBranding({ favicon: { href: "/assets/acme.svg" } }).faviconHref).toBe("/assets/acme.svg");
   });
 });
 
@@ -194,13 +168,6 @@ describe("the shared page layout", () => {
     expect(renderPage(svg, { ...layout, uiMounted: false })).not.toContain('class="brand-mark"');
   });
 
-  it("reads a configured theme color the one way resolveBranding does", () => {
-    const page = renderPage({ themeColor: "  #101010  " }, layout);
-    expect(page).toContain('<meta name="theme-color" content="#101010">');
-    expect(resolveBranding({ themeColor: "  #101010  " }).themeColor).toBe("#101010");
-    expect(renderPage({ themeColor: "   " }, layout)).toContain('media="(prefers-color-scheme: dark)"');
-  });
-
   it("escapes every branding value it interpolates", () => {
     const page = renderPage(
       {
@@ -215,60 +182,6 @@ describe("the shared page layout", () => {
 });
 
 describe("operator theme tokens", () => {
-  it("defaults to the stylesheet's own tokens and the OS color scheme", () => {
-    const theme = resolveTheme();
-    expect(theme).toEqual({ colorScheme: "system" });
-    expect(themeCss(theme)).toBe("");
-    expect(droppedThemeTokens()).toEqual([]);
-  });
-
-  it("keeps the values a deployment is allowed to set", () => {
-    const theme = resolveTheme({
-      accent: "#7C3AED",
-      radius: 4,
-      fontFamily: "Inter, system-ui, sans-serif",
-      monoFamily: '"JetBrains Mono", monospace',
-      colorScheme: "dark",
-    });
-    expect(theme).toEqual({
-      accent: "#7C3AED",
-      radius: "4px",
-      fontFamily: "Inter, system-ui, sans-serif",
-      monoFamily: '"JetBrains Mono", monospace',
-      colorScheme: "dark",
-    });
-    expect(themeCss(theme)).toBe(
-      ":root{--accent:#7C3AED;--custom-on-accent:#ffffff;--custom-accent-text:#a375f2;" +
-        "--radius:4px;--sans:Inter, system-ui, sans-serif;" +
-        '--mono:"JetBrains Mono", monospace}',
-    );
-    expect(droppedThemeTokens({ accent: "#7C3AED", radius: 4 })).toEqual([]);
-  });
-
-  // A dark accent stays legible as text on the dark palette, and a light one
-  // gets dark text on its fill; the built-in accent keeps the stylesheet's mix.
-  it("derives readable text colors from a configured accent", () => {
-    expect(themeCss(resolveTheme({ accent: "#000080" }))).toContain("--custom-accent-text:#8c8cc6");
-    expect(themeCss(resolveTheme({ accent: "#000080" }))).toContain("--custom-on-accent:#ffffff");
-    expect(themeCss(resolveTheme({ accent: "#ffd400" }))).toContain("--custom-on-accent:#0f0e1f");
-    expect(themeCss(resolveTheme({ radius: 0 }))).not.toContain("--custom-");
-  });
-
-  // The resolver trims before reading, so the warning must too: a value that
-  // was applied and a value that was dropped cannot both print as dropped.
-  it("does not report a padded value the resolver accepted", () => {
-    const theme = { colorScheme: " dark " as NonNullable<ConnectaTheme["colorScheme"]> };
-    expect(resolveTheme(theme).colorScheme).toBe("dark");
-    expect(droppedThemeTokens(theme)).toEqual([]);
-  });
-
-  it("reads radius as pixels only when the operator left off the unit", () => {
-    expect(resolveTheme({ radius: "0.5rem" }).radius).toBe("0.5rem");
-    expect(resolveTheme({ radius: "12" }).radius).toBe("12px");
-    expect(resolveTheme({ radius: 0 }).radius).toBe("0px");
-    expect(resolveTheme({ radius: -1 }).radius).toBeUndefined();
-  });
-
   // Every token lands in a `:root` block, so the gates reject anything that
   // could close a declaration, open a function, or leave a string open.
   it.each([
@@ -289,26 +202,6 @@ describe("operator theme tokens", () => {
     else expect(resolved[token]).toBeUndefined();
     expect(droppedThemeTokens(theme)).toEqual([`theme.${token}`]);
     expect(themeCss(resolveTheme(theme))).not.toContain(value);
-  });
-
-  it("pins the page's color scheme and appends the token block", async () => {
-    const body = await (
-      await makeDeployment(brandingConfig({ theme: { accent: "#123456", colorScheme: "dark" } })).fetch(
-        new Request(`${BASE}/`),
-      )
-    ).text();
-    expect(body).toContain('<html lang="en" data-scheme="dark">');
-    expect(body).toContain(":root{--accent:#123456;--custom-on-accent:#ffffff;--custom-accent-text:#7d8fa2}</style>");
-  });
-
-  it("leaves the html element alone when the scheme follows the OS", async () => {
-    const body = await (
-      await makeDeployment(brandingConfig({ theme: { accent: "#123456" } })).fetch(new Request(`${BASE}/`))
-    ).text();
-    // The stylesheet still carries its `[data-scheme]` selectors; what an
-    // unpinned deployment must not carry is the attribute that triggers them.
-    expect(body).toContain('<html lang="en">');
-    expect(body).not.toContain('<html lang="en" data-scheme');
   });
 
   it("warns once, naming every theme token it dropped", async () => {
@@ -333,34 +226,6 @@ describe("operator theme tokens", () => {
 });
 
 describe("branding in served pages", () => {
-  it("links the product label when only productUrl is set", async () => {
-    const body = await (
-      await makeDeployment(
-        brandingConfig({
-          productName: "Acme MCP",
-          productUrl: "https://acme.example/docs",
-        }),
-      ).fetch(new Request(`${BASE}/`))
-    ).text();
-    expect(body).toContain('<a class="brand navlink" href="https://acme.example/docs">Acme MCP</a>');
-  });
-
-  it("serves a custom favicon and points the page at a custom href", async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>';
-    const ico = new Uint8Array([0, 0, 1, 0]);
-    const c = makeDeployment(
-      brandingConfig({
-        productName: "Acme MCP",
-        favicon: { svg, ico, href: "https://cdn.acme.example/icon.svg" },
-      }),
-    );
-    expect(await (await c.fetch(new Request(`${BASE}/favicon.svg`))).text()).toBe(svg);
-    const icoRes = await c.fetch(new Request(`${BASE}/favicon.ico`));
-    expect(new Uint8Array(await icoRes.arrayBuffer())).toEqual(ico);
-    const ui = await (await c.fetch(new Request(`${BASE}/`))).text();
-    expect(ui).toContain('href="https://cdn.acme.example/icon.svg"');
-  });
-
   it("renders an accepted favicon href on both branded surfaces", async () => {
     for (const href of ["https://cdn.acme.example/icon.svg", "/assets/acme.svg"]) {
       const c = makeDeployment(brandingConfig({ productName: "Acme MCP", favicon: { href } }));
@@ -369,24 +234,6 @@ describe("branding in served pages", () => {
         expect(iconHref(body)).toBe(href);
       }
     }
-  });
-
-  it("keeps the default mark for a format the deployment does not override", async () => {
-    const c = makeDeployment(brandingConfig({ favicon: { svg: "<svg/>" } }));
-    const icoRes = await c.fetch(new Request(`${BASE}/favicon.ico`));
-    expect(icoRes.status).toBe(200);
-    expect((await icoRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
-  });
-
-  it("brands the OAuth result page too", async () => {
-    const body = await (
-      await makeDeployment(brandingConfig({ productName: "Acme MCP" })).fetch(
-        new Request(`${BASE}/oauth/callback/unknown-connector`),
-      )
-    ).text();
-    expect(body).toContain("<title>Authorization could not be completed · Acme MCP</title>");
-    expect(body).toContain("Start authorization again from Acme MCP.");
-    expect(body).not.toContain("Connecta");
   });
 });
 

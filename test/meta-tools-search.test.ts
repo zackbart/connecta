@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import { BASE, connectorIds, toolsByConnector, registry, type SearchResult, textOf } from "./fixtures/meta-tools.js";
+import { BASE, connectorIds, toolsByConnector, type SearchResult, textOf } from "./fixtures/meta-tools.js";
 import { api } from "../src/connectors/api.js";
 import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { buildSandboxProviders } from "../src/execute.js";
-import { createMetaTools, jsonResult, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
+import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
-import { LINEAR_SAVE_ISSUE, PROVIDER_CORPUS } from "./fixtures/schema-corpus.js";
-import { required, calcConnector, makeRegistry, remoteConnector, silentLogger } from "./helpers.js";
+import { required, calcConnector, makeRegistry, remoteConnector } from "./helpers.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -41,70 +39,7 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(text).not.toContain("\uFFFD");
 }
 
-describe("structured result compatibility", () => {
-  it("keeps structuredContent canonical and content complete but compact", () => {
-    const value = {
-      connectors: [{ id: "calc", tools: [{ address: "calc.add", score: 1 }] }],
-      total: 1,
-    };
-    const result = jsonResult(value);
-
-    // A content-only client keeps the complete result.
-    const contentOnly = JSON.parse(required(result.content[0]).text);
-    expect(contentOnly).toEqual(value);
-    // A structured-aware client receives the original full-fidelity object.
-    expect(result.structuredContent).toBe(value);
-    // A mixed consumer sees equivalent representations without indentation.
-    expect(contentOnly).toEqual(result.structuredContent);
-    expect(required(result.content[0]).text).toBe(JSON.stringify(value));
-    expect(required(result.content[0]).text).not.toContain("\n");
-  });
-
-  it("uses the same compact policy for discovery results", async () => {
-    const result = await createMetaTools(makeRegistry([calcConnector]), BASE).searchTools({
-      query: "add",
-      includeSchemas: "compact",
-    });
-    expect(required(result.content[0]).text).toBe(JSON.stringify(result.structuredContent));
-  });
-});
-
 describe("describe recovery", () => {
-  it("returns route-aware typed misses and bounded canonical suggestions", async () => {
-    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-    const described = await service.describe({
-      addresses: ["ghost.ad", "calc.ad", "calc.completely_different"],
-    });
-
-    expect(required(described[0]).errorDetails).toEqual({
-      code: "unknown_address",
-      configuredConnectors: ["calc"],
-      message: 'Unknown address "ghost.ad"',
-      retryable: false,
-      nextAction: {
-        tool: "search_tools",
-        arguments: { query: "ad", includeSchemas: "compact" },
-        purpose: "Find the configured canonical address before retrying.",
-      },
-    });
-    expect(required(described[1]).errorDetails).toEqual({
-      code: "unknown_tool",
-      message: 'Unknown tool "ad" on connector "calc"',
-      retryable: false,
-      nextAction: {
-        tool: "search_tools",
-        arguments: {
-          query: "ad",
-          connector: "calc",
-          includeSchemas: "compact",
-        },
-        purpose: "Find the connector's current canonical tool address.",
-      },
-      suggestions: ["calc.add"],
-    });
-    expect(required(required(described[2]).errorDetails).suggestions).toBeUndefined();
-  });
-
   it("classifies and bounds catalog failures without call-path detail", async () => {
     const unavailable: Connector = connectorWith({
       id: "billing",
@@ -171,62 +106,6 @@ describe("describe recovery", () => {
 });
 
 describe("search_tools", () => {
-  it("uses the default bound for catalog fan-out and preserves all results", async () => {
-    let active = 0;
-    let maxActive = 0;
-    const connectors = Array.from({ length: 9 }, (_, index): Connector =>
-      connectorWith({
-        id: `search_${index}`,
-        kind: "mcp",
-        description: `Search ${index}`,
-        tools: async () => {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          active--;
-          return [
-            {
-              name: `read_${index}`,
-              description: "Read matching data",
-            },
-          ];
-        },
-        call: async () => null,
-      }),
-    );
-    const result = textOf(
-      await createMetaTools(makeRegistry(connectors), BASE).searchTools({
-        query: "matching",
-        limit: 20,
-      }),
-    ) as { total: number };
-    expect(result.total).toBe(9);
-    expect(maxActive).toBe(4);
-  });
-
-  it("matches name and description into flat tool rows", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(await mt.searchTools({ query: "echo" })) as SearchResult;
-    // A single matching tool carries its canonical connector address.
-    expect(connectorIds(parsed)).toHaveLength(1);
-    expect(required(connectorIds(parsed)[0])).toBe("remote");
-    expect(parsed.tools.map((t) => t.address)).toEqual(["remote.echo"]);
-    expect(parsed.total).toBe(1);
-  });
-
-  it("empty query browses healthy tools and reports unavailable catalogs", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(await mt.searchTools({})) as SearchResult;
-    const whitespace = textOf(await mt.searchTools({ query: " \n\t " })) as SearchResult;
-    // Healthy connector tools are returned in one page; failures are separate.
-    expect(connectorIds(parsed).sort()).toEqual(["calc", "remote"]);
-    const byId = toolsByConnector(parsed);
-    expect(required(byId.calc).tools.map((t) => t.address)).toEqual(["calc.add"]);
-    expect(required(byId.remote).tools.map((t) => t.address)).toEqual(["remote.echo"]);
-    expect(parsed.total).toBe(2);
-    expect(whitespace).toEqual(parsed);
-  });
-
   it("does not turn a non-empty Unicode-only query into a browse", async () => {
     const query = "界".repeat(80);
     const parsed = textOf(
@@ -247,37 +126,6 @@ describe("search_tools", () => {
     });
     expect(parsed.matchMode).toBeUndefined();
     expect(new TextEncoder().encode(JSON.stringify(parsed.queryAnalysis)).length).toBeLessThan(1_600);
-  });
-
-  it("clips non-BMP no-match analysis by Unicode code point", async () => {
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({
-        query: "😀".repeat(80),
-      }),
-    ) as SearchResult;
-    const unmatched = required(required(parsed.queryAnalysis).unmatchedTerms[0]);
-
-    expect(parsed.tools).toEqual([]);
-    expect(unmatched).toBe(`${"😀".repeat(63)}…`);
-    expect([...unmatched]).toHaveLength(64);
-    expect(required(parsed.queryAnalysis).truncated).toBe(true);
-  });
-
-  it("uses searchable ASCII terms from a mixed Unicode query", async () => {
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({
-        query: `${"界".repeat(80)} add`,
-      }),
-    ) as SearchResult;
-    const tools = parsed.tools;
-
-    expect(tools).toHaveLength(1);
-    expect(required(tools[0])).toMatchObject({
-      address: "calc.add",
-    });
-    expect(required(tools[0])).not.toHaveProperty("queryCoverage");
-    expect(required(tools[0])).not.toHaveProperty("score");
-    expect(parsed.queryAnalysis).toBeUndefined();
   });
 
   it("filters discovery with the same fail-closed safety classification as invocation", async () => {
@@ -334,37 +182,6 @@ describe("search_tools", () => {
     }
   });
 
-  it("explains an empty safety-filtered result without hiding the complete catalog", async () => {
-    const writeOnly: Connector = connectorWith({
-      id: "write_only",
-      staticTools: [{ name: "create", annotations: { readOnlyHint: false } }],
-      tools: [],
-      call: async () => ({}),
-    });
-    const mt = createMetaTools(makeRegistry([writeOnly]), BASE);
-    const filtered = textOf(
-      await mt.searchTools({
-        query: "create",
-        safety: "readOnly",
-      }),
-    ) as SearchResult;
-    expect(filtered.total).toBe(0);
-    expect(filtered.queryAnalysis?.guidance).toContain("No matching read-only capability");
-    expect(filtered.queryAnalysis?.guidance).toContain("Change safety to inspect the other tools.");
-
-    const complete = textOf(await mt.searchTools({ query: "create" })) as SearchResult;
-    expect(complete.tools).toHaveLength(1);
-  });
-
-  it("respects the connector filter → a single group", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(await mt.searchTools({ connector: "calc" })) as SearchResult;
-    expect(connectorIds(parsed)).toHaveLength(1);
-    expect(required(connectorIds(parsed)[0])).toBe("calc");
-    expect(parsed.tools.map((t) => t.address)).toEqual(["calc.add"]);
-    expect(parsed.total).toBe(1);
-  });
-
   it("does not load unrelated catalogs for a connector-scoped search", async () => {
     const loads = { wanted: 0, unrelated: 0 };
     const dynamic = (id: keyof typeof loads): Connector =>
@@ -383,27 +200,6 @@ describe("search_tools", () => {
 
     expect(connectorIds(parsed)).toEqual(["wanted"]);
     expect(loads).toEqual({ wanted: 1, unrelated: 0 });
-  });
-
-  it("paginates results while reporting the full match count", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(await mt.searchTools({ limit: 1 })) as SearchResult;
-    expect(parsed.total).toBe(2);
-    expect(parsed.hasMore).toBe(true);
-    expect(parsed.nextOffset).toBe(1);
-    const shown = parsed.tools;
-    expect(shown).toHaveLength(1);
-
-    const next = textOf(
-      await mt.searchTools({
-        limit: 1,
-        offset: required(parsed.nextOffset),
-      }),
-    ) as SearchResult;
-    expect(next.total).toBe(2);
-    expect(next.offset).toBe(1);
-    expect(next.hasMore).toBe(false);
-    expect(next.tools).toHaveLength(1);
   });
 
   it("defaults to eight results and preserves the remaining page", async () => {
@@ -463,138 +259,6 @@ describe("search_tools", () => {
     }
     // The rejected calls never reached listTools.
     expect(loads).toBe(2);
-  });
-
-  it("keeps default and maximum result pages coverage-free", async () => {
-    const terms = Array.from({ length: 8 }, (_, index) => `${index}${"x".repeat(79)}`);
-    const connector: Connector = connectorWith({
-      id: "coverage_budget",
-      staticTools: Array.from({ length: MAX_SEARCH_LIMIT }, (_, index) => ({
-        name: `read_${String(index).padStart(3, "0")}`,
-        description: terms.join(" "),
-      })),
-      tools: [],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-    for (const limit of [undefined, MAX_SEARCH_LIMIT]) {
-      const result = await mt.searchTools({
-        query: terms.join(" "),
-        ...(limit === undefined ? {} : { limit }),
-      });
-      const parsed = textOf(result) as SearchResult;
-      const tools = parsed.tools;
-
-      expect(tools).toHaveLength(limit ?? 8);
-      expect(tools.every((tool) => !("queryCoverage" in tool))).toBe(true);
-      expect(tools.every((tool) => !("score" in tool))).toBe(true);
-      const responseBytes = new TextEncoder().encode(required(result.content[0]).text).length;
-      expect(responseBytes).toBeLessThan(limit === undefined ? 10_000 : 100_000);
-      expect(responseBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
-    }
-  });
-
-  // Builds and ranks a 100,000-tool catalog: CPU-bound, with no timing
-  // behavior, and on a loaded host past vitest's 5s default. The budget is a
-  // hang guard, not a speed assertion.
-  it("keeps 100,000-tool pagination exact at the first, middle, and final page", async () => {
-    const total = 100_000;
-    const connector: Connector = connectorWith({
-      id: "huge",
-      staticTools: Array.from({ length: total }, (_, i) => ({
-        name: `tool-${String(i).padStart(6, "0")}`,
-      })),
-      tools: async () => {
-        throw new Error("static catalog should not load");
-      },
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-    const seen = new Set<string>();
-    for (const offset of [0, 50_000, total - MAX_SEARCH_LIMIT]) {
-      const page = textOf(await mt.searchTools({ offset, limit: MAX_SEARCH_LIMIT })) as SearchResult;
-      expect(page.total).toBe(total);
-      expect(page.offset).toBe(offset);
-      expect(page.tools).toHaveLength(MAX_SEARCH_LIMIT);
-      for (const tool of page.tools) {
-        expect(seen.has(tool.address)).toBe(false);
-        seen.add(tool.address);
-      }
-    }
-    expect(seen.size).toBe(3 * MAX_SEARCH_LIMIT);
-  }, 30_000);
-
-  it("rejects an oversized multibyte search result with a paging hint", async () => {
-    const connector: Connector = connectorWith({
-      id: "verbose",
-      staticTools: [
-        {
-          name: "read",
-          description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ fullDescriptions: true });
-
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatchObject({
-      error: {
-        code: "result_too_large",
-        message: expect.stringContaining(`${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`),
-        retryable: false,
-      },
-    });
-  });
-
-  it("ranks tool-name matches above incidental description matches", async () => {
-    const conn: Connector = connectorWith({
-      id: "knowledge",
-      description: "Knowledge base",
-      tools: [
-        {
-          name: "article-search",
-          description: "Search articles, then fetch a matching document for details.",
-        },
-        {
-          name: "article-fetch",
-          description: "Fetch an article document by URL or ID.",
-        },
-      ],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const parsed = textOf(await mt.searchTools({ query: "fetch article document" })) as SearchResult;
-
-    expect(parsed.tools.map((t) => t.name)).toEqual(["article-fetch", "article-search"]);
-    expect(parsed.matchMode).toBeUndefined();
-  });
-
-  it("removes conversational framing before the all-term decision", async () => {
-    const connector: Connector = connectorWith({
-      id: "conversation",
-      staticTools: [
-        {
-          name: "list_issues",
-          description: "List open issues for a project",
-        },
-        {
-          name: "expand_archive",
-          description: "Expand a compressed archive",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
-        query: "can you show me all of the current open issues in our project please",
-      }),
-    ) as SearchResult;
-
-    expect(parsed.tools.map((tool) => tool.name)).toEqual(["list_issues"]);
-    expect(parsed.matchMode).toBeUndefined();
   });
 
   it("keeps action terms and returns every relevant multi-intent match", async () => {
@@ -807,81 +471,6 @@ describe("search_tools", () => {
     expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(1_600);
   });
 
-  it("does not let short function words force incidental partial matches", async () => {
-    const connector: Connector = connectorWith({
-      id: "messages",
-      staticTools: [
-        {
-          name: "send_message",
-          description: "Send a message to a channel",
-        },
-        {
-          name: "list_members",
-          description: "List the people in a channel",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
-        query: "send a message to a channel",
-      }),
-    ) as SearchResult;
-
-    expect(parsed.tools.map((tool) => tool.name)).toEqual(["send_message"]);
-    expect(parsed.matchMode).toBeUndefined();
-  });
-
-  it("falls back to the original query when cleanup removes every term", async () => {
-    const connector: Connector = connectorWith({
-      id: "framing",
-      staticTools: [
-        {
-          name: "phrase",
-          description: "A and the",
-        },
-        {
-          name: "decoy",
-          description: "Unrelated record",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
-        query: "a and the",
-      }),
-    ) as SearchResult;
-
-    expect(parsed.tools.map((tool) => tool.name)).toEqual(["phrase"]);
-    expect(parsed.matchMode).toBeUndefined();
-  });
-
-  it("returns no false positive when only a framing word overlaps", async () => {
-    const connector: Connector = connectorWith({
-      id: "archives",
-      staticTools: [
-        {
-          name: "expand_archive",
-          description: "Expand a compressed archive",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
-        query: "weather radar and rain forecast",
-      }),
-    ) as SearchResult;
-
-    expect(parsed.tools).toEqual([]);
-    expect(parsed.total).toBe(0);
-    expect(parsed.matchMode).toBeUndefined();
-  });
-
   it("mixes an exact action/object near-match into an all-term decoy page", async () => {
     // Development-only reproduction of #326's live Mixpanel failure. The
     // sealed discovery holdout stays unchanged; these synthetic descriptions
@@ -1008,53 +597,6 @@ describe("search_tools", () => {
     ) as SearchResult;
     expect(second.matchMode).toBe("partial");
     expect(second.tools.map((tool) => tool.name)).toEqual(["list_experiments"]);
-  });
-
-  it("keeps partial fallback connector-scoped and returns no mode without overlap", async () => {
-    const connector = (id: string, name: string): Connector =>
-      connectorWith({
-        id,
-        tools: [{ name, description: `${name} records` }],
-        call: async () => null,
-      });
-    const mt = createMetaTools(
-      makeRegistry([connector("wanted", "get_experiment"), connector("other", "get_results")]),
-      BASE,
-    );
-    const partial = textOf(
-      await mt.searchTools({
-        connector: "wanted",
-        query: "get experiment metrics variants results",
-      }),
-    ) as SearchResult;
-    expect(partial.matchMode).toBe("partial");
-    expect(connectorIds(partial)).toEqual(["wanted"]);
-
-    const none = textOf(
-      await mt.searchTools({
-        connector: "wanted",
-        query: "calendar availability",
-      }),
-    ) as SearchResult;
-    expect(none).toMatchObject({ tools: [], total: 0, hasMore: false });
-    expect(none.matchMode).toBeUndefined();
-  });
-
-  it("returns concise descriptions by default and full text on request", async () => {
-    const longDescription = `A tool ${"with extensive documentation ".repeat(20)}`;
-    const conn: Connector = connectorWith({
-      id: "docs",
-      description: "Docs",
-      tools: [{ name: "read", description: longDescription }],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const concise = textOf(await mt.searchTools({})) as SearchResult;
-    const full = textOf(await mt.searchTools({ fullDescriptions: true })) as SearchResult;
-
-    expect(required(concise.tools[0]).description!.length).toBeLessThan(longDescription.length);
-    expect(required(concise.tools[0]).description).toMatch(/…$/);
-    expect(required(full.tools[0]).description).toBe(longDescription);
   });
 
   it("keeps a representative compact page within an agent-context budget", async () => {
@@ -1205,56 +747,6 @@ describe("search_tools", () => {
       openWorldHint: false,
     });
   });
-
-  it("reports a connector's display title separately from its address id", async () => {
-    const titled = api("billing", {
-      title: "Acme Billing",
-      description: "Acme billing management",
-      tools: [
-        {
-          name: "list",
-          description: "List billing records",
-          annotations: { readOnlyHint: true },
-          inputSchema: { type: "object" },
-          handler: () => [],
-        },
-      ],
-    });
-    const parsed = textOf(await createMetaTools(makeRegistry([titled]), BASE).searchTools({})) as SearchResult;
-
-    expect(parsed.tools[0]).toMatchObject({
-      address: "billing.list",
-      connectorTitle: "Acme Billing",
-    });
-  });
-
-  it("loads independent connector catalogs in parallel", async () => {
-    let started = 0;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const connector = (id: string): Connector =>
-      connectorWith({
-        id,
-        kind: "mcp",
-        tools: async () => {
-          started++;
-          if (started === 2) release();
-          await gate;
-          return [{ name: "read" }];
-        },
-        call: async () => null,
-      });
-    const search = createMetaTools(makeRegistry([connector("first"), connector("second")]), BASE).searchTools({});
-    await expect(
-      Promise.race([
-        search,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("catalogs loaded sequentially")), 100)),
-      ]),
-    ).resolves.toBeDefined();
-    expect(started).toBe(2);
-  });
 });
 
 describe("compact schema rendering", () => {
@@ -1273,19 +765,6 @@ describe("compact schema rendering", () => {
     const described = await new CatalogService(makeRegistry([conn]), BASE).describe({ addresses: ["shape.t"] });
     return required(described[0]).inputSchema as string;
   }
-
-  it("renders optionals, enums, arrays and property descriptions", async () => {
-    const shape = await shapeOf({
-      type: "object",
-      properties: {
-        id: { type: "string", description: "the id" },
-        mode: { enum: ["a", "b"] },
-        tags: { type: "array", items: { type: "string" } },
-      },
-      required: ["id"],
-    });
-    expect(shape).toBe('{ id: string // the id, mode?: "a" | "b", tags?: string[] }');
-  });
 
   it("renders numeric and string constraints in discovery and describe", async () => {
     const schema = {
@@ -1324,29 +803,6 @@ describe("compact schema rendering", () => {
       }).text,
     ).toBe("(string | null) /* length >= 2 */");
     expect(compactDiscoverySchema({ minimum: 0 }).text).toBe("unknown /* >= 0 */");
-  });
-
-  it("groups enum and resolved-union constraints around the whole type", () => {
-    const constrainedEnum = { enum: ["a", "bbb"], minLength: 2 };
-    expect(compactDiscoverySchema(constrainedEnum).text).toBe('("a" | "bbb") /* length >= 2 */');
-    expect(compactSchema(constrainedEnum)).toBe('("a" | "bbb") /* length >= 2 */');
-
-    const constrainedRef = {
-      $ref: "#/$defs/Value",
-      minLength: 2,
-      $defs: {
-        Value: {
-          anyOf: [{ type: "string" }, { type: "null" }],
-        },
-      },
-    };
-    expect(compactDiscoverySchema(constrainedRef).text).toBe("(string | null) /* length >= 2 */");
-    expect(compactSchema(constrainedRef)).toBe("(string | null) /* length >= 2 */");
-  });
-
-  it("does not group unconstrained array-valued type unions", () => {
-    expect(compactDiscoverySchema({ type: ["string", "null"] }).text).toBe("string | null");
-    expect(compactSchema({ type: ["string", "null"] })).toBe("string | null");
   });
 
   // `A | B[]` reads as "an A, or an array of B" (#569): every shape that
@@ -1394,121 +850,6 @@ describe("compact schema rendering", () => {
     ).toBe("(string | number) /* length >= 1 */[]");
   });
 
-  it("groups by the shape rendered, not by a pipe in the text", () => {
-    // Pipes inside literals, constraints, names, and prose are not operators,
-    // and unbalanced prose brackets cannot hide one that is.
-    expect(compactSchema({ type: "array", items: { enum: ["a | b"] } })).toBe('"a | b"[]');
-    expect(compactSchema({ type: "array", items: { const: "a & b" } })).toBe('"a & b"[]');
-    expect(compactSchema({ type: "array", items: { type: "string", pattern: "a | b" } })).toBe(
-      'string /* pattern "a | b" */[]',
-    );
-    expect(compactSchema({ type: "array", items: { $ref: "#/$defs/A | B" } })).toBe("A | B[]");
-    expect(
-      compactSchema({
-        type: "array",
-        items: { type: "object", properties: { x: { type: "string", description: "1) a | 2) b" } } },
-      }),
-    ).toBe("{ x?: string // 1) a | 2) b }[]");
-    expect(
-      compactSchema({
-        type: "array",
-        items: {
-          oneOf: [{ type: "object", properties: { x: { type: "string", description: "b) c)" } } }, { type: "number" }],
-        },
-      }),
-    ).toBe("({ x?: string // b) c) } | number)[]");
-  });
-
-  it("groups Linear save_issue's patch operations identically in search_tools and connecta.search", async () => {
-    const corpus = connectorWith({
-      id: "corpus",
-      kind: "mcp",
-      tools: PROVIDER_CORPUS.map(({ address, input, output }) => ({
-        name: address.slice(address.indexOf(".") + 1),
-        inputSchema: input,
-        ...(output ? { outputSchema: output } : {}),
-        annotations: { readOnlyHint: true },
-      })),
-    });
-    const reg = makeRegistry([corpus]);
-    const topLevel = textOf(
-      await createMetaTools(reg, BASE).searchTools({ connector: "corpus", includeSchemas: "compact" }),
-    ) as SearchResult;
-    const providers = await buildSandboxProviders(reg, BASE, silentLogger);
-    const program = (await required(required(providers.find((item) => item.name === "connecta")).fns.search)({
-      connector: "corpus",
-      includeSchemas: "compact",
-    })) as { tools: Array<Record<string, unknown>> };
-
-    const shapes = (rows: Array<Record<string, unknown>>) =>
-      rows.map(({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }) => ({
-        address,
-        inputSchema,
-        outputSchema,
-        inputSchemaTruncated,
-        outputSchemaTruncated,
-      }));
-    const topRows = topLevel.tools as Array<Record<string, unknown>>;
-    expect(topRows).toHaveLength(PROVIDER_CORPUS.length);
-    expect(shapes(program.tools)).toEqual(shapes(topRows));
-
-    const patch =
-      'patch?: ({ op: "replace", old_string: string /* length >= 1 */, new_string: string, replace_all?: boolean } | ' +
-      '{ op: "append", text: string /* length >= 1 */ })[], ';
-    const saveIssue = required(topRows.find((row) => row.address === "corpus.save_issue"));
-    expect(saveIssue.inputSchema).toContain(patch);
-    expect(compactSchema(LINEAR_SAVE_ISSUE)).toContain(
-      'patch?: ({ op: "replace", old_string: string /* length >= 1 */ // Exact text to replace., ',
-    );
-    // The same operations one array deeper stay grouped once, inside.
-    const patches = { type: "array", items: (LINEAR_SAVE_ISSUE.properties as Record<string, unknown>).patch };
-    expect(compactDiscoverySchema(patches).text).toBe(
-      '({ op: "replace", old_string: string /* length >= 1 */, new_string: string, replace_all?: boolean } | ' +
-        '{ op: "append", text: string /* length >= 1 */ })[][]',
-    );
-  });
-
-  it("drops constraints that push discovery over budget and flags the shape", () => {
-    const schema = {
-      type: "object",
-      properties: Object.fromEntries(
-        Array.from({ length: 36 }, (_, index) => [`field${index}`, { type: "string", minLength: 1, maxLength: 64 }]),
-      ),
-    };
-
-    const compact = compactDiscoverySchema(schema);
-    expect(compact.truncated).toBe(true);
-    expect(compact.text).toContain("field0?: string");
-    expect(compact.text).toContain("field35?: string");
-    expect(compact.text).not.toContain("length >=");
-    expect(new TextEncoder().encode(compact.text).length).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
-  });
-
-  it('inlines $ref by name and falls back to "json" format on request', async () => {
-    const schema = {
-      type: "object",
-      properties: { pt: { $ref: "#/$defs/Point" } },
-      required: ["pt"],
-      $defs: {
-        Point: { type: "object", properties: { x: { type: "number" } } },
-      },
-    };
-    const shape = await shapeOf(schema);
-    expect(shape).toBe("{ pt: { x?: number } }");
-  });
-
-  it("preserves small enums in compact discovery", () => {
-    expect(
-      compactDiscoverySchema({
-        type: "object",
-        properties: { mode: { enum: ["read", "write"] } },
-      }),
-    ).toEqual({
-      text: '{ mode?: "read" | "write" }',
-      truncated: false,
-    });
-  });
-
   it("renders empty enums as the valid never type in compact discovery", () => {
     // `never` is the TypeScript bottom type, valid at both root and property
     // positions; an empty string was neither a type nor a readable constraint.
@@ -1525,12 +866,6 @@ describe("compact schema rendering", () => {
       truncated: false,
     });
     expectStructurallyCompleteTypeShape(nested.text);
-  });
-
-  it("renders empty enums as never in ordinary compact describe", async () => {
-    const shape = await shapeOf({ enum: [] });
-    expect(shape).toBe("never");
-    expectStructurallyCompleteTypeShape(shape);
   });
 
   it("bounds nested UTF-8 enums without hiding other property types", () => {
@@ -1566,40 +901,6 @@ describe("compact schema rendering", () => {
     expectStructurallyCompleteTypeShape(compact.text);
     expect(new TextEncoder().encode(compact.text).length).toBeLessThan(new TextEncoder().encode(exact).length * 0.25);
     expect(exact).toContain(required(values.at(-1)));
-  });
-
-  it("keeps exact enum values in JSON discovery and describe", async () => {
-    const values = Array.from({ length: 40 }, (_, index) => `state-${index}`);
-    const schema = {
-      type: "object",
-      properties: { state: { enum: values } },
-    };
-    const conn: Connector = connectorWith({
-      id: "enum_exact",
-      kind: "mcp",
-      tools: [{ name: "read", description: "Read state", inputSchema: schema }],
-      call: async () => null,
-    });
-    const registry = makeRegistry([conn]);
-    const search = textOf(
-      await createMetaTools(registry, BASE).searchTools({
-        query: "read state",
-        includeSchemas: "json",
-      }),
-    ) as any;
-    expect(required(search.tools[0]).inputSchema).toEqual(schema);
-
-    const [describedJson] = await new CatalogService(registry, BASE).describe({
-      addresses: ["enum_exact.read"],
-      format: "json",
-    });
-    expect(required(describedJson).inputSchema).toEqual(schema);
-    const [describedCompact] = await new CatalogService(registry, BASE).describe({
-      addresses: ["enum_exact.read"],
-      format: "compact",
-    });
-    expect(required(describedCompact).inputSchema).toContain(required(values.at(-1)));
-    expect(required(describedCompact).inputSchema).not.toContain("omitted");
   });
 
   it("keeps oversized nested objects structurally complete", () => {

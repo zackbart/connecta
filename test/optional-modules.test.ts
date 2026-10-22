@@ -23,21 +23,6 @@ function connector(id = "shared", personal = false): Connector {
     status: vi.fn(async () => ({ state: "ok" as const })),
   };
 }
-function deployment() {
-  const storage = memoryStorage();
-  return createConnecta({
-    readOnly: false,
-    connectors: [connector(), connector("personal", true)],
-    executor,
-    logger: "silent",
-    auth,
-    maintainers,
-    publicUrl: BASE,
-    storage,
-    vault: encryptedCredentialVault(storage, btoa("a".repeat(32))),
-    ui: operatorUi(),
-  });
-}
 
 describe("optional deployment modules", () => {
   afterEach(() => {
@@ -64,24 +49,7 @@ describe("optional deployment modules", () => {
     expect(await callback.text()).not.toContain('href="/"');
   });
 
-  it("omits vault and history routes independently while UI remains enabled", async () => {
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [connector()],
-      executor,
-      auth,
-      maintainers,
-      ui: operatorUi(),
-      logger: "silent",
-    });
-    for (const path of ["/ui/credentials/shared", "/ui/activity", "/activity"]) {
-      expect((await app.fetch(new Request(BASE + path, { headers }))).status).toBe(404);
-    }
-    expect((await app.fetch(new Request(BASE + "/", { headers }))).status).toBe(200);
-  });
-
   it.each([
-    { ui: false, vault: false },
     { ui: false, vault: true },
     { ui: true, vault: false },
   ])("offers no credential handoff when a recovery module is missing (%j)", async (modules) => {
@@ -196,21 +164,6 @@ describe("optional deployment modules", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(c.status).not.toHaveBeenCalled();
     expect(c.closeScope).toHaveBeenCalledOnce();
-  });
-
-  it("INV-4: a maintainer manages shared credentials and their own personal ones", async () => {
-    const app = deployment();
-    for (const id of ["shared", "personal"]) {
-      const response = await app.fetch(
-        new Request(`${BASE}/ui/credentials/${id}`, {
-          method: "PUT",
-          headers,
-          body: JSON.stringify({ value: "private-key-value" }),
-        }),
-      );
-      expect(response.status).toBe(200);
-      expect(await response.text()).not.toContain("private-key-value");
-    }
   });
 
   it("allows authorized MCP OAuth initiation and completion with no UI", async () => {

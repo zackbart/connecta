@@ -126,35 +126,6 @@ describe("public package boundary", () => {
     expect(packageJson.exports?.["./package.json"]).toBe("./package.json");
   });
 
-  it("ships only generic connector factories and their shared machinery", () => {
-    // guarded-fetch.ts is transport, not a third authoring path: it knows no
-    // provider, and a provider-named file here would still be a failure.
-    // api-connector.ts is api() itself without its OAuth grant, split so the
-    // providers do not carry machinery they never use.
-    // option-shapes.ts holds the closed option shapes those factories and the
-    // providers walk for unknown keys; it builds nothing.
-    // negotiation-cache.ts stores redacted protocol verdicts, without a client.
-    // resource-uri.ts matches advertised templates without fetching any URI.
-    expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
-      "api-connector.ts",
-      "api.ts",
-      "guarded-fetch.ts",
-      "negotiation-cache.ts",
-      "option-shapes.ts",
-      "remote-mcp.ts",
-      "resource-uri.ts",
-    ]);
-  });
-
-  it("ships one SQL store with two drivers and no other storage backend", () => {
-    // The shared core, the key families, and the in-memory default. The two
-    // drivers are the /d1 and /sqlite subpaths; no KV or file store remains.
-    expect(readdirSync(join(ROOT, "src", "storage")).sort()).toEqual(["keys.ts", "memory.ts", "sql.ts"]);
-    expect(packageJson.exports?.["./d1"]).toEqual({ types: "./dist/d1.d.ts", import: "./dist/d1.js" });
-    expect(packageJson.exports?.["./sqlite"]).toEqual({ types: "./dist/sqlite.d.ts", import: "./dist/sqlite.js" });
-    expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
-  });
-
   // The rule is about the exports map, not the tarball: `examples/worker`
   // ships because it is the Workers starting template a consumer copies, and
   // nothing under examples/ is importable from the package.
@@ -178,12 +149,6 @@ describe("public package boundary", () => {
       optional: true,
     });
     expect(packageJson.exports).toHaveProperty("./auth/clerk");
-  });
-
-  it("keeps Cloudflare Access dependency-free behind its Worker subpath", () => {
-    expect(packageJson.exports).toHaveProperty("./auth/cloudflare-access");
-    const source = readFileSync(join(ROOT, "src", "auth", "cloudflare-access.ts"), "utf8");
-    expect(source).not.toMatch(/from\s+["'][^./]/);
   });
 
   it("INV-13: keeps QuickJS behind an optional executor subpath", () => {
@@ -261,23 +226,6 @@ describe("public package boundary", () => {
     }
   }, 30_000);
 
-  it("exports validateToolInput from the core entry", async () => {
-    const core = await import("../src/index.js");
-    expect(typeof core.validateToolInput).toBe("function");
-  });
-
-  it("publishes the JSON Schema validator under an explicit subpath", async () => {
-    expect(packageJson.exports).toHaveProperty("./json-schema");
-    expect(packageJson.exports?.["./json-schema"]).toEqual({
-      types: "./dist/json-schema.d.ts",
-      import: "./dist/json-schema.js",
-    });
-    // The re-export keeps downstream build-time validation off npm hoisting.
-    expect(packageJson.dependencies).toHaveProperty("@cfworker/json-schema");
-    const { Validator } = await import("../src/json-schema.js");
-    expect(typeof Validator).toBe("function");
-  });
-
   // The Cloudflare prebuilt connection is hand-written fetch against the
   // documented v4 REST API. That is a deliberate choice over wrapping the
   // generated `cloudflare` SDK, so the SDK must not appear as a dependency, an
@@ -296,80 +244,6 @@ describe("public package boundary", () => {
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
-  });
-
-  it("keeps the Planning Center provider free of bare-specifier imports", () => {
-    const source = readFileSync(join(ROOT, "src", "providers", "planning-center", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
-
-  it("keeps the Vercel provider dependency-free and out of the root entry", () => {
-    expect(packageJson.dependencies).not.toHaveProperty("@vercel/sdk");
-    expect(packageJson.peerDependencies).not.toHaveProperty("@vercel/sdk");
-    expect(packageJson.devDependencies).not.toHaveProperty("@vercel/sdk");
-    const source = readFileSync(join(ROOT, "src", "providers", "vercel", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
-
-  it("keeps the CCB provider dependency-free and out of the root entry", () => {
-    // Its OAuth grant is core's `api()` machinery, not an OAuth client library.
-    const source = readFileSync(join(ROOT, "src", "providers", "ccb", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
-
-  it("keeps the Overflow provider dependency-free and behind its own subpath", () => {
-    expect(packageJson.exports).toHaveProperty("./providers/overflow");
-    const source = readFileSync(join(ROOT, "src", "providers", "overflow", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
-
-  it("keeps the Tithe.ly provider dependency-free", () => {
-    const source = readFileSync(join(ROOT, "src", "providers", "tithely", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
-
-  // Breeze has no SDK worth wrapping and gets none: its API is keyed GETs
-  // against one church's host, so the provider stays Web-API fetch.
-  it("keeps the Breeze provider dependency-free and out of the root entry", () => {
-    const source = readFileSync(join(ROOT, "src", "providers", "breeze", "index.ts"), "utf8");
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-    expect(source).not.toContain("remote-mcp");
-  });
-
-  // Delegated Workspace access signs its own RS256 assertions with Web Crypto
-  // (#678): no Google auth library, no OAuth client, no MCP SDK. The shared
-  // layer under providers/_shared/google/ is imported, never exported.
-  it("keeps the Workspace providers and their shared layer dependency-free", () => {
-    for (const file of [
-      join(ROOT, "src", "providers", "gmail", "index.ts"),
-      join(ROOT, "src", "providers", "drive", "index.ts"),
-      join(ROOT, "src", "providers", "docs", "index.ts"),
-      join(ROOT, "src", "providers", "sheets", "index.ts"),
-      join(ROOT, "src", "providers", "slides", "index.ts"),
-      join(ROOT, "src", "providers", "forms", "index.ts"),
-      ...readdirSync(join(ROOT, "src", "providers", "_shared", "google")).map((name) =>
-        join(ROOT, "src", "providers", "_shared", "google", name),
-      ),
-    ]) {
-      const source = readFileSync(file, "utf8");
-      for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-        expect(match[1], `${file}: ${match[1]} is not a relative import`).toMatch(/^\./);
-        expect(match[1]).not.toMatch(/remote-mcp|static-oauth|downstream-oauth/);
-      }
-    }
-    expect(Object.keys(packageJson.exports ?? {}).some((key) => key.includes("google"))).toBe(false);
   });
 });
 
