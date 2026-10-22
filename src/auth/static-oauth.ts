@@ -256,6 +256,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     ctx: ConnectorContext,
     coordinator: OAuthRefreshCoordinator,
     private readonly settings: StaticOAuthSettings,
+    requestOwned = false,
   ) {
     super(
       connectorId,
@@ -264,7 +265,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       coordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
-      viewSignal(ctx),
+      viewSignal(ctx, requestOwned),
       // No client binding: the client is configuration, so there is no
       // registration for a restart to carry forward or discard.
       undefined,
@@ -381,9 +382,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
 
   const warnShortSecret = shortSecretWarning();
-  const providerFor = (ctx: ConnectorContext) => {
+  const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
     warnShortSecret(settings.clientSecret, ctx.logger);
-    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
+    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings, requestOwned);
   };
 
   /**
@@ -612,7 +613,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         const release = retainOAuthPartition(oauthPartitionFor(ctx));
         try {
           if (signal?.aborted) throw signal.reason;
-          const provider = providerFor(ctx);
+          const provider = providerFor(ctx, auxiliary);
           // Bind this call's reads and writes to the live epoch: a reset landing
           // meanwhile fails the call rather than handing it another flow's grant.
           const epoch = await provider.beginFlow();
