@@ -68,5 +68,11 @@ export function kitInputDisagreements(tool: ApiTool, base: Record<string, unknow
       if (validated !== decoded) out.push(`${tool.name}.${name} = ${JSON.stringify(value)}`);
     }
   }
+  const extra = { ...base, unexpected_argument: true };
+  if (
+    (validateToolInput(schema, extra, { address: tool.name, failClosed: true }) === null) !==
+    (Schema.decodeUnknownExit(input as Schema.Codec<unknown>, { onExcessProperty: "error" })(extra)._tag === "Success")
+  )
+    out.push(`${tool.name}: excess properties disagree`);
   return out;
 }

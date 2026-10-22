@@ -1613,11 +1613,11 @@ never left (provenance (a)). It also sets the definition's `kit`, decision
 - `hatch`: `{ name, verdicts }` from the hatch declaration, from which the
   Conventions name the hatch tools and the operations refused by design.
 
-The Tithe.ly prototype declares `TITHELY_KIT_FACTS` the same way:
-operations `GET /charges-list` and `GET /charges/{chargeId}`, page size 25
+The B.4 Tithe.ly reference declares `TITHELY_KIT_FACTS` the same way:
+all ten named operation variants derived from its vendor, page size 25
 of at most 99, and no `hatch`, because step 1 keeps `tithely_api_get` and
 `tithely_api_mutate` and the standard hatch arrives with step 2. Its suite
-checks the page size against the catalog's `limit`. `manifest(vendor)`
+checks all eleven tools' catalog and request/result bytes, and the page size against the catalog's `limit`. `manifest(vendor)`
 keeps the method, path and parameter names for the drift checks; the
 operation set comes from code, never a hand-typed list.
 

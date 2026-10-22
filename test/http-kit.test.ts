@@ -739,7 +739,8 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
       tithely_api_get: { path: "/charges" },
       get_organization: { organizationId: "org_1" },
       get_account: { accountId: "user_1" },
-      get_recurring_charge: { recurringChargeId: "rc_1" },
+      get_recurring_charge: { recurringId: "rc_1" },
+      list_payment_methods: { accountId: "user_1" },
     };
     for (const tool of kitTools(TITHELY_API_BASE_URLS.live, 25)) {
       expect(disagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
