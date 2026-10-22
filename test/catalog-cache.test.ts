@@ -19,7 +19,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { Registry } from "../src/registry.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
-import { responseCacheKeys } from "../src/storage/keys.js";
+import { responseCacheKeys, scopes } from "../src/storage/keys.js";
 import { withDeadline } from "../src/timeout.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, deferred, scriptedExecutor, waitFor } from "./fixtures/misc.js";
@@ -713,7 +713,8 @@ describe("SQL-backed SDK catalog cache", () => {
     const root = f.registry();
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    const negotiations = async () => (await f.store.list("")).filter((key) => key.includes("negotiation:v1:"));
+    const negotiations = async () =>
+      (await f.store.list(scopes.connector(f.id))).filter((key) => key.includes("negotiation:v1:"));
 
     await f.read(root, "alice", "crm");
     expect(await negotiations()).toHaveLength(1);
