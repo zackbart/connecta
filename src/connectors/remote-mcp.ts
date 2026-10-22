@@ -1,5 +1,5 @@
 import { deriveContext } from "../derived-context.js";
-import { duringViewCall, operationContext, openRequest, viewSignal } from "../runtime/call.js";
+import { duringViewCall, operationContext, openRequest, settleOnClose, viewSignal } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -2738,6 +2738,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           closeHalf(state);
         }
       }
+      // Credential preparation belongs to this caller, even when the session
+      // it may join belongs to the request. A late preparation cannot acquire
+      // or reuse a session after its operation boundary has refused the call.
+      viewSignal(ctx).throwIfAborted();
       if (isClosed(state)) throw scopeEndedError();
       if (state.client) return state.client;
       const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
@@ -3353,100 +3357,113 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async callTool(name, args, ctx, options) {
       enterProviderBoundary(ctx, connector);
-      // Refusals before this call's dispatch record exists: no tools/call of
-      // its can have left, so they are known failures (ledger provenance).
-      if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
-        throw knownProviderFailure(
-          new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
-        );
-      }
-      const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state).catch((error: unknown) => {
-        throw knownProviderFailure(error);
-      });
-      const definition = options?.definition;
-      // The registry's verdict for this call; outside an invocation, the
-      // dispatched definition's, else a reviewed write or the annotations.
-      const reviewed = classification?.tools[name];
-      const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
-      const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
-      const write =
-        (callClassification(ctx) ??
-          definition?.classification ??
-          (verdict !== undefined && verdict !== "read"
-            ? "write"
-            : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
-      const dispatch = newDispatch(write);
-      dispatch.request = {
-        entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
-        ctx,
-      };
-      state.dispatches.set(dispatch, name);
+      let active: { state: ConnectionState; client: Client; dispatch: CallDispatch; write: boolean } | undefined;
       try {
-        const toolDefinition = definition
-          ? {
-              ...definition,
-              // Older stored catalogs and custom connectors may omit inputSchema.
-              inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
-            }
-          : state.toolDefinitions.get(name);
-        if (toolDefinition?.execution?.taskSupport === "required") {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            `Tool "${name}" requires task-based execution, which Connecta does not support.`,
-          );
-        }
-        let output: StandardSchemaV1 | undefined;
-        const outputError = (code: number, message: string): unknown =>
-          atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
-        if (toolDefinition?.outputSchema) {
-          try {
-            output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
-          } catch {
-            throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
+        // Race the entire operation inside its write decider. Cancellation must
+        // retain the exact request ledger and a dispatched write's verdict.
+        return await settleOnClose(ctx, async () => {
+          // Refusals before this call's dispatch record exists: no tools/call of
+          // its can have left, so they are known failures (ledger provenance).
+          if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
+            throw knownProviderFailure(
+              new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
+            );
           }
-        }
-        const result = await client
-          .callTool(
-            withDispatch(
-              {
-                name,
-                arguments: (args ?? {}) as Record<string, unknown>,
-                ...options?.input,
-              },
-              dispatch,
-            ),
-            {
-              ...requestOptions(ctx),
-              allowInputRequired: true,
-              // SDK 2.3.1's callTool checks outputSchema even for a suspension.
-              // Retain its header mirroring, then validate only final results.
-              // Given a definition, it never relists and sends a call again
-              // after a HeaderMismatch answer, so a write always has one.
-              ...(toolDefinition
-                ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
-                : write
-                  ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
-                  : {}),
-            },
-          )
-          .catch((err: unknown) => {
-            assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
-            throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
+          const state = stateFor(ctx);
+          const client = await ensureConnected(ctx, state).catch((error: unknown) => {
+            throw knownProviderFailure(error);
           });
-        if (isInputRequiredResult(result)) {
+          const definition = options?.definition;
+          // The registry's verdict for this call; outside an invocation, the
+          // dispatched definition's, else a reviewed write or the annotations.
+          const reviewed = classification?.tools[name];
+          const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
+          const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
+          const write =
+            (callClassification(ctx) ??
+              definition?.classification ??
+              (verdict !== undefined && verdict !== "read"
+                ? "write"
+                : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
+          const dispatch = newDispatch(write);
+          dispatch.request = {
+            entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
+            ctx,
+          };
+          active = { state, client, dispatch, write };
+          state.dispatches.set(dispatch, name);
+          const toolDefinition = definition
+            ? {
+                ...definition,
+                // Older stored catalogs and custom connectors may omit inputSchema.
+                inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
+              }
+            : state.toolDefinitions.get(name);
+          if (toolDefinition?.execution?.taskSupport === "required") {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `Tool "${name}" requires task-based execution, which Connecta does not support.`,
+            );
+          }
+          let output: StandardSchemaV1 | undefined;
+          const outputError = (code: number, message: string): unknown =>
+            atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+          if (toolDefinition?.outputSchema) {
+            try {
+              output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
+            } catch {
+              throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
+            }
+          }
+          const result = await client
+            .callTool(
+              withDispatch(
+                {
+                  name,
+                  arguments: (args ?? {}) as Record<string, unknown>,
+                  ...options?.input,
+                },
+                dispatch,
+              ),
+              {
+                ...requestOptions(ctx),
+                allowInputRequired: true,
+                // SDK 2.3.1's callTool checks outputSchema even for a suspension.
+                // Retain its header mirroring, then validate only final results.
+                // Given a definition, it never relists and sends a call again
+                // after a HeaderMismatch answer, so a write always has one.
+                ...(toolDefinition
+                  ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
+                  : write
+                    ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
+                    : {}),
+              },
+            )
+            .catch((err: unknown) => {
+              assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
+              throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
+            });
+          if (isInputRequiredResult(result)) {
+            return result;
+          }
+          assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+          if (output && !result.isError) {
+            if (result.structuredContent === undefined)
+              throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
+            const validation = await output["~standard"].validate(result.structuredContent);
+            if (validation.issues)
+              throw outputError(
+                -32602,
+                "Structured content does not match the tool's output schema: validation failed",
+              );
+          }
           return result;
-        }
-        assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-        if (output && !result.isError) {
-          if (result.structuredContent === undefined)
-            throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
-          const validation = await output["~standard"].validate(result.structuredContent);
-          if (validation.issues)
-            throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
-        }
-        return result;
+        });
       } catch (err) {
+        // The boundary refuses preparation too; before a dispatch record
+        // exists, this call is still a proven unsent failure.
+        if (!active) throw knownProviderFailure(err);
+        const { state, client, dispatch, write } = active;
         const direct = write && callClassification(ctx) === undefined;
         // The request's own abort reason passes by identity for a read or a
         // served call. A direct write's is finalized below: it may have left.
@@ -3509,7 +3526,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
-        state.dispatches.delete(dispatch);
+        if (active) active.state.dispatches.delete(active.dispatch);
       }
     },
 
@@ -3597,9 +3614,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ]),
         );
       reset(state);
-      // Runs the live connection's lease finalizer, if there is one.
-      if (release) await runEdge(release);
-      await cacheClosed;
+      // Start every finalizer before checking the caller's owner. Teardown is
+      // revocation machinery and must still run for an already-ended request.
+      const closing = Promise.all([release ? runEdge(release) : undefined, cacheClosed]).then(() => {});
+      void closing.catch(() => {});
+      if (viewSignal(ctx, true).aborted) return closing;
+      return settleOnClose(ctx, () => closing, true);
     },
 
     async status(ctx): Promise<ConnectorStatus> {
@@ -3818,6 +3838,40 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const path = await newProvider(args[0], stateFor(args[0])).registrationPath();
       return { ...status, ...(path ? { registrationPath: path } : {}) };
     };
+  }
+  // Every published Promise operation owns its whole wait, including local
+  // storage, digest, registration-path and result processing seams. callTool
+  // settles inside its write decider; closeScope starts cleanup before racing
+  // the join, and finishAuth already owns its request-scoped exchange boundary.
+  const settlingOperation =
+    <Args extends unknown[], Result>(
+      operation: (...args: Args) => Promise<Result>,
+      contextIndex: number,
+      requestOwned = false,
+    ): ((...args: Args) => Promise<Result>) =>
+    (...args) => {
+      const ctx = args[contextIndex] as ConnectorContext;
+      const state = states.get(ctx.requestScope ?? ctx);
+      // A connector scope already revoked by teardown keeps its established
+      // refusal, before the enclosing request's more general close boundary.
+      if (state && isClosed(state)) return Promise.reject(scopeEndedError());
+      return settleOnClose(ctx, () => operation(...args), requestOwned);
+    };
+  connector.listTools = settlingOperation(connector.listTools, 0);
+  connector.readResource = settlingOperation(connector.readResource!, 1);
+  if (connector.downstreamSkills) {
+    connector.downstreamSkills.list = settlingOperation(connector.downstreamSkills.list, 0);
+    connector.downstreamSkills.read = settlingOperation(connector.downstreamSkills.read, 1);
+  }
+  const status = connector.status!;
+  connector.status = (ctx) => settleOnClose(ctx, () => status(ctx)).catch((error) => failureStatus(id, error));
+  if (connector.testCredential) connector.testCredential = settlingOperation(connector.testCredential, 1);
+  if (isOauth) {
+    connector.startAuth = settlingOperation(connector.startAuth!, 0);
+    connector.disconnectAuth = settlingOperation(connector.disconnectAuth!, 0);
+    connector.verifyState = settlingOperation(connector.verifyState!, 1, true);
+    connector.verifyCallbackIssuer = settlingOperation(connector.verifyCallbackIssuer!, 1, true);
+    connector.consumeAuthError = settlingOperation(connector.consumeAuthError!, 0, true);
     // Pin before the first asynchronous storage/discovery read, not only once
     // a refresh flight exists. These operations do not take call admission.
     const retain = retainingOAuthPartition;
@@ -3852,13 +3906,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (isOauth)
     registerInvocationAuth(
       connector,
-      retainingOAuthPartition(async (ctx) => {
-        // Only inspect local grant state here. Discovery, refresh, and MCP
-        // transports remain inside callTool and cannot establish retry safety.
-        const provider = newProvider(ctx, stateFor(ctx));
-        if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
-        if (!(await provider.tokens())) throw authRequiredError();
-      }, 0),
+      retainingOAuthPartition(
+        settlingOperation(async (ctx: ConnectorContext) => {
+          // Only inspect local grant state here. Discovery, refresh, and MCP
+          // transports remain inside callTool and cannot establish retry safety.
+          const provider = newProvider(ctx, stateFor(ctx));
+          if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
+          if (!(await provider.tokens())) throw authRequiredError();
+        }, 0),
+        0,
+      ),
     );
   return connector;
 }
