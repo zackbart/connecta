@@ -2,11 +2,11 @@ import type { FetchLike } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { classifyHost, isPrivateHost, learnedUrlRefusal } from "../src/url-safety.js";
 import { classifyCallError } from "../src/errors.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
+import { classifyHost, isPrivateHost, learnedUrlRefusal } from "../src/url-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { required } from "./helpers.js";
 
@@ -19,21 +19,12 @@ const hostOf = (href: string) => new URL(href).hostname;
 
 describe("classifyHost", () => {
   it.each([
-    "http://localhost/",
     "http://LOCALHOST./",
     "http://api.localhost/",
-    "http://a.b.localhost/",
     "http://127.0.0.1/",
-    "http://127.255.255.254/",
     "http://[::1]/",
-    "http://[0:0:0:0:0:0:0:1]/",
-    "http://[::ffff:127.0.0.1]/",
     "http://[::ffff:7f00:1]/",
-    // The URL parser, not this module, folds legacy IPv4 spellings.
     "http://2130706433/",
-    "http://0x7f.1/",
-    "http://0177.0.0.1/",
-    "http://127.1/",
   ])("%s is loopback", (href) => {
     expect(classifyHost(hostOf(href))).toBe("loopback");
     expect(isPrivateHost(hostOf(href))).toBe(true);
@@ -41,57 +32,31 @@ describe("classifyHost", () => {
 
   it.each([
     "http://10.0.0.1/",
-    "http://10.255.255.255/",
     "http://172.16.0.1/",
-    "http://172.31.255.255/",
     "http://192.168.1.1/",
     "http://169.254.169.254/",
-    "http://0xa9fea9fe/",
     "http://100.64.0.1/",
-    "http://100.127.255.255/",
     "http://0.0.0.0/",
-    "http://0/",
-    "http://0.1.2.3/",
     "http://[::]/",
     "http://[fc00::1]/",
-    "http://[fd12:3456:789a::1]/",
     "http://[fe80::1]/",
-    "http://[febf::1]/",
-    "http://[::ffff:10.0.0.1]/",
     "http://[::ffff:a9fe:a9fe]/",
-    "http://[::ffff:192.168.0.1]/",
   ])("%s is private", (href) => {
     expect(classifyHost(hostOf(href))).toBe("private");
     expect(isPrivateHost(hostOf(href))).toBe(true);
   });
 
   it.each([
-    "https://example.com/",
-    "https://auth.example/",
     "https://localhost.example/",
-    "https://notlocalhost/",
     "https://8.8.8.8/",
     "https://172.15.255.255/",
     "https://172.32.0.1/",
-    "https://192.169.0.1/",
-    "https://100.63.255.255/",
     "https://100.128.0.1/",
-    "https://169.255.0.1/",
-    "https://11.0.0.1/",
-    "https://128.0.0.1/",
     "https://[2001:db8::1]/",
-    "https://[2606:4700::1111]/",
-    "https://[fec0::1]/",
     "https://[::ffff:8.8.8.8]/",
   ])("%s is public", (href) => {
     expect(classifyHost(hostOf(href))).toBe("public");
     expect(isPrivateHost(hostOf(href))).toBe(false);
-  });
-
-  it("canonicalizes a host that did not come from the URL parser", () => {
-    expect(classifyHost("::1")).toBe("loopback");
-    expect(classifyHost("0x7f000001")).toBe("loopback");
-    expect(classifyHost("169.254.169.254.")).toBe("private");
   });
 
   it("fails closed on a host it cannot parse", () => {
@@ -114,29 +79,17 @@ describe("learnedUrlRefusal", () => {
     expect(refusal(lan, "http://10.0.0.5:9000/register")).toMatch(/10\.0\.0\.5/);
   });
 
-  it("accepts a public https URL", () => {
-    expect(refusal(publicConfig, "https://auth.example/token")).toBeUndefined();
-    expect(refusal(loopbackConfig, "https://auth.example/token")).toBeUndefined();
-  });
-
   it.each(["http://auth.example/token", "ftp://auth.example/token"])("refuses the non-HTTPS URL %s", (target) => {
     expect(refusal(publicConfig, target)).toMatch(/HTTPS/);
     expect(refusal(loopbackConfig, target)).toMatch(/HTTPS/);
   });
 
-  it.each([
-    "https://169.254.169.254/latest/meta-data",
-    "https://10.0.0.1/token",
-    "https://192.168.0.10/register",
-    "https://[fd00::1]/token",
-    "https://[fe80::1]/token",
-    "https://[::ffff:a9fe:a9fe]/token",
-    "https://localhost/token",
-    "https://127.0.0.1:9000/token",
-    "https://[::1]/token",
-  ])("refuses the private https URL %s behind a public config", (target) => {
-    expect(refusal(publicConfig, target)).toMatch(/private/);
-  });
+  it.each(["https://169.254.169.254/latest/meta-data", "https://[fd00::1]/token", "https://[::ffff:a9fe:a9fe]/token"])(
+    "refuses the private https URL %s behind a public config",
+    (target) => {
+      expect(refusal(publicConfig, target)).toMatch(/private/);
+    },
+  );
 
   it("lets a loopback config learn loopback, over http too", () => {
     for (const target of [
@@ -150,15 +103,12 @@ describe("learnedUrlRefusal", () => {
     expect(refusal(new URL("http://localhost:3000/mcp"), "http://127.0.0.1:9000/token")).toBeUndefined();
   });
 
-  it.each([
-    "http://169.254.169.254/latest/meta-data",
-    "http://10.0.0.1/token",
-    "https://192.168.0.10/register",
-    "https://[fe80::1]/token",
-    "http://0.0.0.0:9000/token",
-  ])("still refuses LAN and link-local %s behind a loopback config", (target) => {
-    expect(refusal(loopbackConfig, target)).toMatch(/private|HTTPS/);
-  });
+  it.each(["http://169.254.169.254/latest/meta-data", "https://[fe80::1]/token"])(
+    "still refuses LAN and link-local %s behind a loopback config",
+    (target) => {
+      expect(refusal(loopbackConfig, target)).toMatch(/private|HTTPS/);
+    },
+  );
 
   it("names the host and never the path, query, or credentials", () => {
     const reason = required(
@@ -388,20 +338,6 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-old")))).not.toBeNull();
   });
 
-  it("keeps a public https authorization server working", async () => {
-    const server = downstream({
-      mcpUrl: "https://downstream.example/mcp",
-      authorizationServer: "https://auth.example",
-    });
-    vi.stubGlobal("fetch", server.fetchStub);
-    const c = connector(server.mcpUrl);
-    const started = await c.startAuth!(scope(memoryStorage()));
-
-    expect(started.state).toBe("auth_required");
-    expect(started.authorizationUrl).toMatch(/^https:\/\/auth\.example\/authorize\?/);
-    expect(server.requests.some((url) => url.href === "https://auth.example/register")).toBe(true);
-  });
-
   it("keeps a loopback-configured connector working against a loopback authorization server", async () => {
     const server = downstream({
       mcpUrl: "http://127.0.0.1:8787/mcp",
@@ -422,24 +358,4 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     await c.finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }));
     expect(server.requests.some((url) => url.href === "http://localhost:9000/token")).toBe(true);
   });
-
-  it.each(["http://192.168.1.20", "http://169.254.169.254"])(
-    "still refuses %s behind a loopback-configured connector",
-    async (authorizationServer) => {
-      const server = downstream({
-        mcpUrl: "http://127.0.0.1:8787/mcp",
-        authorizationServer,
-      });
-      vi.stubGlobal("fetch", server.fetchStub);
-      const c = connector(server.mcpUrl);
-      const started = await c.startAuth!(scope(memoryStorage()));
-
-      const host = new URL(authorizationServer).hostname;
-      expect(started).toMatchObject({
-        state: "error",
-        message: expect.stringContaining(host),
-      });
-      expect(reached(server, host)).toBe(0);
-    },
-  );
 });

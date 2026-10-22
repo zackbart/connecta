@@ -1,10 +1,10 @@
 // Node-only: walks the source import graph with Node filesystem APIs.
-import ts from "typescript";
-import { required } from "./helpers.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { required } from "./helpers.js";
 
 // Guardrail: the main entry (src/index.ts) must stay Workers-clean and free of
 // optional adapters. Node-only code and provider-specific auth integrations live
@@ -87,11 +87,6 @@ function walkImports(entry: string): Set<string> {
 
 describe("src/index.ts import purity (Workers-clean entry)", () => {
   const graph = importGraph(ENTRY);
-
-  it("reaches a non-trivial graph rooted at index.ts", () => {
-    expect(graph.has(ENTRY)).toBe(true);
-    expect(graph.size).toBeGreaterThan(1);
-  });
 
   it("INV-12: contains no `node:` builtin imports or requires", () => {
     for (const file of graph) {

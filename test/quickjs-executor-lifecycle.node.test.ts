@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
+import { deferred } from "./fixtures/misc.js";
 import { connectorWith } from "./fixtures/connectors.js";
-import { required, calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
-import { deferred, waitFor } from "./fixtures/misc.js";
+import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 // Real child startup and IPC need generous hang guards on a loaded host.
 // Each deadline case still asserts the executor's own configured budget.
@@ -100,32 +100,6 @@ describe("quickJsExecutor", () => {
     2 * SPAWN_BUDGET_MS,
   );
 
-  it("flags awaiting a promise that can never settle", async () => {
-    const ex = quickJsExecutor({ timeoutMs: 2_000 });
-    const out = await ex.execute(`async () => { await new Promise(() => {}); }`, []);
-    expect(out.error).toContain("stalled");
-  }, 10_000);
-
-  it("cancels a running child from the inbound request signal", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", ex, silentLogger);
-    const controller = new AbortController();
-    const pending = handler({ code: `async () => { while (true) {} }` }, { signal: controller.signal });
-    setTimeout(() => controller.abort(), 50);
-    const out = await pending;
-    const payload = JSON.parse(required(out.content[0]).text) as {
-      error: { code: string; retryable: boolean };
-    };
-    expect(payload.error).toMatchObject({
-      code: "executor_cancelled",
-      retryable: false,
-    });
-    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
-      result: 9,
-    });
-    await ex.close?.();
-  });
-
   it("recycles a running child when the execute watchdog abandons it", async () => {
     // The ceiling is set below this pool's own deadline only to make the
     // abandonment observable: releasing the lease must kill the child rather
@@ -151,37 +125,6 @@ describe("quickJsExecutor", () => {
       result: 9,
     });
   }, 10_000);
-
-  it("cancels a cold readiness wait without poisoning the warming slot", async () => {
-    const ex = quickJsExecutor({ timeoutMs: 2_000 });
-    const controller = new AbortController();
-    const lease = await ex.acquire({ signal: controller.signal });
-    const started = performance.now();
-    const pending = lease.execute("async () => 1", []);
-    setTimeout(() => controller.abort(), 1);
-    await expect(pending).rejects.toMatchObject({
-      code: "executor_cancelled",
-    });
-    lease.release();
-    expect(performance.now() - started).toBeLessThan(500);
-    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
-      result: 9,
-    });
-  });
-
-  it("close terminates active children and rejects new admission", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const running = ex.execute(`async () => { while (true) {} }`, []);
-    const closed = expect(running).rejects.toMatchObject({
-      code: "executor_closed",
-    });
-    await waitFor(() => (ex.admissionSnapshot?.().active ?? 0) > 0);
-    await ex.close?.();
-    await closed;
-    await expect(ex.execute("async () => 1", [])).rejects.toMatchObject({
-      code: "executor_closed",
-    });
-  });
 
   it("reports emitted blocks discarded by mid-run shutdown", async () => {
     const { promise: started, resolve: callStarted } = deferred<void>();

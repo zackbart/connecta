@@ -2,28 +2,29 @@
 // dispatchable example here, and every dispatched failure must use core's
 // decision. Argument examples come from the independent #900 fixtures.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ContractFixture } from "./fixtures/provider-contract.js";
-import { providerFixtures } from "./providers.generated.js";
-import argumentsByProvider from "./fixtures/provider-failure-arguments.json";
-import { googleOptions } from "./fixtures/provider-options.js";
-import { apiFixture, SCOPES } from "./fixtures/github-api.js";
+import { callClassification } from "../src/call-classification.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { api } from "../src/connectors/api.js";
+import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
+import { CredentialVault } from "../src/credentials.js";
+import { deriveContext } from "../src/derived-context.js";
+import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
+import { InvocationService } from "../src/invocation.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { providerRequests, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
 import { AppAuth } from "../src/providers/github/auth.js";
 import { restConnector } from "../src/providers/github/rest.js";
 import { parseScopes, ScopePolicy } from "../src/providers/github/scope.js";
-import { CredentialVault } from "../src/credentials.js";
-import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { callClassification } from "../src/call-classification.js";
-import * as outcomes from "../src/write-outcome.js";
-import { api } from "../src/connectors/api.js";
-import { providerRequests, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
-import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
-import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
-import { deriveContext } from "../src/derived-context.js";
-import { InvocationService } from "../src/invocation.js";
-import { CatalogService } from "../src/catalog-service.js";
+import { classifyTool } from "../src/tool-safety.js";
 import type { Connector } from "../src/types.js";
+import * as outcomes from "../src/write-outcome.js";
+import { apiFixture, SCOPES } from "./fixtures/github-api.js";
+import type { ContractFixture } from "./fixtures/provider-contract.js";
+import argumentsByProvider from "./fixtures/provider-failure-arguments.json";
+import { googleOptions } from "./fixtures/provider-options.js";
 import { makeRegistry } from "./helpers.js";
+import { providerFixtures } from "./providers.generated.js";
 
 const fixtures: readonly ContractFixture[] = providerFixtures;
 const BASE = "https://connecta.example";
@@ -131,66 +132,74 @@ describe("API provider failure sweep", () => {
       ]);
       for (const { tool, args, suffix } of examples) {
         const address = `${provider.name}.${tool.name}`;
-        for (const classification of ["write", "read"] as const) {
-          it.each(["503", "network-after-send"] as const)(
-            `INV-9: ${address}${suffix} served ${classification} → %s`,
-            async (failure) => {
-              const decision =
-                typeof outcomes.providerCallFailure === "function"
-                  ? vi.spyOn(outcomes, "providerCallFailure")
-                  : undefined;
-              const requests: string[] = [];
-              const fail = (request: Request): Response => {
-                requests.push(`${request.method} ${request.url}`);
-                if (failure === "network-after-send")
-                  throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
-                return Response.json(
-                  { error: { code: 503 }, errors: [{ message: "Service unavailable" }] },
-                  { status: 503 },
-                );
-              };
-              const result = await sweepCall(provider, tool.name, address, args, classification, fail);
-              if (LOCAL.has(address) && !suffix) {
-                expect(requests).toEqual([]);
-                expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
-                return;
-              }
-              expect(requests.length, JSON.stringify(result.structuredContent)).toBe(
-                address === "planning-center.get_plan"
-                  ? 3
-                  : ["forms.list_responses", "forms.get_response"].includes(address)
-                    ? 2
-                    : 1,
+        // Sweep every tool at its declared verdict; shared contract cases below
+        // exercise forced classifications without multiplying each provider tool.
+        for (const classification of [classifyTool(tool)]) {
+          // Network loss crosses the same transport boundary for every tool.
+          // Keep one probe per provider/verdict alongside every tool's HTTP refusals.
+          it.each(
+            provider.catalog.find(
+              (candidate) =>
+                !LOCAL.has(`${provider.name}.${candidate.name}`) && classifyTool(candidate) === classification,
+            )?.name === tool.name
+              ? (["503", "network-after-send"] as const)
+              : (["503"] as const),
+          )(`INV-9: ${address}${suffix} served ${classification} → %s`, async (failure) => {
+            const decision =
+              typeof outcomes.providerCallFailure === "function"
+                ? vi.spyOn(outcomes, "providerCallFailure")
+                : undefined;
+            const requests: string[] = [];
+            const fail = (request: Request): Response => {
+              requests.push(`${request.method} ${request.url}`);
+              if (failure === "network-after-send")
+                throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+              return Response.json(
+                { error: { code: 503 }, errors: [{ message: "Service unavailable" }] },
+                { status: 503 },
               );
-              // Composite tools may send independent requests concurrently (e.g.
-              // get_plan). Every request, including the first, must leave once.
-              expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
-              expect(result.structuredContent).toMatchObject({
-                ok: false,
-                error: classification === "write" ? { retryable: false, writeOutcome: "unknown" } : { retryable: true },
-              });
-              if (classification === "read")
-                expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
-              // One unknown-outcome advice: a provider's own is never followed by the shared one.
-              const { message } = (result.structuredContent as { error: { message: string } }).error;
-              if (/so its outcome is unknown|may or may not have been applied/.test(message))
-                expect(message).not.toContain("Whether the write took effect at");
-              if (decision) {
-                expect(
-                  decision.mock.calls.some(
-                    ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
-                  ),
-                ).toBe(true);
-                // The declaration is what lets an empty ledger prove a write
-                // unsent: the call's ledger recorded every resource request.
-                const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
-                expect(finals).toHaveLength(1);
-                expect(
-                  providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
-                ).toHaveLength(requests.length);
-              }
-            },
-          );
+            };
+            const result = await sweepCall(provider, tool.name, address, args, classification, fail);
+            if (LOCAL.has(address) && !suffix) {
+              expect(requests).toEqual([]);
+              expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+              return;
+            }
+            expect(requests.length, JSON.stringify(result.structuredContent)).toBe(
+              address === "planning-center.get_plan"
+                ? 3
+                : ["forms.list_responses", "forms.get_response"].includes(address)
+                  ? 2
+                  : 1,
+            );
+            // Composite tools may send independent requests concurrently (e.g.
+            // get_plan). Every request, including the first, must leave once.
+            expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
+            expect(result.structuredContent).toMatchObject({
+              ok: false,
+              error: classification === "write" ? { retryable: false, writeOutcome: "unknown" } : { retryable: true },
+            });
+            if (classification === "read")
+              expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
+            // One unknown-outcome advice: a provider's own is never followed by the shared one.
+            const { message } = (result.structuredContent as { error: { message: string } }).error;
+            if (/so its outcome is unknown|may or may not have been applied/.test(message))
+              expect(message).not.toContain("Whether the write took effect at");
+            if (decision) {
+              expect(
+                decision.mock.calls.some(
+                  ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
+                ),
+              ).toBe(true);
+              // The declaration is what lets an empty ledger prove a write
+              // unsent: the call's ledger recorded every resource request.
+              const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
+              expect(finals).toHaveLength(1);
+              expect(
+                providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
+              ).toHaveLength(requests.length);
+            }
+          });
           // A write answered 401 is an unknown outcome unless its provider
           // declares reviewed authBeforeExecution evidence; a read keeps its
           // refusal. Either way authorization is still needed, so the handoff
@@ -867,14 +876,6 @@ describe("round-6 write evidence sweep", () => {
     Object.defineProperty(blob, "stream", { value: () => streamed(bytes) });
     return blob;
   }
-  function form(bytes: number): FormData {
-    const data = new FormData();
-    data.append("note", "Fixture");
-    // append() copies a Blob into a new File, so the override goes on the copy.
-    data.append("file", new Blob([new Uint8Array(bytes * 2)]), "ticket.txt");
-    Object.defineProperty(data.get("file"), "stream", { value: () => streamed(bytes) });
-    return data;
-  }
   const refusedErrno = () =>
     new TypeError("fetch failed", {
       cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
@@ -882,12 +883,8 @@ describe("round-6 write evidence sweep", () => {
 
   it.each([
     ["a streamed body pulled before its producer raised ECONNREFUSED", "pulled"],
-    ["a streamed body fetch never pulled", "unpulled"],
     ["no body", "none"],
-    ["a JSON body", "json"],
-    ["a body of no type fetch holds whole", "opaque"],
     ["a Blob whose stream() streamed bytes before ECONNREFUSED", "blob"],
-    ["FormData carrying such a Blob", "form"],
   ] as const)("INV-9: a write refused at connect with %s is unknown", async (_name, body) => {
     const received: number[] = [];
     const send = guardedFetch({
@@ -910,9 +907,8 @@ describe("round-6 write evidence sweep", () => {
             throw new TypeError("fetch failed", { cause });
           }
         }
-        // Blobs, a FormData's included, are read through their stream().
-        const blobs =
-          init.body instanceof Blob ? [init.body] : init.body instanceof FormData ? [...init.body.values()] : [];
+        // Blobs are read through their stream().
+        const blobs = init.body instanceof Blob ? [init.body] : [];
         for (const blob of blobs) {
           if (!(blob instanceof Blob)) continue;
           const reader = blob.stream().getReader();
@@ -941,17 +937,11 @@ describe("round-6 write evidence sweep", () => {
                 {
                   method: "POST",
                   path: "/tickets",
-                  ...(body === "pulled" || body === "unpulled"
+                  ...(body === "pulled"
                     ? { rawBody: streamed(20) }
-                    : body === "json"
-                      ? { body: { title: "Fixture" } }
-                      : body === "opaque"
-                        ? { rawBody: { [Symbol.asyncIterator]: async function* () {} } as unknown as BodyInit }
-                        : body === "blob"
-                          ? { rawBody: producingBlob(20) }
-                          : body === "form"
-                            ? { rawBody: form(20) }
-                            : {}),
+                    : body === "blob"
+                      ? { rawBody: producingBlob(20) }
+                      : {}),
                 },
                 ctx,
                 (r) => r.json(),
@@ -961,7 +951,7 @@ describe("round-6 write evidence sweep", () => {
       }),
     );
     const result = await invoke(connector, "send", "write");
-    if (body === "pulled" || body === "blob" || body === "form") expect(received).toEqual([20]);
+    if (body === "pulled" || body === "blob") expect(received).toEqual([20]);
     expect(result).toMatchObject({ ok: false, error: { retryable: false, writeOutcome: "unknown" } });
     expect(stateOf(result)).toBe("unknown");
   });

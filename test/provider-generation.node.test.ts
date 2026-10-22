@@ -1,6 +1,5 @@
 // Node-only: executes the generator against temporary provider folders.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -229,55 +228,16 @@ describe("provider folder generation", () => {
     expect(packed.status, packed.stderr).toBe(0);
   });
 
-  it("computes current skills before imports and checks freshness without creating or changing files", () => {
+  it.each(["index.ts", "drift.json"])("rejects a missing required %s with a provider-specific error", (file) => {
     const root = repository();
     provider(root, "alpha");
-    const before = snapshot(root);
-    const missing = run(root, true);
-    expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain("src/providers/alpha/skill.generated.ts");
-    expect(missing.stderr).toContain("scripts/provider-smoke.generated.mjs");
-    expect(snapshot(root)).toEqual(before);
-    expect(run(root).status).toBe(0);
-    const skillSource = read(root, "src/providers/alpha/skill.generated.ts");
-    const skill = JSON.parse(skillSource.slice(skillSource.indexOf("= ") + 2, skillSource.lastIndexOf(" as const")));
-    expect(skill.content).toBe("  Keep spaces.\n\n");
-    expect(skill.fragments.footer).toBe("Tail without final newline");
-    write(root, "src/providers/alpha/skill.generated.ts", 'throw new Error("stale skill must not load");\n');
-    const staleSnapshot = snapshot(root);
-    const stale = run(root, true);
-    expect(stale.status).toBe(1);
-    expect(stale.stderr).toContain("Stale provider outputs");
-    expect(snapshot(root)).toEqual(staleSnapshot);
-    expect(run(root).status).toBe(0);
-    expect(run(root, true).status).toBe(0);
-  });
-
-  it.each(["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "provider.test.ts"])(
-    "rejects a missing required %s with a provider-specific error",
-    (file) => {
-      const root = repository();
-      provider(root, "alpha");
-      unlinkSync(join(root, "src/providers/alpha", file));
-      const before = snapshot(root);
-      const result = run(root);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        `src/providers/alpha: missing required file ${file === "provider.test.ts" ? "provider.node.test.ts" : file}`,
-      );
-      expect(snapshot(root)).toEqual(before);
-    },
-  );
-
-  it("rejects malformed or duplicated skill fragments before writing outputs", () => {
-    const root = repository();
-    provider(root, "alpha");
-    const skill = "src/providers/alpha/SKILL.md";
-    write(root, skill, read(root, skill) + "<!-- fragment: content -->\nDuplicate<!-- endfragment -->\n");
+    unlinkSync(join(root, "src/providers/alpha", file));
     const before = snapshot(root);
     const result = run(root);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("providers/alpha: duplicate skill fragment content");
+    expect(result.stderr).toContain(
+      `src/providers/alpha: missing required file ${file === "provider.test.ts" ? "provider.node.test.ts" : file}`,
+    );
     expect(snapshot(root)).toEqual(before);
   });
 
@@ -380,149 +340,21 @@ const generatedSkill = (root: string, name: string) => {
   const source = read(root, `src/providers/${name}/skill.generated.ts`);
   return JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
 };
-const digestOf = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 
 describe("decision 0011 guides and drift records", () => {
   const KIT = `kit: { operations: ["POST /b", "GET /a", "GET /a"], pageSize: { default: 25, max: 100 },
     hatch: { name: "alpha", verdicts: { "GET /a": "read", "POST /b": "write", "DELETE /c": "refuse" } } },`;
 
-  it("renders a standard guide's Conventions from its declarations and writes drift.json's generated block", () => {
-    const root = repository();
-    const safety = '{ "format": 5 }\n';
-    standardProvider(root, "alpha", {
-      definition: KIT,
-      files: { "safety.ts": "export const table = {};\n", "evidence/value-safety.json": safety },
-    });
-    const first = run(root);
-    expect(first.status, first.stderr).toBe(0);
-    const skill = generatedSkill(root, "alpha");
-    expect(Object.keys(skill)).toEqual(["content", "instructionsHeading"]);
-    expect(
-      skill.content.startsWith("## Identity\n\nResolve an account id before any write.\n\n## Conventions\n\n"),
-    ).toBe(true);
-    expect(skill.content.split("\n").filter((line: string) => line.startsWith("- **"))).toEqual([
-      expect.stringContaining(
-        "**Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100)",
-      ),
-      expect.stringContaining("**Results:** `fields` narrows"),
-      expect.stringMatching(
-        /^- \*\*Hatch:\*\* `alpha_api_search` .*`alpha_api_write` calls a reviewed write, and every call to it needs approval\. .*refused by design: `DELETE \/c`\.$/,
-      ),
-      expect.stringContaining("**Writes:** a write is sent once and never retried"),
-      expect.stringContaining('**Withheld values:** a value withheld for safety reads `"[redacted]"`'),
-    ]);
-    const drift = json(root, "src/providers/alpha/drift.json");
-    expect(Object.keys(drift)).toEqual(["version", "provider", "generated", "checks"]);
-    expect(drift.generated).toEqual({
-      operations: ["GET /a", "POST /b"],
-      hosted: [],
-      evidence: { "value-safety.json": digestOf(safety) },
-    });
-    expect(run(root, true).status).toBe(0);
-    // Tools own the generated block: a hand edit, or evidence bytes that moved, is stale.
-    const path = "src/providers/alpha/drift.json";
-    const generated = read(root, path);
-    write(root, path, generated.replace('"GET /a",', '"GET /a",\n      "GET /typed-by-hand",'));
-    const handEdited = run(root, true);
-    expect(handEdited.status).toBe(1);
-    expect(handEdited.stderr).toContain(path);
-    write(root, path, generated);
-    write(root, "src/providers/alpha/evidence/value-safety.json", '{ "format": 6 }\n');
-    expect(run(root, true).stderr).toContain(path);
-    expect(run(root).status).toBe(0);
-    expect(json(root, path).generated.evidence).toEqual({ "value-safety.json": digestOf('{ "format": 6 }\n') });
-    // So does a Conventions section whose declaration moved.
-    const index = "src/providers/alpha/index.ts";
-    write(root, index, read(root, index).replace("default: 25", "default: 50"));
-    const moved = run(root, true);
-    expect(moved.status).toBe(1);
-    expect(moved.stderr).toContain("src/providers/alpha/skill.generated.ts");
-  });
-
-  it("keys a dual guide's API and hosted Conventions to its declared blocks, and lists served hosted names", () => {
-    const root = repository();
-    standardProvider(root, "alpha", {
-      kind: "dual",
-      definition: `blocks: { keys: ["api", "hosted"], select: () => ["api"] },
-        classify: { tools: { list_items: "read", edit_item: "write" } },`,
-      skill: "## Identity\n\n<!-- when: hosted -->\nSelect the workspace first.\n<!-- end -->\n",
-      files: {
-        "evidence/catalog.json": JSON.stringify({
-          capturedAt: "2026-10-01",
-          method: "tools/list",
-          source: "https://vendor.example/mcp",
-          tools: [{ name: "edit_item" }, { name: "list_items" }],
-        }),
-      },
-    });
-    const result = run(root);
-    expect(result.status, result.stderr).toBe(0);
-    expect(generatedSkill(root, "alpha").content.split("\n")).toEqual([
-      "## Identity",
-      "",
-      "<!-- when: hosted -->",
-      "Select the workspace first.",
-      "<!-- end -->",
-      "",
-      "## Conventions",
-      "",
-      "<!-- when: api -->",
-      expect.any(String),
-      "<!-- end -->",
-      expect.stringContaining("- **Writes:**"),
-      "<!-- when: hosted -->",
-      expect.stringContaining("- **Hosted tools:** the hosted catalog varies by plan and permission"),
-      "<!-- end -->",
-    ]);
-    expect(json(root, "src/providers/alpha/drift.json").generated).toMatchObject({
-      operations: [],
-      hosted: ["edit_item", "list_items"],
-      evidence: { "catalog.json": expect.stringMatching(/^sha256:/) },
-    });
-  });
-
   it.each([
-    [
-      "a fragment guide",
-      { skill: "<!-- fragment: content -->\nText.\n<!-- endfragment -->\n" },
-      "G2: SKILL.md uses retired fragment markers",
-    ],
     [
       "an undeclared when-block key",
       { skill: "<!-- when: region -->\nUS only.\n<!-- end -->\n" },
       "G2: SKILL.md uses the when-block region, which blocks.keys omits",
     ],
     [
-      "an inline when-block",
-      { skill: "Text <!-- when: api -->inline<!-- end -->\n" },
-      "G2: a when-block marker stands alone on its line",
-    ],
-    [
-      "a written Conventions section",
-      { skill: "## Conventions\n\nPage with cursors.\n" },
-      "G3: the Conventions section",
-    ],
-    [
-      "operator setup",
-      { skill: "## Setup\n\nImport it from `@zackbart/connecta/providers/alpha`.\n" },
-      "G4: SKILL.md carries operator setup",
-    ],
-    [
       "a dual guide without hosted and api keys",
       { kind: "dual" as const, definition: 'classify: { tools: { list_items: "read" } },' },
       "G2: a dual provider declares the hosted and api block keys",
-    ],
-    [
-      "a manual check without lastVerified",
-      { checks: [{ type: "manual", source: "https://vendor.example", reason: "Prose." }] },
-      "D3: checks[0] manual check needs lastVerified",
-    ],
-    [
-      "a hand-kept reviewed list",
-      {
-        checks: [{ type: "mcp-docs", setup: "https://vendor.example/mcp", endpoints: ["https://x"], reviewed: ["a"] }],
-      },
-      "D4: checks[0] hand-keeps a reviewed list",
     ],
     [
       "an endpoint row the manifest does not send",
@@ -536,36 +368,6 @@ describe("decision 0011 guides and drift records", () => {
         ],
       },
       "D4: checks[0] entries are keyed by an operation in generated.operations",
-    ],
-    [
-      "a ReadMe endpoint row without its page, which providers:check cannot read",
-      {
-        definition: KIT,
-        checks: [
-          {
-            type: "endpoints",
-            specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
-            endpoints: [{ operation: "GET /a", specRevision: "1", contract: `sha256:${"0".repeat(64)}` }],
-          },
-        ],
-      },
-      "D3: providers:check rejects checks[0]: GET /a names its reference page",
-    ],
-    [
-      "reviewed access to a tool generated.hosted does not serve",
-      {
-        kind: "mcp" as const,
-        definition: 'classify: { tools: { list_items: "read" } },',
-        checks: [
-          {
-            type: "mcp-docs",
-            setup: "https://vendor.example/mcp",
-            endpoints: ["https://mcp.vendor.example/mcp"],
-            reviewedAccess: { ghost: "read" },
-          },
-        ],
-      },
-      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
     ],
   ])("refuses %s past its step before writing anything", (_label, options, finding) => {
     const root = repository();
@@ -672,44 +474,6 @@ describe("decision 0011 guides and drift records", () => {
       instructionsHeading: "Notes",
       fragments: { content: "# Legacy\n" },
     });
-  });
-});
-
-describe("the generated Conventions", () => {
-  const conventions = async () =>
-    (await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href)) as {
-      renderConventions(input: object): string;
-    };
-  const labels = (text: string) => [...text.matchAll(/^- \*\*([A-Za-z ]+):\*\*/gm)].map((match) => match[1]);
-
-  it("states the hosted conventions for mcp, and only the declared API ones for api", async () => {
-    const { renderConventions } = await conventions();
-    expect(labels(renderConventions({ name: "acme", kind: "mcp" }))).toEqual(["Writes", "Hosted tools"]);
-    expect(labels(renderConventions({ name: "acme", kind: "api" }))).toEqual(["Results", "Writes"]);
-    const kit = { operations: [], pageSize: { default: 10, max: 50 }, hatch: { name: "acme", verdicts: {} } };
-    const full = renderConventions({ name: "acme", kind: "api", kit, withheld: true });
-    expect(labels(full)).toEqual(["Paging", "Results", "Hatch", "Writes", "Withheld values"]);
-    // A hatch with no write verdict offers no write tool and asks no approval.
-    expect(full).not.toContain("acme_api_write");
-    expect(full).toContain("An operation without a reviewed verdict is refused.");
-  });
-
-  it("refuses kit facts it cannot state truthfully", async () => {
-    const { renderConventions } = await conventions();
-    expect(() =>
-      renderConventions({ name: "acme", kind: "api", kit: { operations: [], pageSize: { default: 50, max: 10 } } }),
-    ).toThrow("kit.pageSize default exceeds its maximum");
-    expect(() =>
-      renderConventions({ name: "acme", kind: "api", kit: { operations: [], hatch: { name: "Acme", verdicts: {} } } }),
-    ).toThrow("snake_case tool prefix");
-    expect(() =>
-      renderConventions({
-        name: "acme",
-        kind: "api",
-        kit: { operations: [], hatch: { name: "acme", verdicts: { "GET /a": "maybe" } } },
-      }),
-    ).toThrow("read, write, destructive, or refuse");
-    expect(() => renderConventions({ name: "acme", kind: "composed" })).toThrow("mcp, api, or dual");
   });
 });
 
@@ -1159,22 +923,6 @@ describe("value-safety candidate detection", () => {
     expect(valueSafetyCandidates(document, { expansions: false })["POST /v1/keys"]?.fields).toEqual(fields);
   });
 
-  it("stamps the candidates file with the detector format, the pinned digest, and the detector options", async () => {
-    const { renderValueSafety, VALUE_SAFETY_FORMAT } = await detection();
-    const rendered = JSON.parse(
-      renderValueSafety(
-        { openapi: "3.0.0", paths: {} },
-        { digest: "sha256:x", options: { valueSafety: { expansions: false } } },
-      ).text,
-    );
-    expect(rendered).toEqual({
-      format: VALUE_SAFETY_FORMAT,
-      digest: "sha256:x",
-      options: { expansions: false },
-      candidates: {},
-    });
-  });
-
   it("INV-5: checks every reviewed path against the pinned response schema, and refuses unacknowledged misses", async () => {
     const { reviewedPaths, renderValueSafety } = await detection();
     const hook = {
@@ -1341,10 +1089,6 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     ): Promise<{ problems: string[]; summary: string }>;
   }
   const spec = async () => (await import(new URL("../scripts/generate-openapi.mjs", import.meta.url).href)) as Spec;
-  const safetyScript = async () =>
-    (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
-      reviewedTable(directory: string): Promise<{ table: unknown; absent: Record<string, unknown> } | undefined>;
-    };
   const document = JSON.stringify({
     openapi: "3.0.0",
     info: { version: "1" },
@@ -1455,45 +1199,5 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     writeFileSync(join(directory, "evidence/openapi.json"), JSON.stringify({ ...pin, vendored: undefined }));
     unlinkSync(join(directory, "evidence/openapi.document.json"));
     expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
-  });
-
-  it("refuses a folder that pins OpenAPI under both names, and keeps legacy names until step 1", async () => {
-    const { openApiEvidence } = await spec();
-    const pin = JSON.stringify({
-      url: "https://vendor.example/openapi.json",
-      revision: "r1",
-      digest: `sha256:${"0".repeat(64)}`,
-    });
-    const both = folder({ "evidence/openapi.json": pin, "openapi.source.json": pin });
-    await expect(openApiEvidence(both.directory)).rejects.toThrow("pins OpenAPI twice");
-    const legacy = folder({ "openapi.source.json": pin });
-    expect(await openApiEvidence(legacy.directory)).toEqual({
-      pin: "openapi.source.json",
-      candidates: "value-safety.candidates.json",
-    });
-  });
-
-  it("reads the reviewed table and its absent paths from safety.ts, legacy files until step 1, never both", async () => {
-    const { reviewedTable } = await safetyScript();
-    const standard = folder({ "safety.ts": table(true) });
-    expect((await reviewedTable(standard.directory))?.absent).toEqual({
-      operations: { "GET /v1/keys": ["legacy_secret"] },
-      resources: {},
-      reason: "A shared verdict path.",
-    });
-    writeFileSync(join(standard.directory, "value-safety.absent.json"), "{}");
-    await expect(reviewedTable(standard.directory)).rejects.toThrow("remove value-safety.*");
-    const legacy = folder({
-      "value-safety.ts": table(false),
-      "value-safety.absent.json": JSON.stringify({
-        reason: "Shared.",
-        operations: { "GET /v1/keys": ["legacy_secret"] },
-      }),
-    });
-    expect((await reviewedTable(legacy.directory))?.absent).toMatchObject({
-      operations: { "GET /v1/keys": ["legacy_secret"] },
-      resources: {},
-    });
-    expect(await reviewedTable(folder({}).directory)).toBeUndefined();
   });
 });

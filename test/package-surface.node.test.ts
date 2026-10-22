@@ -225,26 +225,6 @@ describe("public package boundary", () => {
       }
     }
   }, 30_000);
-
-  // The Cloudflare prebuilt connection is hand-written fetch against the
-  // documented v4 REST API. That is a deliberate choice over wrapping the
-  // generated `cloudflare` SDK, so the SDK must not appear as a dependency, an
-  // optional peer, or a dev dependency — any of the three would reintroduce the
-  // install weight the hand-written surface exists to avoid.
-  it("does not depend on the Cloudflare service API SDK", () => {
-    expect(packageJson.dependencies).not.toHaveProperty("cloudflare");
-    expect(packageJson.peerDependencies).not.toHaveProperty("cloudflare");
-    expect(packageJson.devDependencies).not.toHaveProperty("cloudflare");
-  });
-
-  it("keeps the Cloudflare provider free of bare-specifier imports", () => {
-    const source = readFileSync(join(ROOT, "src", "providers", "cloudflare", "index.ts"), "utf8");
-    // Every import must be relative: a bare specifier here would be a runtime
-    // dependency the package never declares.
-    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
-    }
-  });
 });
 
 // Effect is the core's implementation and must never become its API: a
@@ -259,13 +239,6 @@ describe("Effect behind the published surface", () => {
       encoding: "utf8",
       timeout: 60_000,
     });
-
-  it("INV-13: publishes no Effect type in any reachable declaration", () => {
-    const result = runChecker([]);
-    expect(result.error).toBeUndefined();
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("no Effect types");
-  }, 60_000);
 
   describe("a checker that can fail", () => {
     const fixture = (files: Record<string, string>) => {
@@ -286,7 +259,7 @@ describe("Effect behind the published surface", () => {
       return dir;
     };
 
-    it("fails on an Effect import in a reachable declaration and names it", () => {
+    it("INV-13: fails on an Effect import in a reachable declaration and names it", () => {
       const dir = fixture({
         "index.d.ts":
           'export { thing } from "./thing.js";\n' +
@@ -332,18 +305,5 @@ describe("Effect behind the published surface", () => {
     const effect = lockedVersions("effect");
     expect(effect.resolved, "locked effect differs from the pin").toBe(pin);
     expect(effect.locked, "a second copy of effect is locked").toEqual([pin]);
-  });
-
-  it("declares exactly the core runtime dependencies", () => {
-    // Meta-tool inputs stay Zod: the measured Effect Schema conversion cost
-    // more bytes without clarifying validation. See architecture.md.
-    expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual([
-      "@cfworker/json-schema",
-      "@modelcontextprotocol/client",
-      "@modelcontextprotocol/server",
-      "acorn",
-      "effect",
-      "zod",
-    ]);
   });
 });

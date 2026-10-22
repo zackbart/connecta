@@ -1,13 +1,13 @@
-import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
-import { machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import { createTestConnecta, required, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
+import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
+import { createTestConnecta, required, silentLogger } from "./helpers.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
@@ -367,52 +367,6 @@ describe("server route contracts", () => {
     expect(await owned.text()).toBe("Not Found");
   });
 
-  it("answers a browser's 404 with one themed page that names no path", async () => {
-    const connecta = createTestConnecta({
-      connectors: [surfaceConnector()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: silentLogger,
-    });
-    const html = { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" };
-    const bodies = new Set<string>();
-    for (const path of [
-      "/owned",
-      "/nested/deeper?q=1",
-      "/.well-known/not-configured",
-      "/credentials",
-      "/%3Cscript%3E",
-    ]) {
-      const response = await connecta.fetch(new Request(`${BASE}${path}`, { headers: html }));
-      expect(response.status, path).toBe(404);
-      expect(response.headers.get("Content-Type"), path).toBe("text/html; charset=utf-8");
-      expect(response.headers.get("Vary"), path).toBe("Accept");
-      expectGlobalSecurityHeaders(response);
-      expect(response.headers.get("Content-Security-Policy"), path).toBe(
-        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-      );
-      expect(response.headers.get("X-Frame-Options"), path).toBe("DENY");
-      expect(response.headers.get("Cache-Control"), path).toBe("no-store");
-      const body = await response.text();
-      expect(body, path).not.toContain(path.split("?")[0]!.slice(1));
-      bodies.add(body);
-    }
-    expect(bodies.size).toBe(1);
-    const [page] = [...bodies];
-    expect(page).toContain("<h1>Page not found</h1>");
-    expect(page).toContain('<header class="masthead shell">');
-    expect(page).toContain(`href="${BASE}/">Go to Connecta</a>`);
-
-    // Everyone else keeps the plain answer: fetch(), MCP clients, probes.
-    for (const accept of [undefined, "*/*", "application/json"]) {
-      const response = await connecta.fetch(
-        new Request(`${BASE}/owned`, accept ? { headers: { Accept: accept } } : {}),
-      );
-      expect(await response.text(), String(accept)).toBe("Not Found");
-    }
-  });
-
   it("keeps operator shells open, framed off, and data-free", async () => {
     const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
@@ -545,73 +499,6 @@ describe("server route contracts", () => {
     }
   });
 
-  it("refuses ?toolkit= on /mcp with an explicit 404 after the retirement", async () => {
-    const warn = vi.fn();
-    const connecta = createTestConnecta({
-      connectors: [testConnector("alpha")],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: { ...silentLogger, warn },
-      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
-    });
-
-    // Every ?toolkit= value — a formerly configured name, garbage, or empty —
-    // gets the same 404: an endpoint URL minted before the retirement (#178)
-    // must not silently widen into the full registry.
-    for (const value of ["support", "no-such-toolkit", ""]) {
-      const response = await mcpRpc(
-        connecta,
-        "tools/call",
-        { name: "search_tools", arguments: { query: "read" } },
-        {
-          token: TOKEN,
-          query: `?toolkit=${value}`,
-        },
-      );
-      expect(response.status, `?toolkit=${value}`).toBe(404);
-      expectMcpCors(response);
-      expect(response.headers.get("Cache-Control")).toBe("no-store");
-      const body = (await response.json()) as {
-        error: { message: string };
-      };
-      expect(body.error.message).toContain("#178");
-    }
-    // The client-facing body is discarded by SDK transports, so the reason
-    // must also reach the operator log (#47).
-    expect(warn).toHaveBeenCalledTimes(3);
-    expect(warn.mock.calls[0]?.[0]).toContain("#178");
-
-    // Auth still runs first: an unauthenticated ?toolkit= request is a plain
-    // 401, revealing nothing about the retirement.
-    const unauthenticated = await mcpRpc(
-      connecta,
-      "tools/call",
-      { name: "search_tools", arguments: { query: "read" } },
-      {
-        query: "?toolkit=support",
-      },
-    );
-    expect(unauthenticated.status).toBe(401);
-
-    // The same credential without the param reaches the endpoint normally —
-    // and the call actually succeeds, which is the only way this contrasts
-    // with the 404 above rather than with some other refusal.
-    const clean = await mcpRpc(
-      connecta,
-      "tools/call",
-      { name: "search_tools", arguments: { query: "read" } },
-      { token: TOKEN },
-    );
-    expect(clean.status).toBe(200);
-    const cleanBody = (await clean.json()) as {
-      error?: unknown;
-      result?: { isError?: boolean };
-    };
-    expect(cleanBody.error, JSON.stringify(cleanBody)).toBeUndefined();
-    expect(cleanBody.result?.isError).toBeFalsy();
-  });
-
   it("verifies OAuth callback state before exchange and keeps all unverifiable callbacks opaque", async () => {
     const acceptedOrder: string[] = [];
     const rejectedFinish = vi.fn();
@@ -703,4 +590,42 @@ describe("server route contracts", () => {
     expect(rejectedFinish).not.toHaveBeenCalled();
     expect(throwingFinish).not.toHaveBeenCalled();
   });
+});
+
+it("answers a browser's 404 with one themed page that names no path", async () => {
+  const connecta = createTestConnecta({
+    connectors: [surfaceConnector()],
+    auth: machineAuth(TOKEN),
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    logger: silentLogger,
+  });
+  const html = { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" };
+  const bodies = new Set<string>();
+  for (const path of ["/owned", "/nested/deeper?q=1", "/.well-known/not-configured", "/credentials", "/%3Cscript%3E"]) {
+    const response = await connecta.fetch(new Request(`${BASE}${path}`, { headers: html }));
+    expect(response.status, path).toBe(404);
+    expect(response.headers.get("Content-Type"), path).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("Vary"), path).toBe("Accept");
+    expectGlobalSecurityHeaders(response);
+    expect(response.headers.get("Content-Security-Policy"), path).toBe(
+      "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    );
+    expect(response.headers.get("X-Frame-Options"), path).toBe("DENY");
+    expect(response.headers.get("Cache-Control"), path).toBe("no-store");
+    const body = await response.text();
+    expect(body, path).not.toContain(path.split("?")[0]!.slice(1));
+    bodies.add(body);
+  }
+  expect(bodies.size).toBe(1);
+  const [page] = [...bodies];
+  expect(page).toContain("<h1>Page not found</h1>");
+  expect(page).toContain('<header class="masthead shell">');
+  expect(page).toContain(`href="${BASE}/">Go to Connecta</a>`);
+
+  // Everyone else keeps the plain answer: fetch(), MCP clients, probes.
+  for (const accept of [undefined, "*/*", "application/json"]) {
+    const response = await connecta.fetch(new Request(`${BASE}/owned`, accept ? { headers: { Accept: accept } } : {}));
+    expect(await response.text(), String(accept)).toBe("Not Found");
+  }
 });

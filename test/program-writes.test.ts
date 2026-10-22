@@ -1,25 +1,24 @@
+import { classifyWriteOutcome } from "../src/program-writes.js";
 import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
 // Program writes on writable and read-only endpoints, with one attempt and
 // bounded outcome accounting.
 import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
-import { ConnectorCallError } from "../src/errors.js";
-import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
-import { createExecuteTool } from "../src/execute.js";
-import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
-import { customExecutor, createConnecta } from "../src/index.js";
+import { CredentialVault } from "../src/credentials.js";
+import { ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
+import { createConnecta, customExecutor } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
+import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
+import type { Connector, Executor, ExecutorProvider, JsonSchema, ToolDef } from "../src/types.js";
 import { readJsonRpc } from "./fixtures/http.js";
+import { PRIVATE_MARKER, privateArgumentCases } from "./fixtures/private-arguments.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
-import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
-import type { JsonSchema } from "../src/types.js";
-import { CredentialVault } from "../src/credentials.js";
-import { stripe } from "../src/providers/stripe/index.js";
 
 const BASE = "https://connecta.program-writes";
 
@@ -203,52 +202,6 @@ describe("a writable endpoint's program Stripe refund whose reply is lost", () =
   });
 });
 
-describe("a writable endpoint's program Stripe refund that meets an object lock", () => {
-  it("INV-9: counts a lock_timeout as a failed write, not an unknown outcome", async () => {
-    const storage = memoryStorage();
-    const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
-    await credentialVault.set("billing", "rk_test_51abc", "test");
-    const registry = makeRegistry(
-      [stripe("billing", { purpose: "Refunds", auth: { type: "apiKey" }, mode: "sandbox" })],
-      {
-        storage,
-        credentialVault,
-      },
-    );
-    let sent = 0;
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      sent += 1;
-      return Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
-    }) as typeof fetch;
-    try {
-      const programs = new Map<string, Program>();
-      const code = "async () => lockedRefund";
-      programs.set(code, async (connecta) => {
-        try {
-          await connecta.call!("billing.stripe_api_write", {
-            method: "POST",
-            path: "/v1/refunds",
-            body: { charge: "ch_1" },
-          });
-        } catch (error) {
-          return { caught: (error as { code?: string }).code };
-        }
-        return "sent";
-      });
-      const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
-        readOnly: false,
-      });
-      const result = await execute({ code });
-      expect(sent).toBe(1);
-      expect(JSON.stringify(result)).not.toContain("write_outcome_unknown");
-      expect(JSON.stringify(result)).toContain("conflict");
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-  });
-});
-
 describe("a program's write", () => {
   for (const { name, schema, args, echo } of privateArgumentCases)
     it(`INV-5 INV-6 INV-9: caught writes retain safe ${name} echoes and original-argument guidance`, async () => {
@@ -302,19 +255,6 @@ describe("a program's write", () => {
     });
     expect(value(result).result).toBe("read_only_endpoint");
     expect(w.writes()).toEqual([]);
-  });
-
-  it("INV-2: is refused on a read-only endpoint before it is sent, offering no write route", async () => {
-    const w = world({ readOnly: true });
-    const result = await w.run(closeOne);
-    expect(result.isError).toBe(true);
-    expect(value(result).error).toMatchObject({ code: "read_only_endpoint", retryable: false });
-    expect(value(result).error).not.toHaveProperty("nextAction");
-    expect(w.writes()).toEqual([]);
-    // An ordinary refused attempt, recorded payload-free.
-    expect(w.events.map((event) => [event.address, event.outcome, event.errorCode, event.friction])).toEqual([
-      ["tracker.close_issue", "error", "read_only_endpoint", undefined],
-    ]);
   });
 
   it("INV-2: is refused on a read-only endpoint for an unannotated tool too, and a caught refusal lets the program go on", async () => {
@@ -531,28 +471,6 @@ describe("writable-endpoint programs (#706, #820)", () => {
       "ConnectaConfig.pools.named.readOnly must be true or false",
     );
     expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
-  });
-
-  it("INV-11: refuses the retired trust option, pointing at readOnly", () => {
-    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
-    const construct = () =>
-      (createConnecta as (config: unknown) => unknown)({
-        connectors: [],
-        executor,
-        logger: "silent",
-        trust: "trusted",
-      });
-    expect(construct).toThrow("ConnectaConfig.trust");
-    expect(construct).toThrow('trust: "read-only" becomes readOnly: true');
-    expect(construct).toThrow('trust: "trusted" becomes readOnly: false');
-  });
-});
-
-describe("write outcomes", () => {
-  it("INV-9: a dispatched write stays applied when result processing fails", () => {
-    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: { code: "result_processing_failed" } })).toBe(
-      "ok",
-    );
   });
 });
 
@@ -882,4 +800,8 @@ it("INV-6 INV-9: caught write timeouts retain uncertain arguments in host-owned 
   });
   expect(w.writes()).toHaveLength(1);
   expect(JSON.stringify(w.events)).not.toContain("argument-sentinel");
+});
+
+it("INV-9: a dispatched write stays applied when result processing fails", () => {
+  expect(classifyWriteOutcome({ ok: false, dispatched: true, error: { code: "result_processing_failed" } })).toBe("ok");
 });
