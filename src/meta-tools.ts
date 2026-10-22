@@ -36,7 +36,7 @@ import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
-import type { Logger } from "./types.js";
+import type { Logger, ToolDef } from "./types.js";
 import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
@@ -164,6 +164,8 @@ export interface ProgramResultDependency {
   tool?: string;
   classification: "read" | "write";
 }
+
+export type ResultReadStage = "result storage" | "access validation";
 
 interface ResultBinding {
   identity: ResultIdentity;
@@ -999,7 +1001,10 @@ function metaToolsForRequest(
       return (await runCall(args, "call_destructive_tool")).toolResult;
     },
 
-    async readResult(args: GetResultArgs, options: { signal?: AbortSignal | undefined } = {}): Promise<ToolResult> {
+    async readResult(
+      args: GetResultArgs,
+      options: { signal?: AbortSignal | undefined; onStage?: (stage: ResultReadStage) => void } = {},
+    ): Promise<ToolResult> {
       // Defense for in-process callers too: guest paging validates these domains
       // before calling here, while internal consumers may call readResult directly.
       if (args.maxBytes !== undefined && !isValidMaxResultBytes(args.maxBytes)) {
@@ -1032,6 +1037,7 @@ function metaToolsForRequest(
       // is simply gone. Every key a page touches answers the same way, so a
       // backend that dies halfway through a multi-chunk page says so.
       const read = async (key: string): Promise<string | null | false> => {
+        options.onStage?.("result storage");
         options.signal?.throwIfAborted();
         let value: string | null | false;
         try {
@@ -1083,27 +1089,16 @@ function metaToolsForRequest(
       )
         return denied();
       const allowed = async (): Promise<boolean> => {
+        options.onStage?.("access validation");
         options.signal?.throwIfAborted();
         try {
-          if (
-            binding.program &&
-            !(await registry.recheckResultAccess(undefined, binding.classification, options.signal))
-          )
-            return false;
-          if (binding.classification === "write" && opts.readOnly === true) return false;
           const dependencies = binding.program ?? [binding as ProgramResultDependency];
+          if (!(await registry.recheckResultAccess(dependencies, binding.classification, options.signal))) return false;
+          options.signal?.throwIfAborted();
+          if (binding.classification === "write" && opts.readOnly === true) return false;
+          const catalogs = new Map<string, ToolDef[]>();
           for (const dependency of dependencies) {
-            const address =
-              dependency.tool === undefined ? dependency.connector : `${dependency.connector}.${dependency.tool}`;
-            if (
-              !(await registry.recheckResultAccess(
-                address,
-                dependency.classification,
-                options.signal,
-                dependency.access,
-              ))
-            )
-              return false;
+            options.signal?.throwIfAborted();
             if (dependency.tool === undefined) {
               if (
                 dependency.access === "catalog"
@@ -1115,12 +1110,17 @@ function metaToolsForRequest(
             }
             const connector = registry.getConnector(dependency.connector);
             if (!connector) return false;
-            const tools = await registry.getTools(
-              dependency.connector,
-              baseUrl,
-              requestScope,
-              options.signal ? { signal: options.signal } : {},
-            );
+            let tools = catalogs.get(dependency.connector);
+            if (!tools) {
+              tools = await registry.getTools(
+                dependency.connector,
+                baseUrl,
+                requestScope,
+                options.signal ? { signal: options.signal } : {},
+              );
+              catalogs.set(dependency.connector, tools);
+            }
+            options.signal?.throwIfAborted();
             const tool = tools.find((tool) => tool.name === dependency.tool);
             if (
               !tool ||
@@ -1139,6 +1139,7 @@ function metaToolsForRequest(
         }
       };
       if (!(await allowed())) return denied();
+      options.onStage?.("result storage");
       opts.onResultRead?.(binding.program ?? [binding as ProgramResultDependency]);
       let requestedOffset = args.offset ?? 0;
       const cap = Number(header[4]);

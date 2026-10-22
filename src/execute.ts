@@ -22,6 +22,7 @@ import {
   jsonResult,
   pageProgramResult,
   type ProgramResultDependency,
+  type ResultReadStage,
   type ToolResult,
 } from "./meta-tools.js";
 import {
@@ -851,7 +852,7 @@ function sandboxProvider(
   };
   const operations: Record<string, (...args: unknown[]) => Effect.Effect<unknown, unknown>> = {
     call,
-    result: (id, options, signal) =>
+    result: (id, options, signal, onStage) =>
       Effect.tryPromise({
         try: async () => {
           const transfer = typeof id === "string" ? transfers.get(id) : undefined;
@@ -892,7 +893,13 @@ function sandboxProvider(
             (args.maxBytes as number | undefined) ?? PROGRAM_RESULT_PAGE_BYTES,
             PROGRAM_RESULT_PAGE_BYTES,
           );
-          const page = await meta.readResult({ id, ...args }, { signal: signal as AbortSignal | undefined });
+          const page = await meta.readResult(
+            { id, ...args },
+            {
+              signal: signal as AbortSignal | undefined,
+              onStage: onStage as (stage: ResultReadStage) => void,
+            },
+          );
           if (page.isError)
             throw new InvocationFailure(
               (page.structuredContent?.error ?? {
@@ -1097,13 +1104,22 @@ function sandboxProvider(
           if (counted) hostCalls.admitted++;
           const started = Date.now();
           const utility = name === "result" || name === "skill";
+          let stage: ResultReadStage | "skill lookup" = name === "result" ? "result storage" : "skill lookup";
           const invoke = Effect.suspend(() => operation(...args));
           const guarded = utility
-            ? withDeadlineEffect((utilitySignal) => Effect.suspend(() => operation(args[0], args[1], utilitySignal)), {
-                timeoutMs: hostCallTimeoutMs,
-                ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
-                timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
-              })
+            ? withDeadlineEffect(
+                (utilitySignal) =>
+                  Effect.suspend(() =>
+                    operation(args[0], args[1], utilitySignal, (current: ResultReadStage) => {
+                      stage = current;
+                    }),
+                  ),
+                {
+                  timeoutMs: hostCallTimeoutMs,
+                  ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+                  timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
+                },
+              )
             : invoke;
           const settled = runEdge(
             guarded.pipe(
@@ -1114,7 +1130,7 @@ function sandboxProvider(
                   );
                 if (utility && error instanceof InvocationFailure && error.code === "timeout") {
                   const elapsedMs = Date.now() - started;
-                  const message = `Operation "connecta.${name}" timed out during ${name === "result" ? "result storage" : "skill lookup"} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+                  const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
                   return typedFailure(
                     new InvocationFailure({
                       code: "timeout",
@@ -1122,7 +1138,7 @@ function sandboxProvider(
                       retryable: true,
                       details: {
                         operation: `connecta.${name}`,
-                        stage: name === "result" ? "result storage" : "skill lookup",
+                        stage,
                         elapsedMs,
                         deadlineMs: hostCallTimeoutMs,
                       },
