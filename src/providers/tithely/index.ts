@@ -128,7 +128,7 @@ const sensitiveFields = (options: Readonly<TithelyOptions>) =>
 /**
  * The step-1 guide (decision 0011): its fragments with the environment,
  * purpose, and the deployment's sensitive-field choice between them, as
- * shipped. Step 2 renders it through `ProviderContext.usageGuide`.
+ * shipped, complete. Step 2 renders it through `ProviderContext.usageGuide`.
  */
 function usageGuide(options: Readonly<TithelyOptions>): ConnectorUsageGuide {
   const live = environmentOf(options) === "live";
@@ -163,6 +163,11 @@ export const tithely = defineApiProvider<TithelyOptions>({
   bundle: { "baselineGzip": 18076 },
   skill,
   options: TITHELY_OPTIONS,
+  displayTitle: (options) => (environmentOf(options) === "live" ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
+  description: (options) =>
+    environmentOf(options) === "live"
+      ? `Tithe.ly giving — live donors and real money — ${options.purpose}`
+      : `Tithe.ly giving (test environment, no real money) — ${options.purpose}`,
   vendor: TithelyApi,
   baseUrl: (options) => options.baseUrl?.trim() || TITHELY_API_BASE_URLS[environmentOf(options)],
   maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
@@ -174,13 +179,6 @@ export const tithely = defineApiProvider<TithelyOptions>({
   safety: (options) => tithelySafety({ names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields(options) }),
   result,
   probe,
-  connector: (options) =>
-    environmentOf(options) === "live"
-      ? { title: "Tithe.ly Giving", description: `Tithe.ly giving — live donors and real money — ${options.purpose}` }
-      : {
-          title: "Tithe.ly Giving (test)",
-          description: `Tithe.ly giving (test environment, no real money) — ${options.purpose}`,
-        },
-  guide: (options) => ({ legacy: usageGuide(options) }),
+  guide: usageGuide,
   tools: tithelyTools,
 });

@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { Context, Effect, Schema } from "effect";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
@@ -95,7 +96,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("INV-11: checks provider, confinement, ceiling, page and privacy configuration before dispatch", () => {
+it("INV-11: checks provider, confinement, ceiling, page and privacy configuration before dispatch", NODE, () => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   const definitions = [
@@ -141,7 +142,7 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("INV-11: renders guides, carries common options and snapshots code-derived kit facts", () => {
+it("INV-11: renders guides, carries common options and snapshots code-derived kit facts", NODE, () => {
   const pages: number[] = [];
   const index = new OperationIndex(
     {
@@ -158,8 +159,12 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
   );
   const hatch = { name: "tickets", index, verdicts: { "GET /who": "read" as const } };
   const pageSize = { default: 10, max: 50 };
+  const completeGuide = { content: "Legacy fragments and instructions.\n", summary: "Triage", required: true };
   const factory = defineApiProvider({
     ...definition,
+    displayTitle: (options) => `${options.purpose} tickets`,
+    description: (options) => `Tickets for ${options.purpose}.`,
+    guide: (options) => (options.purpose === "Triage" ? completeGuide : definition.guide(options)),
     pageSize,
     hatch,
     tools: (kit) => {
@@ -177,9 +182,17 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     maxResultBytes: 256,
     title: "Team tickets",
   });
-  factory("other", { purpose: "Triage", defaultPageSize: 50 });
+  const second = factory("other", { purpose: "Triage", defaultPageSize: 50, instructions: "Already rendered." });
   expect(pages).toEqual([10, 50]);
-  expect(first).toMatchObject({ title: "Team tickets", authScope: "personal", readOnly: true, maxResultBytes: 256 });
+  expect(first).toMatchObject({
+    title: "Team tickets",
+    description: "Tickets for Support.",
+    authScope: "personal",
+    readOnly: true,
+    maxResultBytes: 256,
+  });
+  expect(second.title).toBe("Triage tickets");
+  expect(second.usageGuide).toEqual(completeGuide);
   expect(first.usageGuide).toMatchObject({
     content:
       "# Tickets usage\n\nSupport\n\nResolve ids before writing.\n\n## Workspace instructions\n\nUse alice's queue.\n",
@@ -212,7 +225,7 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
   ).toThrow(/Declare pageSize/);
 });
 
-it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools through result safety", async () => {
+it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools through result safety", NODE, async () => {
   type Row = Pick<Parameters<typeof defineApiProvider<Options>>[0], "headers" | "admit"> & {
     name: string;
     tool: string;
@@ -264,7 +277,7 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   }
 });
 
-it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close retained capabilities", async () => {
+it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close retained capabilities", NODE, async () => {
   for (const mode of ["single", "named"] as const) {
     let retained!: Context.Context<Caller | Credentials | Budget | Classification | Signal>;
     const authenticate = Effect.context<Caller | Credentials | Budget | Classification | Signal>().pipe(
@@ -278,6 +291,14 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
     const connector = defineApiProvider({
       ...definition,
       authenticate,
+      probe: {
+        ...definition.probe,
+        check: (values, options) => {
+          expect(options.purpose).toBe("Support");
+          return Object.values(values).includes("invalid") ? "Replace this candidate." : undefined;
+        },
+        describe: (reply, options) => `${options.purpose}: ${JSON.stringify(reply)}`,
+      },
       credential:
         mode === "single"
           ? { label: "Token" }
@@ -315,7 +336,12 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
       mode === "single"
         ? await connector.testCredential!("candidate-token", ctx)
         : await connector.testCredentials!({ token: "candidate-token", account: "candidate-account" }, ctx);
-    expect(answer).toEqual({ ok: true, message: '{"visible":"[redacted]"}' });
+    expect(answer).toEqual({ ok: true, message: 'Support: {"visible":"[redacted]"}' });
+    const refused =
+      mode === "single"
+        ? await connector.testCredential!("invalid", ctx)
+        : await connector.testCredentials!({ token: "invalid" }, ctx);
+    expect(refused).toEqual({ ok: false, message: "Replace this candidate." });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(ctx.credential.getAll).not.toHaveBeenCalled();
     expect(charged).toBe(0);
@@ -325,7 +351,7 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
   }
 });
 
-it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed probes", async () => {
+it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed probes", NODE, async () => {
   let signal: AbortSignal | undefined;
   const authenticate = definition.authenticate.pipe(
     Effect.tap(() =>
@@ -354,7 +380,7 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
   }
 });
 
-it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writes once", async () => {
+it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writes once", WORKERS, async () => {
   const { credential: _credential, ...withoutCredential } = definition;
   const oauth = {
     authorizationEndpoint: "https://tickets.example/auth",

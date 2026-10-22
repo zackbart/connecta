@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { Effect } from "effect";
 import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -7,7 +8,7 @@ import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { hatch } from "../src/http/hatch.js";
-import { resultSafety } from "../src/http/safety.js";
+import { restSafety, resultSafety } from "../src/http/safety.js";
 import { connect, get, vendor } from "../src/http/vendor.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
@@ -134,13 +135,7 @@ function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]
     {
       errors: ERRORS,
       safety: resultSafety({
-        reviewed: {
-          redact: (data, op) => reviewed.redact(data, op.method, op.template),
-          withholdsErrors: (op) => {
-            const indexed = index.operation(op.method, op.template);
-            return indexed ? reviewed.withholdsErrors(indexed) : true;
-          },
-        },
+        reviewed: restSafety(reviewed, index),
         sensitiveFields: { names: ["email"], choice: "drop" },
       }),
     },
@@ -153,58 +148,63 @@ function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]
   return { index, tools, connection, call, sendPath, authenticate, admit };
 }
 
-it("INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction", async () => {
-  const verdicts = { ...VERDICTS };
-  const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
-  expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
-    ["items_api_search", { readOnlyHint: true }],
-    ["items_api_details", { readOnlyHint: true }],
-    ["items_api_read", { readOnlyHint: true }],
-    ["items_api_write", { readOnlyHint: false, destructiveHint: true }],
-  ]);
-  const rows = ((await call("search", { query: "item", limit: 50 })) as { operations: Array<Record<string, unknown>> })
-    .operations;
-  for (const [method, path, verdict, tool] of [
-    ["GET", "/items", "read", "items_api_read"],
-    ["GET", "/touch", "write", "items_api_write"],
-    ["DELETE", "/items/{item}", "destructive", "items_api_write"],
-    ["POST", "/query", "read", "items_api_read"],
-    ["GET", "/blocked", "refuse", undefined],
-    ["GET", "/items/{item}", "refuse", undefined],
-  ]) {
-    const details = (await call("details", { method, path })) as Record<string, unknown>;
-    expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
-    expect(details["tool"]).toBe(tool);
-    expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
-  }
-  Object.assign(verdicts, { "GET /items": "write" });
-  expect(await call("details", { method: "GET", path: "/items" })).toMatchObject({ verdict: "read" });
-  expect(hatch({ name: "items", index, connection, verdicts: {} }).map((tool) => tool.name)).toEqual([
-    "items_api_search",
-    "items_api_details",
-    "items_api_read",
-  ]);
-  for (const bad of [{ "GET /missing": "read" }, { "GET /items": "unknown" }]) {
-    expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
-  }
-  for (const tool of tools) {
-    const base = tool.name.endsWith("_search")
-      ? { query: "items" }
-      : tool.name.endsWith("_details") || tool.name.endsWith("_write")
-        ? { method: "GET", path: "/items" }
-        : { path: "/items" };
-    expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
-    expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
-    expect(Object.keys((tool.inputSchema as { properties: object }).properties)).not.toEqual(
-      expect.arrayContaining(["raw"]),
-    );
-  }
-  expect(sendPath).not.toHaveBeenCalled();
-  expect(authenticate).not.toHaveBeenCalled();
-  expect(sent).toEqual([]);
-});
+it(
+  "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
+  NODE,
+  async () => {
+    const verdicts = { ...VERDICTS };
+    const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
+    expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
+      ["items_api_search", { readOnlyHint: true }],
+      ["items_api_details", { readOnlyHint: true }],
+      ["items_api_read", { readOnlyHint: true }],
+      ["items_api_write", { readOnlyHint: false, destructiveHint: true }],
+    ]);
+    const rows = (
+      (await call("search", { query: "item", limit: 50 })) as { operations: Array<Record<string, unknown>> }
+    ).operations;
+    for (const [method, path, verdict, tool] of [
+      ["GET", "/items", "read", "items_api_read"],
+      ["GET", "/touch", "write", "items_api_write"],
+      ["DELETE", "/items/{item}", "destructive", "items_api_write"],
+      ["POST", "/query", "read", "items_api_read"],
+      ["GET", "/blocked", "refuse", undefined],
+      ["GET", "/items/{item}", "refuse", undefined],
+    ]) {
+      const details = (await call("details", { method, path })) as Record<string, unknown>;
+      expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
+      expect(details["tool"]).toBe(tool);
+      expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
+    }
+    Object.assign(verdicts, { "GET /items": "write" });
+    expect(await call("details", { method: "GET", path: "/items" })).toMatchObject({ verdict: "read" });
+    expect(hatch({ name: "items", index, connection, verdicts: {} }).map((tool) => tool.name)).toEqual([
+      "items_api_search",
+      "items_api_details",
+      "items_api_read",
+    ]);
+    for (const bad of [{ "GET /missing": "read" }, { "GET /items": "unknown" }]) {
+      expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
+    }
+    for (const tool of tools) {
+      const base = tool.name.endsWith("_search")
+        ? { query: "items" }
+        : tool.name.endsWith("_details") || tool.name.endsWith("_write")
+          ? { method: "GET", path: "/items" }
+          : { path: "/items" };
+      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
+      expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
+      expect(Object.keys((tool.inputSchema as { properties: object }).properties)).not.toEqual(
+        expect.arrayContaining(["raw"]),
+      );
+    }
+    expect(sendPath).not.toHaveBeenCalled();
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  },
+);
 
-it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once", async () => {
+it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once", WORKERS, async () => {
   const withheld = "https://files.example/file?signature=%5Bredacted%5D";
   const cases: Array<{
     kind: string;
@@ -277,7 +277,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   }
 });
 
-it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", async () => {
+it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", NODE, async () => {
   for (const entry of [
     { args: { path: "/items" }, deny: true, message: "Account pin", sends: 0, auth: 0 },
     {

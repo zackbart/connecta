@@ -2085,10 +2085,12 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. Tithe.ly is the first provider on
 it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
-are unchanged. A provider still in `PENDING.step2` may keep its legacy
-fragment guide by returning `{ legacy }` from `guide`. On Node, kit writes go
-through the owned transport `listen` installs, so suites that call one
-without `listen` configure it themselves, as the goldens harness does.
+are unchanged. The helper derives connection metadata and probe messages from
+validated options and accepts complete legacy usage guides, which providers in
+`PENDING.step2` keep. Candidate checks can refuse before authentication while
+preserving the provider's exact diagnostic. On Node, kit writes go through the
+owned transport `listen` installs, so suites that call one without `listen`
+configure it themselves, as the goldens harness does.
 
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection
@@ -2097,6 +2099,13 @@ and HEAD require a review. Construction fixes each write step's capacity;
 the guarded transport reserves it before preparation and the shared core
 decides the whole call's write outcome. Upload builders and byte-body request
 shapes wait for the Google Drive migration in C.7.
+
+Reviewed path calls resolve their actual method and path through an indexed
+safety adapter; a provider-supplied template cannot bypass the policy.
+Unindexed paths require an explicit global review. Sent-secret redaction
+covers response headers before result hooks can extract fragments. Withheld
+hooks admit only operation-bound status failures or unreadable bodies; other
+failures become defects whose text the API boundary withholds.
 
 ### Why not Schema or HttpApi for core routes
 

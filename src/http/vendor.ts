@@ -115,7 +115,7 @@ type Send<R = CallServices> = <Op extends Operation>(
   options?: SendOptions,
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
-/** A request a hatch addresses by path; `template` is its index's operation. */
+/** A request addressed by its actual method and path; safety resolves the canonical operation. */
 type PathRequest = WriteRequest;
 
 export interface ConnectOptions {
@@ -192,11 +192,13 @@ export function connect<R>(
         // Whole, before a detail line trims it or a projection extracts from it.
         const secrets = yield* RequestSecrets;
         const parsed = parse(reply.text, (value) => secrets.redact(value));
+        // Hooks can cut header values too; redact their whole values before exposing them.
+        const headers = new Headers(secrets.redact([...reply.headers]));
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
             new StatusFailure({
               status: reply.status,
-              headers: reply.headers,
+              headers,
               body: parsed?.value,
               ...(parsed ? {} : { unreadable: true as const }),
               operation,
@@ -209,20 +211,19 @@ export function connect<R>(
           ? yield* options
               .result(parsed.value, {
                 status: reply.status,
-                headers: reply.headers,
-                operation,
+                headers,
+                operation: { ...operation },
                 withheld,
               })
               .pipe(
-                Effect.catchTag("Refusal", (failure) =>
-                  withheld
-                    ? Effect.die(
-                        new Error(
-                          "A result hook withholding vendor text must report an in-band refusal as StatusFailure.",
-                        ),
-                      )
-                    : Effect.fail(failure),
-                ),
+                Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
+                  if (failure._tag === "StatusFailure")
+                    return Effect.fail(new StatusFailure({ ...failure, operation }));
+                  if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
+                  return Effect.die(
+                    new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),
+                  );
+                }),
               )
           : parsed.value;
         return { status: reply.status, data: options.safety.redact(kept, operation) };
@@ -274,28 +275,27 @@ export function connect<R>(
         return yield* connection.sendPath(request, { step, item });
       }),
     sendPath: (request, sendOptions) => {
-      return settle(
-        {
-          method: request.method,
-          template: request.template,
-          ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}),
-        },
-        Effect.suspend(() => {
-          let built = HttpClientRequest.make(request.method)(
-            request.path,
-            request.query ? { urlParams: parameterPairs(request.query) } : {},
-          );
-          if (request.form && Object.keys(request.form).length > 0) {
-            built = HttpClientRequest.bodyText(
-              built,
-              new URLSearchParams(parameterPairs(request.form)).toString(),
-              "application/x-www-form-urlencoded",
+      const { method, path } = request;
+      return Effect.flatMap(options.safety.resolve(method, path), (operation) =>
+        settle(
+          { ...operation, ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}) },
+          Effect.suspend(() => {
+            let built = HttpClientRequest.make(method)(
+              path,
+              request.query ? { urlParams: parameterPairs(request.query) } : {},
             );
-          }
-          if (request.json !== undefined) built = HttpClientRequest.bodyText(built, request.json, "application/json");
-          return guarded.client.execute(built);
-        }),
-        sendOptions,
+            if (request.form && Object.keys(request.form).length > 0) {
+              built = HttpClientRequest.bodyText(
+                built,
+                new URLSearchParams(parameterPairs(request.form)).toString(),
+                "application/x-www-form-urlencoded",
+              );
+            }
+            if (request.json !== undefined) built = HttpClientRequest.bodyText(built, request.json, "application/json");
+            return guarded.client.execute(built);
+          }),
+          sendOptions,
+        ),
       );
     },
   };

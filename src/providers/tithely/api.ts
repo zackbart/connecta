@@ -205,17 +205,21 @@ export const authenticate = Effect.gen(function* () {
   return { Authorization: `Basic ${btoa(`${pair.publicKey}:${pair.privateKey}`)}` };
 });
 
-/** The credential probe: one organization through the candidate keys. */
+/** The credential probe: one organization through the candidate keys; a mismatched pair is refused before it. */
 export const probe = {
   operation: listOrganizations,
   request: { query: { limit: 1 } },
-  describe: (reply: unknown): string => {
+  check: (values: ConnectorCredentialValues): string | undefined => {
+    const pair = keyPairProblem(values);
+    return typeof pair === "string" ? pair : undefined;
+  },
+  describe: (reply: unknown, options: { readonly environment: string }): string => {
     const first = asRecord(asArray(asRecord(reply)["data"])[0]);
     const name = text(first["name"]);
     const organization = text(first["organization_id"]);
     return name
-      ? `Keys accepted by Tithe.ly; first organization reached: ${name}${organization ? ` (${organization})` : ""}.`
-      : "Keys accepted by Tithe.ly; no organization is visible to them.";
+      ? `Keys accepted by Tithe.ly (${options.environment}); first organization reached: ${name}${organization ? ` (${organization})` : ""}.`
+      : `Keys accepted by Tithe.ly (${options.environment}); no organization is visible to them.`;
   },
 };
 

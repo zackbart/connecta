@@ -180,6 +180,8 @@ export function tithelyTools({ connection, pageSize }: { connection: Connection;
       limit: limit ?? pageSize,
       fetch: (ask) => fetch(ask).pipe(Effect.flatMap(({ data }) => listRows(data))),
     });
+  // The hatches address Tithe.ly by path: the connection's safety resolves each
+  // request's operation (its global review admits every confined v1 path).
   return [
     read(connection, {
       name: "tithely_api_get",

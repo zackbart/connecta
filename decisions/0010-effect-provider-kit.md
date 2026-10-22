@@ -1393,16 +1393,19 @@ provider cannot reach a body any earlier:
 1. confinement, `admit`, then authentication, before anything is sent;
 2. the bounded read;
 3. JSON parse, then the request's whole sent-secret set (`RequestSecrets`)
-   redacts the parsed body before anything can cut, trim or extract from it
-   (#911's `redactBeforeCut`), on a failure's body and a success's alike;
+   redacts the parsed body and response headers before anything can cut,
+   trim or extract from them (#911's `redactBeforeCut`), on a failure's
+   body and a success's alike;
 4. a non-2xx becomes `StatusFailure` with its operation, and B.3 asks
    `withholdsErrors(operation)` before it builds any detail; a 2xx that did
    not parse is `UnreadableBody`;
 5. the vendor's `result` hook: unwrap an envelope, or fail an in-band refusal.
-   It receives `withheld`; a vendor whose review withholds any operation's
-   text raises its in-band refusals as `StatusFailure`, so the same check
-   applies (Cloudflare does), and only a vendor that withholds nothing, such
-   as Tithe.ly, may quote its own reason in a `Refusal`;
+   It receives `withheld`. When true, its only admitted failures are
+   `StatusFailure`, pinned to the answering operation, and `UnreadableBody`.
+   Any other failure becomes a defect whose text the API boundary withholds;
+   this includes free-text sibling tags such as `RequestRefused` and
+   `ResponseTooLarge`. Only an operation whose review withholds nothing,
+   such as Tithe.ly's, may quote its own reason in a `Refusal`;
 6. `ResultSafety.redact(data, operation)`: the vendor's reviewed redaction
    (the REST family's `ValueSafety`, by operation), then A.2's
    `sensitiveFields` drop at any depth unless deployment code chose
@@ -1418,6 +1421,21 @@ unwraps; the data itself is redacted before any strategy reads it.
 table nor a written reason for having none (INV-11), and a `sensitiveFields`
 value other than `"drop"` or `"return"`. Sent-secret registration stays as a
 separate layer, because a stored downstream secret may never have been sent.
+
+A reviewed `sendPath` resolves the actual method and path through an indexed
+canonical resolver before dispatch; the caller's `template` cannot select its
+value-safety policy. An absent resolver or unknown operation fails closed.
+An explicit nonempty global review may permit unindexed paths, preserving
+Tithe.ly's legacy hatches. Typed `send` keeps its declared operation. The REST
+adapter uses `OperationIndex.resolve` for both redaction and error withholding.
+
+`SafetyOptions.reviewed.resolve(method, path)` is the optional synchronous
+canonical resolver. `ResultSafety.resolve(method, path)` wraps it as an
+`Effect<OperationRef, Refusal>`, mapping an invalid path to `invalid_args`.
+`restSafety(reviewed: ValueSafety, index: OperationIndex)` supplies the resolver
+and the REST redaction, refusal and withholding policy together; an unknown
+typed template also fails closed. Typed `:param` templates normalize to the
+index's `{param}` spelling.
 
 **Tool builders (`src/http/tools.ts`).** Each builder returns an ordinary
 `ApiTool`. Kit tools therefore sit in `api()` beside hand-written ones and keep
@@ -1585,6 +1603,8 @@ common options and the title, and renders the guide through
 
 ```ts
 function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderDefinition<O>, "kind" | "create"> & {
+  readonly displayTitle?: (options: Readonly<O>) => string;          // options.title wins; definition.title remains the provider name
+  readonly description?: (options: Readonly<O>) => string;
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;                 // environment or override; checked at construction
   readonly maxResponseBytes: number;
@@ -1597,8 +1617,13 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
   readonly errors: VendorErrors;
   readonly safety: (options: Readonly<O>) => SafetyOptions;           // reviewed table or reason, and the sensitiveFields option
   readonly result?: ConnectOptions["result"];
-  readonly probe: { readonly operation: Operation; readonly request: unknown; readonly describe: (reply: unknown) => string };
-  readonly guide: (options: Readonly<O>) => ProviderGuideInput;
+  readonly probe: {
+    readonly operation: Operation;
+    readonly request: unknown;
+    readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
+    readonly describe: (reply: unknown, options: Readonly<O>) => string;
+  };
+  readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;  // name, index, verdicts; the kit builds the hatch tools
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
 }): ProviderFactory<O>; // kit: ProviderKitFacts set on the definition; the connector declares tracksEveryRequest
@@ -1606,7 +1631,13 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
 
 The probe becomes `testCredential(s)`. It runs `authenticate` against the
 candidate values, sends one operation, and maps a failure through the vendor
-table. It copies no context.
+table. An optional `probe.check` returns an exact candidate-refusal message
+before authentication or dispatch, without adding an authorization handoff.
+The success description receives the validated options. It copies no context.
+`displayTitle` and `description` derive connection metadata from those same
+options; an explicit `options.title` takes precedence. A complete usage guide
+passes through unchanged so step-1 migrations preserve legacy fragments and
+option-dependent text without changing `SKILL.md`.
 
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write
