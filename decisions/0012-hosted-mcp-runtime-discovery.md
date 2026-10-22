@@ -85,9 +85,12 @@ nothing.
 
 **INV-9 holds through reclassification.** The registry keeps the hint-derived
 class beside the effective class, and the transport sends once whenever
-either says write. An override changes exposure and routing, never replay
-safety. Today a server-marked write overridden to `"read"` could be resent on
-auth renewal or reconnect.
+either says write. The same rule governs failure outcome and advice: a call
+whose server hints say write reports `writeOutcome: "unknown"`, non-retryable,
+after a possible dispatch, so the agent never re-sends it. An override changes
+approval, read-only gating and catalog presentation, which follow the
+effective class, never replay safety. Today a server-marked write overridden
+to `"read"` could be resent on auth renewal or reconnect.
 
 C.0a owns INV-1's canonical text. In substance, a hosted tool's fail-closed
 verdict comes from its annotations or the deployment's `classification` map.
