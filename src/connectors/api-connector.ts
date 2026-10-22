@@ -21,7 +21,7 @@ import {
   providerRequests,
   tracksRequests,
 } from "../provider-call.js";
-import { providerCallFailure } from "../write-outcome.js";
+import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
@@ -479,6 +479,9 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         });
       }
       closeProviderCall(callCtx);
+      // A write an unrenewed 401 left unknown fails however its handler returned.
+      const unknown = providerCallResult(handlerCtx, write ? "write" : "read");
+      if (unknown) throw redactSentSecrets(ctx, unknown);
       return redactSentSecrets(ctx, result);
     },
   };

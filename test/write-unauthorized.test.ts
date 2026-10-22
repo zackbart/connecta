@@ -579,7 +579,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
     },
   );
 
-  it("INV-9: an inner api() write's 401 decides a direct outer call, and an outer that recovers succeeds", async () => {
+  it("INV-9: an inner api() write's 401 decides a direct outer call, even one whose handler swallows it and returns", async () => {
     const ctx = (await registryFor(outer(inner(false), "later"))).contextFor("outer", BASE);
     const direct = classifyCallError(
       await outer(inner(false), "later")
@@ -593,8 +593,22 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
       message: `Tickets rejected the configured token. ${SENTENCE}`,
     });
     expect(direct).not.toHaveProperty("retryAfterMs");
+    // A write an unrenewed 401 left unknown is never a success, served or direct.
     const meta = createMetaTools(await registryFor(outer(inner(false), "success")), BASE);
-    expect((await meta.callDestructiveTool({ address: "outer.create" })).isError).toBeFalsy();
+    const served = (await meta.callDestructiveTool({ address: "outer.create" })).structuredContent as {
+      error: CallErrorDetails;
+    };
+    expect(served.error).toMatchObject({
+      code: "auth_required",
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message: `Tickets rejected the configured token. ${SENTENCE}`,
+    });
+    const swallowing = outer(inner(false), "success");
+    const swallowed = await swallowing
+      .callTool("create", {}, (await registryFor(swallowing)).contextFor("outer", BASE))
+      .catch((e: unknown) => e);
+    expect(classifyCallError(swallowed)).toMatchObject({ code: "auth_required", writeOutcome: "unknown" });
   });
 
   it("INV-9: a tracked outer whose nested api() sent a write is never a known failure on its own empty ledger", async () => {

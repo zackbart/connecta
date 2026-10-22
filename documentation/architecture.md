@@ -2220,7 +2220,17 @@ compiling and configuring the real thing.
   `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
   logical call, status, the verdict, and renewal by comparing the
   `Authorization` of the resend the SDK attempts), and `api()` itself (one
-  ledger per call, linked to the one whose handler entered it). A 408 is a
+  ledger per call, linked to the one whose handler entered it). The same
+  decision settles a call that returned (`settleWriteResult`, before its
+  result is processed in the invocation, and in `providerCallResult` at an
+  outermost direct boundary): a write an unrenewed 401 left unknown is never
+  a success, whatever its handler made of the 401, and a program counts it
+  in `writes.unknown`. The decider normalizes every failure it settles,
+  typed or not (a raw network error, an `AbortError`, a thrown string). Its
+  verdict is final (`settledWrite`, which follows copies and redaction): the
+  invocation reads the mark before anything rebuilds the details, and its
+  enrichers then add no key-reuse, resend or wait advice; only the
+  reconcile-first `retry` words and the handoff. A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the

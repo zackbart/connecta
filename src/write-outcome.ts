@@ -18,6 +18,7 @@ import {
   explainedUnauthorizedVerdict,
   explainsUnauthorized,
   inLogicalCall,
+  settledWrite,
   isKnownProviderFailure,
   knownProviderFailure,
   nestedProviderCall,
@@ -97,6 +98,19 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
       "so check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },
   );
+}
+
+/**
+ * A call's result, settled as its failure would be ({@link settleWriteResult}):
+ * by the invocation for its logical call, and otherwise here, at the
+ * outermost boundary, over every ledger beneath it. The verdict to throw in
+ * place of the result, or undefined when the result stands.
+ */
+export function providerCallResult(ctx: ConnectorContext, fallback: "read" | "write"): ConnectorCallError | undefined {
+  if ((callClassification(ctx) ?? fallback) !== "write") return undefined;
+  const requests = providerRequests(ctx);
+  if (!requests || inLogicalCall(ctx) || nestedProviderCall(ctx)) return undefined;
+  return settleWriteResult([...requests, ...nestedProviderRequests(ctx)]);
 }
 
 /**
@@ -298,7 +312,21 @@ export function settleWrite(requests: readonly ProviderRequest[], error: unknown
   if (knownRefusal && sent.length === 1 && only.authBeforeExecution === true && standingRefusal(error, only))
     return error;
   const unrenewed = answers.find((request) => request.renewed !== true);
-  return unrenewed ? unauthorizedVerdict(unrenewed, error) : renewedVerdict(answers, error);
+  return settledWrite(unrenewed ? unauthorizedVerdict(unrenewed, error) : renewedVerdict(answers, error));
+}
+
+/**
+ * The same decision for a call that returned a result: a write left unknown
+ * by an unrenewed 401 is never a success, however its handler went on (it
+ * caught the 401, say), so it fails with Q8's verdict. A result stands after
+ * a 401 every renewal answered, or one the vendor's reviewed evidence makes
+ * the call's only, refused, request.
+ */
+export function settleWriteResult(requests: readonly ProviderRequest[]): ConnectorCallError | undefined {
+  const sent = requests.filter((request) => request.dispatched && !request.auxiliary);
+  const unrenewed = sent.find((request) => request.status === 401 && request.renewed !== true);
+  if (unrenewed === undefined || (sent.length === 1 && unrenewed.authBeforeExecution === true)) return undefined;
+  return settledWrite(unauthorizedVerdict(unrenewed, undefined));
 }
 
 /**
@@ -353,19 +381,14 @@ function unauthorizedVerdict(answer: ProviderRequest, error: unknown): Connector
  * did ({@link unsentAfterUnauthorized}); any other failure keeps its words,
  * unknown, without a retry flag or a wait.
  */
-function renewedVerdict(answers: readonly ProviderRequest[], error: unknown): unknown {
+function renewedVerdict(answers: readonly ProviderRequest[], error: unknown): ConnectorCallError {
   const own = refusalRequest(error);
+  const subject = (own ?? answers[0]!).provider;
   if (error === undefined || (authorizationFailure(error) && own !== undefined && answers.includes(own)))
-    return carryFailureFacts(error, unsentAfterUnauthorized((own ?? answers[0]!).provider));
-  if (!(error instanceof ConnectorCallError)) return error;
-  return withoutRetry(
-    error.writeOutcome === "unknown"
-      ? error
-      : carryFailureFacts(
-          error,
-          new ConnectorCallError(error.code, error.message, { retryable: false, writeOutcome: "unknown" }),
-        ),
-  );
+    return carryFailureFacts(error, unsentAfterUnauthorized(subject));
+  // Every failure, typed or not (a raw network error, an abort, a thrown
+  // string), reads as #902's unknown outcome, without a retry flag or wait.
+  return withoutRetry(uncertainProviderFailure({ title: subject }, error, undefined));
 }
 
 /** An unknown outcome as it stands, without a retry flag or a wait. */
@@ -440,10 +463,10 @@ export function providerFailureMessage(error: ConnectorCallError, message: strin
 function uncertainProviderFailure(
   vendor: { title: string },
   error: unknown,
-  ctx: ConnectorContext,
+  ctx: ConnectorContext | undefined,
 ): ConnectorCallError {
   if (error instanceof ConnectorCallError && error.writeOutcome === "unknown" && !error.retryable) return error;
-  const abort = callerAbort(ctx);
+  const abort = ctx && callerAbort(ctx);
   if (abort) return callerAborted(vendor, error, abort.reason);
   const details = classifyWithoutAdvice(error);
   const timeout =

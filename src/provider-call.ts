@@ -47,6 +47,9 @@ const knownFailures = followRedactedCopies(new WeakSet<object>());
 // Verdicts that already account for a write's 401 in words of their own: a
 // renewal's (`unsentAfterUnauthorized`) or Q8's own. Q8 adds no sentence to them.
 const explainedUnauthorized = followRedactedCopies(new WeakSet<object>());
+// Verdicts the one Q8 decision (`settleWrite`) made. They are final: nothing
+// after it may add retry, resend, key-reuse or wait advice to them.
+const settledWrites = followRedactedCopies(new WeakSet<object>());
 // The authorization verdict a request's own 401 was mapped to, kept for the
 // call's verdict whatever failure surfaces after it (Q8).
 const unauthorizedAnswers = new WeakMap<ProviderRequest, ConnectorCallError>();
@@ -392,6 +395,7 @@ export function carryProviderFailure<T>(from: unknown, to: T): T {
     if (refusal) refusals.set(to, refusal);
     if (isKnownProviderFailure(from)) knownFailures.add(to);
     if (explainsUnauthorized(from)) explainedUnauthorized.add(to);
+    if (isSettledWrite(from)) settledWrites.add(to);
     carryResendAdvice(from, to);
   }
   return to;
@@ -405,4 +409,14 @@ export function explainedUnauthorizedVerdict<T>(error: T): T {
 
 export function explainsUnauthorized(error: unknown): boolean {
   return error !== null && typeof error === "object" && explainedUnauthorized.has(error);
+}
+
+/** Mark a verdict the Q8 decision made, final for every step after it. */
+export function settledWrite<T>(error: T): T {
+  if (error !== null && typeof error === "object") settledWrites.add(error);
+  return error;
+}
+
+export function isSettledWrite(error: unknown): boolean {
+  return error !== null && typeof error === "object" && settledWrites.has(error);
 }

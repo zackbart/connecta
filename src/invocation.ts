@@ -39,13 +39,14 @@ import { recoveryFor } from "./call-recovery.js";
 import {
   forgetProviderFailure,
   isKnownProviderFailure,
+  isSettledWrite,
   keyProtectsLogicalCall,
   knownForLogicalCall,
   knownProviderFailure,
   logicalCallRequests,
   openLogicalCall,
 } from "./provider-call.js";
-import { classifyWriteOutcome, settleWrite } from "./write-outcome.js";
+import { classifyWriteOutcome, settleWrite, settleWriteResult } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -410,14 +411,16 @@ export class InvocationService {
           }),
         });
       };
-      const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
+      const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
         const recovery = recoveryFor(dispatchContext);
         // A recorded key is a diagnostic; advice to reuse it needs proof that
-        // it protects the whole logical call, not one request inside it.
-        const recoveryRetry = keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
-          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
-          : "";
+        // it protects the whole logical call, not one request inside it. Q8's
+        // settled verdict is final: no enricher adds advice to it.
+        const recoveryRetry =
+          !settled && keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
+            ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
+            : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
           return {
@@ -455,7 +458,7 @@ export class InvocationService {
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
         // Key-reuse advice also needs its key to protect the logical call.
-        else {
+        else if (!settled) {
           if (failureKeyAdvice && keyProtectsLogicalCall(dispatchContext, failureKeyAdvice.key))
             error = { ...error, message: withResendAdvice(error.message, failureKeyAdvice.advice) };
           if (failureAdvice !== undefined)
@@ -598,6 +601,8 @@ export class InvocationService {
               (!resolved && context.source === "call_tool"),
           );
         }
+        // Read before any step below rebuilds the details: Q8's verdict is final.
+        const settled = isSettledWrite(error);
         // Attach host deadline facts before write recovery changes the code.
         if (isTimeoutFailure(error)) {
           const elapsedMs = Date.now() - started;
@@ -609,7 +614,7 @@ export class InvocationService {
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
-        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target), "envelope"));
+        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target, settled), "envelope"));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -952,6 +957,16 @@ export class InvocationService {
       const completed = resolved;
       if (!completed) {
         return yield* Effect.die(new Error("Invocation completed without a resolved tool"));
+      }
+      // Q8 settles a result too: a write an unrenewed 401 left unknown is no
+      // success, whatever its handler made of the 401, and its result is not
+      // processed.
+      if (dispatchedToConnector && completed.definition.classification !== "read") {
+        const unknown = settleWriteResult(logicalCallRequests(dispatchContext) ?? []);
+        if (unknown) {
+          failureAdvice = failureKeyAdvice = undefined;
+          return failed(carryFailureFacts(unknown, classifyWithoutAdvice(sentSecrets.redact(unknown))));
+        }
       }
 
       const processResult = context.processResult;

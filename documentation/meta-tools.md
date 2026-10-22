@@ -1056,8 +1056,11 @@ composite write, a 401 answered inside another connector the call reached
 (an `api()` or `remoteMcp()` connector, through a custom connector or a
 program), or the call's deadline or the caller's cancellation cutting the
 write off after the 401: the result is that verdict, not
-`write_outcome_unknown`. An idempotency key never makes such a write
-repeatable, so it gets no key-reuse advice. Once every such 401 is renewed
+`write_outcome_unknown`. Nor can such a call succeed: a handler that caught
+the 401 and returned, or a result that could not be processed, still ends
+in that verdict, and a program counts the write in `writes.unknown`. An
+idempotency key never makes such a write repeatable, so it gets no
+key-reuse advice. Once every such 401 is renewed
 the handoff goes, but a call that also sent another write stays unknown,
 never retryable and without a wait.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left

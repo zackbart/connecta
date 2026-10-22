@@ -4,16 +4,26 @@
 // (dispatch, status, a reviewed authBeforeExecution match, a 401's mapped
 // verdict, a renewal of that request's own credential); `settleWrite` decides,
 // in the invocation for a served call and at the outermost boundary otherwise.
-// Each case here is a review repro of PR #917, rounds 3 and 4.
+// Each case here is a review repro of PR #917, rounds 3 to 5.
+import { Context, Effect, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { recordRecovery } from "../src/call-recovery.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
-import { guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { answeredRequest, guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { tracksEveryRequest } from "../src/provider-call.js";
+import { guardedClient } from "../src/http/client.js";
+import { Refusal } from "../src/http/errors.js";
+import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
+import { resultSafety } from "../src/http/safety.js";
+import { write } from "../src/http/tools.js";
+import { connect, get, vendor } from "../src/http/vendor.js";
+import { InvocationService } from "../src/invocation.js";
+import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
 import { infisical } from "../src/providers/infisical/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
@@ -692,5 +702,351 @@ describe("the invocation's own deadline and cancellation, and what Q8 leaves alo
   it("INV-5 INV-9: the 401's recorded verdict reaches the agent redacted", async () => {
     const error = expectQ8((await control("redacted")).result!, "served");
     expect(error.message).toBe(`Rejected [redacted] ${sentence("Tickets")}`);
+  });
+});
+
+describe("Q8's verdict is final, for every outcome a write call can end in", () => {
+  /**
+   * An api() write that records an idempotency key, sends one keyed POST
+   * answered 401 (renewed with a fresh token, or not), then ends as `end`:
+   * a thrown failure of any kind, or a result.
+   */
+  function keyedWrite(renewed: boolean, end: () => unknown) {
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({ Authorization: "Bearer token-one" }),
+      maxResponseBytes: 1024,
+      fetch: async () => new Response(null, { status: 401 }),
+    });
+    return tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            ...CREATE,
+            handler: async (_args, ctx) => {
+              recordRecovery(ctx, { idempotencyKey: "create-1" });
+              await send({ method: "POST", path: "/items", idempotencyKey: "create-1" }, ctx, (response) => {
+                if (renewed) renewedAfterUnauthorized(answeredRequest(response), "token-one", "token-two");
+                throw resendAdvice(
+                  new ConnectorCallError("auth_required", "Token rejected.", { retryable: true, retryAfterMs: 30_000 }),
+                  " Retry the write.",
+                );
+              }).catch(() => undefined);
+              return end();
+            },
+          },
+        ],
+      }),
+    );
+  }
+
+  /** Every failure and result shape an enricher might add advice to, typed or not. */
+  const ENDS: Array<[string, () => unknown]> = [
+    [
+      "timeout",
+      () => {
+        throw new ConnectorCallError("timeout", "Timed out.", { retryable: true });
+      },
+    ],
+    [
+      "invalid_args with validation",
+      () => {
+        throw new ConnectorCallError("invalid_args", "Bad.", {
+          validation: [{ path: "/x", message: "required" }] as never,
+        });
+      },
+    ],
+    [
+      "provider_permission_denied",
+      () => {
+        throw new ConnectorCallError("provider_permission_denied", "Denied.");
+      },
+    ],
+    [
+      "input_required_unsupported",
+      () => {
+        throw new ConnectorCallError("input_required_unsupported", "Needs input.");
+      },
+    ],
+    [
+      "rate_limited with a wait and resend advice",
+      () => {
+        throw resendAdvice(
+          new ConnectorCallError("rate_limited", "Slow down.", { retryable: true, retryAfterMs: 30_000 }),
+          " Retry the write.",
+        );
+      },
+    ],
+    [
+      "unavailable with a wait",
+      () => {
+        throw new ConnectorCallError("unavailable", "Down.", { retryable: true, retryAfterMs: 30_000 });
+      },
+    ],
+    [
+      "conflict",
+      () => {
+        throw new ConnectorCallError("conflict", "Changed.", { retryable: true });
+      },
+    ],
+    [
+      "auth_required",
+      () => {
+        throw new ConnectorCallError("auth_required", "Later auth failure.", { retryAfterMs: 30_000 });
+      },
+    ],
+    [
+      "a raw ECONNRESET",
+      () => {
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      },
+    ],
+    [
+      "an AbortError",
+      () => {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      },
+    ],
+    [
+      "a thrown string",
+      () => {
+        throw "plain text failure";
+      },
+    ],
+    ["a JSON result", () => ({ partial: true })],
+    ["a BigInt result", () => 1n],
+    [
+      "a cyclic result",
+      () => {
+        const cycle: Record<string, unknown> = {};
+        cycle["self"] = cycle;
+        return cycle;
+      },
+    ],
+  ];
+
+  function expectFinal(error: CallErrorDetails | undefined, renewed: boolean) {
+    expect(error).toBeDefined();
+    expect(error).toMatchObject({ retryable: false });
+    expect(error).not.toHaveProperty("retryAfterMs");
+    expect(error!.message).not.toMatch(/Retry the write|Reusing it/);
+    expect(error!.retry ?? "").not.toMatch(/cannot repeat|idempotencyKey|^Retry /);
+    if (!renewed) expect(error).toMatchObject({ code: "auth_required", nextAction: { tool: "authorize_connector" } });
+    // A renewal clears only its own 401: a later authorization failure still needs recovery.
+    else if (error!.code !== "auth_required") expect(error).not.toHaveProperty("nextAction");
+  }
+
+  it.each([false, true])(
+    "INV-9: no enricher adds retry, resend, key or wait advice to a settled verdict, served or in a program (renewed: %s)",
+    async (renewed) => {
+      const connector = keyedWrite;
+      for (const [end, run] of ENDS) {
+        // After a renewed 401 the credential needs no recovery and the
+        // handler answered: its result stands. Every failure is still settled.
+        if (renewed && end.endsWith("result")) {
+          const served = await createMetaTools(makeRegistry([connector(renewed, run)]), BASE).callDestructiveTool({
+            address: "tickets.create",
+            args: {},
+          });
+          const code = (served.structuredContent as { error?: CallErrorDetails } | undefined)?.error?.code;
+          expect(code, end).not.toBe("auth_required");
+          continue;
+        }
+        const served = await createMetaTools(makeRegistry([connector(renewed, run)]), BASE).callDestructiveTool({
+          address: "tickets.create",
+          args: {},
+        });
+        const error = (served.structuredContent as { error?: CallErrorDetails } | undefined)?.error;
+        expectFinal(error, renewed);
+        expect(error, end).toMatchObject({ writeOutcome: "unknown" });
+        const program = createExecuteTool(
+          makeRegistry([connector(renewed, run)]),
+          BASE,
+          scriptedExecutor(async (fns) => {
+            await fns.call!("tickets.create", {}).catch(() => undefined);
+            return "done";
+          }),
+          silentLogger,
+          undefined,
+          { readOnly: false },
+        );
+        const result = (await program({ code: "async () => null" })).structuredContent as {
+          error?: CallErrorDetails & { writes?: unknown };
+        };
+        expect(result.error, `${end} in a program`).toMatchObject({
+          retryable: false,
+          writes: { succeeded: 0, failed: 0, unknown: 1 },
+        });
+        expect(result.error).not.toHaveProperty("retryAfterMs");
+        expect(result.error!.retry ?? "").not.toMatch(/cannot repeat|idempotencyKey/);
+        if (!renewed)
+          expect(result.error).toMatchObject({ code: "auth_required", nextAction: { tool: "authorize_connector" } });
+      }
+    },
+  );
+
+  const THROWN: Array<[string, () => unknown]> = [
+    ["a raw ECONNRESET", () => Object.assign(new Error("auxiliary fetch failed"), { code: "ECONNRESET" })],
+    ["a fetch TypeError", () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } })],
+    ["a plain Error", () => new Error("parser failed after renewal")],
+    ["an AbortError", () => new DOMException("The operation was aborted.", "AbortError")],
+    ["a thrown string", () => "plain text failure"],
+  ];
+
+  it.each(THROWN)(
+    "INV-9: a direct keyed write renewed after its 401 and then failing with %s is unknown, never retryable",
+    async (_name, thrown) => {
+      for (const renewed of [true, false]) {
+        let token = "token-one";
+        const send = guardedFetch({
+          provider: "Tickets",
+          baseUrl: "https://tickets.example",
+          authenticate: () => ({ Authorization: `Bearer ${token}` }),
+          maxResponseBytes: 1024,
+          fetch: async () => new Response(null, { status: 401 }),
+        });
+        const ctx = makeRegistry([]).contextFor("tickets", BASE);
+        const failure = await send(
+          { method: "POST", path: "/items", idempotencyKey: "create-1" },
+          ctx,
+          async (response) => {
+            const stale = token;
+            token = "token-two";
+            if (renewed) renewedAfterUnauthorized(answeredRequest(response), stale, token);
+            throw thrown();
+          },
+        ).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        const error = classifyCallError(failure);
+        expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+        expect(error).not.toHaveProperty("retryAfterMs");
+        expect(error.message).not.toContain("Reusing it");
+        expect(classifyWriteOutcome({ ok: false, dispatched: true, error })).toBe("unknown");
+        if (!renewed)
+          expect(error).toMatchObject({
+            code: "auth_required",
+            message: `Tickets answered this write with HTTP 401. ${sentence("Tickets")}`,
+          });
+        else expect(error.code).not.toMatch(/auth_required|unavailable/);
+      }
+    },
+  );
+
+  it("INV-9: a result processor that fails after the handler caught its 401 cannot make the write ok", async () => {
+    const sends: string[] = [];
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => {
+        sends.push("POST");
+        return new Response(null, { status: 401 });
+      },
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            ...CREATE,
+            handler: async (_args, ctx) => {
+              await send({ method: "POST", path: "/items" }, ctx, () => {
+                throw new ConnectorCallError("auth_required", "Token rejected.");
+              }).catch(() => undefined);
+              return { partial: true };
+            },
+          },
+        ],
+      }),
+    );
+    const registry = makeRegistry([connector]);
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "tickets.create",
+      {},
+      {
+        source: "call_destructive_tool",
+        processResult: () => {
+          throw new Error("output policy failed");
+        },
+      },
+    );
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "auth_required", writeOutcome: "unknown", retryable: false },
+    });
+    expect(classifyWriteOutcome(outcome as never)).toBe("unknown");
+    expect(sends).toEqual(["POST"]);
+  });
+
+  it("INV-9: a renewed keyed kit write's verdict carries no key-reuse advice", async () => {
+    const errors = {
+      provider: "Acme",
+      facts: () => ({}),
+      detail: ({ status }: { status: number }) => `Acme HTTP ${status}`,
+      unreadable: "Unreadable",
+      statuses: {
+        401: () => ({ code: "auth_required" as const }),
+        403: () => ({ code: "provider_permission_denied" as const }),
+        404: () => ({ code: "not_found" as const }),
+      },
+    };
+    const guarded = guardedClient({
+      provider: "Acme",
+      baseUrl: "https://api.acme.example/v1",
+      maxResponseBytes: 4096,
+      authenticate: bearer,
+    });
+    const connection = connect(vendor("Acme", get("items", "/items")), refreshOnce(guarded), {
+      errors,
+      safety: resultSafety({ review: "test", sensitiveFields: { names: [], choice: "drop" } }),
+    } as never);
+    const layer = Context.make(Grant, {
+      token: Effect.succeed("token-one"),
+      refresh: () => Effect.succeed("token-two"),
+      rejected: Effect.fail(new Refusal({ error: new ConnectorCallError("auth_required", "rejected") })),
+    });
+    const tool = write(
+      connection as never,
+      {
+        name: "create",
+        description: "Create",
+        destructive: false,
+        input: Schema.Struct({ key: Schema.String }),
+        output: Schema.Unknown,
+        idempotency: { header: "Idempotency-Key", key: (args: { key: string }) => args.key },
+        run: () =>
+          (connection as never as { sendPath: (op: unknown) => Effect.Effect<{ data: unknown }> })
+            .sendPath({ method: "POST", path: "/items", template: "/items" })
+            .pipe(
+              Effect.map(({ data }) => data),
+              Effect.provideContext(layer as never),
+            ),
+      } as never,
+    );
+    let sends = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        sends++;
+        return new Response(null, { status: 401 });
+      }),
+    );
+    const connector = tracksEveryRequest(api("acme", { tools: [tool] }));
+    const result = await createMetaTools(makeRegistry([connector]), BASE).callDestructiveTool({
+      address: "acme.create",
+      args: { key: "create-1" },
+    });
+    const error = (result.structuredContent as { error: CallErrorDetails }).error;
+    expect(error).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+      uncertainCall: { recovery: { idempotencyKey: "create-1" } },
+      retry: "Do not retry automatically. Check whether the write took effect first.",
+    });
+    expect(sends).toBe(1);
   });
 });
