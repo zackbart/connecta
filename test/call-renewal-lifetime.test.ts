@@ -8,6 +8,7 @@ import { callFromContext, contextView, openRequest, viewLease } from "../src/run
 import { memoryStorage } from "../src/storage/memory.js";
 import {
   oauthGrantKeys,
+  oauthFlowKeys,
   oauthRefreshActiveKeys,
   oauthRefreshKeys,
   oauthRefreshSpentKeys,
@@ -28,6 +29,7 @@ const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const phases = [
   "grant read",
   "coordinator read",
+  "claim submitted",
   "claimed read",
   "liveness reply",
   "dispatch reply",
@@ -36,6 +38,7 @@ const phases = [
   "dispatched",
 ] as const;
 type Phase = (typeof phases)[number];
+const coordinatorOwned = (phase: Phase) => phase !== "grant read" && phase !== "coordinator read";
 
 async function snapshot(storage: KVStorage): Promise<Record<string, string | null>> {
   return Object.fromEntries(
@@ -96,8 +99,9 @@ function observedStore(backing: KVStorage, phase: Phase, ready: () => boolean, n
     },
     async compareAndSet(key, expected, next, options) {
       writes.push(key);
-      // A submitted CAS cannot be retracted through KVStorage. Holding it
-      // before its commit separately proves the one unavoidable late write.
+      // Hold submission before the durable claim exists: ownership must
+      // transfer before the CAS promise settles, including when it loses.
+      if (!held && phase === "claim submitted" && lease(key) && next?.includes('"state":"claimed"')) await wait();
       if (!held && phase === "spent write" && spent(key)) await wait();
       const won = await backing.compareAndSet(key, expected, next, options);
       if (
@@ -113,9 +117,108 @@ function observedStore(backing: KVStorage, phase: Phase, ready: () => boolean, n
   return { storage, writes, entered: entered.promise, release: () => release.resolve() };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+async function seedDownstream(storage: KVStorage) {
+  await seedGrant(storage, {
+    issuer: ORIGIN,
+    tokens: old,
+    client: { value: { client_id: "fixture-client", issuer: ORIGIN } },
+    discovery: {
+      authorizationServerUrl: ORIGIN,
+      resourceMetadata: { resource: ORIGIN },
+      authorizationServerMetadata: {
+        issuer: ORIGIN,
+        authorization_endpoint: `${ORIGIN}/authorize`,
+        token_endpoint: TOKEN,
+        response_types_supported: ["code"],
+      },
+    },
+  });
+}
+
+async function downstreamFlow(storage: KVStorage, scope: object, coordinator = new OAuthRefreshCoordinator()) {
+  const operation: ConnectorContext = {
+    storage,
+    baseUrl: BASE,
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    requestScope: scope,
+  };
+  const lease = callFromContext(operation, "read");
+  const view = contextView(lease, operation);
+  const provider = new KvOAuthProvider(
+    "tickets",
+    storage,
+    `${BASE}/oauth/callback/tickets`,
+    coordinator,
+    false,
+    undefined,
+    view.signal,
+  );
+  await provider.beginFlow();
+  await provider.tokens({ issuer: ORIGIN });
+  return { lease, view, provider, coordinator };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("production OAuth renewal ownership", () => {
+  it("INV-7: code exchange without an external signal cannot POST after its callback request closes", async () => {
+    const backing = memoryStorage();
+    const entered = deferred<void>();
+    const gate = deferred<void>();
+    let hold = false;
+    const storage: KVStorage = {
+      ...backing,
+      async compareAndSet(key, expected, next, options) {
+        const won = await backing.compareAndSet(key, expected, next, options);
+        if (hold && won && key.startsWith(`${namespace}${oauthFlowKeys.prefix}`) && next?.includes('"consumed":true')) {
+          hold = false;
+          entered.resolve();
+          await gate.promise;
+        }
+        return won;
+      },
+    };
+    const send = vi.fn(async () => Response.json(fresh));
+    vi.stubGlobal("fetch", send);
+    const connector = api("tickets", {
+      oauth: {
+        authorizationEndpoint: `${ORIGIN}/authorize`,
+        tokenEndpoint: TOKEN,
+        clientId: "fixture-client",
+        apiOrigins: [ORIGIN],
+      },
+      tools: [],
+    });
+    const registry = makeRegistry([connector], { storage });
+    const consent = await connector.startAuth!(registry.contextFor("tickets", BASE));
+    const state = new URL(consent.authorizationUrl!).searchParams.get("state")!;
+    const scope = {};
+    const callback = registry.contextFor("tickets", BASE, scope);
+    expect(callback.signal).toBeUndefined();
+    expect(await connector.verifyState!(state, callback)).toBe(true);
+    hold = true;
+    const pending = connector.finishAuth!(
+      "fixture-code",
+      callback,
+      new URLSearchParams({ code: "fixture-code", state }),
+    ).catch((error: unknown) => error);
+    try {
+      await entered.promise;
+      openRequest(scope).close();
+      gate.resolve();
+      expect(await pending).toBeInstanceOf(Error);
+      expect(send).not.toHaveBeenCalled();
+      expect((await storedGrant(backing, namespace))?.body?.tokens).toBeUndefined();
+    } finally {
+      gate.resolve();
+      await pending;
+      openRequest(scope).close();
+    }
+  });
+
   for (const boundary of ["call", "request"] as const) {
     for (const method of ["GET", "POST"] as const) {
       it.each(phases)(
@@ -139,6 +242,8 @@ describe("production OAuth renewal ownership", () => {
               return response.promise;
             }
             resources.push(new Headers(init?.headers).get("authorization")!);
+            if (new Headers(init?.headers).get("authorization") === `Bearer ${fresh.access_token}`)
+              return Response.json({ ok: true });
             unauthorized = true;
             return new Response(null, { status: 401 });
           });
@@ -169,7 +274,8 @@ describe("production OAuth renewal ownership", () => {
             }),
           );
           const scope = {};
-          const tools = createMetaTools(makeRegistry([connector], { storage: store.storage }), BASE, {
+          const registry = makeRegistry([connector], { storage: store.storage });
+          const tools = createMetaTools(registry, BASE, {
             requestScope: scope,
             defer: (tail) => tails.push(tail),
           });
@@ -179,7 +285,7 @@ describe("production OAuth renewal ownership", () => {
               : tools.callDestructiveTool({ address: "tickets.run" });
           try {
             await (phase === "dispatched" ? dispatched.promise : store.entered);
-            if (phase === "grant read" || phase === "coordinator read") expect(store.writes).toEqual([]);
+            if (!coordinatorOwned(phase)) expect(store.writes).toEqual([]);
             const before = await snapshot(backing);
             const writesAtClose = store.writes.length;
             const requests = providerRequests(view)!;
@@ -195,13 +301,14 @@ describe("production OAuth renewal ownership", () => {
             if (phase === "dispatched") {
               expect(tokenSignal).toBeDefined();
               expect(tokenSignal!.aborted).toBe(false);
-            } else {
-              expect(tokens).toBe(0);
+            } else expect(tokens).toBe(0);
+            if (!coordinatorOwned(phase)) {
               expect(store.writes).toHaveLength(writesAtClose);
               expect(await snapshot(backing)).toEqual(before);
             }
-            // Release only after the closed caller has failed. The late answer
-            // belongs to the coordinator; it cannot renew this call's ledger.
+            // Claim submission already committed the coordinator to finish.
+            // Release only after the caller refused; no caller result or
+            // resource resend may follow the eventual grant commit.
             store.release();
             response.resolve(Response.json(fresh));
             await Promise.all(tails);
@@ -220,24 +327,25 @@ describe("production OAuth renewal ownership", () => {
             }
             expect(resource.renewed).not.toBe(true);
             expect(resources).toEqual([`Bearer ${old.access_token}`]);
-            expect(tokens).toBe(phase === "dispatched" ? 1 : 0);
-            if (phase === "dispatched") {
+            expect(tokens).toBe(coordinatorOwned(phase) ? 1 : 0);
+            if (coordinatorOwned(phase)) {
+              expect(tokenSignal!.aborted).toBe(false);
               expect((await storedGrant(backing, namespace))!.body!.tokens).toMatchObject(fresh);
               const spent = await backing.list(`${namespace}${oauthRefreshSpentKeys.family.prefixes[0]}`);
               expect(spent).toHaveLength(1);
               expect(JSON.parse((await backing.get(spent[0]!))!)).toMatchObject({ state: "resolved" });
+              // A fresh deliberate call needs no consent or second refresh.
+              const nextTools = createMetaTools(registry, BASE);
+              const next = await (method === "GET"
+                ? nextTools.callTool({ address: "tickets.run" })
+                : nextTools.callDestructiveTool({ address: "tickets.run" }));
+              expect(next.isError).not.toBe(true);
+              expect(resources).toEqual([`Bearer ${old.access_token}`, `Bearer ${fresh.access_token}`]);
+              expect(tokens).toBe(1);
             } else {
               expect((await storedGrant(backing, namespace))!.body!.tokens).toEqual(old);
               expect(store.writes).toHaveLength(writesAtClose);
-              const after = await snapshot(backing);
-              if (phase === "spent write") {
-                const spent = Object.keys(after).filter((key) => !(key in before));
-                expect(spent).toHaveLength(1);
-                expect(spent[0]).toContain(oauthRefreshSpentKeys.family.prefixes[0]);
-                expect(JSON.parse(after[spent[0]!]!)).toMatchObject({ state: "outstanding" });
-                delete after[spent[0]!];
-              }
-              expect(after).toEqual(before);
+              expect(await snapshot(backing)).toEqual(before);
             }
           } finally {
             store.release();
@@ -254,44 +362,11 @@ describe("production OAuth renewal ownership", () => {
       `INV-5 INV-7: downstream OAuth SDK grant closed at the ${boundary} during %s keeps coordinator ownership`,
       async (phase) => {
         const backing = memoryStorage();
-        await seedGrant(backing, {
-          issuer: ORIGIN,
-          tokens: old,
-          client: { value: { client_id: "fixture-client", issuer: ORIGIN } },
-          discovery: {
-            authorizationServerUrl: ORIGIN,
-            resourceMetadata: { resource: ORIGIN },
-            authorizationServerMetadata: {
-              issuer: ORIGIN,
-              authorization_endpoint: `${ORIGIN}/authorize`,
-              token_endpoint: TOKEN,
-              response_types_supported: ["code"],
-            },
-          },
-        });
+        await seedDownstream(backing);
         let running = false;
         const store = observedStore(backing, phase, () => running);
         const scope = {};
-        const operation: ConnectorContext = {
-          storage: store.storage,
-          baseUrl: BASE,
-          logger: { debug() {}, info() {}, warn() {}, error() {} },
-          requestScope: scope,
-        };
-        const lease = callFromContext(operation, "read");
-        const view = contextView(lease, operation);
-        const coordinator = new OAuthRefreshCoordinator();
-        const provider = new KvOAuthProvider(
-          "tickets",
-          store.storage,
-          `${BASE}/oauth/callback/tickets`,
-          coordinator,
-          false,
-          undefined,
-          view.signal,
-        );
-        await provider.beginFlow();
-        await provider.tokens({ issuer: ORIGIN });
+        const { lease, view, provider, coordinator } = await downstreamFlow(store.storage, scope);
         const response = deferred<Response>();
         const dispatched = deferred<void>();
         const tails: Promise<unknown>[] = [];
@@ -310,7 +385,7 @@ describe("production OAuth renewal ownership", () => {
         }).catch((error: unknown) => error);
         try {
           await (phase === "dispatched" ? dispatched.promise : store.entered);
-          if (phase === "grant read" || phase === "coordinator read") expect(store.writes).toEqual([]);
+          if (!coordinatorOwned(phase)) expect(store.writes).toEqual([]);
           const before = await snapshot(backing);
           const writesAtClose = store.writes.length;
           (boundary === "call" ? lease : openRequest(scope)).close();
@@ -324,7 +399,8 @@ describe("production OAuth renewal ownership", () => {
           response.resolve(Response.json(fresh));
           await Promise.all(tails);
           await pause();
-          if (phase === "dispatched") {
+          if (coordinatorOwned(phase)) {
+            expect(tokenSignal!.aborted).toBe(false);
             expect((await storedGrant(backing))!.body!.tokens).toMatchObject(fresh);
             const spent = await backing.list(oauthRefreshSpentKeys.family.prefixes[0]);
             expect(spent).toHaveLength(1);
@@ -332,17 +408,9 @@ describe("production OAuth renewal ownership", () => {
           } else {
             expect((await storedGrant(backing))!.body!.tokens).toEqual(old);
             expect(store.writes).toHaveLength(writesAtClose);
-            const after = await snapshot(backing);
-            if (phase === "spent write") {
-              const spent = Object.keys(after).filter((key) => !(key in before));
-              expect(spent).toHaveLength(1);
-              expect(spent[0]).toContain(oauthRefreshSpentKeys.family.prefixes[0]);
-              expect(JSON.parse(after[spent[0]!]!)).toMatchObject({ state: "outstanding" });
-              delete after[spent[0]!];
-            }
-            expect(after).toEqual(before);
+            expect(await snapshot(backing)).toEqual(before);
           }
-          expect(send).toHaveBeenCalledTimes(phase === "dispatched" ? 1 : 0);
+          expect(send).toHaveBeenCalledTimes(coordinatorOwned(phase) ? 1 : 0);
         } finally {
           store.release();
           response.resolve(Response.json(fresh));
@@ -352,5 +420,93 @@ describe("production OAuth renewal ownership", () => {
         }
       },
     );
+
+    it(`INV-5 INV-7: a submitted claim that loses after ${boundary} closure adopts the winner without another token request`, async () => {
+      const backing = memoryStorage();
+      await seedDownstream(backing);
+      const store = observedStore(backing, "claim submitted", () => true);
+      const scope = {};
+      const first = await downstreamFlow(store.storage, scope);
+      const tails: Promise<unknown>[] = [];
+      let coordinatorFinished = false;
+      const send = vi.fn(async () => Response.json(fresh));
+      const pending = auth(first.provider, {
+        serverUrl: new URL(ORIGIN),
+        fetchFn: first.coordinator.coordinatedFetch(first.provider, send, first.view.signal, (tail) => {
+          tails.push(tail);
+          void tail.then(() => {
+            coordinatorFinished = true;
+          });
+        }),
+      }).catch((error: unknown) => error);
+      try {
+        await store.entered;
+        (boundary === "call" ? first.lease : openRequest(scope)).close();
+        expect(await promptly(pending)).toMatchObject({ message: expect.stringContaining("This call has ended") });
+        expect(coordinatorFinished).toBe(false);
+        // Another isolate wins while the first CAS is still submitted.
+        const winnerScope = {};
+        const winner = await downstreamFlow(backing, winnerScope);
+        expect(
+          await auth(winner.provider, {
+            serverUrl: new URL(ORIGIN),
+            fetchFn: winner.coordinator.coordinatedFetch(winner.provider, send, winner.view.signal),
+          }),
+        ).toBe("AUTHORIZED");
+        openRequest(winnerScope).close();
+        store.release();
+        await Promise.all(tails);
+        expect(send).toHaveBeenCalledTimes(1);
+        expect((await storedGrant(backing))!.body!.tokens).toMatchObject(fresh);
+      } finally {
+        store.release();
+        await pending;
+        await Promise.all(tails);
+        openRequest(scope).close();
+      }
+    });
+
+    it(`INV-5 INV-7: the coordinator keeps its own preparation deadline after claim submission and ${boundary} closure`, async () => {
+      const backing = memoryStorage();
+      await seedDownstream(backing);
+      const store = observedStore(backing, "claim submitted", () => true);
+      const scope = {};
+      let pins = 0;
+      const coordinator = new OAuthRefreshCoordinator(() => {
+        pins++;
+        return () => {
+          pins--;
+        };
+      });
+      const flow = await downstreamFlow(store.storage, scope, coordinator);
+      const entered = deferred<() => void>();
+      const realTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
+        if (ms === 35_000) entered.resolve(fn);
+        return realTimeout(fn, ms);
+      }) as typeof setTimeout);
+      const tails: Promise<unknown>[] = [];
+      const send = vi.fn(async () => Response.json(fresh));
+      const pending = auth(flow.provider, {
+        serverUrl: new URL(ORIGIN),
+        fetchFn: coordinator.coordinatedFetch(flow.provider, send, flow.view.signal, (tail) => tails.push(tail)),
+      }).catch((error: unknown) => error);
+      try {
+        await store.entered;
+        (boundary === "call" ? flow.lease : openRequest(scope)).close();
+        expect(await promptly(pending)).toMatchObject({ message: expect.stringContaining("This call has ended") });
+        expect(pins).toBe(1);
+        (await entered.promise)();
+        await Promise.all(tails);
+        expect(pins).toBe(0);
+        expect(send).not.toHaveBeenCalled();
+        expect((await storedGrant(backing))!.body!.tokens).toEqual(old);
+      } finally {
+        store.release();
+        await pending;
+        await Promise.all(tails);
+        openRequest(scope).close();
+      }
+    });
   }
 });

@@ -153,22 +153,30 @@ interface StoredRefreshLease {
 const REFRESH_REQUEST_DEADLINE_MS = 20_000;
 const REFRESH_WAIT_DEADLINE_MS = 35_000;
 
-/** One deadline covers preparation, shared claims, and local joiners. */
+/** Caller-owned reads become coordinator-owned at the first submitted durable write. */
 interface RefreshWait {
   signal: AbortSignal;
+  readonly requestStarted: boolean;
   run<T>(operation: () => Promise<T>): Promise<T>;
+  transfer(): void;
+  beginRequest(): void;
   close(): void;
 }
 
 function refreshWait(signal?: AbortSignal): RefreshWait {
   const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(), REFRESH_WAIT_DEADLINE_MS);
+  let timer = setTimeout(() => deadline.abort(), REFRESH_WAIT_DEADLINE_MS);
   let closed = false;
+  let transferred = false;
+  let requestStarted = false;
   const abort = () => deadline.abort(aborted(signal));
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   return {
     signal: deadline.signal,
+    get requestStarted() {
+      return requestStarted;
+    },
     run: <T>(operation: () => Promise<T>) => {
       // A race's losing Promise may still start. Check before constructing it,
       // then again before handing a late result back to preparation.
@@ -182,6 +190,22 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
         if (deadline.signal.aborted) throw aborted(deadline.signal);
         return value;
       });
+    },
+    transfer: () => {
+      if (deadline.signal.aborted) throw aborted(deadline.signal);
+      if (transferred) return;
+      // Synchronous with CAS submission: cancellation can prevent the write
+      // only before this point. Keep the independent preparation timer alive.
+      signal?.removeEventListener("abort", abort);
+      transferred = true;
+    },
+    beginRequest: () => {
+      if (deadline.signal.aborted) throw aborted(deadline.signal);
+      requestStarted = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
+      }, REFRESH_REQUEST_DEADLINE_MS);
     },
     close: () => {
       if (closed) return;
@@ -332,6 +356,7 @@ export class OAuthRefreshCoordinator {
   ): Promise<Response> {
     if (signal?.aborted) throw aborted(signal);
     const waiting = refreshWait(signal);
+    let redeeming = false;
     try {
       // A verdict belongs to one refresh; never let an older one decide this.
       provider.recordRefreshFailure(undefined);
@@ -366,8 +391,13 @@ export class OAuthRefreshCoordinator {
             { status: 400 },
           );
         }
-        const redemption = this.redeem(provider, epoch, requested, input, init, baseFetch, signal, waiting);
-        // The refresh owns its completion after dispatch, including storage.
+        redeeming = true;
+        const redemption = this.redeem(provider, epoch, requested, input, init, baseFetch, waiting).finally(() =>
+          waiting.close(),
+        );
+        // Claim submission transfers renewal to the coordinator, including
+        // preparation, the token request and commit. Only this caller's wait
+        // races its signal; it never closes the coordinator's deadline.
         // Attach it before yielding so a cancelled Worker keeps that work alive.
         try {
           detach(
@@ -388,10 +418,10 @@ export class OAuthRefreshCoordinator {
       throw provider.refreshContended();
     } catch (error) {
       if (signal?.aborted) throw aborted(signal);
-      if (waiting.signal.aborted) throw provider.refreshContended();
+      if (waiting.signal.aborted && !waiting.requestStarted) throw provider.refreshContended();
       throw error;
     } finally {
-      waiting.close();
+      if (!redeeming) waiting.close();
     }
   }
 
@@ -402,7 +432,6 @@ export class OAuthRefreshCoordinator {
     input: string | URL,
     init: RequestInit | undefined,
     baseFetch: FetchLike,
-    signal: AbortSignal | undefined,
     waiting: RefreshWait,
   ): Promise<Response> {
     const flight: RefreshFlight = { outcome: Deferred.makeUnsafe() };
@@ -423,7 +452,7 @@ export class OAuthRefreshCoordinator {
     const issuer = provider.refreshIssuer(epoch);
     let lease: RefreshLease;
     try {
-      const claim = await provider.claimRefresh(epoch, requested, signal, waiting);
+      const claim = await provider.claimRefresh(epoch, requested, undefined, waiting);
       if (claim instanceof Response) {
         const tokens = await waiting.run(() => provider.storedTokens());
         if (tokens) settle({ status: "refreshed", tokens });
@@ -439,55 +468,46 @@ export class OAuthRefreshCoordinator {
       await provider.releaseRefresh(lease, verdict, undefined, resolution);
     };
     let outcome: RefreshResponseOutcome;
-    const deadline = new AbortController();
+    const deadline = waiting.signal;
     let dispatched = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const read = provider
         .dispatchRefresh(
           lease,
           () => {
-            if (signal?.aborted) throw aborted(signal);
-            if (init?.signal?.aborted) throw aborted(init.signal);
+            waiting.beginRequest();
             dispatched = true;
-            // Preparation remains bounded through the send transition. After
-            // dispatch, caller cancellation must not prevent an answer's commit.
-            waiting.close();
-            // Start the deadline at dispatch, including the response body read.
-            timer = setTimeout(() => {
-              deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
-            }, REFRESH_REQUEST_DEADLINE_MS);
-            return baseFetch(input, { ...init, redirect: "manual", signal: deadline.signal });
+            return baseFetch(input, { ...init, redirect: "manual", signal: deadline });
           },
           waiting,
         )
         .then((response) => {
-          if (deadline.signal.aborted) {
+          if (deadline.aborted) {
             void response.body?.cancel().catch(() => {});
-            throw aborted(deadline.signal);
+            throw aborted(deadline);
           }
-          return refreshResponseOutcome(response, deadline.signal);
+          return refreshResponseOutcome(response, deadline);
         });
       // The deadline can settle the race before a late fetch/body rejects.
       void read.catch(() => {});
       outcome = await runEdge(
         Effect.raceAllFirst<Effect.Effect<RefreshResponseOutcome, unknown>>([
           Effect.tryPromise({ try: () => read, catch: (error) => error }),
-          fromSignal(deadline.signal),
+          fromSignal(deadline),
         ]),
       );
-      if (deadline.signal.aborted) throw aborted(deadline.signal);
+      if (deadline.aborted) throw aborted(deadline);
     } catch (error) {
       if (!dispatched) {
-        // A cancelled or timed-out unsent holder leaves a safely expiring
-        // claim. Cleanup must not retain its local flight or partition pin.
-        if (!waiting.signal.aborted && !signal?.aborted && !init?.signal?.aborted) {
+        // Only the coordinator's own preparation deadline can interrupt a
+        // submitted claim. Caller cancellation no longer reaches this work.
+        if (!waiting.signal.aborted) {
           await waiting.run(() => releaseLease()).catch(() => {});
           if (provider.refreshVerdict()?.kind === "dead") {
             await waiting.run(() => provider.discardRefusedGrant(requested, epoch)).catch(() => {});
           }
         }
-        const failure = !signal?.aborted && waiting.signal.aborted ? provider.refreshContended() : error;
+        const failure = waiting.signal.aborted ? provider.refreshContended() : error;
         fail(failure, provider.refreshVerdict());
         throw failure;
       }
@@ -500,7 +520,7 @@ export class OAuthRefreshCoordinator {
       fail(failure, { kind: "dead" });
       throw failure;
     } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      waiting.close();
     }
     // An answer exists from here on, and is committed whatever the owner does.
     if (outcome.failure) {
@@ -786,7 +806,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly allowAuthorization = true,
     /** Present when the deployment's vault can seal; the grant is then ciphertext. */
     private readonly sealer?: OAuthStateSealer,
-    /** Call/request ownership for SDK hooks; dispatched coordinator commits ignore it. */
+    /** SDK hook ownership; renewal ignores it after claim submission. */
     private readonly signal?: AbortSignal,
     /** Stable connector configuration bound to dynamically registered clients. */
     private readonly clientBinding?: string,
@@ -961,7 +981,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   private async updateGrant(
     change: (grant: Grant) => Grant | undefined,
-    options: { epoch?: string; quiet?: boolean; commit?: boolean } = {},
+    options: { epoch?: string; quiet?: boolean; commit?: boolean; beforeWrite?: () => void } = {},
   ): Promise<boolean> {
     for (let attempt = 0; attempt < MAX_GRANT_WRITES; attempt++) {
       if (!options.commit && this.signal?.aborted) return false;
@@ -979,6 +999,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       if (!options.commit && this.signal?.aborted) return false;
       let written: boolean;
       try {
+        options.beforeWrite?.();
         written = await this.storage.compareAndSet(GRANT, raw, encoded);
       } catch {
         // A store's own error can quote the value it refused.
@@ -1724,7 +1745,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
       const key = oauthRefreshKeys.lease(epoch, digest);
       const spentKey = oauthRefreshSpentKeys.spent(digest);
       while (!waiting.signal.aborted) {
-        if (signal?.aborted) throw aborted(signal);
         const current = await wait(() => this.storedTokens());
         if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
           if (!current) this.recordRefreshFailure({ kind: "dead" });
@@ -1742,7 +1762,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         }
         if (plainObject(stored) && (plainObject(stored.verdict) || stored.completed === true)) {
           this.recordRefreshFailure({ kind: "dead" });
-          await wait(() => this.discardRefusedGrant(requested, epoch));
+          await wait(() => this.discardRefusedGrant(requested, epoch, waiting.transfer));
           throw new UnauthorizedError("OAuth refresh grant is no longer active.");
         }
         if (plainObject(stored) && stored.state !== "claimed") {
@@ -1754,12 +1774,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
               : null;
           if (active === null) {
             const refused = JSON.stringify({ ...stored, verdict: { kind: "dead" } });
-            if (await wait(() => this.storage.compareAndSet(key, raw, refused))) {
+            if (
+              await wait(() => {
+                waiting.transfer();
+                return this.storage.compareAndSet(key, raw, refused);
+              })
+            ) {
               await wait(() =>
                 this.resolveRefreshSpent({ key, spentKey, spentExpected: null, raw: raw! }, "ambiguous"),
               );
               this.recordRefreshFailure({ kind: "dead" });
-              await wait(() => this.discardRefusedGrant(requested, epoch));
+              await wait(() => this.discardRefusedGrant(requested, epoch, waiting.transfer));
               throw new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
             }
             continue;
@@ -1778,12 +1803,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
               // Reset can sweep the old lease while its request remains live.
               // Only storage-owned expiry can make an outstanding send ambiguous.
               if (spent?.state === "outstanding" && (await wait(() => this.storage.get(spent.activeKey))) === null) {
-                await wait(() =>
-                  this.storage.compareAndSet(spentKey, spentExpected, JSON.stringify({ ...spent, state: "ambiguous" })),
-                );
+                await wait(() => {
+                  waiting.transfer();
+                  return this.storage.compareAndSet(
+                    spentKey,
+                    spentExpected,
+                    JSON.stringify({ ...spent, state: "ambiguous" }),
+                  );
+                });
               }
               this.recordRefreshFailure({ kind: "dead" });
-              await wait(() => this.discardRefusedGrant(requested, epoch));
+              await wait(() => this.discardRefusedGrant(requested, epoch, waiting.transfer));
               throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
             }
           }
@@ -1800,7 +1830,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
             } satisfies StoredRefreshLease);
             let won: boolean;
             try {
-              won = await wait(() => this.storage.compareAndSet(key, raw, claimed));
+              won = await wait(() => {
+                waiting.transfer();
+                return this.storage.compareAndSet(key, raw, claimed);
+              });
             } catch {
               throw this.credentialWriteError();
             }
@@ -1813,12 +1846,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                     ? this.adoptRefresh(latest)
                     : Response.json({ error: "invalid_grant" }, { status: 400 });
                 }
-                if (signal?.aborted) throw aborted(signal);
                 return { key, spentKey, spentExpected, raw: claimed };
               } catch (error) {
-                // An unsent claim can expire safely. A caller that has left must
-                // settle its local flight without awaiting cleanup storage.
-                if (!waiting.signal.aborted && !signal?.aborted) {
+                if (!waiting.signal.aborted) {
                   await wait(() => this.releaseRefresh({ key, spentKey, spentExpected, raw: claimed }));
                 }
                 throw error;
@@ -1826,17 +1856,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
             }
           }
         }
-        await runEdge(
-          Effect.raceAllFirst([
-            Effect.sleep(delay),
-            fromSignal(waiting.signal),
-            ...(signal ? [fromSignal(signal)] : []),
-          ]),
-        );
+        await runEdge(Effect.raceAllFirst([Effect.sleep(delay), fromSignal(waiting.signal)]));
         delay = Math.min(250, delay * 2);
       }
     } catch (error) {
-      if (signal?.aborted) throw aborted(signal);
       if (!waiting.signal.aborted) throw error;
     } finally {
       if (!sharedWait) waiting.close();
@@ -1882,8 +1905,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
           this.recordRefreshFailure({ kind: "dead" });
           throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
         }
-        // A storage operation can finish after its waiter left. Never send from
-        // abandoned preparation, even if both CAS operations succeeded.
+        // Submission already transferred ownership to the coordinator. Only
+        // its own deadline can stop this send; the departed caller cannot.
         if (waiting.signal.aborted) throw aborted(waiting.signal);
         const sent = send();
         sent.catch(() => {});
@@ -2004,7 +2027,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * that completed meanwhile survives. Best effort: if storage fails, the
    * next refresh is refused again and ends the same way.
    */
-  async discardRefusedGrant(refreshToken: string | null, epoch: string): Promise<void> {
+  async discardRefusedGrant(refreshToken: string | null, epoch: string, beforeWrite?: () => void): Promise<void> {
     try {
       await this.updateGrant(
         (grant) => {
@@ -2012,7 +2035,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
           const { tokens: _refused, ...body } = grant.body;
           return { ...grant, body };
         },
-        { epoch, quiet: true, commit: true },
+        { epoch, quiet: true, commit: true, ...(beforeWrite ? { beforeWrite } : {}) },
       );
     } catch {
       // See above: a refusal that could not be recorded recurs, it does not hide.

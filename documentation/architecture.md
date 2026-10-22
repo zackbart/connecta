@@ -50,24 +50,27 @@ deployment shapes construct it outside the request handler.
 An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
 runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
 Joined scopes share the outcome while keeping their own request I/O and
-cancellation. Grant use, renewal preparation and the caller's wait belong to
-the call. Closing the call or its request promptly refuses those capabilities
-with "This call has ended…", including paused grant reads. Before token
-dispatch, abandoned preparation sends no authorization-server request and
-starts no later token or renewal-state writes; late reads cannot resume it.
-Already-issued storage operations remain fenced, and abandoned unsent claims
-expire safely. `KVStorage` cannot cancel or retract a submitted CAS: it can
-commit after closure, including the final spent-fingerprint write. Abandoned
-preparation starts no further write or token request; a late spent fingerprint remains outstanding
-and can require re-consent. The coordinator never removes it to reopen a
-possibly spent token. A shared-storage CAS lease prevents independent isolates from
-redeeming the same refresh token concurrently. The holder commits an accepted
-rotation to the grant by CAS before releasing waiters, even when the owner
-cancels after dispatch. At dispatch, response and commit ownership pass to the
-storage coordinator: the HTTP exchange uses its own 20-second deadline,
-detached from caller cancellation, and the runtime passes its completion and
-commit to Workers `waitUntil`. Closing a call or request promptly ends that
-caller's wait without aborting the dispatched authorization-server request.
+cancellation. Grant use and the caller's wait belong to the call. Renewal
+preparation is call-owned only until the first durable coordinator write
+(the claim CAS) is submitted. Closing the call or request before
+submission promptly refuses with "This call has ended…": no CAS, no token
+request and no state change. Late read results cannot restart preparation.
+Claim submission transfers renewal synchronously to the storage coordinator,
+before CAS completion or token dispatch. The coordinator retains its own
+35-second preparation deadline and then a 20-second deadline for the token
+request and response body, followed by the fenced rotation commit. Neither
+the call nor request signal controls this work after submission. A winning
+claim proceeds to token exchange and commit; a losing claim follows existing
+contention/adoption rules. The runtime passes completion to Workers
+`waitUntil`. Cancellation cannot abandon a fenced claim or strand a spent
+refresh token, and introduces no rollback or re-consent exception. A shared
+storage CAS lease prevents independent isolates from redeeming the same
+refresh token concurrently. The holder commits an accepted rotation by CAS
+before releasing waiters, even after caller closure. Closing a call or request
+still promptly ends that caller's wait.
+Authorization-code exchange transfers no refresh ownership: its auxiliary
+token POST checks request revocation even when the callback operation has
+only a `requestScope` and no external signal.
 The closed call consumes no renewal result, marks no ledger entry renewed,
 and sends or resends no resource request. This preserves a rotation after its
 refresh token has been spent while keeping call capabilities revoked.
@@ -95,7 +98,7 @@ request that created them. INV-7 requires this lifetime: a client retained
 across requests on Workers is a cross-request capability leak, and a promise awaited after the response is
 work the runtime may already have torn down. Deferred work has one sanctioned
 channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
-writes and dispatched OAuth grant commits use it. Catalog listing and SQL cache
+writes and OAuth renewals from claim submission use it. Catalog listing and SQL cache
 publication finish in the requesting scope. A fresh
 `McpServer` per request is what makes the deployment stateless: no sessions, no
 server push, no stream resumability, scope resolved rather than remembered.
@@ -1942,7 +1945,7 @@ storage is the root's namespaced to its principal.
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
-| Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Call-owned preparation and waits stop at call or request closure; late reads cannot resume renewal. After token dispatch, the storage coordinator owns the response under its independent 20-second HTTP deadline and the fenced grant commit through the runtime deferred-work hook. A closed call fails promptly without consuming the result, marking its ledger renewed or sending/resending a resource request; the dispatched token request and accepted rotation still complete.                                                                                    |
+| Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -2140,9 +2143,10 @@ compiling and configuring the real thing.
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the
   request; their credential access comes from the operation. OAuth renewal
-  preparation and the caller's wait close with the call; a dispatched refresh's
-  response and fenced rotation commit instead belong to the storage
-  coordinator under its own deadline and deferred-work hook. That completion
+  is call-owned until its first durable claim CAS is submitted. Submission
+  transfers preparation, token exchange and fenced rotation commit to the
+  storage coordinator under its own deadlines and deferred-work hook; only
+  the caller's wait still closes with the call. That completion
   cannot resume a closed call or resend its resource request
   (`test/call-renewal-lifetime.test.ts`). Request closure
   revokes views and calls first, then runs every finalizer in reverse order,

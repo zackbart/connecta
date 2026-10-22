@@ -9,6 +9,7 @@ import {
   renewedAfterUnauthorized,
   takeProviderHandoff,
   vendorRefusal,
+  type ProviderRequest,
 } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
@@ -19,6 +20,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
 import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
+import type { SentSecrets } from "../sent-secrets.js";
 import type { ApiOAuthClientAuthentication, ApiOAuthConfig, ApiOAuthHooks } from "../connectors/api-connector.js";
 import { ConnectorCallError, msg, resendAdviceOf, withResendAdvice } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
@@ -35,7 +37,7 @@ import {
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
-import { duringViewCall } from "../runtime/call.js";
+import { duringViewCall, openRequest } from "../runtime/call.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -388,20 +390,29 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * from configuration the token endpoint is the only URL the SDK fetches here;
    * the check keeps the headers on it even if that ever changes.
    */
-  const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
+  const tokenEndpointFetch = async (secrets: SentSecrets, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
     const request: RequestInit = { ...init, redirect: "manual" };
     if (settings.tokenRequestHeaders.length && `${url.origin}${url.pathname}` === settings.identity) {
       const headers = new Headers(init.headers);
       for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
       for (const [name, value] of settings.tokenRequestHeaders)
-        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
+        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) secrets.header(value);
       request.headers = headers;
     }
-    trackRemoteClientRequest(sentSecretsFor(ctx), input, request);
-    const dispatch = providerRequest(ctx, true, id, { method: request.method ?? "GET" });
-    dispatchProviderRequest(ctx, dispatch, request.headers);
-    const response = await sentSecretsFetch(ctx)(input, request);
+    trackRemoteClientRequest(secrets, input, request);
+    // The coordinator or code-exchange wrapper authorizes this send. Refresh
+    // claim submission may outlive the caller; this transport uses no
+    // request-owned capability and changes no closed resource-call ledger.
+    const dispatch: ProviderRequest = {
+      dispatched: false,
+      auxiliary: true,
+      provider: id,
+      method: request.method ?? "GET",
+    };
+    dispatchProviderRequest(undefined, dispatch, request.headers);
+    secrets.request(input, request);
+    const response = await fetch(input, request);
     recordProviderResponse(dispatch, response.status);
     return byteReadResponse(response);
   };
@@ -416,17 +427,29 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     provider: StaticOAuthProvider,
     ctx: ConnectorContext,
     exchange?: { authorizationCode: string; iss?: string },
-  ) =>
-    auth(provider, {
+  ) => {
+    const secrets = sentSecretsFor(ctx);
+    return auth(provider, {
       serverUrl: settings.serverUrl,
       ...exchange,
       fetchFn: coordinatorFor(ctx).coordinatedFetch(
         provider,
-        (input, init) => tokenEndpointFetch(ctx, input, init),
+        (input, init) => {
+          if (exchange) {
+            // A code exchange has no submitted refresh claim transferring
+            // ownership. Its callback operation can have no external signal;
+            // request revocation must still refuse its auxiliary token POST.
+            assertProviderCallOpen(ctx, id, true);
+            const request = ctx.requestScope ? openRequest(ctx.requestScope) : undefined;
+            if (request?.signal.aborted) throw request.signal.reason;
+          }
+          return tokenEndpointFetch(secrets, input, init);
+        },
         ctx.signal,
         ctx.defer,
       ),
     });
+  };
 
   // No cause, as in remoteMcp(): the `UnauthorizedError` class is the whole
   // verdict, and a logger rendering the chain renders whatever it says.
@@ -442,7 +465,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * already rotated in, or else one coordinated refresh.
    */
   const renewedToken = async (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string) => {
-    // Only the coordinator's dispatched exchange may survive this call.
+    // Only renewal whose claim CAS was submitted may survive this call.
     // Race each preparation read too, and never resume SDK work or consume a
     // rotated token after closure, even if a storage promise completes late.
     const live = async <A>(work: () => Promise<A>): Promise<A> => {
