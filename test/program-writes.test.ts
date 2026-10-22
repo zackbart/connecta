@@ -530,6 +530,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(() => construct({ pools: { named: { tools: ["notes"], readOnly: 1 } } })).toThrow(
       "ConnectaConfig.pools.named.readOnly must be true or false",
     );
+    expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
   });
 
   it("INV-11: refuses the retired trust option, pointing at readOnly", () => {

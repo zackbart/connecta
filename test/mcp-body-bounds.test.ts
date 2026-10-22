@@ -99,6 +99,8 @@ async function admittedTotal(c: { fetch(request: Request): Promise<Response> }):
 describe("MCP request bodies before auth", () => {
   it.each([
     ["/agent/team", 401],
+    ["/agent/unknown", 401],
+    ["/agent/team/", 404],
     ["/mcp", 401],
     ["/mcp/team", 401],
   ] as const)(
@@ -122,6 +124,7 @@ describe("MCP request bodies before auth", () => {
 
   it.each([
     ["/agent/team", "bot"],
+    ["/mcp/team", "bob"],
     ["/mcp", "alice"],
   ] as const)(
     "INV-7: answers an authenticated oversized listen POST to %s with 413, reading no further than the cap",

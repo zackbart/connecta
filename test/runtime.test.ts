@@ -93,8 +93,6 @@ describe("the microtask scheduler", () => {
   });
 });
 
-describe("fromSignal", () => {});
-
 describe("withDeadlineEffect", () => {
   it("aborts the operation's signal with the labelled error before interrupting it", WORKERS, async () => {
     vi.useFakeTimers();
