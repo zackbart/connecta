@@ -1,5 +1,5 @@
 import { configureGuardedTransport } from "../src/guarded-transport.js";
-// The Effect provider kit prototype (decision 0010, src/http/): the guarded
+// The Effect provider kit (decision 0010, src/http/): the guarded
 // client's confinement and ceilings, the error contract and its bounded
 // vendor facts, the provenance it records for the core's write-outcome
 // decision (src/write-outcome.ts, which the kit never restates), the
@@ -39,7 +39,7 @@ import {
 } from "../src/http/errors.js";
 import { Integer, catalogSchema, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
 import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
-import { allRows, boundCursor, lookahead } from "../src/http/paging.js";
+import { allRows, boundCursor, lookahead, token, offset, page, link } from "../src/http/paging.js";
 import { resultSafety } from "../src/http/safety.js";
 import {
   Budget,
@@ -66,8 +66,20 @@ import {
   type CallServices,
   type Dispatch,
 } from "../src/http/services.js";
-import { kitInput, read, write } from "../src/http/tools.js";
-import { connect, vendor, get, type Connection } from "../src/http/vendor.js";
+import { kitInput, read, write, list, get as getTool, action } from "../src/http/tools.js";
+import {
+  connect,
+  vendor,
+  get,
+  head,
+  post,
+  put,
+  patch,
+  del,
+  operations,
+  manifest,
+  type Connection,
+} from "../src/http/vendor.js";
 import { kitTools } from "../src/providers/tithely/kit-prototype.js";
 import { TITHELY_API_BASE_URLS } from "../src/providers/tithely/index.js";
 import { runEdge } from "../src/runtime/run.js";
@@ -789,9 +801,13 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
       list_charges: {},
       get_charge: { chargeId: "ch_1" },
       tithely_api_mutate: { method: "POST", path: "/charges" },
+      tithely_api_get: { path: "/charges" },
+      get_organization: { organizationId: "org_1" },
+      get_account: { accountId: "user_1" },
+      get_recurring_charge: { recurringChargeId: "rc_1" },
     };
     for (const tool of kitTools(TITHELY_API_BASE_URLS.live, 25)) {
-      expect(disagreements(tool, bases[tool.name]!), tool.name).toEqual([]);
+      expect(disagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
     }
   });
 
@@ -849,6 +865,147 @@ describe("paging (decision 0010, B.4)", () => {
       ),
     );
     expect(Array.from(rows)).toEqual([1, 2, 3]);
+    const strategies = [
+      token({ fetch: () => Effect.succeed({ rows: [1], hasMore: true, nextCursor: "2" }) }),
+      offset({
+        offset: 1,
+        limit: 1,
+        fetch: (start, size) => {
+          expect([start, size]).toEqual([1, 1]);
+          return Effect.succeed({ rows: [1], total: 3 });
+        },
+      }),
+      page({
+        page: 1,
+        limit: 1,
+        fetch: (start, size) => {
+          expect([start, size]).toEqual([1, 1]);
+          return Effect.succeed({ rows: [1], totalPages: 3 });
+        },
+      }),
+      link({
+        baseUrl: OPTIONS.baseUrl,
+        param: "cursor",
+        fetch: () => Effect.succeed({ rows: [1], next: "https://api.acme.example/v1/items?cursor=2" }),
+      }),
+    ];
+    for (const strategy of strategies)
+      expect(await runEdge(strategy)).toEqual({ rows: [1], page: { hasMore: true, nextCursor: "2" } });
+    for (const strategy of [
+      token({ fetch: () => Effect.succeed({ rows: [], hasMore: false, nextCursor: "stale" }) }),
+      offset({ offset: 1, limit: 2, fetch: () => Effect.succeed({ rows: [] }) }),
+      page({ page: 2, limit: 2, fetch: () => Effect.succeed({ rows: [], hasMore: false }) }),
+      link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [] }) }),
+    ])
+      expect(await runEdge(strategy)).toEqual({ rows: [], page: { hasMore: false, nextCursor: null } });
+    for (const next of [
+      "https://other.example/v1/items?cursor=x",
+      "/v2/items?cursor=x",
+      "/v1/items",
+      "/v1/items?cursor=x&cursor=y",
+      "https://alice@api.acme.example/v1/items?cursor=x",
+    ]) {
+      const result = await runEdge(
+        Effect.result(
+          link({ baseUrl: OPTIONS.baseUrl, param: "cursor", fetch: () => Effect.succeed({ rows: [], next }) }),
+        ),
+      );
+      expect(result._tag, next).toBe("Failure");
+    }
+    expect(
+      (
+        await runEdge(
+          Effect.result(token({ fetch: () => Effect.succeed({ rows: [], hasMore: true, nextCursor: null }) })),
+        )
+      )._tag,
+    ).toBe("Failure");
+  });
+});
+
+describe("kit construction (decision 0010, B.4)", () => {
+  it("INV-1 INV-9 INV-11: declares every method and builder, requires read reviews, and binds list cursors", async () => {
+    const declared = vendor(
+      "Methods",
+      get("get", "/get"),
+      head("head", "/head"),
+      post("post", "/post"),
+      put("put", "/put"),
+      patch("patch", "/patch"),
+      del("delete", "/delete"),
+    );
+    expect(operations(declared)).toEqual([
+      "DELETE /delete",
+      "GET /get",
+      "HEAD /head",
+      "PATCH /patch",
+      "POST /post",
+      "PUT /put",
+    ]);
+    expect(Object.keys(manifest(declared).paths)).toHaveLength(6);
+    expect(() => vendor("duplicate", get("same", "/a"), post("same", "/b"))).toThrow(/unique/);
+    const connection = acme();
+    const spec = {
+      name: "sample",
+      description: "Sample",
+      input: Schema.Struct({}),
+      output: Schema.Unknown,
+      run: () => Effect.succeed(null),
+    };
+    for (const [build, annotations] of [
+      [() => read(connection, spec), { readOnlyHint: true }],
+      [() => getTool(connection, spec), { readOnlyHint: true }],
+      [() => write(connection, { ...spec, destructive: false }), { readOnlyHint: false }],
+      [() => write(connection, { ...spec, destructive: true }), { readOnlyHint: false, destructiveHint: true }],
+      [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
+    ] as const)
+      expect(build().annotations).toEqual(annotations);
+    for (const review of [undefined, "A documented read-only POST."]) {
+      const tool = read(connection, {
+        ...spec,
+        ...(review ? { review } : {}),
+        run: () =>
+          connection
+            .sendPath({ method: "POST", path: "/query", template: "/query" })
+            .pipe(Effect.map(({ data }) => data)),
+      });
+      const connector = tracksEveryRequest(apiConnector("acme", { tools: [tool] }));
+      sent = [];
+      const result = await connector.callTool("sample", {}, context()).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      expect(sent).toHaveLength(review ? 1 : 0);
+      if (!review) {
+        expect(result).toHaveProperty("error");
+        expect(String((result as { error: unknown }).error)).not.toMatch(/requires a review/);
+      }
+    }
+    for (const mode of ["plain", "bound"] as const) {
+      const cursors: Array<string | undefined> = [];
+      const tool = list(connection, {
+        name: "list_items",
+        description: "Items",
+        key: "items",
+        row: Schema.String,
+        cursor: mode,
+        input: Schema.Struct({ owner: Schema.String, cursor: Schema.optionalKey(Schema.String) }),
+        page: (_args, cursor) => {
+          cursors.push(cursor);
+          return Effect.succeed({ rows: ["safe"], page: { hasMore: true, nextCursor: "next" } });
+        },
+      });
+      const connector = apiConnector("acme", { tools: [tool] });
+      const first = (await connector.callTool("list_items", { owner: "alice" }, context())) as {
+        page: { nextCursor: string };
+      };
+      await connector.callTool("list_items", { owner: "alice", cursor: first.page.nextCursor }, context());
+      expect(cursors).toEqual([undefined, "next"]);
+      if (mode === "bound")
+        await expect(
+          connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, context()),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+      else expect(first.page.nextCursor).toBe("next");
+    }
   });
 });
 
@@ -917,6 +1074,43 @@ describe("value-safety boundary (decision 0010, B.4)", () => {
       expect(answer.data).toEqual([
         { token: "[redacted]", ...(choice === "return" ? { owner: "alice@example.com" } : {}) },
       ]);
+    }
+    for (const tagged of [true, false]) {
+      const connection = connect(ACME_API, guardedClient(OPTIONS), {
+        errors: {
+          ...VENDOR,
+          detail: (input) => {
+            expect(input).not.toHaveProperty("body");
+            return "Vendor text withheld.";
+          },
+        },
+        safety: resultSafety({
+          reviewed: { redact: (data) => data, withholdsErrors: () => true },
+          sensitiveFields: { names: [], choice: "drop" },
+        }),
+        result: (_body, answer) =>
+          tagged
+            ? Effect.fail(
+                new StatusFailure({
+                  status: 400,
+                  headers: answer.headers,
+                  operation: answer.operation,
+                  body: { message: "stored-secret-never-sent" },
+                }),
+              )
+            : Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", "stored-secret-never-sent") })),
+      });
+      const tool = read(connection, {
+        name: "withheld",
+        description: "A withheld envelope.",
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        run: () => connection.send(keys, {}).pipe(Effect.map(({ data }) => data)),
+      });
+      const result = await through(tool, {});
+      expect(result).toHaveProperty("error");
+      expect(String(result.error)).not.toContain("stored-secret-never-sent");
+      if (tagged) expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
     }
   });
 
@@ -1044,6 +1238,9 @@ describe("call services (decision 0010, B.1)", () => {
     expect(await tracksEveryRequest(apiConnector("acme", { tools: [tool] })).callTool("peek", {}, context())).toEqual({
       token: "[redacted]",
     });
+    expect((await runEdge(Effect.result(kept!)))._tag).toBe("Failure");
+    // The builder itself must revoke its lease even without api()'s outer finalizer.
+    await tool.handler!({}, { ...context(), fetch: globalThis.fetch });
     expect((await runEdge(Effect.result(kept!)))._tag).toBe("Failure");
   });
 
@@ -1473,6 +1670,14 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     const tool = write(connection, spec);
     // Mutating the caller's declaration after construction cannot increase the bound.
     spec.writeSteps.rows.maxItems = 100;
+    const oneStep = { rows: { ...spec.writeSteps.rows, maxItems: 1 } };
+    const one = write(connection, { ...spec, writeSteps: oneStep });
+    oneStep.rows.maxItems = 2;
+    await expect(one.handler!({ ids: ["alice", "bob"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
+      /maxItems/,
+    );
+    expect(sent).toEqual([]);
+    selections = 0;
     answers = [() => Response.json({ ok: true }), () => new Response(null, { status: 503 })];
     const outcome = (await through(tool, { ids: ["alice", "bob"] })).error;
     expect(sent.map((request) => request.url).sort()).toEqual([

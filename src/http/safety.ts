@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.4). Unreachable from src/index.ts.
+// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 //
 // The one value-safety boundary of a kit connection. `connect` requires it,
 // and `Send` hands a provider nothing it has not passed: a named tool, a

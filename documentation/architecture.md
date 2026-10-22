@@ -2077,7 +2077,24 @@ within five minutes of expiry in the same auth partition. Partial walks and
 auth or permission failures refuse fallback; resources require unexpired
 inventories, and stale fallback cannot authorize post-entry auth recovery.
 
-### Why not Schema or HttpApi
+### Contributor provider kit
+
+Provider declarations use `src/http/vendor.ts` for HttpApi operations and
+`src/http/tools.ts` for list, get, read, write and action builders.
+`src/http/provider.ts` composes them with `defineProvider`; it returns the
+ordinary Promise-based Connector factory. The kit stays outside the root
+graph and its Effect types are internal. No live provider migrates in B.4;
+the complete Tithe.ly reference remains separate until B.5 proves its goldens.
+
+Every answer passes through bounded reading, sent-secret redaction, vendor
+result handling, reviewed value safety and the deployment privacy projection
+before paging or provider projections can read it. Read methods beyond GET
+and HEAD require a review. Construction fixes each write step's capacity;
+the guarded transport reserves it before preparation and the shared core
+decides the whole call's write outcome. Upload builders and byte-body request
+shapes wait for the Google Drive migration in C.7.
+
+### Why not Schema or HttpApi for core routes
 
 Both were measured and both lost. `effect` is imported through its barrel,
 which defeats tree-shaking: the first conversion step measured about +20 ms

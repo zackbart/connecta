@@ -1444,6 +1444,8 @@ function action<I extends Input, O extends Schema.Top>(connection: Connection, s
 `read` and `write`, with `write`'s `idempotency`, are prototyped; `list`,
 `get`, `action` and the `review` check arrive in B.4.
 
+The upload builder and byte-body request shape are deferred to C.7 (Google Drive), the first upload migration; B.4 retains separate `session` and `bytes` write steps.
+
 `idempotency` declares a genuine key the vendor honors, taken from validated
 arguments (an `idempotencyKey` argument, say). One key protects one request,
 so a tool with more than one write step cannot declare it (a construction
@@ -1577,6 +1579,8 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;                 // environment or override; checked at construction
   readonly maxResponseBytes: number;
+  readonly headers?: GuardedOptions["headers"];                      // constants first; auth applied last, shadowing refused
+  readonly admit?: GuardedOptions["admit"];                          // before any credential read, as in B.2
   readonly pageSize?: { readonly default: number; readonly max: number }; // becomes the `defaultPageSize` option and its check
   readonly credential?: ConnectorCredentialConfig;                    // exclusive with oauth
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;

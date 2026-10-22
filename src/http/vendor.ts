@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.4). Unreachable from src/index.ts.
+// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 //
 // A vendor is an `HttpApi`: endpoints with Schemas for path params, query,
 // and payload, from which requests are encoded and the endpoint manifest is
@@ -44,6 +44,7 @@ import {
   Dispatches,
   RequestFacts,
   RequestSecrets,
+  ReadTool,
   WriteCapacity,
   reserveWrite,
   type WriteRequest,
@@ -53,8 +54,13 @@ import {
 
 /** Declare a GET operation: `get("getCharge", "/charges/:chargeId", { params, query, success })`. */
 export const get = HttpApiEndpoint.get;
+export const head = HttpApiEndpoint.head;
+export const post = HttpApiEndpoint.post;
+export const put = HttpApiEndpoint.put;
+export const patch = HttpApiEndpoint.patch;
+export const del = HttpApiEndpoint.delete;
 
-type Operation = HttpApiEndpoint.ConstraintRequest;
+export type Operation = HttpApiEndpoint.ConstraintRequest;
 
 type Part<Key extends string, S> = [S] extends [never]
   ? {}
@@ -72,6 +78,12 @@ export interface Vendor {
 
 /** Group a vendor's operations into one API, the source of its client and its manifest. */
 export function vendor(name: string, ...operations: readonly [Operation, ...Operation[]]): Vendor {
+  if (
+    !name.trim() ||
+    operations.length === 0 ||
+    new Set(operations.map((op) => op.identifier)).size !== operations.length
+  )
+    throw new Error("A vendor needs a name and operations with unique identifiers.");
   return { api: HttpApi.make(name).add(HttpApiGroup.make("operations", { topLevel: true }).add(...operations)) };
 }
 
@@ -165,6 +177,9 @@ export function connect<R>(
       // write-outcome rule can tell the write's own failure from a later one.
       const sent: { reservation?: Dispatch; dispatch?: Dispatch } = {};
       return Effect.gen(function* () {
+        const authored = yield* ReadTool;
+        if (authored !== undefined && operation.method !== "GET" && operation.method !== "HEAD" && !authored.review)
+          return yield* Effect.die(new Error("A read tool sending a method other than GET or HEAD requires a review."));
         if ((yield* Classification) === "write" && sendOptions?.effect !== "read") {
           const ledger = yield* Dispatches;
           const capacity = yield* WriteCapacity;
@@ -189,13 +204,26 @@ export function connect<R>(
           );
         }
         if (!parsed) return yield* Effect.fail(new UnreadableBody());
+        const withheld = options.safety.withholdsErrors(operation);
         const kept = options.result
-          ? yield* options.result(parsed.value, {
-              status: reply.status,
-              headers: reply.headers,
-              operation,
-              withheld: options.safety.withholdsErrors(operation),
-            })
+          ? yield* options
+              .result(parsed.value, {
+                status: reply.status,
+                headers: reply.headers,
+                operation,
+                withheld,
+              })
+              .pipe(
+                Effect.catchTag("Refusal", (failure) =>
+                  withheld
+                    ? Effect.die(
+                        new Error(
+                          "A result hook withholding vendor text must report an in-band refusal as StatusFailure.",
+                        ),
+                      )
+                    : Effect.fail(failure),
+                ),
+              )
           : parsed.value;
         return { status: reply.status, data: options.safety.redact(kept, operation) };
       }).pipe(
