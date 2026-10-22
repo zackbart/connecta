@@ -19,8 +19,9 @@ export interface SourceState {
   events: number;
   violation?: Error;
   timers: Map<number, Timer>;
-  /** Resolves on the next counted native completion, not a host scheduling turn. */
-  waitForIO(): Promise<void>;
+  /** Resolves on counted I/O completion or runnable controlled timers/microtasks. */
+  waitForWork(): Promise<void>;
+  wake(): void;
   completeIO(): void;
   tick(ms: number): void;
   next(): number | undefined;
@@ -77,6 +78,7 @@ export function installSources(): Sources {
       ...(interval === undefined ? {} : { interval }),
     });
     state.events++;
+    if (delay === 0) state.wake();
     // Node timer consumers (Effect included) may unref a timer.
     return {
       [Symbol.toPrimitive]: () => key,
@@ -104,6 +106,7 @@ export function installSources(): Sources {
     const state = active!;
     state.microtasks++;
     state.events++;
+    state.wake();
     nativeMicrotask(() => {
       try {
         (callback as () => void)();
@@ -315,7 +318,7 @@ export function installSources(): Sources {
     start() {
       if (active) throw new Error("Overlapping golden captures are unsupported");
       uuid = byte = seed = 0;
-      const completions = new Set<() => void>();
+      const waiters = new Set<() => void>();
       const state: SourceState = {
         now: GOLDEN_NOW,
         loading: true,
@@ -323,15 +326,21 @@ export function installSources(): Sources {
         microtasks: 0,
         events: 0,
         timers: new Map(),
-        waitForIO() {
-          // Check and subscribe synchronously so a completion cannot be missed.
-          return state.inFlight === 0 ? Promise.resolve() : new Promise((resolve) => completions.add(resolve));
+        waitForWork() {
+          // Check and subscribe synchronously: work queued before subscription
+          // is already runnable; work queued afterwards wakes the same wait.
+          return state.inFlight === 0 || state.microtasks > 0 || state.next() === 0
+            ? Promise.resolve()
+            : new Promise((resolve) => waiters.add(resolve));
+        },
+        wake() {
+          for (const resolve of waiters) resolve();
+          waiters.clear();
         },
         completeIO() {
           state.inFlight--;
           state.events++;
-          for (const resolve of completions) resolve();
-          completions.clear();
+          state.wake();
         },
         tick(ms) {
           state.now += ms;

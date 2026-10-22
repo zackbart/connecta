@@ -1657,7 +1657,10 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   the harness's fresh-graph loading phase admits test fixture imports.
   Invalid captures cancel and drain their concurrent fake requests.
 - Settle, rejected-capture cleanup, and final teardown await counted native
-  I/O completion notifications while operations remain outstanding. Host turns
+  I/O completion or runnable controlled timer/microtask notifications while
+  operations remain outstanding. A counted stream read can depend on a
+  zero-delay timer queued after a tick; the driver keeps ticking due timers
+  without advancing future deadlines while native I/O remains pending. Host turns
   spent waiting for crypto or body reads do not consume a scheduling budget.
   Each settle/drain allows 20,000 controlled source events or outstanding
   counted operations, and clock advancement remains limited to 1,000 ticks.

@@ -93,6 +93,29 @@ function delayedRead(): Promise<string> {
     }),
   ).text();
 }
+// A counted read whose producer queues work after the driver's tick, either
+// before it subscribes to progress or after it has started waiting for I/O.
+function queuedTimerRead(turns = 0, callbacks = 1): Promise<string> {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let turn = 0; turn < turns; turn++) await goldenSources().turn();
+        const produce = () => {
+          if (--callbacks > 0) queueMicrotask(() => setTimeout(produce, 0));
+          else {
+            controller.enqueue(new TextEncoder().encode("body"));
+            controller.close();
+          }
+        };
+        queueMicrotask(() => setTimeout(produce, 0));
+      },
+    }),
+  ).text();
+}
+const countedReadCases = [
+  { name: "delayed counted I/O", read: delayedRead },
+  { name: "counted I/O with a queued zero timer", read: queuedTimerRead },
+];
 const savedNow = performance.now.bind(performance);
 const savedDateNow = Date.now.bind(Date);
 const descriptorDateNow = Object.getOwnPropertyDescriptor(Date, "now")!.value as () => number;
@@ -663,6 +686,23 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: "body" });
   });
 
+  it.each([0, 3])(
+    "drives a counted body producer's queued zero timer after %i native turns",
+    WORKERS,
+    async (turns) => {
+      const baseline = await captureCall(
+        probeSpec(async () => new Response("body").text()),
+        "probe",
+      );
+      expect(
+        await captureCall(
+          probeSpec(async () => queuedTimerRead(turns)),
+          "probe",
+        ),
+      ).toBe(baseline);
+    },
+  );
+
   it("awaits counted I/O beyond 10,000 host turns without changing capture bytes", WORKERS, async () => {
     const baseline = await captureCall(
       probeSpec(async () => new Response("body").text()),
@@ -671,7 +711,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(await captureCall(probeSpec(delayedRead), "probe")).toBe(baseline);
   });
 
-  it("drains delayed counted I/O when rejecting concurrent fake requests", WORKERS, async () => {
+  it.each(countedReadCases)("drains $name when rejecting concurrent fake requests", WORKERS, async ({ read }) => {
     let drained = false;
     let drainedUnderFakes = false;
     const error = new Error("fixture rejected");
@@ -679,7 +719,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       async () => Promise.all([fetch("https://probe.example/a"), fetch("https://probe.example/b")]),
       () => {
         const fake = fetch;
-        void delayedRead().then(() => {
+        void read().then(() => {
           drained = true;
           drainedUnderFakes = fetch === fake;
         });
@@ -698,18 +738,22 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(next.result).toMatchObject({ ok: true, value: "clean" });
   });
 
-  it("drains delayed counted I/O when construction fails outside the network driver", WORKERS, async () => {
-    let drained = false;
-    const spec = probeSpec(async () => "unused");
-    spec.create = () => {
-      void delayedRead().then(() => {
-        drained = true;
-      });
-      throw new Error("construction rejected");
-    };
-    await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
-    expect(drained).toBe(true);
-  });
+  it.each(countedReadCases)(
+    "drains $name when construction fails outside the network driver",
+    WORKERS,
+    async ({ read }) => {
+      let drained = false;
+      const spec = probeSpec(async () => "unused");
+      spec.create = () => {
+        void read().then(() => {
+          drained = true;
+        });
+        throw new Error("construction rejected");
+      };
+      await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
+      expect(drained).toBe(true);
+    },
+  );
 
   it("bounds controlled operations with an outstanding-work diagnostic", WORKERS, async () => {
     await expect(
@@ -725,6 +769,15 @@ describe(suiteName, { timeout: 120_000 }, () => {
         "probe",
       ),
     ).rejects.toThrow(/controlled operation budget exceeded \(0 counted I\/O operations outstanding/);
+  });
+
+  it("bounds timer/microtask producers while a counted body read remains outstanding", WORKERS, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () => queuedTimerRead(0, 6_000)),
+        "probe",
+      ),
+    ).rejects.toThrow(/controlled operation budget exceeded \([1-9]\d* counted I\/O operations outstanding/);
   });
 
   it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", WORKERS, async () => {

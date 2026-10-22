@@ -408,9 +408,12 @@ async function countedTurn(real: RealWork, checkBudget: () => void): Promise<voi
   await realTurn();
   checkBudget();
   // Native crypto/body reads may need arbitrarily many host turns under load.
-  // Their completion wakes the driver; only actual operations spend its budget.
+  // Their completion OR newly runnable controlled work wakes the driver: a
+  // body read may itself depend on a timer queued after tick(0). Never advance
+  // future deadlines while waiting for native I/O. Only actual operations spend
+  // the budget, including timer/microtask chains that do not complete the I/O.
   // Vitest's native runner timeout remains the backstop for a never-resolving I/O.
-  if (real.inFlight) await real.waitForIO();
+  if (real.inFlight) await real.waitForWork();
   checkBudget();
 }
 
