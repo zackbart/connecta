@@ -54,6 +54,8 @@ function setup(
     refresh?: "rotate" | "dead" | "outage";
     redirects?: "same-origin";
     versionNegotiation?: "legacy" | "auto";
+    /** Runs as a tools/call is answered 401, before the answer reaches connecta. */
+    onUnauthorized?: () => void;
   } = {},
 ) {
   const applied: string[] = [];
@@ -120,13 +122,15 @@ function setup(
     const answer = answers.get(name) ?? "pass";
     if (answer === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     sent.push({ name, authorization });
-    if (answer === 401 && authorization === `Bearer ${STALE}`)
+    if (answer === 401 && authorization === `Bearer ${STALE}`) {
+      options.onUnauthorized?.();
       return new Response(null, {
         status: 401,
         headers: {
           "WWW-Authenticate": `Bearer resource_metadata="${downstream.url.replace("/mcp", "")}/.well-known/oauth-protected-resource"`,
         },
       });
+    }
     if (answer === 403)
       return new Response(null, {
         status: 403,
@@ -332,6 +336,22 @@ describe("remote MCP OAuth writes after a 401", () => {
       expect(flow.sent("create_item")).toHaveLength(1);
     },
   );
+
+  it("INV-9: a direct write whose caller leaves as it is answered 401 keeps the auth code, unknown and unsent", async () => {
+    const controller = new AbortController();
+    const flow = setup({
+      oauth: true,
+      onUnauthorized: () => controller.abort(new DOMException("The caller left.", "AbortError")),
+    });
+    await flow.seedOAuth();
+    flow.answers.set("create_item", 401);
+    const failed = await flow.connector
+      .callTool("create_item", { id: 1 }, flow.context({ signal: controller.signal }))
+      .catch((error: unknown) => error);
+    // Renewal never succeeded, so the 401's authorization verdict stands.
+    expect(failed).toMatchObject({ code: "downstream_oauth_required", retryable: false, writeOutcome: "unknown" });
+    expect(flow.sent("create_item")).toHaveLength(1);
+  });
 
   it("INV-9: a write the downstream refuses for scope is sent once; the step-up never resends it", async () => {
     const flow = setup({ oauth: true });

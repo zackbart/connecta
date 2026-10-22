@@ -12,14 +12,16 @@ import { classifyTool } from "../tool-safety.js";
 import {
   closeProviderCall,
   enterProviderBoundary,
+  inLogicalCall,
   knownProviderFailure,
+  nestedProviderRequests,
   providerBoundary,
   providerCallContext,
   providerFetch,
   providerRequests,
   tracksRequests,
 } from "../provider-call.js";
-import { providerCallFailure } from "../write-outcome.js";
+import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
@@ -405,7 +407,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // write once: the registry's classification of this call decides, else
       // the rule the registry would apply to the tool (INV-1).
       const write = (callClassification(ctx) ?? classifyTool(tool)) === "write";
-      const callCtx = providerCallContext(ctx);
+      const callCtx = providerCallContext(ctx, providerRequests(ctx) ? classifyTool(tool) : write ? "write" : "read");
       const handlerCtx = deriveContext<ApiHandlerContext>(callCtx, {
         fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
         ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),
@@ -430,10 +432,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
               untracked: !tracksRequests(connector),
             }),
           );
-        // The request's own abort reason, by identity, is the caller's. A
-        // direct write's is settled like any other failure: it may have left.
+        // The request's own abort reason, by identity, is the caller's. The
+        // invocation reports it for its logical call; any other write's is
+        // settled like any other failure: it may have left.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
-          if (!write || callClassification(ctx) !== undefined) throw error;
+          if (!write || inLogicalCall(ctx)) throw error;
           throw settle(error);
         }
         if (error instanceof ConnectorCallError) throw settle(error);
@@ -466,14 +469,19 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         // have sent the write, so no network code proves a write unsent.
         const unreachable = unavailableCallError(error, undefined, undefined, ctx.signal);
         // A raw handler with no tracked requests remains opaque, as before.
-        // Once guarded requests exist their ledger supplies the dispatch proof.
-        if (providerRequests(handlerCtx)?.length) throw settle(unreachable);
+        // Once guarded requests exist, its own or a nested api() boundary's,
+        // the ledgers supply the dispatch proof.
+        if (providerRequests(handlerCtx)?.length || nestedProviderRequests(handlerCtx).length)
+          throw settle(unreachable);
         throw providerCallFailure(ctx, { title: opts.title ?? id }, unreachable, {
           dispatched: true,
           fallback: classifyTool(tool),
         });
       }
       closeProviderCall(callCtx);
+      // A write an undeclared 401 left unknown fails however its handler returned.
+      const unknown = providerCallResult(handlerCtx, write ? "write" : "read");
+      if (unknown) throw redactSentSecrets(ctx, unknown);
       return redactSentSecrets(ctx, result);
     },
   };

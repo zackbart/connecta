@@ -19,18 +19,23 @@ import {
   assertProviderCallOpen,
   bindProviderRequest,
   dispatchProviderRequest,
+  handoffProviderRequest,
+  isRecordingFetch,
+  recordProviderResponse,
   providerRequest,
-  readMethod,
+  responseProviderRequest,
   vendorRefusal,
+  type ProviderRequest,
 } from "../provider-call.js";
-import { providerCallFailure } from "../write-outcome.js";
+import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
-// Three of the types below carry no `export`: they are reached through the
-// exported `GuardedRequest` and `GuardedTransport` rather than named directly,
-// and the unused-export gate is right to say so while this module is internal.
+// Five of the types below carry no `export`: they are reached through the
+// exported `GuardedRequest`, `GuardedFetchOptions` and `GuardedTransport`
+// rather than named directly, and the unused-export gate is right to say so
+// while this module is internal.
 // They get their own `export` on the day the helper joins the published
 // surface, and not before.
 
@@ -79,7 +84,7 @@ export interface GuardedRequest {
    * up front: the ceiling still bounds what is read, never what is sent.
    */
   prefixOnly?: boolean;
-  /** Fallback only without a served verdict (e.g. Breeze writes use GET). */
+  /** Trusted per-operation evidence (e.g. Breeze writes use GET); otherwise the tool's verdict applies. */
   classification?: "read" | "write";
   /** Provider-declared request that cannot perform the logical resource write. */
   auxiliary?: boolean;
@@ -192,6 +197,31 @@ export interface GuardedFetchOptions {
    * authentication, so a refused request never resolves a credential.
    */
   admit?: (url: URL, request: GuardedRequest) => void;
+  /**
+   * Reviewed vendor evidence that the vendor authenticates a request before
+   * it acts on it. Without it, a write answered 401 has an unknown outcome:
+   * a server may act on a request before it rejects the credential. With it,
+   * a 401 that `matches` is that write's refusal. Declare it only where the
+   * vendor's documentation says so, cite that documentation in `evidence` and
+   * in the provider's evidence review, and keep `matches` narrow. Of the
+   * maintained providers only Stripe declares it. Checked at construction.
+   */
+  authBeforeExecution?: AuthBeforeExecution;
+}
+
+/**
+ * A trusted per-vendor review: types cannot verify what a vendor does, so the
+ * reviewer checks the cited documentation and the predicate against it.
+ */
+interface AuthBeforeExecution {
+  /** The vendor's documented guarantee: its URL and what it says. Never empty. */
+  evidence: string;
+  /**
+   * Whether this raw 401 is one the evidence covers, from its status and
+   * headers and the request's method and provider-relative path only: never a
+   * mapped code or prose.
+   */
+  matches: (answer: { status: 401; headers: Headers; method: string; path: string }) => boolean;
 }
 
 /** Sends one already-guarded request on behalf of one call's context. */
@@ -202,14 +232,16 @@ type GuardedFetcher = (url: string, init: RequestInit, ctx: ConnectorContext) =>
  * own `api()` OAuth grant: no header of the helper's making, and every request
  * sent through `ctx.oauth.fetch`, which adds the calling owner's bearer token,
  * refuses any origin outside the grant's `apiOrigins`, and spends one
- * coordinated refresh and one replay on a 401 before answering
- * `auth_required`. Spread it into the options:
+ * coordinated refresh on a 401: a read is replayed once before answering
+ * `auth_required`, and a write is never sent again (INV-9). Spread it into
+ * the options:
  * `guardedFetch({ provider, baseUrl, maxResponseBytes, ...oauthBearer(provider) })`.
  *
  * Confinement still happens here first, so a request reaches the grant only
  * once it is provably beneath `baseUrl`; the grant's origin check is the second
  * fence, not the only one.
  */
+const oauthSenders = new WeakSet<GuardedFetcher>();
 export function oauthBearer(provider: string): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
   const send: GuardedFetcher = (url, init, ctx) => {
     const grant = (ctx as ApiHandlerContext).oauth;
@@ -224,6 +256,7 @@ export function oauthBearer(provider: string): Pick<GuardedFetchOptions, "authen
     }
     return grant.fetch(url, init);
   };
+  oauthSenders.add(send);
   return { authenticate: () => ({}), fetch: send };
 }
 
@@ -482,6 +515,18 @@ async function jsonResult(read: () => Promise<unknown>): Promise<{ value: unknow
   }
 }
 
+// Each response a mapper reads, and the ledger entry of the request it answered.
+const answeredRequests = new WeakMap<object, ProviderRequest>();
+
+/**
+ * The ledger entry of the request `response` answered, so a provider that
+ * renews its credential after a 401 can name exactly that request
+ * (`renewedAfterUnauthorized`). Undefined for anything else.
+ */
+export function answeredRequest(response: object): ProviderRequest | undefined {
+  return answeredRequests.get(response);
+}
+
 /**
  * Build the transport a connector sends every request through. `maxResponseBytes`
  * is required rather than defaulted: what counts as an absurd response is a fact
@@ -492,35 +537,60 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`${provider} maxResponseBytes must be a whole number of bytes >= 1; received ${String(limit)}.`);
   }
+  const authFirst = options.authBeforeExecution;
+  if (
+    authFirst &&
+    (typeof authFirst.evidence !== "string" || !authFirst.evidence.trim() || typeof authFirst.matches !== "function")
+  ) {
+    throw new Error(`${provider} authBeforeExecution needs nonempty evidence and a narrow matches predicate.`);
+  }
   const base = confinementBase(provider, options.baseUrl);
   // "" for a root base, so joining never doubles the separator.
   const basePath = base.pathname.replace(/\/+$/, "");
   const constantHeaders = { ...options.headers };
   const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
 
-  return async function guarded(request, ctx, map) {
+  // The reviewed predicate is trusted code; one that throws proves nothing.
+  const authenticatedFirst = (response: Response, request: GuardedRequest): boolean => {
+    try {
+      return (
+        authFirst?.matches({ status: 401, headers: response.headers, method: request.method, path: request.path }) ===
+        true
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  return async function guarded<T>(request: GuardedRequest, ctx: ConnectorContext, map: GuardedResponseMapper<T>) {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
     // A call that already ended sends nothing more, not even a credential read.
     assertProviderCallOpen(ctx, provider, auxiliary);
-    const dispatch = providerRequest(ctx, auxiliary, provider, {
+    let dispatch = providerRequest(ctx, auxiliary, provider, {
       method: request.method,
+      ...(request.classification ? { classification: request.classification } : {}),
       ...(request.idempotencyKey === undefined ? {} : { key: request.idempotencyKey }),
     });
-    let dispatched = false;
     let response: Response | undefined;
+    let result: T;
     try {
-      return await requestOnce(request, ctx, map);
+      result = await requestOnce(request, ctx, map);
     } catch (error) {
       // No rejection proves a dispatched write unsent: fetch may have made
       // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
       // retrying dispatcher), whatever the last one reports.
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
-        dispatched: dispatched && !auxiliary,
+        dispatched: dispatch.dispatched && !auxiliary,
         ...(response ? { status: response.status } : {}),
-        fallback: request.classification ?? (readMethod(request.method) ? "read" : "write"),
+        fallback: dispatch.classification ?? "write",
         repeatable: request.idempotencyKey !== undefined,
+        authBeforeExecution: dispatch.authBeforeExecution === true,
+        ...(auxiliary ? {} : { request: dispatch }),
       });
     }
+    const unknown = providerCallResult(ctx, dispatch.classification ?? "write", dispatch);
+    if (unknown) throw unknown;
+    return result;
 
     async function requestOnce<T>(
       request: GuardedRequest,
@@ -576,14 +646,18 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           headers[name] = value;
         }
         bindProviderRequest(init, dispatch);
-        dispatchProviderRequest(ctx, dispatch);
-        dispatched = true;
+        if (oauthSenders.has(send) && isRecordingFetch((ctx as ApiHandlerContext).oauth?.fetch))
+          handoffProviderRequest(init, dispatch);
+        else dispatchProviderRequest(ctx, dispatch, headers, init.method);
         response = await send(url.toString(), init, ctx);
-        dispatch.status = response.status;
+        const answered = responseProviderRequest(response, dispatch);
+        if (answered) dispatch = answered;
+        else recordProviderResponse(dispatch, response.status);
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
       }
+      if (response.status === 401 && authenticatedFirst(response, request)) dispatch.authBeforeExecution = true;
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel().catch(() => {});
         throw new ConnectorCallError(
@@ -606,7 +680,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         await response.body?.cancel().catch(() => {});
         throw oversized(provider, limit, `a declared ${declared} bytes`);
       }
-      return await map(boundedResponse(provider, response, limit), ctx);
+      const answer = boundedResponse(provider, response, limit);
+      answeredRequests.set(answer, dispatch);
+      return await map(answer, ctx);
     }
   };
 }

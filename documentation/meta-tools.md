@@ -1041,12 +1041,48 @@ instead of to retry the original call. A read, and a write with a known
 outcome, keep that advice. A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
-write the downstream answered with HTTP 401 is not resent: the credential is
-renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
-for any fresh call after the target is reconciled, and the call reports the
-same unknown outcome. If
-renewal fails, an authorization verdict keeps its code with `retryable: false`
-and `reconciliationRequired: true`, and anything else is the unknown outcome.
+write the downstream answered with HTTP 401 has an unknown outcome, since a
+server may act on a request before it rejects the credential, and is never
+resent. It is never retryable and carries no wait. Until the credential is
+renewed, the failure keeps its authorization code (`auth_required`, or
+`downstream_oauth_required` for an OAuth connector) with
+`writeOutcome: "unknown"`, `reconciliationRequired: true`, and the
+`authorize_connector` handoff, whose `instructions` say to authorize and then
+re-read the target before any fresh call. That holds whatever renewal meets: a
+refused or unreachable token endpoint, a disconnect, or the caller leaving. It
+also holds whatever the call met after the 401: a body past the response
+ceiling, a later failure in the same call, a 401 on a later request of a
+composite write, a 401 answered inside another connector the call reached
+(an `api()` or `remoteMcp()` connector, through a custom connector or a
+program), or the call's deadline or the caller's cancellation cutting the
+write off after the 401: the result is that verdict, not
+`write_outcome_unknown`. Nor can such a call succeed: a handler that caught
+the 401 and returned, or a result that could not be processed, still ends
+in that verdict, and a program counts the write in `writes.unknown`. An
+idempotency key never makes such a write repeatable, so it gets no
+key-reuse advice. Once every such 401 is renewed
+the handoff goes, but the call stays unknown, even if its handler caught
+the failure and returned a result: renewal does not prove whether the write
+took effect. A caught read 401, or a declared refusal followed by a successful
+write, does not prevent the call from succeeding. A read needs positive
+operation or tool classification and a recorded GET or HEAD; the method
+alone is insufficient. Breeze GET writes and requests carrying
+`X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` remain writes,
+even when a handler catches their 401 and returns.
+Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
+to authorize: the call reports a non-retryable `connector_call_failed` with
+the unknown outcome, and the renewed credential serves any fresh call after
+the target is reconciled. Renewal succeeds only when it yields a different
+credential than the one the write sent: a refresh or login that hands back
+the rejected token, or an earlier recovery in the same request, renews
+nothing, and the write keeps its handoff. Google Workspace renews on the next call, so its
+write keeps the authorization code and handoff. A write answered 401 is a
+known refusal only where its provider has reviewed vendor documentation that
+the vendor authenticates a request before acting on it. Among the maintained
+providers that is Stripe with an API key, for an API v1 answer that carries
+Stripe's `Request-Id`, since Stripe documents that an invalid API key is an
+error that occurs before execution begins. A read answered 401 keeps its
+refusal, and its handoff says to retry the original call.
 A `remoteMcp()` write answered with a redirect is not sent to the new location,
 whatever the connector's `redirects` setting, and reports the unknown outcome;
 reads follow same-origin redirects as configured. An error whose write outcome

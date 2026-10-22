@@ -407,11 +407,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Planning Center: Golden 401: Golden 401 failure (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it.",
+            "message": "Planning Center: Golden 401: Golden 401 failure (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it. The write was sent before Planning Center rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "church",
             "operation": "church.create_person",
             "recovery": "unavailable",
@@ -696,11 +696,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Planning Center: Golden 401: Golden 401 failure: rejected [redacted] [redacted] (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it.",
+            "message": "Planning Center: Golden 401: Golden 401 failure: rejected [redacted] [redacted] (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it. The write was sent before Planning Center rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "church",
             "operation": "church.create_person",
             "recovery": "unavailable",

@@ -365,11 +365,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure An operator must replace it with the key from this church's Extensions → API page.",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure An operator must replace it with the key from this church's Extensions → API page. The write was sent before Breeze rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "church",
             "operation": "church.add_person",
             "recovery": "unavailable",
@@ -565,11 +565,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure: rejected [redacted] An operator must replace it with the key from this church's Extensions → API page.",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure: rejected [redacted] An operator must replace it with the key from this church's Extensions → API page. The write was sent before Breeze rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "church",
             "operation": "church.add_person",
             "recovery": "unavailable",

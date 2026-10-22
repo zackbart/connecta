@@ -18,7 +18,7 @@ import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
-  departedVerdict,
+  recordUnauthorized,
   validateVendorErrors,
   RedirectRefused,
   Refusal,
@@ -73,6 +73,8 @@ import {
   dispatchProviderRequest,
   providerCallContext,
   providerRequest,
+  providerRequests,
+  recordProviderResponse,
   refusalRequest,
   tracksEveryRequest,
   type ProviderRequest,
@@ -80,7 +82,7 @@ import {
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
-import { classifyWriteOutcome, providerCallFailure } from "../src/write-outcome.js";
+import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
@@ -122,9 +124,7 @@ function services(
     Context.add(Dispatches, dispatches),
     Context.add(Ledger, {
       open: (facts) => ({ dispatched: false, ...facts }),
-      dispatch: (request) => {
-        request.dispatched = true;
-      },
+      dispatch: (request, headers, method) => dispatchProviderRequest(undefined, request, headers, method),
     }),
     Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
@@ -347,7 +347,7 @@ function ledger(dispatches: Dispatch[], provider = "Acme"): ConnectorContext {
     if (entry.state === "reserved" || entry.state === "preparing") continue;
     const sent = providerRequest(ctx, !entry.write, provider, { method: "POST" });
     dispatchProviderRequest(ctx, sent);
-    if (entry.status !== undefined) sent.status = entry.status;
+    if (entry.status !== undefined) recordProviderResponse(sent, entry.status);
     entry.request = sent;
   }
   closeProviderCall(ctx);
@@ -741,10 +741,17 @@ describe("failure mapping (decision 0010, B.3)", () => {
       authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
     };
     const both = [dispatch("answered", { status: 201, step: "first" }), answered(failure)];
-    const departed = (dispatches: Dispatch[]) =>
-      finalized(ledger(dispatches), departedVerdict(vendor, { classification: "write", dispatches })!, vendor);
+    // The caller left, so no failure was mapped: the kit records each 401's
+    // facts, and the core decides over the whole ledger with no failure in hand.
+    const departed = (dispatches: Dispatch[]) => {
+      const requests = providerRequests(ledger(dispatches))!;
+      recordUnauthorized(vendor, { dispatches });
+      return settleWrite(requests, undefined, true);
+    };
     expect(departed(both)).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect(outcomeOf(departed([answered(status(401))]))).toBe("failed");
+    // The proven 401 that is the call's one request stays a refusal: nothing is
+    // settled, and the invocation reports its own deadline or cancellation.
+    expect(departed([answered(status(401))])).toBeUndefined();
   });
 
   it("INV-9: a proven 401 refusal still owns auth recovery when another write step is uncertain", () => {
@@ -1415,6 +1422,23 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     },
   );
 
+  it("INV-9: a method override prevents the kit from replaying a positive read", async () => {
+    const { layer, state } = grant();
+    const guarded = refreshOnce(guardedClient({ ...OPTIONS, authenticate: bearer }));
+    answers.push(
+      () => new Response(null, { status: 401 }),
+      () => Response.json({ ok: true }),
+    );
+    const response = await runEdge(
+      guarded.client
+        .execute(HttpClientRequest.get("/items", { headers: { "X-HTTP-Method-Override": "POST" } }))
+        .pipe(Effect.provideContext(layer), Effect.provideContext(services("read"))),
+    );
+    expect(response.status).toBe(401);
+    expect(state.refreshes).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it("INV-9: replays a read once after one refresh, whatever its method", async () => {
     const { state, layer } = grant();
     answers.push(
@@ -2078,7 +2102,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(sent).toHaveLength(1);
     expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect((outcome.error as Error).message).toBe(
-      `Acme returned HTTP 401. Acme rejected the token. The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it. ${STOPPED}`,
+      `Acme returned HTTP 401. Acme rejected the token. ${STOPPED} The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.`,
     );
   });
 

@@ -116,7 +116,17 @@ import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./res
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { enterProviderBoundary, knownProviderFailure, providerBoundary } from "../provider-call.js";
+import {
+  dispatchProviderRequest,
+  recordProviderResponse,
+  enterProviderBoundary,
+  knownProviderFailure,
+  providerBoundary,
+  providerRequest,
+  renewedAfterUnauthorized,
+  vendorRefusal,
+  type ProviderRequest,
+} from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
@@ -1438,6 +1448,14 @@ interface CallDispatch {
   redirected: boolean;
   /** A further send of this call was stopped before it left. */
   resendRefused: boolean;
+  /**
+   * Its entry in the call's ledger and logical call, recorded as it leaves
+   * and is answered, with the context it was called under. A read is
+   * auxiliary there: it cannot be the write.
+   */
+  request?: { entry: ProviderRequest; ctx: ConnectorContext };
+  /** The `Authorization` its one send carried, for a renewal to be compared with. */
+  authorization?: string | null;
 }
 
 /**
@@ -2374,13 +2392,32 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           : undefined;
       if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
       if (flight?.write) {
-        if (flight.sent) throw resendRefused(flight);
+        if (flight.sent) {
+          // The SDK renewed the grant and tried to send again: a renewal of
+          // this request's own credential only if the token changed (Q8).
+          if (flight.request && flight.authorization)
+            renewedAfterUnauthorized(
+              flight.request.entry,
+              flight.authorization,
+              new Headers(init?.headers).get("authorization") ?? flight.authorization,
+            );
+          throw resendRefused(flight);
+        }
         flight.sent = true;
+        flight.authorization = new Headers(init?.headers).get("authorization");
       }
+      const request = flight?.request;
+      if (request?.entry.dispatched)
+        request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
+          method: init?.method ?? "GET",
+        });
+      const entry = request?.entry;
+      if (request && entry) dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
+      if (entry) recordProviderResponse(entry, response.status);
       if (flight?.write) {
         if (response.status === 401) flight.unauthorized = true;
         else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
@@ -3254,6 +3291,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             ? "write"
             : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
       const dispatch = newDispatch(write);
+      dispatch.request = {
+        entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
+        ctx,
+      };
       state.dispatches.set(dispatch, name);
       try {
         const toolDefinition = definition
@@ -3337,8 +3378,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // not after a 401, whatever the grant's recovery met; not after a
         // redirect or a further send stopped here; and not after a gateway's
         // 502 to 504, a timeout, or a connection lost once it was sent.
+        // A resend stopped after the SDK renewed the grant renewed this
+        // write's credential only when the token changed (Q8); the same token
+        // back is a grant that still needs authorization.
+        const renewal = dispatch.request?.entry.renewed
+          ? undefined
+          : dispatch.resendRefused
+            ? authRequiredError()
+            : failure;
+        const unsent = (entry: ProviderRequest | undefined) => {
+          const verdict = unsentAfterUnauthorized(
+            `Connector "${id}"'s MCP server`,
+            renewal,
+            isOauth ? "downstream_oauth_required" : "auth_required",
+          );
+          // Recorded as this request's 401 verdict, for the call that decides Q8.
+          return entry ? vendorRefusal(verdict, entry) : verdict;
+        };
         const verdict = dispatch.unauthorized
-          ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, dispatch.resendRefused ? undefined : failure)
+          ? unsent(dispatch.request?.entry)
           : dispatch.redirected || dispatch.resendRefused
             ? new ConnectorCallError(
                 "connector_call_failed",
@@ -3361,6 +3419,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           dispatched: dispatch.sent,
           ...(status === undefined ? {} : { status }),
           fallback: "write",
+          request: dispatch.request?.entry,
         });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {

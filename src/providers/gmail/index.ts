@@ -1924,7 +1924,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // Kept unless restated: From, To, Cc, Bcc, Reply-To, Subject, the
         // thread, In-Reply-To, and References. Any other header is not.
         const existing = asRecord(
-          await client.json({ method: "GET", path: draftPath, query: { format: "full" } }, ctx),
+          await client.json({ method: "GET", path: draftPath, query: { format: "full" }, classification: "read" }, ctx),
         );
         const message = asRecord(existing["message"]);
         const payload = asRecord(message["payload"]);

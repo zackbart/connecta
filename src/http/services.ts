@@ -106,8 +106,6 @@ export interface Dispatch {
   headers?: Headers;
   /** The failure this request's own answer settled into, so the mapping can tell it from a later one. */
   failure?: HttpFailure;
-  /** Its 401 earned a renewal that succeeded: the next call has a fresh credential. */
-  renewed?: true;
   /** Its entry in the core ledger, recorded synchronously before `fetch`. */
   request?: ProviderRequest;
 }
@@ -133,7 +131,7 @@ export class Ledger extends Context.Service<
       readonly method: string;
       readonly key?: string;
     }) => ProviderRequest;
-    readonly dispatch: (request: ProviderRequest) => void;
+    readonly dispatch: (request: ProviderRequest, headers?: HeadersInit, method?: string) => void;
   }
 >()("connecta/http/Ledger") {}
 
@@ -149,9 +147,7 @@ const detachedLedger: Context.Service.Shape<typeof Ledger> = {
     method,
     ...(key === undefined ? {} : { key }),
   }),
-  dispatch: (request) => {
-    request.dispatched = true;
-  },
+  dispatch: (request, headers, method) => dispatchProviderRequest(undefined, request, headers, method),
 };
 
 /** A genuine idempotency key the vendor honors, and the header that carries it, for the call's one write. */
@@ -492,9 +488,15 @@ export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "
     requestSecrets: requestSentSecrets(ctx),
     signal: request ? (ctx.signal ? AbortSignal.any([ctx.signal, request.signal]) : request.signal) : ctx.signal,
     ledger: {
-      open: ({ auxiliary, provider, method, key }) =>
-        providerRequest(ctx, auxiliary, provider, { method, ...(key === undefined ? {} : { key }) }),
-      dispatch: (entry) => dispatchProviderRequest(ctx, entry),
+      open: ({ auxiliary, provider, method, key }) => {
+        const entry = providerRequest(ctx, auxiliary, provider, {
+          method,
+          ...(key === undefined ? {} : { key }),
+        });
+        entry.classification ??= fallback;
+        return entry;
+      },
+      dispatch: (entry, headers, method) => dispatchProviderRequest(ctx, entry, headers, method),
     },
   });
   request?.own(lease.close);

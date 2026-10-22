@@ -39,12 +39,14 @@ import { recoveryFor } from "./call-recovery.js";
 import {
   forgetProviderFailure,
   isKnownProviderFailure,
+  isSettledWrite,
   keyProtectsLogicalCall,
   knownForLogicalCall,
   knownProviderFailure,
+  logicalCallRequests,
   openLogicalCall,
 } from "./provider-call.js";
-import { classifyWriteOutcome } from "./write-outcome.js";
+import { classifyWriteOutcome, settleWrite, settleWriteResult } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -409,14 +411,16 @@ export class InvocationService {
           }),
         });
       };
-      const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
+      const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
         const recovery = recoveryFor(dispatchContext);
         // A recorded key is a diagnostic; advice to reuse it needs proof that
-        // it protects the whole logical call, not one request inside it.
-        const recoveryRetry = keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
-          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
-          : "";
+        // it protects the whole logical call, not one request inside it. Q8's
+        // settled verdict is final: no enricher adds advice to it.
+        const recoveryRetry =
+          !settled && keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
+            ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
+            : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
           return {
@@ -454,7 +458,7 @@ export class InvocationService {
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
         // Key-reuse advice also needs its key to protect the logical call.
-        else {
+        else if (!settled) {
           if (failureKeyAdvice && keyProtectsLogicalCall(dispatchContext, failureKeyAdvice.key))
             error = { ...error, message: withResendAdvice(error.message, failureKeyAdvice.advice) };
           if (failureAdvice !== undefined)
@@ -505,6 +509,7 @@ export class InvocationService {
               },
             };
           case "destructive_tool_requires_approval": {
+            if (settled) return error;
             const echoed = argumentEcho;
             return {
               ...error,
@@ -572,6 +577,20 @@ export class InvocationService {
       };
       let stage = "catalog";
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
+        // Q8 (settleWrite): this invocation's deadline or its caller cut off
+        // a write. No connector failure arrives, so the logical call's
+        // recorded requests alone decide whether a 401 left it unknown.
+        if (
+          dispatchedToConnector &&
+          resolved?.definition.classification !== "read" &&
+          (error.code === "cancelled" || isTimeoutFailure(error))
+        ) {
+          const departed = settleWrite(logicalCallRequests(dispatchContext) ?? [], undefined, true);
+          if (departed !== undefined) {
+            failureAdvice = failureKeyAdvice = undefined;
+            error = carryFailureFacts(departed, classifyWithoutAdvice(sentSecrets.redact(departed)));
+          }
+        }
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
         if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
@@ -583,6 +602,8 @@ export class InvocationService {
               (!resolved && context.source === "call_tool"),
           );
         }
+        // Read before any step below rebuilds the details: Q8's verdict is final.
+        const settled = isSettledWrite(error);
         // Attach host deadline facts before write recovery changes the code.
         if (isTimeoutFailure(error)) {
           const elapsedMs = Date.now() - started;
@@ -594,7 +615,7 @@ export class InvocationService {
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
-        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target), "envelope"));
+        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target, settled), "envelope"));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -872,9 +893,15 @@ export class InvocationService {
           if (Exit.isFailure(attempt)) {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
-            const attemptError = Cause.squash(attempt.cause);
-            answered = answeredFailure(attemptError, write, dispatchContext);
-            if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
+            const thrown = Cause.squash(attempt.cause);
+            if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
+            answered = answeredFailure(thrown, write, dispatchContext);
+            // Q8 is decided here for every served write, whatever its
+            // connector made of the 401: over the logical call's whole ledger.
+            const attemptError = write
+              ? settleWrite(logicalCallRequests(dispatchContext) ?? [], thrown, answered)
+              : thrown;
+            if (attemptError !== thrown) answered = false;
             failureAdvice = resendAdviceOf(attemptError);
             failureKeyAdvice = keyResendAdviceOf(attemptError);
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
@@ -931,6 +958,16 @@ export class InvocationService {
       const completed = resolved;
       if (!completed) {
         return yield* Effect.die(new Error("Invocation completed without a resolved tool"));
+      }
+      // Q8 settles a result too: a write an undeclared 401 left unknown is no
+      // success, whatever its handler made of the 401, and its result is not
+      // processed.
+      if (dispatchedToConnector && completed.definition.classification !== "read") {
+        const unknown = settleWriteResult(logicalCallRequests(dispatchContext) ?? []);
+        if (unknown) {
+          failureAdvice = failureKeyAdvice = undefined;
+          return failed(carryFailureFacts(unknown, classifyWithoutAdvice(sentSecrets.redact(unknown))));
+        }
       }
 
       const processResult = context.processResult;

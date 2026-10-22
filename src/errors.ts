@@ -504,8 +504,9 @@ export class ConnectorCallError extends Error {
   /**
    * `"unknown"` when the write this call sent may have taken effect, whatever
    * `code` says: an authorization verdict reached after the downstream already
-   * had the write (a 401, then a failed renewal) is still an unknown outcome
-   * (INV-9). Undefined when the code alone tells the outcome.
+   * had the write (a 401, unless the vendor's reviewed evidence says it
+   * authenticates first, or a renewal that failed after one) is still an
+   * unknown outcome (INV-9). Undefined when the code alone tells the outcome.
    */
   readonly writeOutcome: "unknown" | undefined;
 
@@ -697,9 +698,13 @@ export interface KeyResendAdvice {
  * that key protects the whole logical call (`keyProtectsLogicalCall`): one
  * boundary entered, one write sent, carrying `key`. Attach it only once the
  * call's ledger shows a dispatched request carrying `key`: a key generated
- * but never sent protects nothing. Only the invocation can see the whole
- * call, so only it composes the advice; a direct caller reads the key from
- * the message, where it stays as a diagnostic.
+ * but never sent protects nothing. Two places compose it. The invocation
+ * sees the whole call and composes it for a served call once
+ * `keyProtectsLogicalCall` holds. {@link classifyCallError} composes it for a
+ * dispatched direct call, which has no invocation: only the one boundary that
+ * sent the keyed request attaches it, and any boundary above that one
+ * finalizes the write as unknown, which drops it. Either way the key stays in
+ * the message as a diagnostic.
  */
 export function keyResendAdvice<T extends object>(error: T, key: string, advice: string): T {
   keyAdvices.set(error, { key, advice });

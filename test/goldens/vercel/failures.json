@@ -375,11 +375,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
+            "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope. The write was sent before Vercel rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "hosting",
             "operation": "hosting.vercel_api_write",
             "recovery": "unavailable",
@@ -608,11 +608,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
+            "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope. The write was sent before Vercel rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "hosting",
             "operation": "hosting.vercel_api_write",
             "recovery": "unavailable",

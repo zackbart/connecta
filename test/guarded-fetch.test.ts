@@ -405,7 +405,11 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
           : new TypeError("fetch failed", { cause: { code } });
       });
       const error = await failure(
-        transport()({ method: "GET", path: "/private", query: { token: "secret" } }, context(), asJson),
+        transport()(
+          { method: "GET", path: "/private", query: { token: "secret" }, classification: "read" },
+          context(),
+          asJson,
+        ),
       );
       expect(error).toMatchObject({
         code: "unavailable",
@@ -421,7 +425,9 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
         "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.",
       );
     });
-    const error = await failure(transport()({ method: "GET", path: "/private" }, context(), asJson));
+    const error = await failure(
+      transport()({ method: "GET", path: "/private", classification: "read" }, context(), asJson),
+    );
     expect(error).toMatchObject({ code: "unavailable", details: { host: "https://api.example.com" } });
     expect(error.details).not.toHaveProperty("code");
   });

@@ -24,8 +24,9 @@ The prototype gives four kinds of evidence:
   including the write's statuses, in-band refusal, refused connection,
   oversized 401 bodies,
   confinement and a path of astral characters. Every case is identical,
-  advice segments included. The one deliberate difference, asserted on its
-  own, is this record's 401 rule (Q8). A.2's write outcomes and sensitive
+  advice segments included. This record's 401 rule (Q8) was the one
+  deliberate difference until the 401 back-port (#917) made it the core's;
+  its case now asserts full equality too. A.2's write outcomes and sensitive
   fields are no longer differences: since #902 merged, both sides get them
   from the core.
 - **Against A.3's goldens (round 2; superseded by round 3 below).** Run out of tree through PR #900's harness (at
@@ -72,9 +73,10 @@ left to drift. The kit now decides no write's outcome:
   whole logical call, exactly as it does for today's providers. A kit
   connector therefore declares `tracksEveryRequest` (B.4).
 
-The kit composes only two things over that decision: Q8's 401 handoff (B.3),
-which the 401 back-port moves into the core, and the words of a blocked
-resend. `classifyWriteOutcome` and the module-private `servedRefusal` stay
+The kit composes only the words of a blocked resend over that decision.
+Q8's 401 handoff (B.3) was a second composition until the 401 back-port
+(#917) made it the core's: the kit now only records each 401's facts on its
+ledger entry (`recordUnauthorized`), and the core's `settleWrite` decides. `classifyWriteOutcome` and the module-private `servedRefusal` stay
 in the core and reach the kit only through the boundary; the kit evaluates
 no provenance of its own.
 
@@ -85,9 +87,9 @@ It adds two refusals before dispatch, Stripe's 424 mapped to `unavailable`,
 Stripe's lock-timeout 429 and a keyed Stripe write. Four rows cover a
 two-step composite. All 34 rows agree on requests, outcome
 (`classifyWriteOutcome`), `retryable`, code and whether advice reaches the
-agent. The exceptions are the write 401 rows, marked Q8. There the kit
-reports the write unknown with its auth code and handoff, while today's core
-still reports a served refusal until the 401 back-port lands. Two red checks
+agent. The write 401 row, marked Q8, was the one exception until the 401
+back-port (#917) landed; it now requires the same verdict on both sides,
+unknown with the auth code and handoff, like every other row. Two red checks
 show the table can fail: without the kit's provenance marks 8 rows fail, and
 with its requests kept out of the core ledger 12 rows fail.
 
@@ -280,9 +282,10 @@ no copy of it:
   transport attempts (B.2).
 - **401 (Q8, decided).** A write answered 401 is unknown by default, unless a
   reviewed `authBeforeExecution` declaration says the vendor authenticates
-  first. On `main` a served 401 is still provenance (b). A separate PR, the
-  401 back-port (`t3/write-401-unknown`), changes that for today's providers
-  and is landing on its own. The kit applies the rule already.
+  first. The 401 back-port (#917) made it the core's rule for today's
+  providers, with `authBeforeExecution` as the core's reviewed declaration;
+  the kit forwards its matched proof to the core's ledger entry
+  (`ProviderRequest.authBeforeExecution`).
 
 _Superseded (#902's draft, rounds 2–5; the merged contract above replaces it
 where they differ):_ A.2 (#902) is not merged yet. Its draft adds `deriveContext`/`contextKey`,
@@ -688,11 +691,13 @@ class Grant extends Context.Service<Grant, {
    fails DNS, goes down) is not this write's verdict. The ledger keeps one
    fact from it, `renewed` when the renewal succeeded, because that alone
    decides whether the agent still needs the `authorize_connector` handoff.
-   Refresh-once then hands the write's own 401 back to the pipeline, and B.3's
-   Q8 handoff reports it from the ledger. A caller who leaves during the renewal gets the
-   same verdict: the builder's edge reads the ledger when the call's signal
-   aborted (`departedVerdict`). A refresh-once that did resend would still be
-   stopped by the one-dispatch guard.
+   Refresh-once then hands the write's own 401 back to the pipeline, and the
+   core's Q8 decision (`settleWrite`, #917) reports it from the ledger. A
+   caller who leaves during the renewal gets the same verdict: the builder's
+   edge records the 401's facts when the call's signal aborted
+   (`recordUnauthorized`; until #917 the kit's own `departedVerdict` decided
+   here), and the core decides. A refresh-once that did resend would still
+   be stopped by the one-dispatch guard.
 4. Refresh-once decides no verdict. The tests prove the rule both ways (a
    read built tool served as a write is not resent; a write built tool served
    as a read is replayed), for a renewal that succeeds, for each renewal
@@ -701,15 +706,13 @@ class Grant extends Context.Service<Grant, {
 `ctx.oauth.fetch` keeps its published contract for custom handlers. It returns
 a `Response` and allows every `apiOrigins` origin, so it shares this decision,
 not the client: #902 makes its renewal failures keep the write's unknown
-outcome too (`unsentAfterUnauthorized`, with `writeOutcome: "unknown"`). One
-difference is left for B.2, when `Grant` wraps `static-oauth.ts`: on a renewal
-that fails without an authorization verdict (a throttled or unreachable token
-endpoint), #902 reports `connector_call_failed` and names the renewal's
-failure class, where the kit keeps the write's own 401 code and its handoff.
-B.2 explicitly changes `src/auth/static-oauth.ts` to preserve the resource
-server's auth verdict and structured handoff until renewal succeeds, always
-non-retryable with `writeOutcome: "unknown"`. This is planned work, not a
-claim that #902 already agrees. B.2 adds parity tests through `Grant` and
+outcome too (`unsentAfterUnauthorized`, with `writeOutcome: "unknown"`). The
+one difference #902 left, a renewal that fails without an authorization
+verdict (a throttled or unreachable token endpoint) reported as
+`connector_call_failed`, is gone: the 401 back-port (#917) made
+`unsentAfterUnauthorized` keep the resource server's auth verdict and its
+handoff until renewal succeeds, always non-retryable with
+`writeOutcome: "unknown"`, the kit's verdict. B.2 adds parity tests through `Grant` and
 `ctx.oauth.fetch` for permanent refusal, throttling, DNS failure, outage,
 cancellation, successful renewal and oversized/broken 401 bodies. It also
 checks direct calls and caught/uncaught program accounting against #902's
@@ -718,9 +721,9 @@ checks direct calls and caught/uncaught program accounting against #902's
 Since #902 the goldens record one 401 behaviour for a write: it is never
 resent. Google mints a token and sends the write once (two requests), and
 Infisical logs in again without resending it. Both already report the write
-unknown with its auth code. Providers on `guarded-fetch.ts`, Tithe.ly among
-them, still count a served 401 a refusal; the 401 back-port changes that, and
-C.5 and C.7 adopt Q8 as it stands. _Superseded (round 2):_ the goldens
+unknown with its auth code. Since the 401 back-port (#917), providers on
+`guarded-fetch.ts`, Tithe.ly among them, report it the same way, and C.5 and
+C.7 adopt Q8 as it stands. _Superseded (round 2):_ the goldens
 recorded Google minting and resending once, writes included, and C.7 was to
 stop that resend. #902's first fix round stopped it.
 
@@ -950,7 +953,7 @@ which answers are refusals. The kit keeps no verdict table:
    `write_outcome_unknown`. Advice composes only after this decision, so an
    unknown write never carries it.
 
-3. **Q8 is the one composition, until the 401 back-port.** Say a write request
+3. **Q8 is the core's rule; the kit records its facts.** Say a write request
    was answered 401, preferring an unrenewed one. The call's failure is then
    that 401's vendor verdict, with `writeOutcome: "unknown"`, non-retryable,
    and the words "The write was sent before <vendor> rejected its credential,
@@ -961,10 +964,14 @@ which answers are refusals. The kit keeps no verdict table:
    `authorize_connector` handoff survive. A renewal that succeeded reports the
    core's `unsentAfterUnauthorized`. With the vendor's `authBeforeExecution`
    evidence, the 401 is its own served refusal and step 2 weighs it like any
-   other: known only if it was the one request the call sent. When the
-   back-port lands, `authBeforeExecution` becomes the core's declaration and
-   the kit's marker goes; anything the back-port's core leaves to compose is
-   decided with it.
+   other: known only if it was the one request the call sent. Since the 401
+   back-port (#917) this is decided once, by the core's `settleWrite` over
+   the whole logical call, and the kit no longer composes it: it records on
+   each write request's ledger entry the 401's own vendor verdict and its
+   matched proof (`recordUnauthorized`, `ProviderRequest.authBeforeExecution`),
+   and a renewal that produced a different token (`ProviderRequest.renewed`).
+   The words above are the core's, so the kit's results are unchanged except
+   that a blocked resend's words now precede the 401 sentence.
 4. **A blocked resend reports the first attempt.** `ResendRefused` maps to
    the first attempt's own answer, with that attempt's provenance, plus "A
    second attempt to send it was stopped before it left". The second attempt
@@ -1467,12 +1474,12 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     other surface change belong to Tithe.ly's separate step 2, never B.5.
   - **Prerequisite sequence, decided by the orchestrator (round 5):** merge
     #902, switch the kit adapter to its shared core helpers, then land one
-    separate write-401 back-port and regenerate goldens. The first two are
-    done: #902 merged and the final round deleted the adapter. The 401
-    back-port (`t3/write-401-unknown`) is landing separately. It keeps the
+    separate write-401 back-port and regenerate goldens. All three are
+    done: #902 merged, the final round deleted the adapter, and the 401
+    back-port landed as #917. It keeps the
     auth code and handoff on the 401 and 401-echo rows, adds
     `writeOutcome: "unknown"`, and stays non-retryable. The final round's
-    golden comparison shows those two rows are the only difference left. The
+    golden comparison showed those two rows were the only difference. The
     kit delegates every other verdict to the core: **do not back-port
     divergent kit wording or fields**. B.5 migrates against the regenerated
     bytes. No back-port or goldens regeneration is part of this design PR.
@@ -1588,14 +1595,13 @@ The previous draft asked eight questions. The orchestrator decided them:
    does not, and the transport's one-dispatch guard stops anything that
    tries. This is the separate Q8 policy composed over the core's verdict,
    not a second kit verdict table. **Decided:** the rule stands for every
-   provider. The kit applies it today. The 401 back-port
-   (`t3/write-401-unknown`), a separate PR now landing, makes it the core's
-   for today's `guarded-fetch.ts` providers, with `authBeforeExecution` as the
-   core's reviewed declaration. Google Workspace and Infisical already report
-   a write's 401 unknown since #902. B.5 needs only that back-port and
+   provider. The kit applies it, and the 401 back-port (#917) made it the
+   core's for today's `guarded-fetch.ts` providers, with `authBeforeExecution`
+   as the core's reviewed declaration. Google Workspace and Infisical already
+   reported a write's 401 unknown since #902. B.5 needed only that back-port and
    regenerated goldens, with no divergent timeout/404/409 or description
-   back-port; the final round's golden comparison shows the write 401 rows
-   are the only difference left.
+   back-port; the final round's golden comparison showed the write 401 rows
+   were the only difference, and #917 regenerated them.
 
 ## Consequences
 
@@ -1604,7 +1610,8 @@ The previous draft asked eight questions. The orchestrator decided them:
   projections. Paging, ledger, redirect, ceiling, secret and value-safety
   rules come from the kit. Every write verdict comes from the core, decided
   at `api()`'s boundary from the ledger the kit records into; only Q8 composes
-  over it until the 401 back-port lands. No provider or kit copy forks the
+  over it, and since the 401 back-port (#917) the core applies the same rule.
+  No provider or kit copy forks the
   verdict table, and the committed case table catches one that tries.
 - **Call state stops depending on object identity, and stops outliving its
   call.** Kit tools receive services on a fiber; every capability closes with
@@ -1626,10 +1633,9 @@ The previous draft asked eight questions. The orchestrator decided them:
   connect are unknown and never retryable, and a failure after a write left
   carries no retry advice. On the kit a write answered 401 keeps
   `auth_required` and its handoff, but is never retryable and its outcome is
-  unknown. The separate 401 back-port gives today's providers the same, and
-  with regenerated goldens it is all that remains before B.5's
-  byte-identical step 1; today's providers never receive divergent kit
-  wording or fields.
+  unknown. The 401 back-port (#917) gave today's providers the same, with
+  regenerated goldens, so B.5's byte-identical step 1 has no prerequisite
+  left; today's providers never receive divergent kit wording or fields.
 - **Classification cannot read prose.** Vendor rules see tokens and
   allowlisted headers and return a code; the message is rendered afterwards.
   A vendor whose current mapper branches on message text must find a code or

@@ -1700,9 +1700,13 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
   lowercase hex, plus the base64 of each `basic` pair. Every sent secret
   contains `/`, `+`, and `=`, so its percent and base64url forms differ from
-  its raw and base64 forms. The `401 echo` case echoes the raw secrets only.
-  Some providers cap a vendor message before redaction sees it (Google at
-  500 characters), and a cut through a secret would leak its start.
+  its raw and base64 forms. The `401 echo` case echoes the raw secrets only
+  unless the spec sets `errorEcho: "all"`: a provider that caps a vendor
+  message before redaction sees it would leak the start of a longer form its
+  cut goes through. The Google Workspace specs set it, since Google redacts a
+  message whole before cutting it to 500 characters. Their `401 echo` carries
+  `errorEchoForms`: every form above, the `Bearer` and `token` framings, and
+  an HTTP Basic pair holding the token as header, base64 and base64url.
 
 Object keys keep the order the provider produced. A migration changes the
 provider, never the spec or harness.
@@ -2122,8 +2126,10 @@ compiling and configuring the real thing.
   every transport applies to a write: `unknownOutcome` turns a retryable
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to
   504, a lost connection or reply) into a non-retryable `connector_call_failed`,
-  and `unsentAfterUnauthorized` reports a write answered 401, which is never
-  resent whatever credential renewal meets. Both mark the error
+  and `unsentAfterUnauthorized` reports a write answered 401 after credential
+  renewal ran, which is never resent: until renewal succeeds it keeps an
+  authorization code (renewal's own verdict, else the 401's), and a renewed
+  credential leaves a non-retryable `connector_call_failed`. Both mark the error
   `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
   refusal provenance, so an authorization verdict reached after the write left still
   counts as unknown in program write accounting (`src/program-writes.ts`),
@@ -2167,7 +2173,97 @@ compiling and configuring the real thing.
   `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
-  only a genuine idempotency key keeps such a direct write's retry. A 408 is a
+  only a genuine idempotency key keeps such a direct write's retry. Nor is a
+  401, since a server may act on a request before it rejects the credential,
+  unless the transport declares reviewed `authBeforeExecution` evidence
+  (`GuardedFetchOptions`: the vendor's cited guarantee and a narrow predicate
+  over the raw status and headers and the request's method and path, checked
+  at construction) and the predicate matched, which the ledger records on the
+  request. Only Stripe declares it (`src/providers/stripe/rest.ts`, reviewed
+  as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
+  `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
+  sources. Q8 is decided in one place, `settleWrite` in
+  `src/write-outcome.ts`, once per logical call and over every request it
+  recorded. The invocation calls it for every failure of a served write: a
+  thrown or mapped error, a custom connector's, a program's call, and its
+  own deadline or the caller's cancellation, when no connector failure
+  arrives at all. It reads the logical call's requests
+  (`logicalCallRequests`), which hold every resource request dispatched
+  under the call from any ledger: nested `api()` calls, remote MCP, guarded
+  transports, `ctx.fetch` and the kit. Without an invocation (a direct call,
+  or a context no invocation opened), only the outermost boundary calls it,
+  at the end of `providerCallFailure`, over its own ledger and every ledger
+  of an `api()` call entered beneath its handler (`nestedProviderCall`,
+  `nestedProviderRequests`), or over the one request a transport outside a
+  ledger sent. Boundaries only record what they observed: the dispatch and
+  status, a reviewed `authBeforeExecution` match, the 401's own mapped verdict
+  (`vendorRefusal`), and a renewal of that one request's own credential
+  (`renewedAfterUnauthorized(request, sent, fresh)`, only for a credential
+  other than the one it sent). The rule: a write request answered 401 that
+  is not a declared refusal standing for the whole call makes the call
+  unknown, never retryable, with no wait and no resend or key-reuse advice;
+  while any such 401 is unrenewed the verdict keeps an authorization code,
+  so invocation keeps the `authorize_connector` handoff and picks its
+  reconcile-first words. Its code and words are the failure's when that is an
+  authorization verdict, else the 401's own recorded verdict, else
+  `auth_required`, with a sentence saying the write was sent before the
+  vendor rejected its credential unless the verdict already accounts for the
+  401 (a renewal's words). When every such 401 was renewed, the handoff goes
+  and the failure keeps its words, unknown and without a wait. A declared 401
+  stands only as the call's one request, sent by the boundary that decides,
+  whose own refusal is the failure (and, served, known for the logical call).
+  The recorders are the guarded transport (dispatch, status, declaration
+  match, mapped verdict), `ctx.fetch` (dispatch, status), static OAuth
+  (status, verdict, renewal), Google (per-attempt entry, renewal of a read's
+  replay), Infisical (renewal, through `answeredRequest`), the kit (core
+  ledger entry, status, `recordUnauthorized`, refresh-once renewal),
+  `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
+  logical call, status, the verdict, and renewal by comparing the
+  `Authorization` of the resend the SDK attempts), and `api()` itself (one
+  ledger per call, linked to the one whose handler entered it). The same
+  decision settles a call that returned (`settleWriteResult`, before its
+  result is processed in the invocation, and in `providerCallResult` at an
+  outermost direct boundary, including a guarded transport outside any ledger):
+  any undeclared write 401 blocks success, even after renewal. Renewal drops
+  only the handoff; a program still counts the write in `writes.unknown`.
+  A caught read 401 needs positive operation or tool classification, plus a
+  recorded GET or HEAD, to leave success intact; a method alone proves no
+  read. The guarded transport records its operation classification, otherwise
+  its own `api()` tool supplies it (including nested read tools).
+  `ctx.fetch`, OAuth and the kit record the same evidence. The final outgoing
+  `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header
+  makes the request a write regardless of its classification or method. A
+  declared refusal followed by a successful write also leaves success intact.
+  A custom guarded transport delegating through `ctx.fetch` or `ctx.oauth.fetch` records the wrapper
+  separately from each physical send. Each physical entry records its own
+  outgoing method and response; a later response cannot erase an earlier
+  401, and a delegated POST cannot inherit a wrapper's GET read evidence.
+  The inner entry does not inherit the wrapper's declaration or explicit
+  read evidence, including when the init is copied. Until linked recording
+  is reviewed, that duplicate may conservatively keep a successful
+  composite unknown even when the wrapper proves its own refusal or read.
+  Request entries are append-only: every physical send, including a read
+  replay after OAuth renewal, gets its own entry. Dispatch refuses an entry
+  already sent and locks its sent method and dispatched flag; the request's
+  own response status is recorded once and locked, and its own renewal can
+  only add a locked mark. These fields are readonly in TypeScript too.
+  The built-in `oauthBearer` transport hands an unsent entry to a known
+  recording OAuth grant once, before any dispatch. The grant consumes that
+  handoff before credential reads and creates a new entry for each further
+  send. It never borrows a dispatched entry. Returned-response identity
+  names the entry whose status was already recorded, without recording it
+  again. This preserves the built-in transport's refusal/read provenance;
+  custom delegation and copied init objects remain conservative.
+  Remote MCP captures
+  each physical read's entry before awaiting its response; a later send
+  cannot overwrite it. Infisical's response identity and Google's init
+  identity only identify the request whose credential was renewed.
+  The decider normalizes every failure it settles,
+  typed or not (a raw network error, an `AbortError`, a thrown string). Its
+  verdict is final (`settledWrite`, which follows copies and redaction): the
+  invocation reads the mark before anything rebuilds the details, and its
+  enrichers then add no key-reuse, resend or wait advice; only the
+  reconcile-first `retry` words and the handoff. A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the
@@ -2230,7 +2326,8 @@ compiling and configuring the real thing.
   exactly one boundary was entered, the invocation's object owns it as for
   `knownForLogicalCall`, that boundary tracks every request, and exactly one
   dispatched request was a write, carrying the named key; a request counts as
-  a read only by its recorded GET or HEAD (`readMethod`). A composite, a
+  a read only with positive operation/tool classification and a recorded
+  GET or HEAD (`readRequest`); method-override headers make it a write. A composite, a
   wrapper, a second write, an earlier unrelated key, or a call interrupted
   after two dispatches gets no such advice; the key stays a diagnostic, in
   the message and `uncertainCall.recovery`. The REST write tool's
@@ -2256,7 +2353,10 @@ compiling and configuring the real thing.
   code or wording, so a generic `connector_call_failed` refusal still counts
   as failed in program write accounting. Every other possibly executing
   failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
-  keep their handoff. The existing special handling of write 401s remains.
+  keep their handoff. A write answered 401 is one of these unless its
+  transport declares `authBeforeExecution` evidence that matched, and it
+  keeps an authorization code and handoff whatever failure surfaced after
+  it, with no wait.
   A later refusal cannot make an earlier successful request safe to repeat.
   Provider recovery wrappers change wording through helpers that preserve
   verdicts and provenance; Google also retains its response phases and reasons.

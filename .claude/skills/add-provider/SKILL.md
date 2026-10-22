@@ -418,6 +418,21 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
 - Once A.2 ([#902](https://github.com/zackbart/connecta/pull/902)) merges,
   write tools go through its `sendingOnce`, so a write is never resent or
   advertised as retryable.
+- A write answered 401 is an unknown outcome that keeps its auth code and
+  handoff. Declare `authBeforeExecution` on the provider's `guardedFetch` only
+  where the vendor's documentation says it authenticates a request before
+  acting on it: cite the page and its words in `evidence` and in the
+  provider's review (`evidence/review.md`, or a `manual` check in a version 1
+  `drift.json`, as Stripe does), keep `matches` to raw status, headers, method
+  and path, and add the provider to `AUTH_BEFORE_EXECUTION` in
+  `test/provider-failure-sweep.test.ts`. Without such a page, leave it out.
+- A provider that renews its credential after a 401 (a login, a refresh, a
+  minted token) records it with `renewedAfterUnauthorized(request, sent,
+  fresh)`: the one request that 401 answered (`answeredRequest(response)` in
+  a guarded mapper), the credential it sent, and the renewed one. Never mark
+  any other request, and a renewal that hands back the sent credential
+  renewed nothing. A provider only records these facts; it never decides a
+  write's 401 itself. `settleWrite` does, once per call.
 
 ## Definition and behavior
 

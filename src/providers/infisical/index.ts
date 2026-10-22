@@ -1,7 +1,7 @@
 import { callClassification } from "../../call-classification.js";
 /** Infisical Universal Auth and a finite, reviewed REST secret-manager surface. */
 import { apiConnector as api, defined as compact, type ApiTool } from "../../connectors/api-connector.js";
-import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
+import { answeredRequest, guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
@@ -10,7 +10,7 @@ import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { renewedAfterUnauthorized, tracksEveryRequest } from "../../provider-call.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
@@ -143,7 +143,7 @@ export const infisical = defineProvider<InfisicalOptions>({
               await response.bytes();
               const error = failure(response.status, response.headers);
               if (response.status !== 401) throw error;
-              return { rejected: true, error };
+              return { rejected: true, error, request: answeredRequest(response) };
             }
             const parsed = await response.jsonResult();
             if (!("value" in parsed) && request.method !== "GET") return { rejected: false, value: undefined };
@@ -160,14 +160,23 @@ export const infisical = defineProvider<InfisicalOptions>({
           // again so an explicit repeat finds a fresh token, but never replay
           // this write, nor call it retryable if the login fails.
           let renewal: unknown;
+          let fresh: string | undefined;
           try {
-            await tokens.token(ctx, token);
+            fresh = await tokens.token(ctx, token);
           } catch (error) {
             renewal = error;
           }
+          // An earlier recovery in this request handed back the very token
+          // this write sent: nothing was renewed, so its own 401 decides (Q8).
+          if (fresh === token) throw result.error;
+          if (fresh !== undefined) renewedAfterUnauthorized(result.request, token, fresh);
           throw unsentAfterUnauthorized("Infisical", renewal);
         }
-        if (result.rejected) result = await attempt(await tokens.token(ctx, token));
+        if (result.rejected) {
+          const renewed = await tokens.token(ctx, token);
+          renewedAfterUnauthorized(result.request, token, renewed);
+          result = await attempt(renewed);
+        }
         if (result.error) throw result.error;
         return result.value;
       } catch (error) {

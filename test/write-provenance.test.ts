@@ -1342,14 +1342,32 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
   }
 
   it("INV-9: a keyed write after a proven GET in the same call keeps its advice", async () => {
+    const read = guardedFetch({
+      provider: "Stripe",
+      baseUrl: "https://api.stripe.com",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+    });
     const { state, served } = await lookupThenCreate((ctx) =>
-      ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "get" }),
+      read(
+        { method: "GET", path: "/v1/customers/search", query: { query: "name" }, classification: "read" },
+        ctx,
+        (response) => response.json(),
+      ),
     );
     expect(state.sent.map((sent) => sent.method)).toEqual(["GET", "POST"]);
     if (served.ok) throw new Error("expected the write to fail");
     expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: state.sent[1]!.key });
     expect(served.error.retry).toContain("cannot repeat the write");
+  });
+
+  it("INV-9: a GET without positive read evidence gives a later write's key no advice", async () => {
+    const { served } = await lookupThenCreate((ctx) =>
+      ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "GET" }),
+    );
+    if (served.ok) throw new Error("expected the write to fail");
+    expectNoKeyAdvice(served.error);
   });
 
   it("INV-9: a keyed write after another request that may have written loses its advice", async () => {

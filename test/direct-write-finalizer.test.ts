@@ -169,7 +169,7 @@ const SURFACES: Surface[] = [
       const request =
         kind === "write"
           ? ({ method: "POST", path: "/hold", body: { title: "Fixture" } } as const)
-          : ({ method: "GET", path: "/hold" } as const);
+          : ({ method: "GET", path: "/hold", classification: "read" } as const);
       return { pending: failure(send(request, ctx, (response) => response.json())), ctx, received: server.received };
     },
   },
@@ -393,7 +393,7 @@ async function guardedCall(
   const request =
     kind === "write"
       ? ({ method: "POST", path: server.path, query: server.query, body: { title: "Fixture" } } as const)
-      : ({ method: "GET", path: server.path, query: server.query } as const);
+      : ({ method: "GET", path: server.path, query: server.query, classification: "read" } as const);
   if (where === "outside any call ledger") {
     const ctx = makeRegistry([]).contextFor("tickets", BASE);
     return failure(send(request, ctx, (response) => map(response)));

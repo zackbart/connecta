@@ -1931,11 +1931,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions. The write was sent before GitHub rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "github",
             "operation": "github.create_release",
             "recovery": "unavailable",
@@ -3006,11 +3006,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions. The write was sent before GitHub rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "github",
             "operation": "github.create_release",
             "recovery": "unavailable",

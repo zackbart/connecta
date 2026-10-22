@@ -57,7 +57,12 @@ import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connec
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { providerRequests } from "../../../provider-call.js";
+import {
+  boundProviderRequest,
+  providerRequests,
+  renewedAfterUnauthorized,
+  type ProviderRequest,
+} from "../../../provider-call.js";
 import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError, resendAdvice } from "../../../errors.js";
@@ -350,6 +355,8 @@ interface SendFacts {
   refused?: boolean;
   /** Google answered a write with a 5xx. */
   serverError?: boolean;
+  /** Its entry in the call's ledger, so a renewal names this request alone. */
+  request?: ProviderRequest | undefined;
 }
 
 const googleOutcomes = followRedactedCopies(new WeakMap<object, GoogleOutcome>());
@@ -700,6 +707,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       // they happen so a failure can say how far the request got.
       fetch: async (url, init) => {
         facts.dispatched = true;
+        facts.request = boundProviderRequest(init);
         const response = await fetch(url, init);
         // Recorded before the transport validates anything: a ceiling or a
         // redirect check can fail an answer, but not change what it said.
@@ -856,6 +864,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       dispatched: facts.dispatched,
       ...(facts.status === undefined ? {} : { status: facts.status }),
       fallback: method === "GET" ? "read" : "write",
+      request: facts.request,
     });
     if (decision instanceof ConnectorCallError && mapped instanceof ConnectorCallError && decision !== mapped) {
       googleReasons.set(decision, googleReasonsOf(mapped));
@@ -893,6 +902,8 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       ...request,
       headers: { Accept: accept, ...request.headers },
     };
+    // The request the last attempt's 401 answered, and the token it sent.
+    let rejected: { facts: SendFacts; token: string } | undefined;
     for (let attempt = 0; ; attempt += 1) {
       const facts: SendFacts = { dispatched: false };
       let delegated: DelegatedTokenRequest;
@@ -902,6 +913,8 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         // token is minted or request sent.
         delegated = await tokenRequest(ctx);
         token = await delegatedToken(delegated, ctx);
+        // A fresh token replaces the one the last attempt's 401 rejected (Q8).
+        if (rejected) renewedAfterUnauthorized(rejected.facts.request, rejected.token, token);
       } catch (error) {
         throw outcome(error, { dispatched: false, phase: "before-send" });
       }
@@ -947,9 +960,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         if (attempt > 0 || ctx.signal?.aborted) {
           throw settled(failed, facts, headed.method, ctx, requestOptions);
         }
+        rejected = { facts, token };
         // A write is never sent again (INV-9). The next call mints the fresh
         // token, so a deliberate repeat finds it.
-        if (isWrite(headed.method, ctx)) {
+        if (isWrite(headed.method, ctx) || facts.request?.classification !== "read") {
           const refusal =
             failed instanceof ConnectorCallError && failed.code === "auth_required"
               ? failed

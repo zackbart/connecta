@@ -277,6 +277,19 @@ export function stripeRest(mode: StripeMode, connectedAccount: string | undefine
         baseUrl: origin,
         maxResponseBytes: MAX_RESPONSE_BYTES,
         timeoutMs: READ_CAP_MS,
+        // Stripe authenticates before it executes (reviewed in drift.json):
+        // its 401 means "No valid API key provided", and "errors that occur
+        // before execution begins, such as invalid parameters, an invalid API
+        // key, or rate limiting, don't cache a result"
+        // (docs.stripe.com/error-low-level#content-errors). That guidance is
+        // API v1's, and only Stripe's API stamps the Request-Id it answered.
+        authBeforeExecution: {
+          evidence:
+            'https://docs.stripe.com/error-low-level#content-errors: 401 is "No valid API key provided", and ' +
+            '"errors that occur before execution begins, such as invalid parameters, an invalid API key, or ' +
+            "rate limiting, don't cache a result\" (API v1).",
+          matches: ({ path, headers }) => path.startsWith("/v1/") && headers.has("request-id"),
+        },
         authenticate: async (ctx) => {
           const key = (await ctx.credential?.get())?.trim();
           if (!key) {
