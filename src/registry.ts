@@ -66,7 +66,6 @@ import {
   stashExpiryKeys,
 } from "./storage/keys.js";
 import { classifyTool } from "./tool-safety.js";
-import type { ProgramResultDependency } from "./meta-tools.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
@@ -189,6 +188,14 @@ export interface ResultIdentity {
   principal: string | null;
   endpoint: string;
   origin: string | null;
+}
+
+export interface ProgramResultDependency {
+  /** Catalog metadata needs visibility, not permission to invoke a write. */
+  access?: "catalog";
+  connector: string;
+  tool?: string;
+  classification: "read" | "write";
 }
 
 export interface RegistryView {

@@ -26,6 +26,7 @@ import {
   isValidMaxResultBytes,
   MIN_MAX_RESULT_BYTES,
   resolveMaxResultBytes,
+  type ProgramResultDependency,
   type RegistryView,
   type ResultIdentity,
 } from "./registry.js";
@@ -157,13 +158,7 @@ function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, 
 const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
 const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
 
-export interface ProgramResultDependency {
-  /** Catalog metadata needs visibility, not permission to invoke a write. */
-  access?: "catalog";
-  connector: string;
-  tool?: string;
-  classification: "read" | "write";
-}
+export type { ProgramResultDependency } from "./registry.js";
 
 export type ResultReadStage = "result storage" | "access validation";
 
