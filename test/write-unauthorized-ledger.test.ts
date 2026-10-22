@@ -1,3 +1,4 @@
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 // Q8 is decided once per logical call, over everything it recorded: nested
 // api() calls, remote MCP, guarded transports, custom wrappers, programs, the
 // invocation's deadline and the caller's cancellation. Boundaries only record
@@ -6,7 +7,7 @@
 // in the invocation for a served call and at the outermost boundary otherwise.
 // Each case here is a review repro of PR #917, rounds 3 to 7.
 import { Context, Effect, Schema } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recordRecovery } from "../src/call-recovery.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
@@ -40,7 +41,12 @@ const sentence = (vendor: string) =>
   `The write was sent before ${vendor} rejected its credential, so whether it took effect is unknown: check the target before repeating it.`;
 const CREATE = { name: "create", description: "Create", annotations: { readOnlyHint: false } } as const;
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 

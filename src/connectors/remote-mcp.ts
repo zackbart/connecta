@@ -114,7 +114,7 @@ import {
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
-import { retryAfterMs } from "./guarded-fetch.js";
+import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";

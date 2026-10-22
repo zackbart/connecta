@@ -1,3 +1,4 @@
+import { configureGuardedTransport } from "../../guarded-transport.js";
 // Decision 0010's proof on real code: Tithe.ly's get_charge, list_charges, and
 // tithely_api_mutate rebuilt on the Effect provider kit must be
 // indistinguishable from index.ts — the same catalog bytes, the same requests
@@ -41,6 +42,7 @@ let sent: Sent[] = [];
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     sent.push({
       method: init.method ?? "GET",
@@ -71,6 +73,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 

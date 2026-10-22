@@ -2381,13 +2381,15 @@ owner's access token as `Authorization: Bearer` with these rules:
   untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
 - On 401, recover exactly once using an already rotated token or one coalesced
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
-  owner is cancelled after the answer. A read-classified call replays once;
+  owner is cancelled after the answer. Only a positively read-classified
+  GET/HEAD without method-override headers replays once;
   stream bodies are refused.
-- A write-classified call never replays (INV-9). The served classification
-  decides, deployment `classification` first and otherwise the rule the
+- A request the core classifies as a write never replays (INV-9). Positive read
+  classification comes from deployment `classification` first and otherwise the rule the
   registry applies to the tool's hints (a contradictory `readOnlyHint: true`
-  with `destructiveHint: true` is a write), never the HTTP method: a write sent
-  with GET is not resent, and a read sent with POST is. After the recovery,
+  with `destructiveHint: true` is a write). The actual method must also be GET
+  or HEAD; an override header, missing read evidence, or a POST remains a
+  one-attempt write, even when the tool calls it a read. After the recovery,
   the call fails with a non-retryable `connector_call_failed` whose outcome is
   unknown, and the renewed grant serves any fresh call the agent makes after
   reconciling the target.

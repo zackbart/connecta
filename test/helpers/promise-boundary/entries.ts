@@ -1,3 +1,4 @@
+import { grantFromOAuth } from "../../../src/http/oauth.js";
 import { Context, Effect } from "effect";
 import { expect, vi } from "vitest";
 import { z } from "zod";
@@ -542,6 +543,54 @@ function oauthFetch(auxiliary = false): Entry["create"] {
   };
 }
 
+/** The three new Grant capabilities use the same generated close/late-result matrix. */
+function grantUse(name: "token" | "refresh" | "rejected"): Entry["create"] {
+  return async (held, owner) => {
+    held.installCrypto();
+    const provided = deferred<ApiHandlerContext>();
+    const leave = deferred<void>();
+    const connector = api("tickets", {
+      oauth: OAUTH,
+      tools: [
+        {
+          ...TOOL,
+          handler: async (_, ctx) => {
+            provided.resolve(ctx);
+            await leave.promise;
+            return {};
+          },
+        },
+      ],
+    });
+    const { ctx } = view(connector, held, owner);
+    await seedGrant(
+      held.backing,
+      {
+        issuer: OAUTH.tokenEndpoint,
+        tokens: {
+          access_token: "fixture-access-token",
+          refresh_token: "fixture-refresh-token",
+          token_type: "Bearer",
+        },
+      },
+      "v3:seeded",
+      scopes.connector("tickets"),
+    );
+    vi.stubGlobal("fetch", (_input: unknown, init?: RequestInit) => held.response(init));
+    const outer = connector.callTool("read", {}, ctx).catch(() => {});
+    const handler = await provided.promise;
+    const grant = grantFromOAuth(handler.oauth!);
+    return direct(
+      handler,
+      () => runEdge(name === "refresh" ? grant.refresh("fixture-access-token") : grant[name]),
+      async () => {
+        leave.resolve();
+        await outer;
+      },
+    );
+  };
+}
+
 function closedEntry(
   name: "api.listTools" | "api.verifyCallbackIssuer" | "remote.verifyCallbackIssuer",
 ): Entry["create"] {
@@ -587,6 +636,9 @@ export const ENTRIES: readonly Entry[] = [
   { name: "ctx.credential.get", seams: ["storage.get"], create: credential("ctx.credential.get") },
   { name: "ctx.credential.getAll", seams: ["storage.get"], create: credential("ctx.credential.getAll") },
   { name: "Credentials.values", seams: ["storage.get"], create: credential("Credentials.values") },
+  { name: "Grant.token", seams: ["storage.get"], create: grantUse("token") },
+  { name: "Grant.refresh", seams: ["storage.get", "crypto.digest"], create: grantUse("refresh") },
+  { name: "Grant.rejected", seams: ["closed-entry"], completions: ["resolve"], create: grantUse("rejected") },
   { name: "ctx.oauth.fetch", seams: ["storage.get", "fetch"], create: oauthFetch() },
   { name: "guardedFetch.auxiliary.oauth", seams: ["storage.get", "fetch"], create: oauthFetch(true) },
   {

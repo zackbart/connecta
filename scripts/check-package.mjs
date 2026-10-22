@@ -441,6 +441,8 @@ const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
 if (typeof access.cloudflareAccessAuth !== "function") throw new Error("missing Cloudflare Access adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
+const node = await import("@zackbart/connecta/node");
+if (typeof node.listen !== "function") throw new Error("missing Node adapter");
 // A consumer's newer Clerk version must install and authenticate through the
 // bundled client. Native readers throw so using the installed SDK fails here.
 const pair = await crypto.subtle.generateKey({
@@ -1103,6 +1105,7 @@ try {
     // install still resolves no executor at all.
     "@cloudflare/codemode",
     "quickjs-emscripten",
+    "undici",
   ]) {
     if (existsSync(join(work, "node_modules", dependency))) {
       throw new Error(`Optional peer ${dependency} was installed with core`);
@@ -1136,7 +1139,11 @@ try {
     await proxy.dispose();
   }
 
-  run(npm, ["install", "--ignore-scripts", "@clerk/backend@3.23.1", "quickjs-emscripten@^0.32.0"], work);
+  run(
+    npm,
+    ["install", "--ignore-scripts", "@clerk/backend@3.23.1", "quickjs-emscripten@^0.32.0", "undici@6.29.1"],
+    work,
+  );
   run(process.execPath, ["optional.mjs"], work);
 
   // A Workers deployment installs its executor by hand, so the peer range in

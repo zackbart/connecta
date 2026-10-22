@@ -131,8 +131,8 @@ export interface ApiOAuthAccess {
   /**
    * `fetch` with the calling owner's access token as `Authorization: Bearer`.
    * Only to `apiOrigins`; redirects are returned unfollowed. A 401 earns one
-   * coordinated refresh. A read-classified call's request is then sent once
-   * more; a write's never is, and the call fails with `connector_call_failed`
+   * coordinated refresh. Only a positively read-classified GET/HEAD without
+   * method-override headers is sent once more; a write's never is, and the call fails with `connector_call_failed`
    * whose outcome is unknown, so the agent checks the target before
    * repeating it. A second 401, a refused refresh, or no grant at all throws
    * `auth_required`, and an authorization-server outage throws a retryable

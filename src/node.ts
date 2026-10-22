@@ -4,6 +4,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
 import { failureRecord, logFailure } from "./operator-record.js";
+import { configureGuardedTransport } from "./guarded-transport.js";
+import { nodeGuardedTransport } from "./http/node-transport.js";
 
 /** 10 MiB. Tool arguments are JSON; nothing legitimate approaches this. */
 const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -81,9 +83,10 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
  * Serve a Connecta over node:http. Thin adapter: IncomingMessage → Request,
  * Response → ServerResponse, plus the process-level concerns a long-running
  * container needs (body cap, response streaming, graceful shutdown). No
- * dependencies beyond node core.
+ * outbound HTTP uses an owned undici dispatcher configured here.
  */
 export function listen(connecta: Connecta, portOrOptions: number | ListenOptions): Server {
+  configureGuardedTransport(nodeGuardedTransport);
   const opts: ListenOptions = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 

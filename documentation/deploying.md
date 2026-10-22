@@ -51,6 +51,11 @@ Follow the [template README](../templates/node/README.md) for storage paths,
 backups, Docker provisioning, secrets, and optional modules. Run the deployment's
 `npm run typecheck` after configuration changes.
 
+Retain the Node template's `undici` dependency and serve with `listen` from
+`@zackbart/connecta/node`. That entry configures the owned transport for
+guarded provider writes. A Node deployment using only the root entry refuses
+those writes before sending them. Workers use their native fetch transport.
+
 ## Start on Workers
 
 Deploy the Worker with [Alchemy](https://alchemy.run) from the example's
@@ -292,6 +297,10 @@ paste a token or raw downstream failure body into a committed diagnostic log.
 Bump the exact package pin, read the [changelog](../CHANGELOG.md) for every
 intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
+
+For an existing Node deployment, add the Node entry's pinned optional peer
+before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
+The current Node template already declares this dependency.
 
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.

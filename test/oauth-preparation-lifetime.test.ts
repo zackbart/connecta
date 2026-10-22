@@ -5,6 +5,9 @@ import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import type { OAuthStateSealer } from "../src/oauth-sealing.js";
+import { CredentialVault } from "../src/credentials.js";
+import { grantFromOAuth } from "../src/http/oauth.js";
+import { runEdge } from "../src/runtime/run.js";
 import { providerCallContext } from "../src/provider-call.js";
 import { openRequest, viewLease } from "../src/runtime/call.js";
 import { oauthGrantKeys, oauthV2Keys, scopes } from "../src/storage/keys.js";
@@ -42,11 +45,29 @@ async function snapshot(storage: KVStorage) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["call", "request", "fetch"] as const)(
-  "INV-7: a real ctx.oauth.fetch initial grant read refuses on %s closure without releasing storage",
-  async (boundary) => {
+const grantEntries = ["facade", "grant token", "grant refresh"] as const;
+const grantPreparationCases = grantEntries.flatMap((entry) =>
+  (entry === "facade" ? (["storage", "sealer"] as const) : (["sealer"] as const)).flatMap((seam) =>
+    (["call", "request", ...(entry === "facade" ? ["fetch" as const] : [])] as const).map((boundary) => ({
+      entry,
+      seam,
+      boundary,
+    })),
+  ),
+);
+
+it.each(grantPreparationCases)(
+  "INV-7: $entry at $seam refuses on $boundary closure without releasing preparation",
+  async ({ entry, seam, boundary }) => {
     const backing = memoryStorage();
     await seedGrant(backing, { issuer: TOKEN, tokens }, "v3:seeded", scopes.connector("tickets"));
+    if (seam === "sealer") {
+      const key = `${scopes.connector("tickets")}${oauthGrantKeys.grant}`;
+      const raw = JSON.parse((await backing.get(key))!);
+      raw.sealed = JSON.stringify(raw.body);
+      delete raw.body;
+      await backing.set(key, JSON.stringify(raw));
+    }
     const before = await snapshot(backing);
     const entered = deferred<void>();
     const release = deferred<void>();
@@ -55,7 +76,7 @@ it.each(["call", "request", "fetch"] as const)(
     const storage: KVStorage = {
       ...backing,
       async get(key) {
-        if (armed && key.endsWith(oauthGrantKeys.grant)) {
+        if (armed && seam === "storage" && key.endsWith(oauthGrantKeys.grant)) {
           entered.resolve();
           await release.promise;
         }
@@ -65,6 +86,15 @@ it.each(["call", "request", "fetch"] as const)(
         writes++;
         return backing.compareAndSet(...args);
       },
+    };
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    vault.seal = async (_id, _key, value) => value;
+    vault.open = async (_id, _key, value) => {
+      if (armed) {
+        entered.resolve();
+        await release.promise;
+      }
+      return value;
     };
     let view: ApiHandlerContext | undefined;
     let pending: Promise<unknown> | undefined;
@@ -87,16 +117,25 @@ it.each(["call", "request", "fetch"] as const)(
           async handler(_, ctx) {
             view = ctx;
             armed = true;
-            pending = ctx.oauth!.fetch(`${ISSUER}/notes`, { signal: abort.signal }).catch((error: unknown) => error);
+            const grant = grantFromOAuth(ctx.oauth!);
+            pending = (
+              entry === "facade"
+                ? ctx.oauth!.fetch(`${ISSUER}/notes`, { signal: abort.signal })
+                : runEdge(entry === "grant token" ? grant.token : grant.refresh(tokens.access_token))
+            ).catch((error: unknown) => error);
             await pending;
             return {};
           },
         },
       ],
     });
-    const call = createMetaTools(makeRegistry([connector], { storage }), "https://connecta.test", {
-      requestScope: scope,
-    }).callTool({ address: "tickets.read" });
+    const call = createMetaTools(
+      makeRegistry([connector], { storage, ...(seam === "sealer" ? { credentialVault: vault } : {}) }),
+      "https://connecta.test",
+      {
+        requestScope: scope,
+      },
+    ).callTool({ address: "tickets.read" });
     try {
       await entered.promise;
       if (boundary === "fetch") abort.abort(new Error("fetch ended"));

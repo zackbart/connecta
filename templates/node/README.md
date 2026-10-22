@@ -18,6 +18,11 @@ npm run --silent rotate-token -- local-machine
 npm start
 ```
 
+Keep the template's pinned `undici` dependency and its `listen` import from
+`@zackbart/connecta/node`. `listen` installs the owned HTTP transport used by
+guarded provider writes; a Node deployment using only the root entry refuses
+those writes before dispatch.
+
 The manifest approves only `esbuild@0.28.2` to run its install script. `tsx`
 uses esbuild to run this TypeScript source, so that script is part of the
 prescribed runtime path. npm 11 therefore installs without an unreviewed-script
