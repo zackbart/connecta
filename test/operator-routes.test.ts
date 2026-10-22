@@ -272,12 +272,14 @@ describe("operator data routes", () => {
     expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale again");
   });
 
-  it("stops resolving activity labels once the reader has gone", async () => {
+  it("INV-7: aborts activity label lookups once the reader has gone", async () => {
     const pending: Array<() => void> = [];
+    const signals: AbortSignal[] = [];
     const activityActorLabel = vi.fn(
-      (id: string) =>
-        new Promise<string>((resolve) => {
-          pending.push(() => resolve(`Label ${id}`));
+      (_id: string, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signals.push(signal!);
+          pending.push(() => reject(new Error("late lookup failure")));
         }),
     );
     const auth: InboundAuth = {
@@ -335,6 +337,8 @@ describe("operator data routes", () => {
 
     controller.abort();
     await expect(reading).rejects.toBeDefined();
+    expect(signals).toHaveLength(8);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
     for (const release of pending.splice(0)) release();
     await settle();
 

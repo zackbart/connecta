@@ -88,7 +88,7 @@ export function resolveActorLabels(
   return Effect.suspend(() => {
     const labels = new Map<string, string>();
     const resolve = ({ key, id, provider }: LabelLookup) =>
-      Effect.tryPromise(() => Promise.resolve(provider.activityActorLabel!(id))).pipe(
+      Effect.tryPromise((signal) => Promise.resolve(provider.activityActorLabel!(id, signal))).pipe(
         Effect.map(cleanActorLabel),
         Effect.orElseSucceed(() => undefined),
         Effect.map((label) => {
