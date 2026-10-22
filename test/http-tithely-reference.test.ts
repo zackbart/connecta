@@ -3,18 +3,16 @@
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
-import { apiConnector } from "../src/connectors/api-connector.js";
 import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
 import goldenSpec from "./goldens/tithely/spec.js";
 import goldenCatalog from "./goldens/tithely/catalog.json";
 import goldenCalls from "./goldens/tithely/calls.json";
 import { manifest } from "../src/http/vendor.js";
-import { tracksEveryRequest } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
-import { TITHELY_API_BASE_URLS, tithely } from "../src/providers/tithely/index.js";
-import { kitTools, TITHELY_KIT_FACTS, TithelyApi } from "../src/providers/tithely/kit-prototype.js";
+import { tithely } from "../src/providers/tithely/index.js";
+import { tithelyKit, TITHELY_KIT_FACTS, TithelyApi } from "../src/providers/tithely/kit-prototype.js";
 
 interface Stub {
   status?: number;
@@ -77,6 +75,15 @@ afterEach(() => {
 
 const KEYS = { publicKey: "pub_abc123", privateKey: "pri_def456" };
 const BASIC = `Basic ${btoa(`${KEYS.publicKey}:${KEYS.privateKey}`)}`;
+const KEY_PROBLEMS: Array<Record<string, string> | null> = [
+  null,
+  {},
+  { publicKey: "pub_x" },
+  { publicKey: "pri_x", privateKey: "pub_y" },
+  { publicKey: "pri_x", privateKey: "pri_y" },
+  { publicKey: "pub_x", privateKey: "pub_y" },
+  { publicKey: "pub_ x", privateKey: "pri_y" },
+];
 
 function context(values: Record<string, string> | null = KEYS, signal?: AbortSignal): ConnectorContext {
   return {
@@ -97,16 +104,12 @@ const current = (
   defaultPageSize = 25,
   environment: "live" | "test" = "live",
 ): Connector => tithely("giving", { purpose: "Weekly giving reports", environment, sensitiveFields, defaultPageSize });
-// Both drop A.2's sensitive fields by default. Every kit request enters the
-// core ledger, so the connector declares it as index.ts does.
 const kit = (
   sensitiveFields: "drop" | "return" = "drop",
   defaultPageSize = 25,
   environment: "live" | "test" = "live",
 ): Connector =>
-  tracksEveryRequest(
-    apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS[environment], defaultPageSize, sensitiveFields) }),
-  );
+  tithelyKit("giving", { purpose: "Weekly giving reports", environment, sensitiveFields, defaultPageSize });
 
 /** Everything an agent or an operator record could observe about one call. */
 function observed(outcome: { value: unknown } | { error: unknown }): unknown {
@@ -218,7 +221,7 @@ const ROWS = [1, 2, 3].map((n) => ({
 }));
 
 describe("Tithe.ly on the provider kit (decision 0010)", () => {
-  it("INV-1: preserves all eleven catalog entries byte for byte, including order and legacy hatch names", async () => {
+  it("INV-1 INV-5: preserves the entire catalog, legacy guides and candidate probe bytes", async () => {
     for (const pageSize of [1, 25, 99]) {
       const before = await current("drop", pageSize).listTools(context());
       const after = await kit("drop", pageSize).listTools(context());
@@ -226,9 +229,79 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       expect(JSON.stringify(after)).toBe(JSON.stringify(before));
       if (pageSize === 25) expect(JSON.stringify(after)).toBe(JSON.stringify(goldenCatalog.tools));
     }
+    const catalog = async (connector: Connector) => {
+      const guide = connector.usageGuide;
+      if (!guide || typeof guide === "string") throw new Error("Expected a complete Tithe.ly guide.");
+      return {
+        id: connector.id,
+        kind: connector.kind,
+        title: connector.title,
+        description: connector.description,
+        credential: connector.credential,
+        guide: { summary: guide.summary, content: guide.content },
+        tools: await connector.listTools(context()),
+      };
+    };
+    const probe = async (connector: Connector, values: Record<string, string>, responses: Stub[]) => {
+      stubs = responses.map((response) => ({ ...response }));
+      sent = [];
+      const ctx = context({ publicKey: "pub_stored", privateKey: "pri_stored" });
+      ctx.credential!.getAll = vi.fn(ctx.credential!.getAll);
+      const result = await connector.testCredentials!(values, ctx);
+      expect(ctx.credential!.getAll).not.toHaveBeenCalled();
+      return { result, sent };
+    };
+    for (const environment of ["live", "test"] as const) {
+      for (const sensitiveFields of ["drop", "return"] as const) {
+        for (const extra of [{}, { title: "Giving reports", instructions: "  Reduce to weekly totals.  " }]) {
+          const options = { purpose: "Weekly giving reports for Grace Church", environment, sensitiveFields, ...extra };
+          const before = tithely("giving", options);
+          const after = tithelyKit("giving", options);
+          const actual = await catalog(after);
+          expect(JSON.stringify(actual)).toBe(JSON.stringify(await catalog(before)));
+          expect(after.usageGuide).toEqual(before.usageGuide);
+          if (environment === "live" && sensitiveFields === "drop" && !("title" in extra)) {
+            expect(JSON.stringify(actual)).toBe(JSON.stringify(goldenCatalog));
+          }
+        }
+      }
+      const before = current("drop", 25, environment);
+      const after = kit("drop", 25, environment);
+      for (const [values, responses] of [
+        ...KEY_PROBLEMS.filter((values) => values !== null).map((values) => [values, []] as const),
+        ...[
+          { body: { data: [ORGANIZATION] } },
+          { body: { data: [{ name: "One organization" }] } },
+          { body: { data: [] } },
+          { status: 401, body: { status: "fail", reason: "Bad keys" } },
+          { status: 500, body: { reason: "Boom" } },
+          { body: { status: "fail", reason: "Keys refused" } },
+          { text: "not JSON" },
+          { reject: new TypeError("fetch failed") },
+        ].map((response) => [KEYS, [response]] as const),
+      ]) {
+        const expected = await probe(before, values, [...responses]);
+        const actual = await probe(after, values, [...responses]);
+        expect(JSON.stringify(actual), `${environment} ${JSON.stringify(values)}`).toBe(JSON.stringify(expected));
+        expect(actual.sent).toHaveLength(responses.length);
+      }
+    }
   });
 
-  const cases: Array<{ name: string; tool: string; args: Record<string, unknown>; responses: Stub[] }> = [
+  const cases: Array<{
+    name: string;
+    tool: string;
+    args: Record<string, unknown>;
+    responses: Stub[];
+    keys?: Record<string, string> | null;
+  }> = [
+    ...KEY_PROBLEMS.map((keys) => ({
+      name: `invalid keys ${JSON.stringify(keys)}`,
+      tool: "get_charge",
+      args: { chargeId: "ch_1" },
+      responses: [],
+      keys,
+    })),
     {
       name: "a charge envelope",
       tool: "get_charge",
@@ -403,7 +476,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       args: { method: "DELETE", path: "/payment-methods/pm_1", query: [{ name: "account_id", value: "user_1" }] },
       responses: [{ text: "" }],
     },
-    ...[400, 403, 404, 409, 422].map((code) => ({
+    ...[400, 401, 403, 404, 409, 422, 500].map((code) => ({
       name: `a write answered ${code}`,
       tool: "tithely_api_mutate",
       args: MUTATE,
@@ -437,7 +510,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   ];
 
   it("INV-5 INV-6 INV-9: preserves all tools' request and output bytes, raw modes, paging and failures", async () => {
-    const fixtureCases = goldenSpec.calls.map((call) => ({
+    const fixtureCases: typeof cases = goldenSpec.calls.map((call) => ({
       name: call.label ?? call.tool,
       tool: call.tool,
       args: call.args ?? {},
@@ -549,8 +622,8 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     const legacy = current();
     const reference = kit();
     for (const scenario of [...fixtureCases, ...cases, ...additional]) {
-      const before = await run(legacy, scenario.tool, scenario.args, scenario.responses, context());
-      const after = await run(reference, scenario.tool, scenario.args, scenario.responses, context());
+      const before = await run(legacy, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
+      const after = await run(reference, scenario.tool, scenario.args, scenario.responses, context(scenario.keys));
       expect(after.sent, scenario.name).toEqual(before.sent);
       expect(after.result, scenario.name).toEqual(before.result);
       expect(JSON.stringify(after), scenario.name).toBe(JSON.stringify(before));
@@ -572,19 +645,15 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
             expect(JSON.stringify(after), `${scenario.name} ${choice} ${environment} raw=${raw}`).toBe(
               JSON.stringify(before),
             );
+            if (raw && JSON.stringify(scenario.responses).includes("TEST BANK")) {
+              if (choice === "drop") expect(JSON.stringify(after.result)).not.toMatch(/TEST BANK|5\/23\/1985/);
+              else expect(JSON.stringify(after.result)).toContain("TEST BANK");
+            }
           }
         }
       }
     }
   }, 30_000);
-
-  it("INV-5: refuses missing or swapped keys before any request, in the same words", async () => {
-    for (const keys of [null, { publicKey: "pri_x", privateKey: "pub_y" }]) {
-      const { before, after } = await both("get_charge", { chargeId: "ch_1" }, [], () => context(keys));
-      expect(after.sent).toEqual([]);
-      expect(after.result).toEqual(before.result);
-    }
-  });
 
   it("INV-5: sends the key pair as HTTP Basic, never follows a redirect, and adds no trace header", async () => {
     const { after } = await both("get_charge", { chargeId: "ch_1" }, [{ body: FULL_CHARGE }]);
@@ -617,52 +686,6 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       // network failure would lose its identity before invocation sees it.
       expect(controller.signal.aborted).toBe(true);
       expect(error).toBe(reason);
-    }
-  });
-
-  it("INV-9: a write answered 401 (Q8), a 5xx and a broken connection match the core", async () => {
-    // Q8: Tithe.ly documents no check of its keys before acting, so the code
-    // and its authorize_connector handoff stay and the outcome is unknown, on
-    // index.ts and on the kit alike.
-    const { before, after } = await both("tithely_api_mutate", MUTATE, [
-      { status: 401, body: { status: "fail", reason: "Bad keys" } },
-    ]);
-    expect(after.sent).toEqual(before.sent);
-    expect(after.result).toEqual(before.result);
-    expect(after.result).toEqual({
-      name: "ConnectorCallError",
-      code: "auth_required",
-      message:
-        "Tithe.ly: Bad keys Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
-      retryable: false,
-      retryAfterMs: undefined,
-      details: undefined,
-      writeOutcome: "unknown",
-      advice: undefined,
-    });
-    // Everything else after dispatch is the core's verdict on both sides.
-    for (const responses of [
-      [{ status: 500, body: { reason: "Boom" } }],
-      [{ reject: Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }) }],
-    ] satisfies Stub[][]) {
-      const { before, after } = await both("tithely_api_mutate", MUTATE, responses);
-      expect(after.sent).toHaveLength(1);
-      expect(after.result).toEqual(before.result);
-      expect(after.result).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    }
-  });
-
-  it("INV-5: drops the sensitive fields from raw reads and hatch replies unless deployment code returns them (A.2)", async () => {
-    const reply = { status: "success", object: FULL_CHARGE };
-    for (const [tool, args] of [
-      ["get_charge", { chargeId: "ch_7", raw: true }],
-      ["tithely_api_mutate", MUTATE],
-    ] as const) {
-      const dropped = await run(kit("drop"), tool, args, [{ body: reply }], context());
-      expect(JSON.stringify(dropped.result), tool).not.toMatch(/TEST BANK|5\/23\/1985/);
-      expect(JSON.stringify(dropped.result), tool).toContain("Grace Church");
-      const returned = await run(kit("return"), tool, args, [{ body: reply }], context());
-      expect(JSON.stringify(returned.result), tool).toMatch(/TEST BANK/);
     }
   });
 

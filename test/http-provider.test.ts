@@ -158,8 +158,12 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
   );
   const hatch = { name: "tickets", index, verdicts: { "GET /who": "read" as const } };
   const pageSize = { default: 10, max: 50 };
+  const completeGuide = { content: "Legacy fragments and instructions.\n", summary: "Triage", required: true };
   const factory = defineApiProvider({
     ...definition,
+    displayTitle: (options) => `${options.purpose} tickets`,
+    description: (options) => `Tickets for ${options.purpose}.`,
+    guide: (options) => (options.purpose === "Triage" ? completeGuide : definition.guide(options)),
     pageSize,
     hatch,
     tools: (kit) => {
@@ -177,9 +181,17 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     maxResultBytes: 256,
     title: "Team tickets",
   });
-  factory("other", { purpose: "Triage", defaultPageSize: 50 });
+  const second = factory("other", { purpose: "Triage", defaultPageSize: 50, instructions: "Already rendered." });
   expect(pages).toEqual([10, 50]);
-  expect(first).toMatchObject({ title: "Team tickets", authScope: "personal", readOnly: true, maxResultBytes: 256 });
+  expect(first).toMatchObject({
+    title: "Team tickets",
+    description: "Tickets for Support.",
+    authScope: "personal",
+    readOnly: true,
+    maxResultBytes: 256,
+  });
+  expect(second.title).toBe("Triage tickets");
+  expect(second.usageGuide).toEqual(completeGuide);
   expect(first.usageGuide).toMatchObject({
     content:
       "# Tickets usage\n\nSupport\n\nResolve ids before writing.\n\n## Workspace instructions\n\nUse alice's queue.\n",
@@ -278,6 +290,14 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
     const connector = defineApiProvider({
       ...definition,
       authenticate,
+      probe: {
+        ...definition.probe,
+        check: (values, options) => {
+          expect(options.purpose).toBe("Support");
+          return Object.values(values).includes("invalid") ? "Replace this candidate." : undefined;
+        },
+        describe: (reply, options) => `${options.purpose}: ${JSON.stringify(reply)}`,
+      },
       credential:
         mode === "single"
           ? { label: "Token" }
@@ -315,7 +335,12 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
       mode === "single"
         ? await connector.testCredential!("candidate-token", ctx)
         : await connector.testCredentials!({ token: "candidate-token", account: "candidate-account" }, ctx);
-    expect(answer).toEqual({ ok: true, message: '{"visible":"[redacted]"}' });
+    expect(answer).toEqual({ ok: true, message: 'Support: {"visible":"[redacted]"}' });
+    const refused =
+      mode === "single"
+        ? await connector.testCredential!("invalid", ctx)
+        : await connector.testCredentials!({ token: "invalid" }, ctx);
+    expect(refused).toEqual({ ok: false, message: "Replace this candidate." });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(ctx.credential.getAll).not.toHaveBeenCalled();
     expect(charged).toBe(0);

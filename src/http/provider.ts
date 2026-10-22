@@ -13,7 +13,13 @@ import {
 import { tracksEveryRequest } from "../provider-call.js";
 import { Operation } from "../runtime/call.js";
 import { runEdge } from "../runtime/run.js";
-import type { ConnectorContext, ConnectorCredentialConfig, CredentialTestResult } from "../types.js";
+import type {
+  ConnectorContext,
+  ConnectorCredentialConfig,
+  ConnectorCredentialValues,
+  ConnectorUsageGuide,
+  CredentialTestResult,
+} from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
@@ -25,6 +31,9 @@ import { connect, operations, type Connection, type ConnectOptions, type Vendor 
 type ProbeOperation = Parameters<Connection["send"]>[0];
 
 interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<ProviderDefinition<O>, "kind" | "create"> {
+  /** Connection defaults; an explicit options.title still wins. */
+  readonly displayTitle?: (options: Readonly<O>) => string;
+  readonly description?: (options: Readonly<O>) => string;
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;
   readonly maxResponseBytes: number;
@@ -40,9 +49,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly probe: {
     readonly operation: ProbeOperation;
     readonly request: unknown;
-    readonly describe: (reply: unknown) => string;
+    /** A candidate problem returned before authentication or dispatch. */
+    readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
+    readonly describe: (reply: unknown, options: Readonly<O>) => string;
   };
-  readonly guide: (options: Readonly<O>) => ProviderGuideInput;
+  /** Complete guides preserve legacy fragments and option-dependent lines. */
+  readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
 }
@@ -68,6 +80,8 @@ const missingGrant: Context.Service.Shape<typeof Grant> = {
 /** An ordinary Promise connector factory; Effect remains inside the kit. */
 export function defineApiProvider<O extends ProviderOptions>(definition: ApiProviderDefinition<O>): ProviderFactory<O> {
   const {
+    displayTitle,
+    description,
     vendor,
     baseUrl,
     maxResponseBytes,
@@ -149,7 +163,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         sendPath: (...args) => authorize(connected.sendPath(...args)),
         sendItem: (...args) => authorize(connected.sendItem(...args)),
       };
-      const test = (ctx: ConnectorContext): Promise<CredentialTestResult> => {
+      const test = (values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> => {
+        const problem = probe.check?.(values, options);
+        if (problem !== undefined) return Promise.resolve({ ok: false, message: problem });
         // api() has already installed anonymous, uncharged candidate services.
         // Bridge those services directly; never copy the supplied context.
         const lease = fromConnectorContext(ctx, "read");
@@ -162,7 +178,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         };
         return runEdge(
           connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
-            Effect.map(({ data }) => ({ ok: true, message: probe.describe(data) })),
+            Effect.map(({ data }) => ({ ok: true, message: probe.describe(data, options) })),
             Effect.catch((failure) =>
               Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
             ),
@@ -180,16 +196,18 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           return typeof override === "number" ? override : pageSize.default;
         },
       });
+      const usageGuide = guide(options);
       return tracksEveryRequest(
         api(id, {
           ...provider.connectorOptions,
-          title: options.title ?? metadata.title,
-          usageGuide: provider.usageGuide(guide(options)),
+          title: options.title ?? displayTitle?.(options) ?? metadata.title,
+          ...(description ? { description: description(options) } : {}),
+          usageGuide: "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide),
           ...(credential
             ? {
                 credential,
-                testCredential: (_value, ctx) => test(ctx),
-                testCredentials: (_values, ctx) => test(ctx),
+                testCredential: (value, ctx) => test({ value }, ctx),
+                testCredentials: (values, ctx) => test(values, ctx),
               }
             : {}),
           ...(oauth ? { oauth: oauth(options) } : {}),

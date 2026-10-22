@@ -11,13 +11,14 @@ import { guardedClient } from "../../http/client.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
 import { Integer, isMaxChars } from "../../http/json-schema.js";
 import { Cursor, lookahead } from "../../http/paging.js";
-import { resultSafety } from "../../http/safety.js";
+import { defineApiProvider } from "../../http/provider.js";
+import { resultSafety, type SafetyOptions } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
 import { get as getTool, list, read, write } from "../../http/tools.js";
-import { connect, get, operations, vendor, type Connection } from "../../http/vendor.js";
-import type { ProviderKitFacts } from "../../provider.js";
-import type { ConnectorCredentialValues } from "../../types.js";
-import { TITHELY_SENSITIVE_FIELDS } from "./index.js";
+import { connect, get, vendor, type Connection } from "../../http/vendor.js";
+import type { ConnectorCredentialValues, ConnectorUsageGuide } from "../../types.js";
+import { TITHELY_API_BASE_URLS, TITHELY_SENSITIVE_FIELDS, tithely, type TithelyOptions } from "./index.js";
+import { skill } from "./skill.generated.js";
 
 // --- Vendor --------------------------------------------------------------------
 
@@ -32,7 +33,7 @@ const Single = (id: string) =>
 const Rows = Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(Schema.Unknown)) });
 const PageQuery = {
   limit: Integer,
-  order_by: Schema.Literals(["DESC", "ASC"]),
+  order_by: Schema.optionalKey(Schema.Literals(["DESC", "ASC"])),
   starting_after: Schema.optionalKey(Schema.String),
 };
 const ScopeQuery = {
@@ -94,12 +95,6 @@ export const TithelyApi = vendor(
 
 const TITHELY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE_SIZE = 99;
-
-/** Manifest facts for the reference; legacy hatches are retained until step 2. */
-export const TITHELY_KIT_FACTS: ProviderKitFacts = {
-  operations: operations(TithelyApi),
-  pageSize: { default: 25, max: MAX_PAGE_SIZE },
-};
 
 const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
@@ -177,40 +172,135 @@ function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return", 
     }),
     {
       errors,
-      safety: resultSafety({
-        review:
-          "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data, dropped below.",
-        // Lean organization results have always kept bank.currency. Preserve
-        // only that reviewed scalar before dropping the bank object; the raw
-        // connection and hatches never receive the added projection field.
-        ...(leanOrganizations
-          ? {
-              reviewed: {
-                withholdsErrors: () => false,
-                redact: (body, operation) => {
-                  const withCurrency = (value: unknown) => {
-                    const record = asRecord(value);
-                    return { ...record, payoutCurrency: text(asRecord(record["bank"])["currency"]) };
-                  };
-                  if (operation.template === "/organizations-list") {
-                    const root = asRecord(body);
-                    return Array.isArray(root["data"]) ? { ...root, data: root["data"].map(withCurrency) } : body;
-                  }
-                  return { object: withCurrency(entity(body, "organization_id")) };
-                },
-              },
-            }
-          : {}),
-        sensitiveFields: { names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields },
-      }),
-      // A 2xx JSON body that is not an in-band refusal. Tithe.ly withholds
-      // nothing, so its own reason may be quoted.
-      result: (body) => {
-        const refused = inBandFailure(body);
-        return refused ? failed(refused) : Effect.succeed(body);
-      },
+      safety: resultSafety(tithelySafety(sensitiveFields, leanOrganizations)),
+      result,
     },
   );
+}
+
+function tithelySafety(sensitiveFields: "drop" | "return", leanOrganizations = false): SafetyOptions {
+  return {
+    review:
+      "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data, dropped below.",
+    // Lean organization results have always kept bank.currency. Preserve
+    // only that reviewed scalar before dropping the bank object; the raw
+    // connection and hatches never receive the added projection field.
+    ...(leanOrganizations
+      ? {
+          reviewed: {
+            withholdsErrors: () => false,
+            redact: (body, operation) => {
+              const withCurrency = (value: unknown) => {
+                const record = asRecord(value);
+                return { ...record, payoutCurrency: text(asRecord(record["bank"])["currency"]) };
+              };
+              if (operation.template === "/organizations-list") {
+                const root = asRecord(body);
+                return Array.isArray(root["data"]) ? { ...root, data: root["data"].map(withCurrency) } : body;
+              }
+              return { object: withCurrency(entity(body, "organization_id")) };
+            },
+          },
+        }
+      : {}),
+    sensitiveFields: { names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields },
+  };
+}
+
+// Tithe.ly withholds nothing, so an in-band refusal may quote its own reason.
+const result = (body: unknown) => {
+  const refused = inBandFailure(body);
+  return refused ? failed(refused) : Effect.succeed(body);
+};
+
+/** Complete connector reference; B.5 owns the maintained provider's migration. */
+export const tithelyKit = defineApiProvider<TithelyOptions>({
+  name: "tithely",
+  title: "Tithe.ly",
+  readme: "Tithe.ly",
+  skill,
+  options: tithely.definition.options,
+  displayTitle: (options) => (options.environment === "live" ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
+  description: (options) =>
+    options.environment === "live"
+      ? `Tithe.ly giving — live donors and real money — ${options.purpose}`
+      : `Tithe.ly giving (test environment, no real money) — ${options.purpose}`,
+  vendor: TithelyApi,
+  baseUrl: (options) => options.baseUrl?.trim() || TITHELY_API_BASE_URLS[options.environment],
+  maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
+  headers: { Accept: "application/json" },
+  pageSize: { default: 25, max: MAX_PAGE_SIZE },
+  credential: {
+    label: "Tithe.ly API keys",
+    description:
+      "The public and private key pair for this connection's environment. API access is by request: email support@tithe.ly to have keys issued. Test keys work only against tithelydev.com and live keys only against tithe.ly.",
+    fields: [
+      {
+        name: "publicKey",
+        label: "Public key",
+        description: "Starts with pub_. Sent as the HTTP Basic user name.",
+        placeholder: "pub_…",
+        inputType: "text",
+      },
+      {
+        name: "privateKey",
+        label: "Private key",
+        description: "Starts with pri_. Sent as the HTTP Basic password; never expose it in a browser.",
+        placeholder: "pri_…",
+        inputType: "password",
+      },
+    ],
+  },
+  authenticate,
+  errors,
+  safety: (options) => tithelySafety(options.sensitiveFields ?? "drop"),
+  result,
+  probe: {
+    operation: listOrganizations,
+    request: { query: { limit: 1 } },
+    check: (values) => {
+      const pair = keyPairProblem(values);
+      return typeof pair === "string" ? pair : undefined;
+    },
+    describe: (reply, options) => {
+      const first = asRecord(asArray(asRecord(reply)["data"])[0]);
+      const name = text(first["name"]);
+      const id = text(first["organization_id"]);
+      return name
+        ? `Keys accepted by Tithe.ly (${options.environment}); first organization reached: ${name}${id ? ` (${id})` : ""}.`
+        : `Keys accepted by Tithe.ly (${options.environment}); no organization is visible to them.`;
+    },
+  },
+  guide: usageGuide,
+  tools: ({ connection, pageSize, options }) =>
+    kitTools(
+      options.baseUrl?.trim() || TITHELY_API_BASE_URLS[options.environment],
+      pageSize,
+      options.sensitiveFields ?? "drop",
+      connection,
+    ),
+});
+
+/** Manifest facts from the helper; legacy hatches are retained until step 2. */
+export const TITHELY_KIT_FACTS = tithelyKit.definition.kit!;
+
+function usageGuide(options: Readonly<TithelyOptions>): ConnectorUsageGuide {
+  const instructions = options.instructions?.trim();
+  const live = options.environment === "live";
+  const where = live
+    ? "Live Tithe.ly (tithe.ly): real donors and real money."
+    : "Test Tithe.ly (tithelydev.com): a test account; no real money moves.";
+  const sensitive =
+    options.sensitiveFields === "return"
+      ? "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n"
+      : "  Every result, `raw: true` and the hatches included, leaves them out.\n";
+  return {
+    content: `# Tithe.ly giving usage\n\n${where}\n\nAccount purpose: ${options.purpose}${skill.fragments.guide_0}${sensitive}${skill.fragments.guide_1}${
+      instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""
+    }`,
+    summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
+    required: true,
+  };
 }
 
 // --- Schemas ---------------------------------------------------------------------
@@ -325,8 +415,8 @@ export function kitTools(
   baseUrl: string,
   defaultPageSize: number,
   sensitiveFields: "drop" | "return" = "drop",
+  connection: Connection = tithelyConnection(baseUrl, sensitiveFields),
 ): ApiTool[] {
-  const connection = tithelyConnection(baseUrl, sensitiveFields);
   const leanOrganizations = tithelyConnection(baseUrl, sensitiveFields, true);
   const { send } = connection;
   const PageInput = {
