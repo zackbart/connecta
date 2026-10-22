@@ -481,9 +481,15 @@ describe("production OAuth renewal ownership", () => {
       const flow = await downstreamFlow(store.storage, scope, coordinator);
       const entered = deferred<() => void>();
       const realTimeout = globalThis.setTimeout;
+      const cleared = vi.spyOn(globalThis, "clearTimeout");
+      let preparationTimer: ReturnType<typeof setTimeout> | undefined;
       vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
-        if (ms === 35_000) entered.resolve(fn);
-        return realTimeout(fn, ms);
+        const timer = realTimeout(fn, ms);
+        if (ms === 35_000) {
+          preparationTimer = timer;
+          entered.resolve(fn);
+        }
+        return timer;
       }) as typeof setTimeout);
       const tails: Promise<unknown>[] = [];
       const send = vi.fn(async () => Response.json(fresh));
@@ -496,9 +502,12 @@ describe("production OAuth renewal ownership", () => {
         (boundary === "call" ? flow.lease : openRequest(scope)).close();
         expect(await promptly(pending)).toMatchObject({ message: expect.stringContaining("This call has ended") });
         expect(pins).toBe(1);
+        expect(preparationTimer).toBeDefined();
+        expect(cleared).not.toHaveBeenCalledWith(preparationTimer);
         (await entered.promise)();
         await Promise.all(tails);
         expect(pins).toBe(0);
+        expect(cleared).toHaveBeenCalledWith(preparationTimer);
         expect(send).not.toHaveBeenCalled();
         expect((await storedGrant(backing))!.body!.tokens).toEqual(old);
       } finally {
