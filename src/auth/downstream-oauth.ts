@@ -43,6 +43,57 @@ import {
 } from "./oauth-token-response.js";
 import { deleteV2Keys, discoveryIssuer, readV2Grant, type MigratedGrantBody } from "./oauth-v2-migration.js";
 import { keepErrorName } from "../redaction-identity.js";
+import { byteReadResponse } from "../byte-read-response.js";
+
+/** @internal Keep the SDK's cloned body reads inside the code exchange's request. */
+export function codeExchangeResponse(response: Response, signal: AbortSignal): Response {
+  if (!response.body) return response;
+  const reader = response.body.getReader();
+  void reader.closed.catch(() => {});
+  let closed = false;
+  let abort: () => void;
+  const release = () => {
+    closed = true;
+    signal.removeEventListener("abort", abort);
+    reader.releaseLock();
+  };
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      abort = () => {
+        if (closed) return;
+        void reader.cancel().catch(() => {});
+        release();
+        controller.error(signal.reason);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    },
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (closed) return;
+        if (next.done) {
+          release();
+          controller.close();
+        } else controller.enqueue(next.value);
+      } catch (error) {
+        if (!closed) {
+          release();
+          controller.error(error);
+        }
+      }
+    },
+    cancel() {
+      if (!closed) {
+        void reader.cancel().catch(() => {});
+        release();
+      }
+    },
+  });
+  return byteReadResponse(
+    new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }),
+  );
+}
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
 const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;

@@ -1,5 +1,5 @@
 import { deriveContext } from "../derived-context.js";
-import { operationContext, openRequest } from "../runtime/call.js";
+import { duringViewCall, operationContext, openRequest, viewSignal } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -49,6 +49,7 @@ import { Deferred, Duration, Effect, Exit, Scope } from "effect";
 import {
   assertOAuthScope,
   authorizingContext,
+  codeExchangeResponse,
   KvOAuthProvider,
   OAuthRequestNotSentError,
   refreshCoordinatorsByPartition,
@@ -1925,8 +1926,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
     signals: readonly (AbortSignal | undefined)[],
+    renewalSignal: (response: Response) => AbortSignal | undefined,
   ): void => {
-    type FlowContext = { fetchFn?: FetchLike } & Record<string, unknown>;
+    type FlowContext = { response: Response; fetchFn?: FetchLike } & Record<string, unknown>;
     const internals = transport as unknown as {
       _authProvider?: { onUnauthorized?: (ctx: FlowContext) => Promise<void> };
       _stepUpAuthorize?: (challenge: unknown, retries: number) => Promise<unknown>;
@@ -1944,21 +1946,35 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "version this release ships with.",
       );
     }
-    const flow = async <T>(start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>): Promise<T> => {
+    const flow = async <T>(
+      start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
+      signal?: AbortSignal,
+    ): Promise<T> => {
       const trail: OAuthTrail = {};
       try {
         return await start((fetchFn) =>
           tracedOAuthFetch(trail, endpoint, async (input, init) => {
             trackSentRequest(ctx, input, init);
-            return await fetchFn(input, init);
+            return await fetchFn(
+              input,
+              signal
+                ? {
+                    ...init,
+                    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+                  }
+                : init,
+            );
           }),
         );
       } catch (err) {
-        throw await withoutAuthorizationServerText(ctx, err, trail, signals);
+        throw await withoutAuthorizationServerText(ctx, err, trail, [...signals, signal]);
       }
     };
     adapted.onUnauthorized = (ctx) =>
-      flow((trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]));
+      flow(
+        (trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]),
+        renewalSignal(ctx.response),
+      );
     internals._stepUpAuthorize = (challenge, retries) =>
       flow((trace) => {
         const traced = trace(internals._fetchWithInit ?? fetch);
@@ -2303,7 +2319,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const newProvider = (
     ctx: ConnectorContext,
     state?: ConnectionState,
-    signal: AbortSignal | undefined = ctx.signal,
+    signal: AbortSignal | undefined = viewSignal(ctx, true),
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
     const metadataUrl = staticClient ? undefined : (clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id));
@@ -2358,10 +2374,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
      * retained past the transport it configures.
      */
     credentialFramed: string | null = null,
-    signal: AbortSignal | undefined = ctx.signal,
+    signal: AbortSignal | undefined = viewSignal(ctx, true),
     /** The raw value behind `credentialFramed`, under the same terms. */
     credentialValue: string | null = null,
+    /** A code exchange never transfers ownership to the refresh coordinator. */
+    exchangeOnly = false,
   ): Transport => {
+    const initiatingSignal = ctx.signal;
     ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
@@ -2481,18 +2500,65 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
     if (opts.auth?.type === "oauth") {
       const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
+      // The session/provider belong to the request. A renewal belongs to the
+      // exact call whose HTTP response challenged it, until claim submission.
+      // Carry that ownership on the response the SDK passes to onUnauthorized;
+      // a shared mutable "current call" would borrow a concurrent call's lease.
+      const renewalSignals = new WeakMap<Response, AbortSignal>();
+      const exchangeFetch = (send: FetchLike): FetchLike =>
+        exchangeOnly
+          ? (input, init) =>
+              duringViewCall(
+                ctx,
+                async (requestSignal) => {
+                  const response = await send(input, {
+                    ...init,
+                    signal: init?.signal ? AbortSignal.any([requestSignal, init.signal]) : requestSignal,
+                  });
+                  // An override may ignore abort. Cancel its late response before
+                  // the SDK can consume it, including a cloned pending body read.
+                  if (requestSignal.aborted) {
+                    void response.body?.cancel().catch(() => {});
+                    throw requestSignal.reason;
+                  }
+                  return codeExchangeResponse(response, requestSignal);
+                },
+                true,
+              )
+          : send;
+      const coordinatedFetch = refreshCoordinatorFor(ctx).coordinatedFetch(
+        oauthProvider,
+        exchangeFetch(learnedUrlSafeFetch(id, url, trackedFetch)),
+        signal,
+        ctx.defer,
+        exchangeFetch(learnedUrlSafeFetch(id, url, guardedFetch)),
+      );
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         onInsufficientScope: "throw",
-        fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
-          oauthProvider,
-          learnedUrlSafeFetch(id, url, trackedFetch),
-          signal,
-          ctx.defer,
-          learnedUrlSafeFetch(id, url, guardedFetch),
-        ),
+        fetch: async (input, init) => {
+          const response = await coordinatedFetch(input, init);
+          if (response.status === 401) {
+            let owner: AbortSignal | undefined;
+            if (typeof init?.body === "string") {
+              try {
+                const rpc: unknown = JSON.parse(init.body);
+                if (skillObject(rpc)) {
+                  if (rpc.method === "initialize" || rpc.method === "server/discover") owner = initiatingSignal;
+                  else if (typeof rpc.id === "string" || typeof rpc.id === "number")
+                    owner = flights.get(rpc.id)?.request?.ctx.signal;
+                }
+              } catch {
+                // OAuth forms and request-owned protocol fetches have no call id.
+              }
+            }
+            const ownedSignal = owner && init?.signal ? AbortSignal.any([owner, init.signal]) : (owner ?? init?.signal);
+            if (ownedSignal) renewalSignals.set(response, ownedSignal);
+          }
+          return response;
+        },
       });
-      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
+      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
       return sendingEachWriteOnce(transport, flights, untrackedRead);
     }
     const headers =
@@ -2734,8 +2800,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // The transport and its OAuth provider are shared by every call in this
       // scope. A call's deadline signal is aborted even on success, so retaining
       // the first caller's signal here would abort its siblings and later calls.
-      // Keep OAuth work cancellable by the connection's own lifetime instead;
-      // requestOptions still passes each call's signal to the SDK separately.
+      // The provider uses the connection's lifetime. Each challenged response
+      // separately binds renewal preparation to the call that initiated it.
       const connectionAbort = new AbortController();
       // Own cancellation before beginFlow's storage reads.
       // The lease first owns just the signal, then the transport it creates.
@@ -3565,43 +3631,50 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async finishAuth(code, ctx, callbackParams) {
-      const state = stateFor(ctx);
-      const provider = newProvider(ctx, state);
-      // verifyState ran on this request-scoped provider first and found the
-      // consent; a programmatic exchange names it by its callback's state.
-      const consent = callbackParams?.get("state") ?? null;
-      if (!consent || !(await provider.verifyCallbackState(consent))) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
-        );
-      }
-      // The exchange reads and writes only the epoch its consent was written
-      // in; it decides nothing about the grant there.
-      provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
-      await provider.bindFlow();
-      // Always a transport of the exchange's own, over the provider that
-      // verified the state: that provider holds the consent's claim, and the
-      // fence before the token request is its to cross. A connection this
-      // scope opened earlier speaks for its connect attempt, not this callback.
-      const t = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
-      const trail: OAuthTrail = {};
-      const internals = t as unknown as { _fetchWithInit?: FetchLike };
-      const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
-      const exchange = new Proxy(t, {
-        get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
-        set: (target, key, value) => Reflect.set(target, key, value, target),
-      });
-      try {
-        await exchange.finishAuth(callbackParams);
-        // Reset so the next use reconnects with the freshly stored tokens.
-        closeHalf(state);
-      } catch (err) {
-        throw await withoutAuthorizationServerText(ctx, err, trail, [ctx.signal]);
-      } finally {
-        // This exchange-only transport has no lease in the request scope.
-        detach(closeConnection(null, t, ctx.logger));
-      }
+      return duringViewCall(
+        ctx,
+        async (signal) => {
+          const state = stateFor(ctx);
+          const provider = newProvider(ctx, state);
+          // verifyState ran on this request-scoped provider first and found the
+          // consent; a programmatic exchange names it by its callback's state.
+          const consent = callbackParams?.get("state") ?? null;
+          if (!consent || !(await provider.verifyCallbackState(consent))) {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+            );
+          }
+          // The exchange reads and writes only the epoch its consent was written
+          // in; it decides nothing about the grant there.
+          provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
+          await provider.bindFlow();
+          signal.throwIfAborted();
+          // Always a transport of the exchange's own, over the provider that
+          // verified the state: that provider holds the consent's claim, and the
+          // fence before the token request is its to cross. A connection this
+          // scope opened earlier speaks for its connect attempt, not this callback.
+          const t = buildTransport(ctx, provider, null, signal, null, true) as StreamableHTTPClientTransport;
+          const trail: OAuthTrail = {};
+          const internals = t as unknown as { _fetchWithInit?: FetchLike };
+          const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+          const exchange = new Proxy(t, {
+            get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
+            set: (target, key, value) => Reflect.set(target, key, value, target),
+          });
+          try {
+            await exchange.finishAuth(callbackParams);
+            // Reset so the next use reconnects with the freshly stored tokens.
+            closeHalf(state);
+          } catch (err) {
+            throw await withoutAuthorizationServerText(ctx, err, trail, [signal, ctx.signal]);
+          } finally {
+            // This exchange-only transport has no lease in the request scope.
+            detach(closeConnection(null, t, ctx.logger));
+          }
+        },
+        true,
+      );
     },
   };
 
