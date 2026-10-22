@@ -2,6 +2,7 @@
 // language, one heuristic that is the union of the two former vendor engines,
 // and one error policy, for every REST vendor.
 import { describe, expect, it } from "vitest";
+import { linearWork, SCAN_HANG_GUARD_MS } from "./scanner-work.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import {
   REDACTED,
@@ -47,71 +48,6 @@ const DATA: OpenApiData = {
 };
 const index = new OperationIndex(DATA, { vendor: "acme", title: "Acme" });
 const engine = (table: Omit<ValueSafetyTable, "title">) => valueSafety({ title: "Acme", ...table }, () => index);
-
-// Multi-MiB CPU work can be delayed or slowed by instrumentation and load.
-// This is only a hang guard; character-work counts enforce the actual bound.
-const SCAN_HANG_GUARD_MS = 20_000;
-
-/**
- * Count explicit character reads and code units scanned/copied by the real
- * scanner's string operations. Avoid spy call histories for multi-MiB inputs.
- * Capture is synchronous and restores every descriptor even on failure, so
- * neither other tests nor output assertions run with instrumented methods.
- * Native regexp backtracking remains subject to the runner's hang guard.
- */
-function stringWork<T>(work: () => T): { value: T; units: number } {
-  const native = {
-    charCodeAt: String.prototype.charCodeAt,
-    slice: String.prototype.slice,
-    replace: String.prototype.replace,
-    toLowerCase: String.prototype.toLowerCase,
-  };
-  let units = 0;
-  // Keep per-character reads allocation-free; recording arguments or creating
-  // a rest array for each read would make the measurement dominate the scan.
-  const counted = {
-    charCodeAt(this: string, index: number) {
-      units++;
-      return native.charCodeAt.call(this, index);
-    },
-    slice(this: string, start?: number, end?: number) {
-      const result = native.slice.call(this, start, end);
-      units += result.length;
-      return result;
-    },
-    replace(this: string, ...args: unknown[]) {
-      units += this.length;
-      return Reflect.apply(native.replace, this, args);
-    },
-    toLowerCase(this: string) {
-      units += this.length;
-      return native.toLowerCase.call(this);
-    },
-  };
-  const originals = (Object.keys(native) as Array<keyof typeof native>).map((name) => {
-    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, name);
-    if (!descriptor) throw new Error(`Missing String.${name}`);
-    return { name, descriptor };
-  });
-  try {
-    for (const { name, descriptor } of originals)
-      Object.defineProperty(String.prototype, name, { ...descriptor, value: counted[name] });
-    const value = work();
-    return { value, units };
-  } finally {
-    for (const { name, descriptor } of originals) Object.defineProperty(String.prototype, name, descriptor);
-  }
-}
-
-/** Bound observed character work by a fixed number of passes over the input. */
-function linearWork<T>(input: string, work: (text: string) => T): T {
-  const { value, units } = stringWork(() => work(input));
-  expect(units, "the scanner must exercise the work counter").toBeGreaterThan(0);
-  // Include the destination scan, copies and up to four decoding layers,
-  // with fixed setup headroom for the reviewed host policy.
-  expect(units).toBeLessThanOrEqual(input.length * 64 + 1_000);
-  return value;
-}
 
 describe("value-safety engine", () => {
   it("INV-3: refuses a refuse verdict by operation, naming it and the reason", () => {
