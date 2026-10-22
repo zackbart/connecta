@@ -19,7 +19,11 @@ import {
   assertProviderCallOpen,
   bindProviderRequest,
   dispatchProviderRequest,
+  handoffProviderRequest,
+  isRecordingFetch,
+  recordProviderResponse,
   providerRequest,
+  responseProviderRequest,
   vendorRefusal,
   type ProviderRequest,
 } from "../provider-call.js";
@@ -237,6 +241,7 @@ type GuardedFetcher = (url: string, init: RequestInit, ctx: ConnectorContext) =>
  * once it is provably beneath `baseUrl`; the grant's origin check is the second
  * fence, not the only one.
  */
+const oauthSenders = new WeakSet<GuardedFetcher>();
 export function oauthBearer(provider: string): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
   const send: GuardedFetcher = (url, init, ctx) => {
     const grant = (ctx as ApiHandlerContext).oauth;
@@ -251,6 +256,7 @@ export function oauthBearer(provider: string): Pick<GuardedFetchOptions, "authen
     }
     return grant.fetch(url, init);
   };
+  oauthSenders.add(send);
   return { authenticate: () => ({}), fetch: send };
 }
 
@@ -560,12 +566,11 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
     // A call that already ended sends nothing more, not even a credential read.
     assertProviderCallOpen(ctx, provider, auxiliary);
-    const dispatch = providerRequest(ctx, auxiliary, provider, {
+    let dispatch = providerRequest(ctx, auxiliary, provider, {
       method: request.method,
       ...(request.classification ? { classification: request.classification } : {}),
       ...(request.idempotencyKey === undefined ? {} : { key: request.idempotencyKey }),
     });
-    let dispatched = false;
     let response: Response | undefined;
     let result: T;
     try {
@@ -575,7 +580,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
       // retrying dispatcher), whatever the last one reports.
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
-        dispatched: dispatched && !auxiliary,
+        dispatched: dispatch.dispatched && !auxiliary,
         ...(response ? { status: response.status } : {}),
         fallback: dispatch.classification ?? "write",
         repeatable: request.idempotencyKey !== undefined,
@@ -641,10 +646,13 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           headers[name] = value;
         }
         bindProviderRequest(init, dispatch);
-        dispatchProviderRequest(ctx, dispatch, headers);
-        dispatched = true;
+        if (oauthSenders.has(send) && isRecordingFetch((ctx as ApiHandlerContext).oauth?.fetch))
+          handoffProviderRequest(init, dispatch);
+        else dispatchProviderRequest(ctx, dispatch, headers, init.method);
         response = await send(url.toString(), init, ctx);
-        dispatch.status = response.status;
+        const answered = responseProviderRequest(response, dispatch);
+        if (answered) dispatch = answered;
+        else recordProviderResponse(dispatch, response.status);
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);

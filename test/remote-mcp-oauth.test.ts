@@ -3,11 +3,13 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError } from "../src/errors.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "../src/oauth-sealing.js";
+import { providerCallContext, providerRequests } from "../src/provider-call.js";
 import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
@@ -1556,6 +1558,36 @@ describe("remoteMcp() dispatched refresh grants", () => {
     expect(await reader(seeded).pendingAuthorizationUrl()).toBeUndefined();
     expect(await reader(seeded).tokens()).toBeUndefined();
     await c.closeScope?.(passive);
+  });
+
+  it("INV-9: an OAuth read resend preserves each physical request's own status", async () => {
+    const storage = await seededStorage(undefined, "access-new");
+    const server = downstream({
+      current: () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" }),
+    });
+    const fallback = globalThis.fetch;
+    let sends = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rpc = typeof init?.body === "string" && String(input) === mcpUrl ? JSON.parse(init.body) : undefined;
+      if (rpc?.method !== "tools/call") return fallback(input, init);
+      if (++sends === 1)
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        });
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { content: [{ type: "text", text: "pong" }] } });
+    });
+    const c = connector();
+    const passive = providerCallContext(scope(storage), "read");
+    attachCallClassification(passive, "read");
+    onTestFinished(() => c.closeScope?.(passive));
+    await c.callTool("ping", {}, passive);
+    expect(sends).toBe(2);
+    expect(server.counts.token).toBe(1);
+    expect(providerRequests(passive)?.map((request) => ({ method: request.method, status: request.status }))).toEqual([
+      { method: "POST", status: 401 },
+      { method: "POST", status: 200 },
+    ]);
   });
 
   it("classifies a dead grant met by a tool call after connect", async () => {

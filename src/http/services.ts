@@ -131,7 +131,7 @@ export class Ledger extends Context.Service<
       readonly method: string;
       readonly key?: string;
     }) => ProviderRequest;
-    readonly dispatch: (request: ProviderRequest, headers?: HeadersInit) => void;
+    readonly dispatch: (request: ProviderRequest, headers?: HeadersInit, method?: string) => void;
   }
 >()("connecta/http/Ledger") {}
 
@@ -147,9 +147,7 @@ const detachedLedger: Context.Service.Shape<typeof Ledger> = {
     method,
     ...(key === undefined ? {} : { key }),
   }),
-  dispatch: (request) => {
-    request.dispatched = true;
-  },
+  dispatch: (request, headers, method) => dispatchProviderRequest(undefined, request, headers, method),
 };
 
 /** A genuine idempotency key the vendor honors, and the header that carries it, for the call's one write. */
@@ -498,7 +496,7 @@ export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "
         entry.classification ??= fallback;
         return entry;
       },
-      dispatch: (entry, headers) => dispatchProviderRequest(ctx, entry, headers),
+      dispatch: (entry, headers, method) => dispatchProviderRequest(ctx, entry, headers, method),
     },
   });
   request?.own(lease.close);

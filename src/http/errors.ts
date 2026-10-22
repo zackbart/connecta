@@ -23,11 +23,11 @@
 // request's served answer is marked as that request's (`vendorRefusal`), so a
 // refusing status counts only for the request that received it. Advice to
 // send a call again is a segment of its own (`resendAdvice`), never part of
-// the message, so output composes it only where the outcome allows. The one
-// policy composed here is Q8's: a write answered 401 keeps its auth code and
-// handoff and is an unknown outcome, unless the vendor documents that it
-// authenticates first. The core applies the same rule (#917) from the ledger
-// entries this kit forwards its matched proof and renewals to.
+// the message, so output composes it only where the outcome allows.
+// Q8 policy is decided once by the core's `settleWrite` (#917), from the
+// ledger entries this kit forwards its matched proof and renewals to. A
+// write answered 401 stays unknown; only renewal removes its handoff, and
+// only a reviewed authentication-before-execution declaration proves refusal.
 
 import { Data } from "effect";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";

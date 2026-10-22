@@ -2234,7 +2234,7 @@ compiling and configuring the real thing.
   `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header
   makes the request a write regardless of its classification or method. A
   declared refusal followed by a successful write also leaves success intact.
-  A guarded transport delegating through `ctx.fetch` records the wrapper
+  A custom guarded transport delegating through `ctx.fetch` or `ctx.oauth.fetch` records the wrapper
   separately from each physical send. Each physical entry records its own
   outgoing method and response; a later response cannot erase an earlier
   401, and a delegated POST cannot inherit a wrapper's GET read evidence.
@@ -2242,6 +2242,22 @@ compiling and configuring the real thing.
   read evidence, including when the init is copied. Until linked recording
   is reviewed, that duplicate may conservatively keep a successful
   composite unknown even when the wrapper proves its own refusal or read.
+  Request entries are append-only: every physical send, including a read
+  replay after OAuth renewal, gets its own entry. Dispatch refuses an entry
+  already sent and locks its sent method and dispatched flag; the request's
+  own response status is recorded once and locked, and its own renewal can
+  only add a locked mark. These fields are readonly in TypeScript too.
+  The built-in `oauthBearer` transport hands an unsent entry to a known
+  recording OAuth grant once, before any dispatch. The grant consumes that
+  handoff before credential reads and creates a new entry for each further
+  send. It never borrows a dispatched entry. Returned-response identity
+  names the entry whose status was already recorded, without recording it
+  again. This preserves the built-in transport's refusal/read provenance;
+  custom delegation and copied init objects remain conservative.
+  Remote MCP captures
+  each physical read's entry before awaiting its response; a later send
+  cannot overwrite it. Infisical's response identity and Google's init
+  identity only identify the request whose credential was renewed.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the

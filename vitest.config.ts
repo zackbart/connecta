@@ -27,6 +27,7 @@ const WORKERS_SUITES = [
   "test/direct-write-finalizer.test.ts",
   "test/mcp-core.test.ts",
   "test/oauth-refresh-http.test.ts",
+  "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
   "test/server.test.ts",
   "test/unhandled-rejections.test.ts",

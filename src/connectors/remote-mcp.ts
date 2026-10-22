@@ -118,6 +118,7 @@ import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
+  recordProviderResponse,
   enterProviderBoundary,
   knownProviderFailure,
   providerBoundary,
@@ -2405,13 +2406,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         flight.sent = true;
         flight.authorization = new Headers(init?.headers).get("authorization");
       }
-      if (flight?.request && !flight.request.entry.dispatched)
-        dispatchProviderRequest(flight.request.ctx, flight.request.entry);
+      const request = flight?.request;
+      if (request?.entry.dispatched)
+        request.entry = providerRequest(request.ctx, !flight?.write, request.entry.provider, {
+          method: init?.method ?? "GET",
+        });
+      const entry = request?.entry;
+      if (request && entry) dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
-      if (flight?.request) flight.request.entry.status = response.status;
+      if (entry) recordProviderResponse(entry, response.status);
       if (flight?.write) {
         if (response.status === 401) flight.unauthorized = true;
         else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;

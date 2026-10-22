@@ -23,6 +23,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
 import { ConnectorCallError } from "../errors.js";
+import { recordProviderResponse } from "../provider-call.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
@@ -273,7 +274,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         try: (interrupted) => {
           // Synchronous with the send: from here the core counts it as left,
           // and it refuses a request whose call has already ended.
-          core.dispatch(entry, headers);
+          core.dispatch(entry, headers, request.method);
           dispatch.state = "pending";
           return globalThis.fetch(url, {
             method: request.method,
@@ -299,7 +300,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       });
       dispatch.state = "answered";
       dispatch.status = response.status;
-      entry.status = response.status;
+      recordProviderResponse(entry, response.status);
       dispatch.headers = response.headers;
       if (REDIRECT_STATUSES.has(response.status)) {
         yield* cancel(response);

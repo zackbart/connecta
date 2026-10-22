@@ -9,12 +9,12 @@ import { followRedactedCopies } from "./redaction-identity.js";
 import type { Connector, ConnectorContext } from "./types.js";
 
 export interface ProviderRequest {
-  dispatched: boolean;
-  status?: number;
+  readonly dispatched: boolean;
+  readonly status?: number;
   auxiliary: boolean;
   provider: string;
   /** The HTTP method it was sent with, when its channel knows it. */
-  method?: string;
+  readonly method?: string;
   /** Positive operation/tool evidence; an HTTP method alone proves no read. */
   classification?: "read" | "write" | undefined;
   /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
@@ -28,10 +28,10 @@ export interface ProviderRequest {
   /**
    * Its answer was a 401, and a renewal then replaced the credential it sent
    * with a different one ({@link renewedAfterUnauthorized}). The 401 no
-   * longer needs the operator's recovery, so it no longer decides the call's
-   * verdict (Q8).
+   * longer needs the operator's recovery. The single `settleWrite` decider
+   * still reports unknown, without the handoff (Q8).
    */
-  renewed?: true;
+  readonly renewed?: true;
 }
 interface ProviderCall {
   requests: ProviderRequest[];
@@ -146,11 +146,62 @@ export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, 
 }
 
 /** Record that a request leaves now; synchronous with the send that follows it. */
-export function dispatchProviderRequest(ctx: ConnectorContext, request: ProviderRequest, headers?: HeadersInit): void {
-  assertProviderCallOpen(ctx, request.provider, request.auxiliary);
+export function dispatchProviderRequest(
+  ctx: ConnectorContext | undefined,
+  request: ProviderRequest,
+  headers?: HeadersInit,
+  method = request.method,
+): void {
+  if (ctx) assertProviderCallOpen(ctx, request.provider, request.auxiliary);
+  if (request.dispatched) throw new Error("Provider request already dispatched.");
   if (hasMethodOverride(headers)) request.classification = "write";
-  request.dispatched = true;
-  if (!request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
+  recordRequestField(request, "method", method);
+  recordRequestField(request, "dispatched", true);
+  if (ctx && !request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
+}
+
+/** A physical send owns its fields permanently; its own answer is recorded once. */
+function recordRequestField(request: ProviderRequest, field: keyof ProviderRequest, value: unknown): void {
+  Object.defineProperty(request, field, { value, enumerable: true, writable: false, configurable: false });
+}
+
+export function recordProviderResponse(request: ProviderRequest, status: number): void {
+  if (request.status !== undefined) throw new Error("Provider request already answered.");
+  recordRequestField(request, "status", status);
+}
+
+// Only a fetch that records physical sends may accept an unsent handoff.
+const recordingFetches = new WeakSet<object>();
+export function recordingFetch<T extends object>(send: T): T {
+  recordingFetches.add(send);
+  return send;
+}
+export function isRecordingFetch(send: object | undefined): boolean {
+  return send !== undefined && recordingFetches.has(send);
+}
+const handoffs = new WeakMap<RequestInit, ProviderRequest>();
+export function handoffProviderRequest(init: RequestInit, request: ProviderRequest): void {
+  if (request.dispatched) throw new Error("Provider request already dispatched.");
+  handoffs.set(init, request);
+}
+export function takeProviderHandoff(init: RequestInit): ProviderRequest | undefined {
+  // Consume before any await: a read replay or another call cannot take it.
+  const request = handoffs.get(init);
+  handoffs.delete(init);
+  return request?.dispatched ? undefined : request;
+}
+// Observation only: a mapper must name the physical reply it actually received.
+const responseRequests = new WeakMap<object, { request: ProviderRequest; owner: ProviderRequest }>();
+export function bindProviderResponse(
+  response: object,
+  request: ProviderRequest,
+  owner: ProviderRequest | undefined,
+): void {
+  if (owner) responseRequests.set(response, { request, owner });
+}
+export function responseProviderRequest(response: object, owner: ProviderRequest): ProviderRequest | undefined {
+  const answer = responseRequests.get(response);
+  return answer?.owner === owner ? answer.request : undefined;
 }
 
 /** Override presence invalidates read evidence, whatever value the header carries. */
@@ -293,9 +344,8 @@ export function readRequest(request: ProviderRequest): boolean {
   return request.classification === "read" && (method === "GET" || method === "HEAD");
 }
 
-// OAuth does credential checks before the actual send. Associate a guarded
-// request with its init so the grant records that same request at dispatch,
-// rather than counting the wrapper and resource as two requests.
+// A guarded send's identity, for its transport to identify the one request
+// whose credential it renews (Google). Never reuse this entry for a new send.
 const requestInits = new WeakMap<RequestInit, ProviderRequest>();
 export function bindProviderRequest(init: RequestInit, request: ProviderRequest): void {
   requestInits.set(init, request);
@@ -315,7 +365,7 @@ export function providerFetch(
     const request = providerRequest(ctx, auxiliary, provider, { method });
     dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const response = await send(input, init);
-    request.status = response.status;
+    recordProviderResponse(request, response.status);
     return response;
   };
 }
@@ -370,7 +420,7 @@ export function unauthorizedAnswer(request: ProviderRequest): ConnectorCallError
  * renewed nothing.
  */
 export function renewedAfterUnauthorized(request: ProviderRequest | undefined, sent: string, fresh: string): void {
-  if (request?.status === 401 && fresh !== sent) request.renewed = true;
+  if (request?.status === 401 && fresh !== sent && !request.renewed) recordRequestField(request, "renewed", true);
 }
 
 /** Whether an invocation opened the logical call `ctx` belongs to; it then settles Q8 itself. */

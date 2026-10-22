@@ -1,10 +1,13 @@
 import {
   assertProviderCallOpen,
-  boundProviderRequest,
+  bindProviderResponse,
   hasMethodOverride,
   dispatchProviderRequest,
+  recordProviderResponse,
+  recordingFetch,
   providerRequest,
   renewedAfterUnauthorized,
+  takeProviderHandoff,
   vendorRefusal,
 } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
@@ -386,22 +389,19 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    */
   const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
-    const dispatch = providerRequest(ctx, true, id);
-    if (settings.tokenRequestHeaders.length === 0 || `${url.origin}${url.pathname}` !== settings.identity) {
-      trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
-      dispatch.dispatched = true;
-      const response = await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" });
-      dispatch.status = response.status;
-      return byteReadResponse(response);
+    const request: RequestInit = { ...init, redirect: "manual" };
+    if (settings.tokenRequestHeaders.length && `${url.origin}${url.pathname}` === settings.identity) {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
+      for (const [name, value] of settings.tokenRequestHeaders)
+        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
+      request.headers = headers;
     }
-    const headers = new Headers(init.headers);
-    for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    for (const [name, value] of settings.tokenRequestHeaders)
-      if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
-    trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
-    dispatch.dispatched = true;
-    const response = await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" });
-    dispatch.status = response.status;
+    trackRemoteClientRequest(sentSecretsFor(ctx), input, request);
+    const dispatch = providerRequest(ctx, true, id, { method: request.method ?? "GET" });
+    dispatchProviderRequest(ctx, dispatch, request.headers);
+    const response = await sentSecretsFetch(ctx)(input, request);
+    recordProviderResponse(dispatch, response.status);
     return byteReadResponse(response);
   };
 
@@ -467,8 +467,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   ): Promise<Response> => {
     // A call that already ended reads no token and sends nothing more.
     assertProviderCallOpen(ctx, id, false);
-    const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id, { method: init.method ?? "GET" });
-    dispatch.dispatched = false;
+    let prepared = takeProviderHandoff(init);
+    const owner = prepared;
     const url = new URL(input);
     if (!settings.apiOrigins.has(url.origin)) {
       throw new ConnectorCallError(
@@ -503,15 +503,20 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
-      dispatchProviderRequest(ctx, dispatch, sent);
-      const response = await sentSecretsFetch(ctx)(url, {
+      const request: RequestInit = {
         ...init,
         headers: sent,
         redirect: "manual",
         ...(signal ? { signal } : {}),
-      });
-      dispatch.status = response.status;
-      return byteReadResponse(response);
+      };
+      const dispatch = prepared ?? providerRequest(ctx, false, id);
+      prepared = undefined;
+      dispatchProviderRequest(ctx, dispatch, sent, request.method ?? "GET");
+      const response = await sentSecretsFetch(ctx)(url, request);
+      recordProviderResponse(dispatch, response.status);
+      const answer = byteReadResponse(response);
+      bindProviderResponse(answer, dispatch, owner);
+      return { response: answer, dispatch };
     };
 
     if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
@@ -527,7 +532,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       }
       const tokens = await provider.tokens(issuerContext);
       if (!tokens) throw authRequiredError();
-      const first = await send(tokens.access_token);
+      const { response: first, dispatch } = await send(tokens.access_token);
       if (first.status !== 401) return first;
       void first.body?.cancel().catch(() => {});
       if (
@@ -553,7 +558,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         );
       }
       const accessToken = await renewedToken(provider, ctx, tokens.access_token);
-      const second = await send(accessToken);
+      renewedAfterUnauthorized(dispatch, tokens.access_token, accessToken);
+      const { response: second } = await send(accessToken);
       if (second.status !== 401) return second;
       void second.body?.cancel().catch(() => {});
       rejectedScopes.add(scopeOf(ctx));
@@ -705,7 +711,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
     access: (ctx, call) => ({
-      fetch: (input, init) => authorizedFetch(ctx, call.write, input, init),
+      fetch: recordingFetch((input: string | URL, init?: RequestInit) => authorizedFetch(ctx, call.write, input, init)),
     }),
   };
 }

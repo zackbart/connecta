@@ -74,6 +74,7 @@ import {
   providerCallContext,
   providerRequest,
   providerRequests,
+  recordProviderResponse,
   refusalRequest,
   tracksEveryRequest,
   type ProviderRequest,
@@ -123,9 +124,7 @@ function services(
     Context.add(Dispatches, dispatches),
     Context.add(Ledger, {
       open: (facts) => ({ dispatched: false, ...facts }),
-      dispatch: (request) => {
-        request.dispatched = true;
-      },
+      dispatch: (request, headers, method) => dispatchProviderRequest(undefined, request, headers, method),
     }),
     Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
@@ -348,7 +347,7 @@ function ledger(dispatches: Dispatch[], provider = "Acme"): ConnectorContext {
     if (entry.state === "reserved" || entry.state === "preparing") continue;
     const sent = providerRequest(ctx, !entry.write, provider, { method: "POST" });
     dispatchProviderRequest(ctx, sent);
-    if (entry.status !== undefined) sent.status = entry.status;
+    if (entry.status !== undefined) recordProviderResponse(sent, entry.status);
     entry.request = sent;
   }
   closeProviderCall(ctx);
