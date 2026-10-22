@@ -106,7 +106,7 @@ export const RequestFacts = Context.Reference<{
   readonly sent?: { reservation?: Dispatch; dispatch?: Dispatch };
 }>("connecta/http/RequestFacts", { defaultValue: () => ({ effect: "call" }) });
 
-/** A call's use of renewal ends on close; a dispatched refresh remains coordinator-owned. */
+/** A call's use of renewal ends on close; a submitted claim remains coordinator-owned. */
 export function duringCall<A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E | RequestRefused, R | Signal> {
   return Signal.use((signal) => {
     const closed = () => new RequestRefused({ message: "This call has ended; no renewal work may continue." });
