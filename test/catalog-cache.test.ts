@@ -708,6 +708,34 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(f.listings()).toBe(3);
   });
 
+  it("INV-4 INV-10: B.1 operation services partition negotiation and private fallback for alice on crm and bob on tickets", async () => {
+    const f = await fixture({ ttl: 60_000, scope: "private", sharedCredential: true });
+    const root = f.registry();
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const negotiations = async () => (await f.store.list("")).filter((key) => key.includes("negotiation:v1:"));
+
+    await f.read(root, "alice", "crm");
+    expect(await negotiations()).toHaveLength(1);
+    await f.read(root, "bob", "tickets");
+    expect(await negotiations()).toHaveLength(2);
+    await f.read(root, "alice", "crm");
+    expect(await negotiations()).toHaveLength(2);
+    expect(f.listings()).toBe(2);
+
+    now += 60_001;
+    f.mode("transient");
+    const alice = await f.read(root, "alice", "crm");
+    const bob = await f.read(root, "bob", "tickets");
+    expect(alice).toHaveLength(1);
+    expect(bob).toHaveLength(1);
+    expect(catalogIsFresh(alice)).toBe(false);
+    expect(catalogIsFresh(bob)).toBe(false);
+    await expect(f.read(root, "alice", "tickets")).rejects.toBeInstanceOf(Error);
+    await expect(f.read(root, "bob", "crm")).rejects.toBeInstanceOf(Error);
+    expect(f.listings()).toBe(6);
+  });
+
   it("INV-4 INV-5: public hints cannot share Alice's private workspace with Bob or another pool", async () => {
     const f = await fixture({
       ttl: 60_000,
