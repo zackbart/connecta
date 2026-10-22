@@ -157,6 +157,9 @@ it("INV-6 INV-7: owned response bytes, form framing, cancellation and gzip follo
     expect(JSON.parse(new TextDecoder().decode(await response.arrayBuffer()))).toEqual({ ok: "😀" });
     expect(raw).toContain('name="name"');
     expect(raw).toContain("alice");
+    const head = await nodeGuardedTransport.send(new URL(`${url}/items`), { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect((await head.arrayBuffer()).byteLength).toBe(0);
     const broken = await nodeGuardedTransport.send(new URL(`${url}/unreadable`), { method: "POST" });
     expect(broken.status).toBe(401);
     await expect(broken.arrayBuffer()).rejects.toThrow("Unsupported response content encoding.");

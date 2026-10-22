@@ -16,7 +16,6 @@ import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
-import { createMetaTools } from "../src/meta-tools.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
   recordUnauthorized,
@@ -83,9 +82,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
-
-const BASE = "https://connecta.example";
+import { silentLogger } from "./helpers.js";
 
 let sent: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
 let answers: Array<() => Response> = [];

@@ -35,6 +35,10 @@ export const nodeGuardedTransport: GuardedTransport = {
         }
       }
       const raw = answer.body;
+      // Undici emits AbortError even for a deliberate destroy() with no
+      // consumer (HEAD or an unsupported encoding). Active Web/decode stream
+      // listeners still receive read failures; cleanup always has an observer.
+      raw.on("error", () => {});
       const close = () => void client.destroy().catch(() => {});
       raw.once("close", close);
       if (framed.method === "HEAD" || [204, 205, 304].includes(answer.statusCode)) {
