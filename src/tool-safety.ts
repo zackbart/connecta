@@ -19,6 +19,36 @@ export function classifyTool(
     : "write";
 }
 
+// Source policy is a verified provider review, otherwise fail-closed hints.
+// Deployment overrides never enter it. It is private metadata, not catalog data.
+// Keep it through host-owned clones without exposing it to tools or storage.
+const sourceClassifications = new WeakMap<ToolDef, "read" | "write">();
+
+export function sourceClassification(
+  tool: ToolDef,
+  review?: { verdict: ToolVerdict; stale?: boolean },
+): "read" | "write" {
+  return sourceClassifications.get(tool) ?? classifyTool(tool, undefined, review);
+}
+
+export function carryToolClassification(
+  source: ToolDef,
+  served: ToolDef,
+  review?: { verdict: ToolVerdict; stale?: boolean },
+): ToolDef {
+  sourceClassifications.set(served, sourceClassification(source, review));
+  return served;
+}
+
+/** Replay and outcome policy only; admission and presentation use the served class. */
+export function isWriteLike(tool: ToolDef): boolean {
+  return tool.classification !== "read" || sourceClassification(tool) === "write";
+}
+
+export function cloneTool(tool: ToolDef): ToolDef {
+  return carryToolClassification(tool, structuredClone(tool));
+}
+
 /**
  * The only permission decision for a connector call. Approval is client-owned.
  * A read-only endpoint refuses every write on every surface; a writable one

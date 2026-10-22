@@ -67,29 +67,31 @@ describe("downstream negotiation verdicts", () => {
     expect(methods.filter((method) => method === "server/discover")).toHaveLength(2);
   });
 
-  for (const status of [405, 500, 502, 503, 599]) {
-    it(`INV-7: caches the legacy verdict after probe HTTP ${status}`, async () => {
+  it("INV-4 INV-7: probe status table caches legacy fallbacks and refuses auth failures", async () => {
+    for (const [status, legacy] of [
+      [405, true],
+      [500, true],
+      [502, true],
+      [503, true],
+      [599, true],
+      [401, false],
+      [403, false],
+    ] as const) {
       const methods = downstream(status);
       const storage = memoryStorage();
       const connector = remoteMcp("down", { url: "https://down.test/mcp" });
-      await list(connector, storage);
-      await list(connector, storage);
-      expect(methods.filter((method) => method === "server/discover")).toHaveLength(1);
-      // A legacy session still initializes on its own fresh transport.
-      expect(methods.filter((method) => method === "initialize")).toHaveLength(2);
-    });
-  }
-
-  for (const status of [401, 403]) {
-    it(`INV-4: refuses probe HTTP ${status} without legacy fallback or a cached verdict`, async () => {
-      const methods = downstream(status);
-      const storage = memoryStorage();
-      const connector = remoteMcp("down", { url: "https://down.test/mcp" });
-      await expect(list(connector, storage)).rejects.toBeDefined();
-      expect(methods).not.toContain("initialize");
-      expect(await storage.list("")).toEqual([]);
-    });
-  }
+      if (legacy) {
+        await list(connector, storage);
+        await list(connector, storage);
+        expect(methods.filter((method) => method === "server/discover")).toHaveLength(1);
+        expect(methods.filter((method) => method === "initialize")).toHaveLength(2);
+      } else {
+        await expect(list(connector, storage)).rejects.toBeDefined();
+        expect(methods).not.toContain("initialize");
+        expect(await storage.list("")).toEqual([]);
+      }
+    }
+  });
 
   it("INV-5: partitions verdicts by the current credential and stores only intake-redacted discovery", async () => {
     const methods = downstream();

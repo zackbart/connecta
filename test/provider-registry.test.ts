@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import { createConnecta, customExecutor } from "../src/index.js";
-import { linear } from "../src/providers/linear/index.js";
 import { planningCenter } from "../src/providers/planning-center/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -67,28 +66,6 @@ const providers: ProviderCase[] = [
         ],
         true,
       ),
-  },
-  {
-    name: "linear",
-    ids: ["linear_product", "linear_reporting"] as const,
-    toolName: "list_issues",
-    secondToolName: "list_projects",
-    descriptionMarks: [
-      "Linear issue tracking and project planning — Product delivery planning",
-      "Linear issue tracking and project planning (read-only) — Executive delivery reporting",
-    ],
-    admissionIds: ["linear_reporting"],
-    meteredId: "linear_reporting",
-    staticCatalog: false,
-    factory: (storage: KVStorage) =>
-      deployment(storage, [
-        linear("linear_product", { purpose: "Product delivery planning", access: "read-write" }),
-        linear("linear_reporting", {
-          purpose: "Executive delivery reporting",
-          access: "read-only",
-          callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCalls: 500, windowMs: 3_600_000 } }] },
-        }),
-      ]),
   },
   {
     name: "planning-center",

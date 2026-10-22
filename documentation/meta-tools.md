@@ -404,6 +404,15 @@ match those bindings and pass current auth, connector/tool grants, pool membersh
 and read-only checks. Old entries lacking bindings fail closed. A random UUID is a
 handle, never an access grant.
 
+Each page validates access twice: before decoding its payload and again before
+returning it. Each pass authenticates the caller once, checks every dependency
+against that admitted scope, and reuses each connector's catalog within the
+pass. Authentication is never reused across passes or requests, so revocation
+during the page read still refuses the page. For example, a search handle with
+30 tool dependencies requires the same number of authentications as one with
+one dependency. Paging deadlines cover both storage and access validation;
+timeout errors identify the active stage as `result storage` or `access validation`.
+
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
 occupies more than 32 keys, because every chunk is also a write. `connecta.result`

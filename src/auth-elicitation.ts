@@ -18,6 +18,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
+import { isWriteLike } from "./tool-safety.js";
 import { authRecoveryFacts, bindReplayReads, classificationDigest, type ReplayRead } from "./invocation-auth.js";
 import { CatalogService } from "./catalog-service.js";
 import { sentSecretsForRequest } from "./sent-secrets.js";
@@ -237,7 +238,7 @@ export class AuthElicitation {
         if (
           !current.ok ||
           current.resolved.classificationFresh !== true ||
-          current.resolved.definition.classification !== "read" ||
+          isWriteLike(current.resolved.definition) ||
           (await classificationDigest(current.resolved.definition)) !== read.digest
         ) {
           const structuredContent = {

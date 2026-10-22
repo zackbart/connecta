@@ -32,7 +32,7 @@ import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
-import type { Logger } from "../types.js";
+import type { Logger, ToolDef } from "../types.js";
 import { agentEndpointPool, isAgentPath } from "./agent-path.js";
 import {
   admitsMaintainer,
@@ -893,13 +893,15 @@ export function createMcpRoute(opts: ServerOptions): {
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
               endpoint: new URL(request.url).pathname,
               origin: request.headers.get("Origin"),
-              currentResultAccess: async (address, classification, signal, access) => {
+              currentResultAccess: async (dependencies, classification, signal) => {
                 signal?.throwIfAborted();
                 const current = await admit();
                 if (!current.ok) {
                   await current.response.body?.cancel().catch(() => {});
+                  signal?.throwIfAborted();
                   return false;
                 }
+                signal?.throwIfAborted();
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 // Paging re-admits the caller at this endpoint, as a new request would.
@@ -913,32 +915,59 @@ export function createMcpRoute(opts: ServerOptions): {
                   caller: callerFor(current.identity, currentOwner),
                 });
                 if (classification === "write" && currentReadOnly) return false;
-                if (address === undefined) return true;
-                // Skill and resource content requires a whole grant; catalog metadata requires visibility.
-                if (!address.includes("."))
-                  return Boolean(
-                    access === "catalog" ? view.getConnector(address) : view.getResourceConnector(address),
-                  );
-                const resolved = view.resolveAddress(address);
-                if (!resolved) return false;
+                // Both admission and catalogs belong to this pass only. A second
+                // pass after reading the page must observe revocation afresh.
                 const requestScope = {};
+                const catalogs = new Map<string, ToolDef[]>();
                 try {
-                  const tool = (
-                    await view.getTools(resolved.connector.id, baseUrl, requestScope, signal ? { signal } : {})
-                  ).find((tool) => tool.name === resolved.toolName);
-                  signal?.throwIfAborted();
-                  return Boolean(
-                    tool &&
-                    (access === "catalog" ||
-                      (classification === "read" && tool.classification === "read") ||
-                      !currentReadOnly),
-                  );
+                  for (const dependency of dependencies) {
+                    signal?.throwIfAborted();
+                    if (dependency.classification === "write" && currentReadOnly) return false;
+                    // Skill and resource content requires a whole grant; catalog metadata requires visibility.
+                    if (dependency.tool === undefined) {
+                      if (
+                        !(dependency.access === "catalog"
+                          ? view.getConnector(dependency.connector)
+                          : view.getResourceConnector(dependency.connector))
+                      )
+                        return false;
+                      continue;
+                    }
+                    const resolved = view.resolveAddress(`${dependency.connector}.${dependency.tool}`);
+                    if (!resolved) return false;
+                    let tools = catalogs.get(resolved.connector.id);
+                    if (!tools) {
+                      // Track even a failed load so its scope is always closed.
+                      catalogs.set(resolved.connector.id, []);
+                      tools = await view.getTools(
+                        resolved.connector.id,
+                        baseUrl,
+                        requestScope,
+                        signal ? { signal } : {},
+                      );
+                      catalogs.set(resolved.connector.id, tools);
+                    }
+                    signal?.throwIfAborted();
+                    const tool = tools.find((tool) => tool.name === resolved.toolName);
+                    if (
+                      !(
+                        tool &&
+                        (dependency.access === "catalog" ||
+                          (dependency.classification === "read" && tool.classification === "read") ||
+                          !currentReadOnly)
+                      )
+                    )
+                      return false;
+                  }
+                  return true;
                 } finally {
-                  await closeConnectorScope(
-                    resolved.connector,
-                    view.contextFor(resolved.connector.id, baseUrl, requestScope),
-                    runtimeContext?.waitUntil?.bind(runtimeContext),
-                  );
+                  for (const id of catalogs.keys()) {
+                    await closeConnectorScope(
+                      view.getConnector(id)!,
+                      view.contextFor(id, baseUrl, requestScope),
+                      runtimeContext?.waitUntil?.bind(runtimeContext),
+                    );
+                  }
                 }
               },
               caller: callerFor(authz.identity, poolOwner),
