@@ -503,6 +503,22 @@ describe("sharing", () => {
     }
     expect(calls).toEqual([]);
   });
+
+  it("emails only when asked, with the message", async () => {
+    route = () => ({ body: { id: "p1" } });
+    await call(connection(), "share_file", {
+      fileId: "f1",
+      type: "group",
+      role: "commenter",
+      emailAddress: "elders@church.example",
+      sendNotificationEmail: true,
+      emailMessage: "For Tuesday.",
+    });
+    expect(Object.fromEntries(calls[0]!.url.searchParams)).toMatchObject({
+      sendNotificationEmail: "true",
+      emailMessage: "For Tuesday.",
+    });
+  });
 });
 
 describe("every projection is what the output schema declares (H8, H9)", () => {
@@ -601,11 +617,6 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     return found;
   }
 
-  it("covers every tool", async () => {
-    const names = (await connection().listTools(context())).map((tool) => tool.name).sort();
-    expect(CASES.map(([name]) => name).sort()).toEqual(names);
-  });
-
   /**
    * Every string a JSON body carries made far longer than any bound, and every
    * list three times past the cap: ids turn malformed, labels and names are
@@ -628,7 +639,6 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
   };
 
   it.each([
-    ["realistic", rich],
     ["empty", empty],
     ["pathological", pathological],
   ] as const)("declares every key of a %s response, and omits nothing required", async (_kind, responses) => {

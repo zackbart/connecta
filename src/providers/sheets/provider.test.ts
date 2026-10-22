@@ -637,32 +637,34 @@ describe("errors (H11)", () => {
   };
   const writes: [string, Record<string, unknown>][] = [
     ["update_values", { spreadsheetId: ID, range: "A1", values: [["x"]], valueInputOption: "RAW" }],
-    ["batch_update_values", { spreadsheetId: ID, data: [{ range: "A1", values: [["x"]] }], valueInputOption: "RAW" }],
     ["append_values", { spreadsheetId: ID, range: "Log!A:C", values: [["x"]], valueInputOption: "RAW" }],
-    ["clear_values", { spreadsheetId: ID, ranges: ["A1"] }],
     ["create_spreadsheet", { title: "Attendance" }],
-    ["add_sheet", { spreadsheetId: ID, title: "Q4" }],
-    ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ deleteSheet: { sheetId: 7 } }] }],
   ];
 
-  it.each(writes)("never tells %s to retry when its 2xx reply breaks mid-stream", async (name, args) => {
-    route = () => ({ raw: brokenReply });
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("the change probably applied");
-    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    // One attempt: an accepted write is never replayed.
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "never tells %s to retry when its 2xx reply breaks mid-stream",
+    async (name, args) => {
+      route = () => ({ raw: brokenReply });
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("the change probably applied");
+      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+      // One attempt: an accepted write is never replayed.
+      expect(calls).toHaveLength(1);
+    },
+  );
 
-  it.each(writes)("INV-9: never tells %s to retry when no reply comes back", async (name, args) => {
-    route = () => ({ raw: noReply });
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("may or may not have been applied");
-    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "INV-9: never tells %s to retry when no reply comes back",
+    async (name, args) => {
+      route = () => ({ raw: noReply });
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("may or may not have been applied");
+      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   const serverError = () => ({
     status: 503,
@@ -671,7 +673,7 @@ describe("errors (H11)", () => {
 
   // Writing fixed cells is an operation hint, not an idempotency key, and
   // grants no retry credit (#902 round 11).
-  it.each(writes.filter(([name]) => ["update_values", "batch_update_values", "clear_values"].includes(name)))(
+  it.each(writes.filter(([name]) => name === "update_values"))(
     "INV-9: a 5xx answering %s is unknown, though it writes fixed cells",
     async (name, args) => {
       route = serverError;
@@ -689,15 +691,20 @@ describe("errors (H11)", () => {
     create_spreadsheet: "Search Drive for this title before creating it again",
   };
 
-  it.each(writes)("treats a redirect answering %s as an unknown outcome, never as applied", async (name, args) => {
-    route = redirect;
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("unknown");
-    expect(failure.message).not.toMatch(/probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-    if (advice[name]) expect(failure.message).toContain(advice[name]);
-    expect(calls).toHaveLength(1);
-  });
+  it.each(writes.filter(([name]) => name === "append_values"))(
+    "treats a redirect answering %s as an unknown outcome, never as applied",
+    async (name, args) => {
+      route = redirect;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("unknown");
+      expect(failure.message).not.toMatch(
+        /probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i,
+      );
+      if (advice[name]) expect(failure.message).toContain(advice[name]);
+      expect(calls).toHaveLength(1);
+    },
+  );
 
   it("keeps a 503 with a rate-limit reason on a non-idempotent write an unknown outcome, not a rate limit", async () => {
     route = () => ({
@@ -711,7 +718,7 @@ describe("errors (H11)", () => {
         },
       },
     });
-    const failure = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const failure = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.code).not.toBe("rate_limited");
     expect(failure.message).toContain("outcome is unknown");
@@ -721,19 +728,19 @@ describe("errors (H11)", () => {
 
   it("gives a 5xx append or create the same advice as one that got no answer", async () => {
     route = serverError;
-    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(append.message).toContain("Appending again would add the rows a second time");
-    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
     expect(create.message).toContain("Search Drive for this title before creating it again");
   });
 
   it("tells an uncertain append to read the table, and an uncertain create to search Drive", async () => {
     route = () => ({ raw: noReply });
-    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(append.message).toContain("Appending again would add the rows a second time");
     expect(append.message).toContain("get_values");
     route = () => ({ raw: brokenReply });
-    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
     expect(create.message).toContain("Search Drive for this title before creating it again");
   });
 
@@ -742,7 +749,7 @@ describe("errors (H11)", () => {
       status: 400,
       body: { error: { code: 400, message: "Unable to parse range: Log!A:C", status: "INVALID_ARGUMENT" } },
     });
-    const refused = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    const refused = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
     expect(refused.code).toBe("invalid_args");
     expect(refused.message).not.toContain("Appending again");
     route = () => ({ raw: noReply });

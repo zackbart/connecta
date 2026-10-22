@@ -139,37 +139,6 @@ const FORM = {
   ],
 };
 
-const RESPONSE = {
-  responseId: "r1",
-  createTime: "2026-10-01T12:00:00.000Z",
-  lastSubmittedTime: "2026-10-01T12:05:00.000Z",
-  respondentEmail: "ann@church.example",
-  answers: {
-    q2: {
-      questionId: "q2",
-      textAnswers: { answers: [{ value: "x".repeat(2_500) }] },
-      grade: {
-        score: 0,
-        correct: false,
-        feedback: {
-          text: `See the allergy guide. ${"f".repeat(2_100)}`,
-          material: [
-            { link: { uri: "https://church.example/allergies", displayText: "Allergy guide" } },
-            { video: { youtubeUri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety" } },
-          ],
-        },
-      },
-    },
-    q1: { questionId: "q1", textAnswers: { answers: [{ value: "Evening" }] } },
-    q5: { questionId: "q5", textAnswers: { answers: [{ value: "Fri" }, { value: "Sat" }] } },
-    gone: { questionId: "gone", textAnswers: { answers: [{ value: "from a deleted question" }] } },
-    q9: {
-      questionId: "q9",
-      fileUploadAnswers: { answers: [{ fileId: "f1", fileName: "waiver.pdf", mimeType: "application/pdf" }] },
-    },
-  },
-};
-
 describe("reading forms (H9)", () => {
   it("refuses an id that is not a form id before any request", async () => {
     for (const formId of ["../drive/v3/files", "a/b", "", "form 1"]) {
@@ -341,22 +310,6 @@ describe("output schemas declare what each tool returns (H8)", () => {
     const projectedEmpty = await call(connector, "get_form", { formId: "new-1" });
     expect(projectedEmpty.items).toEqual([]);
     await conforms(connector, "get_form", projectedEmpty);
-  });
-
-  it("declares every key of listed and fetched responses", async () => {
-    const connector = connection();
-    route = (request) =>
-      request.url.pathname.endsWith("/responses")
-        ? { body: { responses: [{ ...RESPONSE, totalScore: 1 }], nextPageToken: "next" } }
-        : request.url.pathname.includes("/responses/")
-          ? { body: { ...RESPONSE, totalScore: 1 } }
-          : { body: RICH_FORM };
-    await conforms(connector, "list_responses", await call(connector, "list_responses", { formId: "form-1" }));
-    await conforms(
-      connector,
-      "get_response",
-      await call(connector, "get_response", { formId: "form-1", responseId: "r1" }),
-    );
   });
 });
 

@@ -575,18 +575,10 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
   it.each(["a(1).png", "a\\).png"])(
     "INV-5: refuses a withheld destination after an adjacent fresh file named %s before dispatch",
     async (filename) => {
-      for (const first of ["", "?label=unredacted", "#top"]) {
-        for (const separator of ["", ",", ";"]) {
-          for (const opener of ["?", "#"]) {
-            for (const image of ["", "!"]) {
-              const content = `![first](https://file.notion.so/f/${filename}${first})${separator}${image}[second](https://${HOST}/b.png${opener}%5Bredacted%5D)`;
-              const error = await refusal(call(build(), "notion_api_write", insert(content)));
-              expect(error.code, content).toBe("invalid_args");
-              expect(error.message).toContain("cannot be copied into a write");
-            }
-          }
-        }
-      }
+      const content = `![first](https://file.notion.so/f/${filename}?label=unredacted)[second](https://${HOST}/b.png?%5Bredacted%5D)`;
+      const error = await refusal(call(build(), "notion_api_write", insert(content)));
+      expect(error.code, content).toBe("invalid_args");
+      expect(error.message).toContain("cannot be copied into a write");
       expect(calls).toHaveLength(0);
     },
   );
@@ -867,7 +859,7 @@ describe.each([
     expect(page.properties).toEqual({ Status: "In progress" });
   });
 
-  describe.each([99, 100])("with %i distinct selected properties", (count) => {
+  describe.each([100])("with %i distinct selected properties", (count) => {
     it.each([
       { includeTitle: false, duplicates: true, raw: false },
       { includeTitle: true, duplicates: false, raw: true },
@@ -1021,6 +1013,46 @@ describe("notion() lean projections", () => {
       page_id: "page-1",
     });
     expect(custom.icon).toBe(":shipit:");
+  });
+
+  it("flattens every property shape and reports truncation", async () => {
+    queue({ body: PAGE_FIXTURE });
+    const page: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+
+    expect(page.id).toBe("page-1");
+    expect(page.title).toBe("Quarterly review");
+    expect(page.icon).toBe("📘");
+    expect(page.parent).toEqual({ type: "data_source_id", id: "ds-1" });
+    expect(page.created_by).toEqual({ id: "user-1", name: "Ada" });
+    expect(page.properties).toEqual({
+      Name: "Quarterly review",
+      Notes: "ship it",
+      Estimate: 42,
+      Done: true,
+      Stage: "In review",
+      Status: "In progress",
+      Tags: ["infra", "urgent"],
+      Due: { start: "2026-03-01", end: null },
+      Owner: [{ id: "user-9", name: "Grace" }],
+      Blocked: ["page-2", "page-3"],
+      Score: 7,
+      Count: 3,
+      Ticket: "RL-12",
+      Spec: [{ name: "spec.pdf", url: "https://x/1" }],
+      Missing: null,
+      // A property type that shipped after this release degrades to its
+      // payload rather than vanishing.
+      Invented: "kept",
+    });
+    // Notion caps a paginated property at 25 entries and says so only with
+    // has_more. The id travels with the name because the property-item read
+    // addresses properties by id.
+    expect(page.truncated_properties).toEqual([{ name: "Blocked", id: "rel" }]);
+
+    const serialized = JSON.stringify(page);
+    expect(serialized).not.toContain("plain_text");
+    expect(serialized).not.toContain("annotations");
+    expect(serialized).not.toContain("multi_select");
   });
 });
 

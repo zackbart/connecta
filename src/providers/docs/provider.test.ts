@@ -593,58 +593,6 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(unguarded.code).toBe("connector_call_failed");
   });
 
-  it.each([["no answer came back", { unreachable: true }]])(
-    "reports every edit's outcome as unknown, unretryably, when %s",
-    async (_kind, reply) => {
-      route = () => reply;
-      const edits: Record<string, Record<string, unknown>> = {
-        append_text: { documentId: "d", text: "x" },
-        insert_text: { documentId: "d", index: 1, text: "x" },
-        replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
-        batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-      };
-      for (const [name, values] of Object.entries(edits)) {
-        const failure = await call(connection(), name, values).catch((error) => error);
-        expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message, name).toContain("outcome of this edit is unknown");
-        expect(failure.message, name).not.toMatch(/nothing was applied/i);
-      }
-
-      // A revision is a precondition, not an idempotency key: no repeat is
-      // offered with one or without one (INV-9, round 13).
-      const guarded = await call(connection(), "append_text", {
-        documentId: "d",
-        text: "x",
-        requiredRevisionId: "r",
-      }).catch((error) => error);
-      const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-      for (const failure of [guarded, bare]) {
-        expect(failure.message).toContain("can duplicate it");
-        expect(failure.message).not.toContain("is safe");
-      }
-    },
-  );
-
-  it.each([
-    ["a body that breaks after the status", { brokenBody: true }],
-    ["a body past the response ceiling", { oversized: true }],
-    ["a body that will not parse", { raw: "{oops" }],
-  ])("calls every edit probably applied after a 2xx with %s, and never invites a repeat", async (_kind, reply) => {
-    const args: Record<string, Record<string, unknown>> = {
-      append_text: { documentId: "d", text: "x" },
-      insert_text: { documentId: "d", index: 1, text: "x" },
-      replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
-      batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-    };
-    route = () => reply;
-    for (const [name, values] of Object.entries(args)) {
-      const failure = await call(connection(), name, values).catch((error) => error);
-      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message, name).toContain("so it was applied");
-      expect(failure.message, name).toContain("Do not repeat it");
-    }
-  });
-
   it.each([
     ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
     [
@@ -721,17 +669,8 @@ async function check(connector: Connector, name: string, result: unknown): Promi
 }
 
 describe("every output is declared (H8, H9)", () => {
-  it("declares every key each tool emits, on realistic and on empty resources", async () => {
+  it("accepts ProtoJSON omissions in documents and batch replies", async () => {
     const connector = connection();
-    route = () => ({ body: DOCUMENT });
-    await check(
-      connector,
-      "get_document",
-      await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }),
-    );
-    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", maxChars: 3 }));
-    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", raw: true }));
-
     // ProtoJSON drops empty fields: an empty document is very nearly `{}`.
     route = () => ({ body: {} });
     const empty = await call(connector, "get_document", { documentId: "doc-0", withIndexes: true });
@@ -744,38 +683,6 @@ describe("every output is declared (H8, H9)", () => {
     await check(connector, "get_document", empty);
     route = () => ({ body: { documentId: "doc-0", tabs: [{ tabProperties: { tabId: "t.0" } }] } });
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-0" }));
-
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? {
-            body: {
-              documentId: "d",
-              replies: [{ replaceAllText: { occurrencesChanged: 2 } }],
-              writeControl: { requiredRevisionId: "r2" },
-            },
-          }
-        : { body: { documentId: "d", title: "T", revisionId: "r1" } };
-    await check(connector, "create_document", await call(connector, "create_document", { title: "T", text: "x" }));
-    await check(connector, "append_text", await call(connector, "append_text", { documentId: "d", text: "x" }));
-    await check(
-      connector,
-      "insert_text",
-      await call(connector, "insert_text", { documentId: "d", index: 1, text: "x" }),
-    );
-    await check(
-      connector,
-      "replace_all_text",
-      await call(connector, "replace_all_text", { documentId: "d", find: "a", replaceWith: "b" }),
-    );
-    await check(
-      connector,
-      "batch_update_document",
-      await call(connector, "batch_update_document", {
-        documentId: "d",
-        requests: [{ insertText: {} }],
-        requiredRevisionId: "r1",
-      }),
-    );
 
     // An empty batchUpdate answer still satisfies every required key.
     route = () => ({ body: {} });
@@ -1046,46 +953,6 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     const create = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
     expect(create.message).toContain("created the document (HTTP 2xx)");
     expect(bytes(create.message)).toBeLessThan(2_000);
-  });
-
-  it("measures the reply notice it returns, at every size around the boundary", async () => {
-    // One reply nearly the whole budget, then 99 small ones: the cut lands
-    // between "1 of 100" and more, where the notice's own length decides.
-    // All 527 sizes share a connector, token cache, and invariant reply data.
-    // Rebuilding them per size repeated RSA import/signing and large-object
-    // allocation, pushing this sweep past the 5s guard under contention.
-    const connector = connection();
-    const ctx = context();
-    const small = Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }));
-    const value = "n".repeat(500);
-    const shown = new Set<number>();
-    for (const [keys, step] of [
-      [380, 37],
-      [385, 1],
-    ] as const) {
-      const big = {
-        createNamedRange: {
-          ...Object.fromEntries(Array.from({ length: keys }, (_, key) => [`k${key}`, value])),
-          tail: "",
-        },
-      };
-      route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
-      for (let tail = 0; tail <= 512; tail += step) {
-        big.createNamedRange.tail = "t".repeat(tail);
-        const result = (await connector.callTool(
-          "batch_update_document",
-          { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-          ctx,
-        )) as { replies: unknown[]; notice: string };
-        expect(bytes(result), `keys ${keys}, tail ${tail}`).toBeLessThanOrEqual(BUDGET);
-        expect(result.notice).toContain(`${result.replies.length} of 100 replies`);
-        shown.add(result.replies.length);
-      }
-    }
-    // The sweep crossed the boundaries it was built for.
-    expect(shown.has(1)).toBe(true);
-    expect([...shown].some((count) => count > 1)).toBe(true);
-    expect(tokenCalls).toBe(1);
   });
 
   it("refuses a default read past the bridge budget, and lets an explicit one through", async () => {

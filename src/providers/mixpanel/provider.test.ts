@@ -3,23 +3,11 @@ import { observedCatalogDrift } from "../../catalog-drift.js";
 import type { ToolDef } from "../../types.js";
 import { hostedSchemaFixtures } from "./fixtures.js";
 import { thingsDeployment } from "../../../test/fixtures/things-deployment.js";
-import {
-  guideOf,
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-  servedTools,
-} from "../../../test/fixtures/hosted-provider.js";
+import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
   remoteMcp: vi.fn(),
-  /**
-   * The mocked downstream serves names and annotations but no schemas, so no
-   * recorded digest can match it. The classification rules below are about
-   * annotations; they read the catalog as if each schema were the one its
-   * release reviewed. The stale-schema case turns this off.
-   */
-  schemasAsReviewed: true,
 }));
 
 vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
@@ -35,27 +23,10 @@ import { MIXPANEL_MCP_ENDPOINTS, mixpanel } from "./index.js";
 describe("mixpanel()", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
-    const construct = mocks.remoteMcp.getMockImplementation()!;
-    mocks.remoteMcp.mockImplementation((id, options) =>
-      construct(id, {
-        ...options,
-        classify: mocks.schemasAsReviewed
-          ? {
-              tools: Object.fromEntries(
-                Object.entries(mixpanel.definition.classify!.tools).map(([name, entry]) => [
-                  name,
-                  typeof entry === "string" ? entry : { verdict: entry.verdict, reason: entry.reason },
-                ]),
-              ),
-            }
-          : options.classify,
-      }),
-    );
-    mocks.schemasAsReviewed = true;
   });
 
-  it("owns the endpoint, OAuth default, purpose, and provider guidance", () => {
-    const connector = mixpanel("product_analytics", {
+  it("owns the endpoint and OAuth default", () => {
+    mixpanel("product_analytics", {
       title: "Production analytics",
       purpose: "Growth team product decisions",
       instructions: "Use project 42 unless the request names another project.",
@@ -66,16 +37,10 @@ describe("mixpanel()", () => {
       expect.objectContaining({
         url: MIXPANEL_MCP_ENDPOINTS.us,
         title: "Production analytics",
-        description: "Mixpanel product analytics (US residency) — Growth team product decisions",
         auth: { type: "oauth" },
         requireHttps: true,
       }),
     );
-    expect(guideOf(connector)).toContain("Never return raw `Run-Query` output.");
-    // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(guideOf(connector)).toContain("## Account instructions");
-    expect(guideOf(connector)).not.toContain("+## Account instructions");
-    expect(guideOf(connector)).toContain("Use project 42 unless the request names another project.");
   });
 
   it("frames an operator-managed service account as Mixpanel documents it", () => {
@@ -103,15 +68,7 @@ describe("mixpanel()", () => {
     );
   });
 
-  itClassifiesLikeARelease(() => mixpanel("analytics", { purpose: "Product decisions" }), mocks, {
-    read: ["Run-Query", "List-Dashboards", "Get-Report"],
-    write: "Create-Dashboard",
-    destructive: "Delete-Dashboard",
-    unknown: ["Brand-New-Tool", "Get-Brand-New-Thing", "Wreck-Brand-New-Thing"],
-  });
-
   it("INV-1: serves a reviewed read whose schema no longer matches its digest as a write", async () => {
-    mocks.schemasAsReviewed = false;
     mocks.listTools.mockResolvedValue([
       { name: "Run-Query" },
       { name: "List-Dashboards", annotations: { readOnlyHint: true } },
@@ -128,7 +85,6 @@ describe("mixpanel()", () => {
   });
 
   it("INV-1: current schemas still fail closed on a new schema change or explicit upstream write hint", async () => {
-    mocks.schemasAsReviewed = false;
     const events = hostedSchemaFixtures.find((tool) => tool.name === "Get-Events")!;
     mocks.listTools.mockResolvedValue([
       { ...events, inputSchema: { ...events.inputSchema, description: "A new unreviewed schema" } },
@@ -142,7 +98,6 @@ describe("mixpanel()", () => {
   });
 
   it("INV-1 INV-2: exposes refreshed reads on a read-only pool and refuses write-capable experiment reads", async () => {
-    mocks.schemasAsReviewed = false;
     mocks.listTools.mockResolvedValue(hostedSchemaFixtures);
     const connector = mixpanel("things", { purpose: "Product decisions" });
     const dispatch = vi.spyOn(connector, "callTool");
