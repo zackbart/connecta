@@ -124,7 +124,7 @@ describe("describeConfig", () => {
       expect(byId.billing?.source).toEqual({ kind: "api", provider: "stripe" });
       expect(byId.billing?.auth).toEqual({ mode: "credential" });
       expect(byId.billing?.usageGuide?.summary).toEqual(expect.any(String));
-      expect(byId.tracker?.source).toEqual({ kind: "remote-mcp", provider: "linear" });
+      expect(byId.tracker?.source).toEqual({ kind: "remote-mcp" });
       // A custom describe() is re-validated: unknown fields are dropped and
       // endpoints are re-parsed down to origin and path.
       expect(byId.custom_conn).toEqual({

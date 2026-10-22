@@ -30,7 +30,6 @@ const fixtures: readonly ContractFixture[] = providerFixtures;
 const BASE = "https://connecta.example";
 const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
-const REMOTE_ONLY = ["basecamp", "intercom", "linear", "revenuecat", "wispr-flow"];
 // These catalog tools consult deployment-owned metadata/indexes and never
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
@@ -59,13 +58,11 @@ function create(fixture: ContractFixture): Connector {
   return fixture.create(fixture.name);
 }
 
-const providers = fixtures
-  .filter((fixture) => !REMOTE_ONLY.includes(fixture.name))
-  .map((fixture) => ({
-    name: fixture.name,
-    create: () => create(fixture),
-    catalog: create(fixture).staticTools!,
-  }));
+const providers = fixtures.map((fixture) => ({
+  name: fixture.name,
+  create: () => create(fixture),
+  catalog: create(fixture).staticTools!,
+}));
 
 function credential(name: string): Record<string, string> {
   return {

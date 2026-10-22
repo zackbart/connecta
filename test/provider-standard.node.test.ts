@@ -228,48 +228,6 @@ describe("the provider standard's rules", () => {
     }
   });
 
-  it("retains observation-only Google hosted names and four annotations independently of api classification", () => {
-    const folder = standard();
-    const drift = JSON.parse(folder.read("drift.json")!);
-    const catalog = JSON.parse(folder.read("evidence/catalog.json")!);
-    const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
-    catalog.tools = [
-      { name: "read_doc", annotations },
-      { name: "update_doc", annotations: { ...annotations, readOnlyHint: false } },
-    ];
-    drift.generated.hosted = [];
-    drift.checks.push({
-      type: "mcp-catalog",
-      endpoint: "https://docsmcp.googleapis.com/mcp/v1",
-      catalog: "evidence/catalog.json",
-    });
-    const observation: ProviderFacts = {
-      ...folder,
-      kind: "api",
-      read: (path) =>
-        path === "drift.json"
-          ? JSON.stringify(drift)
-          : path === "evidence/catalog.json"
-            ? JSON.stringify(catalog)
-            : folder.read(path),
-    };
-    expect(evidenceViolations(observation, today)).toEqual([]);
-    expect(driftViolations(observation, today)).toEqual([]);
-    drift.generated.hosted = ["read_doc", "update_doc"];
-    expect(driftViolations(observation, today)).toContain(
-      "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
-    );
-    drift.generated.hosted = [];
-    delete drift.checks.at(-1).catalog;
-    expect(driftViolations(observation, today)).toContain(
-      "D4: checks[2] compares hosted names and annotations against evidence/catalog.json (tools/list)",
-    );
-    catalog.tools[0].annotations.readOnlyHint = "true";
-    expect(evidenceViolations(observation, today)).toContain(
-      "E3: evidence/catalog.json read_doc behavioral hints must be booleans when present",
-    );
-  });
-
   it("holds when-blocks to declared keys on their own lines, and dual guides to hosted and api", () => {
     const folder = standard();
     const guide = (body: string, facts: Partial<ProviderFacts> = {}) =>

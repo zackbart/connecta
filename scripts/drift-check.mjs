@@ -1,7 +1,7 @@
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
 // Version 2 (decision 0011, D; scripts/drift-record.mjs) reads hosted names
-// from `generated.hosted`, catalog baselines from evidence/catalog.json, and
+// from `generated.hosted` and
 // endpoint rows keyed by an `operation` from `generated.operations`. Version 1
 // stays readable for providers that have not landed their step 1.
 // Reports are advisory (exit 0), including parser/network failures and required
@@ -12,7 +12,6 @@
 import { createHash } from "node:crypto";
 import { STALE_AFTER_DAYS, serializeDrift } from "./drift-record.mjs";
 import {
-  CATALOG_HINTS,
   DRIFT_VERSION,
   EvidenceError,
   checkView as projectCheck,
@@ -36,17 +35,14 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * @typedef {{type: "endpoints", specification: object, endpoints: object[], scopes?: string[]} |
  * {type: "versioned-endpoints", specifications: object, endpoints: object[]} |
  * {type: "mcp-docs", setup: string, inventory?: object, endpoints: string[], reviewed: string[], reviewedAccess?: Record<string, "read" | "write">} |
- * {type: "oauth-discovery", setup: string, endpoints: string[], reviewed: string[]} |
- * {type: "mcp-catalog", endpoint: string, reviewed: object[]} |
  * {type: "manual", source: string, rationale: string, evidence?: object} |
  * {type: "openapi-index", source: "openapi.source.json"}} DriftCheck
  * @typedef {{version: 1, provider: string, checks: DriftCheck[]}} DriftRecord
  *
  * Version 2 changes these, and every checker reads a v2 check through
  * `checkView` in the version-1 shape above: `manual` names `reason` and a
- * `lastVerified` day; `mcp-docs` and `oauth-discovery` name no `reviewed`
- * list (it is `generated.hosted`); `mcp-catalog` names
- * `catalog: "evidence/catalog.json"`; endpoint rows carry `operation` (and
+ * `lastVerified` day; `mcp-docs` names no `reviewed`
+ * list (it is `generated.hosted`); endpoint rows carry `operation` (and
  * `page` for ReadMe operation pages) in place of `method` and `path`;
  * `openapi-index` reads `evidence/openapi.json`.
  * @typedef {{version: 2, provider: string, generated: {operations: string[], hosted: string[], evidence: Record<string, string>}, checks: object[]}} DriftRecordV2
@@ -70,12 +66,12 @@ function usage(message) {
       "usage: pnpm run drift:check [options]",
       "",
       "  --specs                  only compare touched endpoints with published specs",
-      "  --docs                   only compare public MCP catalogs, docs and connection metadata",
+      "  --docs                   only compare MCP docs and connection metadata",
       "  --provider <id>          limit to one provider (repeatable)",
       "  --spec <id>=<file|url>   read a provider's published spec from here",
       "                           (planning-center: --spec planning-center/<app>=…)",
       "  --tool-reference <id>=<file|url>",
-      "                           read its MCP tool reference or public catalog here",
+      "                           read its MCP tool reference here",
       "  --setup-reference <id>=<file|url>",
       "                           read its official MCP setup documentation here",
       "  --manual                 only report required manual vendor reviews",
@@ -170,7 +166,7 @@ function errorFinding(error) {
 function checkMode(type) {
   if (type === "endpoints" || type === "versioned-endpoints" || type === "openapi-index") return "specs";
   if (type === "manual") return "manual";
-  if (type === "mcp-docs" || type === "oauth-discovery" || type === "mcp-catalog") return "docs";
+  if (type === "mcp-docs") return "docs";
   return "records";
 }
 
@@ -251,14 +247,10 @@ function validateSelection(options, providers) {
   for (const provider of new Set([...options.toolReferenceSources.keys(), ...options.setupReferenceSources.keys()])) {
     const entry = known.get(provider);
     if (entry.error) continue;
-    const check = entry.record.checks.find(
-      (item) => item?.type === "mcp-docs" || item?.type === "oauth-discovery" || item?.type === "mcp-catalog",
-    );
+    const check = entry.record.checks.find((item) => item?.type === "mcp-docs");
     if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no MCP reference check`);
-    if (options.setupReferenceSources.has(provider) && check.type === "mcp-catalog")
-      usage(`${provider} has no setup reference check`);
-    if (options.toolReferenceSources.has(provider) && !check.inventory && check.type !== "mcp-catalog")
+    if (options.toolReferenceSources.has(provider) && !check.inventory)
       usage(`${provider} has no public tool inventory`);
   }
   if (options.record) {
@@ -267,24 +259,6 @@ function validateSelection(options, providers) {
         usage(`--record source overrides must name an explicitly selected --provider: ${provider}`);
     }
   }
-}
-
-/**
- * A check as the version-1 checkers read it (drift-validate.mjs), with a
- * version-2 public catalog's baseline read from its evidence file.
- */
-async function checkView(record, check, directory) {
-  let catalog;
-  if (record.version === DRIFT_VERSION && check?.type === "mcp-catalog" && check.catalog === "evidence/catalog.json") {
-    try {
-      catalog = JSON.parse(await readFile(resolvePath(directory, check.catalog), "utf8"));
-    } catch (error) {
-      throw new EvidenceError(
-        `could not read ${check.catalog}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  return projectCheck(record, check, { catalog });
 }
 
 /** A recorded endpoint row in its version-2 spelling. */
@@ -806,95 +780,6 @@ async function checkVersionedProvider(provider, manifest, options) {
 // Published MCP references
 // ---------------------------------------------------------------------------
 
-function catalogHints(annotations) {
-  return Object.fromEntries(
-    CATALOG_HINTS.filter((key) => annotations?.[key] !== undefined).map((key) => [key, annotations[key]]),
-  );
-}
-
-async function checkPublicCatalog(provider, check, options) {
-  const source = options.toolReferenceSources.get(provider) ?? check.endpoint;
-  const tools = new Map();
-  const cursors = new Set();
-  const signal = AbortSignal.timeout(30_000);
-  let cursor;
-  for (let page = 0; page < 100; page += 1) {
-    let text;
-    if (/^https?:\/\//.test(source)) {
-      const url = new URL(source);
-      if (url.username || url.password || url.search || url.hash)
-        throw new EvidenceError("catalog source must not carry credentials or query parameters");
-      let response;
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          redirect: "error",
-          signal,
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/list",
-            params: cursor === undefined ? {} : { cursor },
-          }),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        text = await response.text();
-      } catch (error) {
-        throw new UnavailableError(
-          `could not read ${provider}'s public tools/list: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } else {
-      text = await loadPublished(provider, "public catalog fixture", source);
-    }
-    let message;
-    try {
-      message = JSON.parse(text);
-    } catch {
-      throw new ParserError(`${provider}'s public catalog is not JSON`);
-    }
-    if (message?.jsonrpc !== "2.0" || message.id !== 1 || message.error || !Array.isArray(message.result?.tools)) {
-      throw new ParserError(`${provider}'s public catalog is not a tools/list result`);
-    }
-    for (const tool of message.result.tools) {
-      if (typeof tool?.name !== "string" || !tool.name.trim() || tools.has(tool.name))
-        throw new ParserError(`${provider}'s public catalog has an invalid or duplicate name`);
-      if (
-        tool.annotations !== undefined &&
-        (!tool.annotations || typeof tool.annotations !== "object" || Array.isArray(tool.annotations))
-      )
-        throw new ParserError(`${provider}'s public catalog has invalid annotations`);
-      for (const key of CATALOG_HINTS) {
-        if (tool.annotations?.[key] !== undefined && typeof tool.annotations[key] !== "boolean")
-          throw new ParserError(`${provider}'s public catalog has an invalid ${key}`);
-      }
-      tools.set(tool.name, catalogHints(tool.annotations));
-    }
-    cursor = message.result.nextCursor;
-    if (cursor === undefined) break;
-    if (typeof cursor !== "string" || !cursor || cursors.has(cursor) || page === 99 || !/^https?:\/\//.test(source))
-      throw new ParserError(`${provider}'s public catalog pagination did not complete`);
-    cursors.add(cursor);
-  }
-  const reviewed = new Map(check.reviewed.map((tool) => [tool.name, catalogHints(tool.annotations)]));
-  const findings = [];
-  for (const [name, annotations] of tools) {
-    if (!reviewed.has(name)) findings.push({ kind: "catalog-added", detail: name });
-    else if (JSON.stringify(annotations) !== JSON.stringify(reviewed.get(name)))
-      findings.push({ kind: "catalog-annotations", detail: `${name}: behavioral annotations changed` });
-  }
-  for (const name of reviewed.keys()) if (!tools.has(name)) findings.push({ kind: "catalog-removed", detail: name });
-  return {
-    provider,
-    source,
-    catalogTools: tools.size,
-    schemaAuthority: "live-tools-list",
-    schemasVendored: false,
-    findings,
-  };
-}
-
 async function loadPublished(provider, label, source) {
   let text;
   try {
@@ -1004,77 +889,6 @@ function documentedToolAccess(markdown, inventory) {
   return access;
 }
 
-/** RFC 8414 metadata location for an issuer, path inserted after the host. */
-function authorizationServerMetadataUrl(issuer) {
-  const url = new URL(issuer);
-  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");
-  return `${url.origin}/.well-known/oauth-authorization-server${path}`;
-}
-
-function parseMetadata(provider, label, text) {
-  try {
-    const value = JSON.parse(text);
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
-  } catch {
-    // Reported below without echoing the body.
-  }
-  throw new ParserError(`${provider}'s ${label} is not a JSON object`);
-}
-
-/**
- * A provider with no public setup page: read its OAuth discovery instead.
- *
- * Only the facts the wrapper depends on become findings. The scopes the
- * resource advertises are reported for the reader and never judged, because
- * the MCP client requests whatever the server's own challenge names.
- */
-async function checkOAuthDiscovery(provider, runtime, resource) {
-  const findings = [];
-  const advertised = Array.isArray(resource.scopes_supported)
-    ? resource.scopes_supported.filter((scope) => typeof scope === "string")
-    : [];
-  if (!runtime.endpoints.includes(resource.resource)) {
-    findings.push({
-      kind: "mcp-endpoint",
-      detail: `protected-resource metadata names ${String(resource.resource)}, not Connecta's endpoint ${runtime.endpoints.join(", ")}`,
-    });
-  }
-  const issuer = Array.isArray(resource.authorization_servers)
-    ? resource.authorization_servers.find((value) => typeof value === "string")
-    : undefined;
-  if (issuer === undefined) {
-    findings.push({
-      kind: "mcp-auth",
-      detail: "protected-resource metadata names no authorization server",
-    });
-    return { findings, authorizationServer: undefined, advertisedScopes: advertised };
-  }
-  const server = parseMetadata(
-    provider,
-    "authorization-server metadata",
-    await loadPublished(provider, "authorization-server metadata", authorizationServerMetadataUrl(issuer)),
-  );
-  // The runtime prefers CIMD and falls back to advertised DCR. A vendor
-  // such as Intercom supporting DCR alone is a valid hosted OAuth server.
-  const hasDcr = typeof server.registration_endpoint === "string" && server.registration_endpoint.trim() !== "";
-  if (server.client_id_metadata_document_supported !== true && !hasDcr) {
-    findings.push({
-      kind: "mcp-auth",
-      detail: `${issuer} advertises neither Client ID Metadata Document support nor a dynamic client registration endpoint`,
-    });
-  }
-  if (
-    !Array.isArray(server.code_challenge_methods_supported) ||
-    !server.code_challenge_methods_supported.includes("S256")
-  ) {
-    findings.push({
-      kind: "mcp-auth",
-      detail: `${issuer} no longer advertises PKCE S256, which the MCP client requires`,
-    });
-  }
-  return { findings, authorizationServer: issuer, advertisedScopes: advertised };
-}
-
 async function checkDocumentedProvider(provider, defaults, options) {
   const runtime = defaults;
   const sources = {
@@ -1133,30 +947,6 @@ async function checkDocumentedProvider(provider, defaults, options) {
           `Vercel inventory unavailable/incomplete: no known category for removed tool ${name}; needs review`,
         );
     }
-  }
-
-  if (defaults.type === "oauth-discovery") {
-    const discovery = await checkOAuthDiscovery(
-      provider,
-      runtime,
-      parseMetadata(provider, "protected-resource metadata", setup),
-    );
-    return {
-      provider,
-      toolReference: undefined,
-      setupReference: sources.setup,
-      setupKind: "oauth-discovery",
-      inventoryChecked: false,
-      documentedTools: undefined,
-      added: [],
-      removed: [],
-      intentionallyUnclassified: [],
-      findings: discovery.findings,
-      authorizationServer: discovery.authorizationServer,
-      advertisedScopes: discovery.advertisedScopes,
-      schemaAuthority: "live-tools-list",
-      schemasVendored: false,
-    };
   }
 
   const findings = [];
@@ -1237,17 +1027,8 @@ function printDocs(result) {
   console.log(
     result.inventoryChecked
       ? `${result.provider} MCP docs: ${result.documentedTools} documented tools`
-      : result.setupKind === "oauth-discovery"
-        ? `${result.provider} MCP: OAuth discovery metadata only; no public setup page or tool inventory`
-        : `${result.provider} MCP docs: setup metadata only; no official tool inventory`,
+      : `${result.provider} MCP docs: setup metadata only; no official tool inventory`,
   );
-  if (result.setupKind === "oauth-discovery") {
-    console.log(
-      `  oauth        ${result.authorizationServer ?? "no authorization server"}; resource scopes ${
-        result.advertisedScopes.length ? result.advertisedScopes.join(" ") : "none advertised"
-      }`,
-    );
-  }
   for (const tool of result.added) {
     console.log(`  unclassified ${tool}`);
   }
@@ -1320,7 +1101,7 @@ async function main() {
       const mode = checkMode(raw?.type);
       if (mode !== "records" && !options[mode]) continue;
       try {
-        const check = await checkView(record, raw, resolvePath(options.providerDirectory, provider));
+        const check = projectCheck(record, raw);
         validateCheck(check, options.record, record.version);
         if (check.type === "openapi-index") {
           report.specs.push({ ...(await checkOpenApiIndex(provider, check, options)), check: index, index: true });
@@ -1354,10 +1135,7 @@ async function main() {
             ...(options.record && recordable ? { recordedTo: path } : {}),
           });
         } else if (mode === "docs") {
-          const result =
-            check.type === "mcp-catalog"
-              ? await checkPublicCatalog(provider, check, options)
-              : await checkDocumentedProvider(provider, check, options);
+          const result = await checkDocumentedProvider(provider, check, options);
           report.docs.push({ ...result, check: index });
         } else {
           const age = v2 ? daysSince(check.lastVerified) : 0;
@@ -1406,15 +1184,11 @@ async function main() {
         );
         for (const finding of result.findings) console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
       } else if (result.endpoints !== undefined) printSpec(result, result.recordedTo);
+      if (result.added) printDocs(result);
       else printFailure(result);
     }
     for (const result of report.docs) {
-      if (result.catalogTools !== undefined) {
-        console.log(
-          `${result.provider} public MCP catalog: ${result.catalogTools} tools; names and behavioral annotations checked`,
-        );
-        printFailure(result);
-      } else if (result.added) printDocs(result);
+      if (result.added) printDocs(result);
       else printFailure(result);
     }
     for (const result of [...report.manual, ...report.records]) printFailure(result);
