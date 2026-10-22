@@ -17,6 +17,7 @@ import {
   ProviderLedger,
   LogicalLedger,
   recordedService,
+  requestClosed,
   viewClosed,
   setViewService,
   callFromContext,
@@ -112,11 +113,18 @@ export function closeProviderCall(ctx: ConnectorContext): void {
 }
 
 /**
- * Refuse a resource request whose call has ended, before credential reads
- * and again immediately before it is sent. Auxiliary requests (token mints,
- * lookups) cannot perform the write and may be shared with other calls.
+ * Refuse every request after its request scope ends, before credential reads
+ * and again immediately before dispatch. Resource requests also require an
+ * open call. Auxiliary requests (token mints, lookups) may outlive that call,
+ * but never their request.
  */
 export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, auxiliary: boolean): void {
+  if (requestClosed(ctx))
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `This ${provider} request belongs to a request that has already ended, so it was not sent.`,
+      { retryable: false },
+    );
   if (auxiliary || (recordedService(ctx, ProviderLedger)?.closed !== true && !viewClosed(ctx))) return;
   throw new ConnectorCallError(
     "connector_call_failed",
