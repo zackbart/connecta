@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -187,6 +188,12 @@ it("INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I
     expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
   }
   for (const tool of tools) {
+    const base = tool.name.endsWith("_search")
+      ? { query: "items" }
+      : tool.name.endsWith("_details") || tool.name.endsWith("_write")
+        ? { method: "GET", path: "/items" }
+        : { path: "/items" };
+    expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
     expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
     expect(Object.keys((tool.inputSchema as { properties: object }).properties)).not.toEqual(
       expect.arrayContaining(["raw"]),
