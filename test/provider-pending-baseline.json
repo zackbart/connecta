@@ -1,6 +1,5 @@
 {
   "step1": [
-    "basecamp",
     "breeze",
     "ccb",
     "cloudflare",
@@ -10,22 +9,17 @@
     "github",
     "gmail",
     "infisical",
-    "intercom",
-    "linear",
     "mixpanel",
     "notion",
     "overflow",
     "planning-center",
-    "revenuecat",
     "sheets",
     "slides",
     "stripe",
     "tithely",
-    "vercel",
-    "wispr-flow"
+    "vercel"
   ],
   "step2": [
-    "basecamp",
     "breeze",
     "ccb",
     "cloudflare",
@@ -35,18 +29,14 @@
     "github",
     "gmail",
     "infisical",
-    "intercom",
-    "linear",
     "mixpanel",
     "notion",
     "overflow",
     "planning-center",
-    "revenuecat",
     "sheets",
     "slides",
     "stripe",
     "tithely",
-    "vercel",
-    "wispr-flow"
+    "vercel"
   ]
 }
