@@ -20,6 +20,11 @@ import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
   recordUnauthorized,
   validateVendorErrors,
+  RequestRefused,
+  ResendRefused,
+  ResponseTooLarge,
+  UnreadableBody,
+  isHttpFailure,
   RedirectRefused,
   Refusal,
   StatusFailure,
@@ -230,403 +235,399 @@ function decided(failure: HttpFailure, vendor: VendorErrors<any>, dispatches: Di
 const outcomeOf = (error: ConnectorCallError) =>
   classifyWriteOutcome({ ok: false, dispatched: true, error: error as never });
 
-describe("failure mapping (decision 0010, B.3)", () => {
-  it("applies the vendor's 401/403/404 and the shared defaults for the rest", () => {
-    const map = (failure: HttpFailure) =>
-      toConnectorCallError(failure, VENDOR, { classification: "read", dispatches: [] });
-    expect(map(status(401)).code).toBe("auth_required");
-    expect(map(status(404)).code).toBe("not_found");
-    // A 409 is a refusal only where the vendor says so (A.3's Tithe.ly golden).
-    expect(map(status(409))).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(map(status(429, { "Retry-After": "2" }))).toMatchObject({ code: "rate_limited", retryAfterMs: 2000 });
-    expect(map(status(502))).toMatchObject({ code: "unavailable", retryable: true });
-    expect(map(status(418))).toMatchObject({ code: "connector_call_failed", retryable: false });
-  });
-
-  it("INV-6: classifies on token facts and allowlisted headers, and renders prose only after the verdict", () => {
-    const order: string[] = [];
-    let seen: { facts: { codes?: readonly number[] }; headers: object } | undefined;
-    let tokens: unknown;
-    const vendor: VendorErrors<{ code?: string; codes?: readonly number[]; expired?: boolean }> = {
-      ...VENDOR,
-      facts: (body) => {
-        tokens = body;
-        const error = (body as { error?: { code?: unknown; codes?: unknown; message?: unknown } } | undefined)?.error;
-        // A careless extractor that sniffs the message finds no message to sniff.
-        return {
-          code: error?.code as string,
-          codes: error?.codes as number[],
-          expired: String(error?.message).includes("expired"),
-        };
-      },
-      headers: ["x-request-id"],
-      detail: (input) => {
-        order.push("detail");
-        seen = input;
-        return "Acme failed.";
-      },
-      classify: [
-        ({ facts, headers }) => {
-          order.push("rule");
-          return facts.code === "token_expired" || facts.codes?.includes(1001) || facts.expired
-            ? { code: "auth_required", words: (detail) => `${detail} Request ${headers["x-request-id"]}.` }
-            : undefined;
-        },
-      ],
-    };
-    const headers = { "X-Request-Id": "req_42", "Set-Cookie": "session=secret" };
-    const map = (body: unknown) =>
-      toConnectorCallError(status(400, headers, body), vendor, { classification: "read", dispatches: [] });
-    // A code decides across statuses; a 400 is otherwise an argument problem.
-    expect(map({ error: { code: "token_expired" } })).toMatchObject({
-      code: "auth_required",
-      message: "Acme failed. Request req_42.",
-    });
-    // The verdict is decided before the detail line exists.
-    expect(order).toEqual(["rule", "detail"]);
-    expect(map({ error: { codes: [7, 1001] } }).code).toBe("auth_required");
-    // Prose never reaches the extractor: not as a value, not as a key.
-    const prose = "the token expired, see https://acme.example/help";
-    expect(map({ error: { code: "x", message: prose, [prose]: true } }).code).toBe("invalid_args");
-    expect(tokens).toEqual({ error: { code: "x" } });
-    expect(JSON.stringify(tokens)).not.toContain("expired");
-    expect(seen?.headers).toEqual({ "x-request-id": "req_42" });
-    // Lists are complete for classification: a code in twenty-first place still
-    // decides. The detail line sees the first eight.
-    const many = [...Array.from({ length: 20 }, (_, n) => n + 2000), 1001];
-    expect(map({ error: { codes: many } }).code).toBe("auth_required");
-    expect(seen?.facts.codes).toEqual(many.slice(0, 8));
-  });
-
-  it("INV-6: a rule's input carries no prose, so reading the detail line or the body does not compile", () => {
-    expectTypeOf<Classified>().not.toHaveProperty("detail");
-    expectTypeOf<Classified>().not.toHaveProperty("body");
-    expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
-    // `words` receives the line once the code is fixed; it returns words, not a verdict.
-    expectTypeOf<NonNullable<Verdict["words"]>>().toEqualTypeOf<(detail: string) => string>();
-    const rules: NonNullable<VendorErrors["classify"]> = [
-      // @ts-expect-error The detail line is rendered after classification; a rule cannot read it.
-      (input) => (String(input.detail).includes("expired") ? { code: "auth_required" } : undefined),
-      // @ts-expect-error Nor the body.
-      (input) => (`${input.body}`.includes("expired") ? { code: "auth_required" } : undefined),
-      // What a rule can read: tokens, headers, the status, the operation.
-      ({ status: code, facts, headers }) =>
-        code === 401 || facts["code"] === "expired" || headers["x-reason"] === "expired"
-          ? { code: "auth_required" }
-          : undefined,
-    ];
-    expect(rules).toHaveLength(3);
-  });
-
-  it("INV-6: classifies over every reason before the detail line's list is cut, as Google's mapper does today", () => {
-    // decision 0010's restatement of `classifyApiFailure` (_shared/google/workspace.ts),
-    // whose `reasonsOf` reads every errors[] and details[] reason before deciding.
-    const record = (value: unknown) =>
-      (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
-    const google: VendorErrors<{ reasons: readonly string[] }> = {
-      provider: "Gmail",
-      facts: (tokens) => {
-        const error = record(record(tokens)["error"]);
-        const listed = [error["errors"], error["details"]].flatMap((entries) =>
-          Array.isArray(entries) ? entries.map((entry) => record(entry)["reason"]) : [],
-        );
-        return {
-          reasons: [...listed, error["status"]].filter((reason): reason is string => typeof reason === "string"),
-        };
-      },
-      detail: ({ status: code, facts }) => `Gmail returned HTTP ${code} (${facts.reasons.join(", ")}).`,
-      unreadable: "Gmail returned a successful response that is not JSON.",
-      classify: [
-        ({ facts, retryAfterMs }) =>
-          ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"].some((reason) =>
-            facts.reasons.includes(reason),
-          )
-            ? { code: "rate_limited", retryAfterMs }
-            : undefined,
-      ],
-      statuses: {
-        401: () => ({ code: "auth_required" }),
-        403: () => ({ code: "provider_permission_denied" }),
-        404: () => ({ code: "not_found" }),
-      },
-    };
-    const ordinary = [
-      "required",
-      "invalid",
-      "notFound",
-      "badRequest",
-      "duplicate",
-      "conditionNotMet",
-      "parseError",
-      "keyInvalid",
-    ];
-    const body = {
-      error: {
-        code: 403,
-        message: "Quota exceeded for quota metric 'Queries' of service 'gmail.googleapis.com'.",
-        errors: [...ordinary.map((reason) => ({ reason, message: "Ordinary." })), { reason: "RATE_LIMIT_EXCEEDED" }],
-      },
-    };
-    const error = toConnectorCallError(
-      new StatusFailure({ status: 403, headers: new Headers({ "Retry-After": "3" }), body, operation: OPERATION }),
-      google,
-      { classification: "read", dispatches: [] },
-    );
-    expect(error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 3000 });
-    expect(error.message).toBe(`Gmail returned HTTP 403 (${ordinary.join(", ")}).`);
-  });
-
-  it("INV-5 INV-6: withholds a value-safety operation's vendor text before any detail is built", () => {
-    let seen: unknown;
-    const vendor: VendorErrors = {
-      ...VENDOR,
-      detail: (input) => {
-        seen = input;
-        return input.withheld ? "Acme's message is withheld." : `Acme: ${(input.body as { message: string }).message}`;
-      },
-    };
-    const leaked = status(400, {}, { message: "stored value sk_live_stored_secret is invalid" });
-    const map = (withheld: boolean) =>
-      toConnectorCallError(leaked, vendor, { classification: "read", dispatches: [], withholds: () => withheld });
-    expect(map(true).message).toBe("Acme's message is withheld.");
-    expect(seen).not.toHaveProperty("body");
-    expect(map(false).message).toContain("sk_live_stored_secret");
-  });
-
-  it("INV-9: never advertises a write that may have landed as retryable, whatever the vendor says", () => {
-    const outage = status(503);
-    const landed = decided(outage, VENDOR, [answered(outage)]);
-    expect(landed).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    // The core's words for an unknown write, so a provider moving onto the kit keeps its goldens.
-    expect(landed.message).toBe(
-      "Acme returned HTTP 503. Whether the write took effect at Acme is unknown; check the target before repeating it.",
-    );
-    const reset = new TransportFailure({ failure: { cause: { code: "ECONNRESET" } }, host: "https://acme.example" });
-    expect(decided(reset, VENDOR, [answered(reset)])).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    // A served refusal on the call's one request is the core's known failure.
-    const refused = status(400);
-    const known = decided(refused, VENDOR, [answered(refused)]);
-    expect(known).toMatchObject({ code: "invalid_args" });
-    expect(known.writeOutcome).toBeUndefined();
-    expect(outcomeOf(known)).toBe("failed");
-    const redirect = new RedirectRefused({ status: 302 });
-    expect(decided(redirect, VENDOR, [answered(redirect, { status: 302 })]).writeOutcome).toBe("unknown");
-  });
-
-  it("INV-9: the kit records provenance and decides nothing: a write's mapping is the read's, marked with its own request", () => {
-    const failure = status(400);
-    const own = answered(failure, { request: request(400) });
-    const read = toConnectorCallError(failure, VENDOR, { classification: "read", dispatches: [] });
-    const write = toConnectorCallError(failure, VENDOR, { classification: "write", dispatches: [own] });
-    expect(write).toEqual(read);
-    expect(write.writeOutcome).toBeUndefined();
-    expect(refusalRequest(write)).toBe(own.request);
-    // A failure that is not its request's own answer carries no provenance.
-    const later = new Refusal({ error: new ConnectorCallError("invalid_args", "The reply failed a check.") });
-    expect(
-      refusalRequest(toConnectorCallError(later, VENDOR, { classification: "write", dispatches: [own] })),
-    ).toBeUndefined();
-  });
-
-  it.each([404, 409, "timeout"] as const)(
-    "INV-9: a write's own %s failure keeps the read's fields; the core alone decides whether it is known",
-    (kind) => {
-      const failure =
-        kind === "timeout"
-          ? new TransportFailure({
-              failure: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
-              host: "https://acme.example",
-            })
-          : status(kind);
-      const vendor = {
-        ...VENDOR,
-        statuses: { ...VENDOR.statuses, 404: () => ({ code: "connector_call_failed" as const, retryable: false }) },
-      };
-      const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
-      const result = decided(failure, vendor, [kind === "timeout" ? dispatch("lost", { failure }) : answered(failure)]);
-      if (kind === "timeout") {
-        // No answer arrived: the core keeps its diagnostics, unknown and never retryable.
-        expect(result).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-      } else {
-        // A served 404 or 409 is a refusal by provenance, whatever code the vendor gives it.
-        expect(result).toEqual(read);
-        expect(result.writeOutcome).toBeUndefined();
-        expect(outcomeOf(result)).toBe("failed");
+const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
+  [
+    "INV-6: every HttpFailure tag has one wire mapping",
+    () => {
+      const carried = new ConnectorCallError("auth_required", "Configure a credential.");
+      const cases: Array<[HttpFailure, string, string]> = [
+        [new RequestRefused({ message: "Confined path required." }), "invalid_args", "Confined path required."],
+        [
+          new TransportFailure({
+            failure: new Error("raw secret", { cause: { code: "ECONNREFUSED" } }),
+            host: "https://acme.example/private?secret=value",
+          }),
+          "unavailable",
+          "Could not reach the Acme API.",
+        ],
+        [new RedirectRefused({ status: 307 }), "connector_call_failed", "redirect"],
+        [new ResponseTooLarge({ detail: "Acme exceeded its byte ceiling." }), "connector_call_failed", "byte ceiling"],
+        [status(400), "invalid_args", "HTTP 400"],
+        [new UnreadableBody(), "connector_call_failed", VENDOR.unreadable],
+        [new Refusal({ error: carried }), "auth_required", carried.message],
+        [new ResendRefused({ first: answered(status(409)) }), "connector_call_failed", "HTTP 409"],
+      ];
+      for (const [failure, code, message] of cases) {
+        expect(isHttpFailure(failure)).toBe(true);
+        const mapped = toConnectorCallError(failure, VENDOR, { classification: "read", dispatches: [] });
+        expect(mapped.code, failure._tag).toBe(code);
+        expect(mapped.message).toContain(message);
+        expect(JSON.stringify(mapped)).not.toMatch(/raw secret|private|secret=value/);
+        if (failure._tag === "TransportFailure")
+          expect(mapped.details).toEqual({ code: "ECONNREFUSED", host: "https://acme.example" });
+        if (failure._tag === "Refusal") expect(mapped).toBe(carried);
+        if (["RedirectRefused", "ResponseTooLarge", "UnreadableBody"].includes(failure._tag))
+          expect(mapped.retryable).toBe(false);
       }
+      for (const unknown of [null, {}, { _tag: "toString" }, new Error("defect")])
+        expect(isHttpFailure(unknown)).toBe(false);
     },
-  );
-
-  it("INV-9: decides from what each request did, never from an errno or a code", () => {
-    const dns = new TransportFailure({ failure: { cause: { code: "ENOTFOUND" } }, host: "https://acme.example" });
-    // A write whose fetch rejected may have left behind the last attempt (#902 round 8).
-    expect(decided(dns, VENDOR, [dispatch("lost", { failure: dns })])).toMatchObject({
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    // An auxiliary read failed after the write was answered: the write may have landed.
-    const aux: Dispatch = { write: false, state: "lost", failure: dns };
-    expect(decided(dns, VENDOR, [dispatch("answered", { status: 200 }), aux])).toMatchObject({
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    // A provider's own Refusal before anything left is the ledger's known failure (a)...
-    const outage = new Refusal({ error: new ConnectorCallError("unavailable", "The upstream is down.") });
-    expect(decided(outage, VENDOR, [])).toBe(outage.error);
-    expect(outcomeOf(decided(outage, VENDOR, []))).toBe("failed");
-    // ...and after the write left, unknown.
-    expect(decided(outage, VENDOR, [dispatch("lost")])).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-  });
-
-  it.each([
-    [503, "RATE_LIMIT_EXCEEDED", "rate_limited"],
-    [500, "denied", "provider_permission_denied"],
-    [502, "bad", "invalid_args"],
-    [504, "missing", "not_found"],
-    [503, "expired", "auth_required"],
-    [500, "failed", "connector_call_failed"],
-    [408, "slow", "conflict"],
-  ] as const)(
-    "INV-9: a write answered HTTP %i with fact %s is unknown whatever its %s verdict",
-    (code, reason, mapped) => {
-      const failure = status(code, { "Retry-After": "2" }, { reason });
-      const vendor: VendorErrors<{ reason: string }> = {
-        ...VENDOR,
-        facts: (tokens) => tokens as { reason: string },
-        classify: [() => ({ code: mapped, retryable: true, retryAfterMs: 2000 })],
-      };
-      expect(toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] }).code).toBe(mapped);
-      // A 5xx or a 408 is never refusal provenance; the code stays as a diagnostic.
-      const result = decided(failure, vendor, [answered(failure)]);
-      expect(result).toMatchObject({ code: mapped, retryable: false, writeOutcome: "unknown" });
-      expect(outcomeOf(result)).toBe("unknown");
-    },
-  );
-
-  it.each([400, 403, 404, 409, 422, 429])(
-    "INV-9: a write's own served HTTP %i refusal keeps its code and retry advice",
-    (code) => {
-      const failure = status(code, { "Retry-After": "2" });
+  ],
+  [
+    "INV-6: vendor rules precede its table and the defaults; 409 has no default",
+    () => {
+      for (const [code, expected, wait] of [
+        [400, "invalid_args"],
+        [422, "invalid_args"],
+        [401, "auth_required"],
+        [403, "provider_permission_denied"],
+        [404, "not_found"],
+        [409, "connector_call_failed"],
+        [429, "rate_limited", 2000],
+        [500, "unavailable", 2000],
+        [599, "unavailable", 2000],
+        [600, "connector_call_failed"],
+        [418, "connector_call_failed"],
+      ] as const) {
+        const mapped = toConnectorCallError(status(code, { "Retry-After": "2" }), VENDOR, {
+          classification: "read",
+          dispatches: [],
+        });
+        expect([mapped.code, mapped.retryAfterMs], String(code)).toEqual([expected, wait]);
+      }
       const vendor: VendorErrors = {
         ...VENDOR,
+        classify: [
+          () => undefined,
+          () => ({ code: "conflict", current: { revision: 2 } }),
+          () => {
+            throw new Error("first rule wins");
+          },
+        ],
         statuses: {
           ...VENDOR.statuses,
-          409: () => ({ code: "conflict", retryable: true }),
-          429: ({ retryAfterMs }) => ({ code: "rate_limited", retryAfterMs, advice: " Back off before retrying." }),
+          409: () => {
+            throw new Error("rules win");
+          },
         },
       };
-      const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
-      const write = decided(failure, vendor, [answered(failure)]);
-      expect(write).toEqual(read);
-      expect(resendAdviceOf(write)).toBe(resendAdviceOf(read));
-      expect(write.writeOutcome).toBeUndefined();
-      expect(outcomeOf(write)).toBe("failed");
+      expect(toConnectorCallError(status(409), vendor, { classification: "read", dispatches: [] })).toMatchObject({
+        code: "conflict",
+        current: { revision: 2 },
+      });
+      for (const [code, table] of [
+        [409, { 409: () => ({ code: "conflict" as const }) }],
+        [503, { serverError: () => ({ code: "rate_limited" as const }) }],
+        [418, { otherwise: () => ({ code: "not_found" as const }) }],
+      ] as const) {
+        expect(
+          toConnectorCallError(
+            status(code),
+            { ...VENDOR, statuses: { ...VENDOR.statuses, ...table } },
+            { classification: "read", dispatches: [] },
+          ).code,
+        ).toBe(code === 409 ? "conflict" : code === 503 ? "rate_limited" : "not_found");
+      }
     },
-  );
-
-  it("INV-9: a served refusal holds only for a call that sent one request", () => {
-    const refused = status(400);
-    const result = decided(refused, VENDOR, [dispatch("answered", { status: 201, step: "first" }), answered(refused)]);
-    expect(result).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
-  });
-
-  it("INV-9: advice to send it again is a segment of its own, never part of the message", () => {
-    const vendor: VendorErrors = {
-      ...VENDOR,
-      statuses: {
-        ...VENDOR.statuses,
-        429: () => ({
-          code: "rate_limited",
-          words: (detail) => `${detail} Slow down.`,
-          advice: " Wait before retrying.",
-        }),
-      },
-    };
-    const read = toConnectorCallError(status(429), vendor, { classification: "read", dispatches: [] });
-    expect(read.message).toBe("Acme returned HTTP 429. Slow down.");
-    expect(resendAdviceOf(read)).toBe(" Wait before retrying.");
-    // A write the core cannot call refused never carries it.
-    const throttled = status(429);
-    const unknown = decided(throttled, vendor, [
-      dispatch("answered", { status: 201, step: "first" }),
-      answered(throttled),
-    ]);
-    expect(unknown.writeOutcome).toBe("unknown");
-    expect(resendAdviceOf(unknown)).toBeUndefined();
-  });
-
-  it("INV-9 INV-11: an authBeforeExecution declaration requires evidence and a narrow raw-fact predicate", () => {
-    for (const proof of [{ evidence: " ", matches: () => true }, { evidence: "docs" }]) {
-      expect(() => validateVendorErrors({ ...VENDOR, authBeforeExecution: proof as never })).toThrow(/evidence/);
-    }
-    const failure = status(401);
-    const vendor: VendorErrors = {
-      ...VENDOR,
-      authBeforeExecution: {
-        evidence: "https://acme.example/docs/auth",
-        matches: ({ headers }) => headers["x-auth-phase"] === "before",
-      },
-      headers: ["x-auth-phase"],
-    };
-    expect(decided(failure, vendor, [answered(failure)])).toMatchObject({
-      code: "auth_required",
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    const proven = status(401, { "x-auth-phase": "before" });
-    const refused = decided(proven, vendor, [answered(proven)]);
-    expect(refused.writeOutcome).toBeUndefined();
-    expect(outcomeOf(refused)).toBe("failed");
-  });
-
-  it("INV-9: an unreadable own 4xx body retains the core's verdict without an extra outcome", () => {
-    const failure = new StatusFailure({
-      status: 400,
-      headers: new Headers(),
-      body: undefined,
-      unreadable: true,
-      operation: OPERATION,
-    });
-    const result = decided(failure, VENDOR, [answered(failure)]);
-    expect(result).toMatchObject({ code: "invalid_args", retryable: false });
-    expect(outcomeOf(result)).toBe("failed");
-  });
-
-  it("INV-9: cancellation after an accepted step and a proven 401 considers the whole ledger", () => {
-    const failure = status(401);
-    const vendor: VendorErrors = {
-      ...VENDOR,
-      authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
-    };
-    const both = [dispatch("answered", { status: 201, step: "first" }), answered(failure)];
-    // The caller left, so no failure was mapped: the kit records each 401's
-    // facts, and the core decides over the whole ledger with no failure in hand.
-    const departed = (dispatches: Dispatch[]) => {
-      const requests = providerRequests(ledger(dispatches))!;
-      recordUnauthorized(vendor, { dispatches });
-      return settleWrite(requests, undefined, true);
-    };
-    expect(departed(both)).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    // The proven 401 that is the call's one request stays a refusal: nothing is
-    // settled, and the invocation reports its own deadline or cancellation.
-    expect(departed([answered(status(401))])).toBeUndefined();
-  });
-
-  it("INV-9: a proven 401 refusal still owns auth recovery when another write step is uncertain", () => {
-    const unauthorized = status(401);
-    const throttled = status(429);
-    const result = decided(
-      throttled,
-      {
+  ],
+  [
+    "INV-6: tokens and extracted facts exclude prose, URLs, invalid numbers and depth past 32",
+    () => {
+      let tokens: any;
+      let facts: unknown;
+      const vendor: VendorErrors = {
         ...VENDOR,
-        authBeforeExecution: {
-          evidence: "This vendor checks credentials first.",
-          matches: ({ status }) => status === 401,
+        facts: (body) => {
+          tokens = body;
+          return {
+            ...(body as object),
+            invented: "text with spaces",
+            list: ["token", 1, true, null, Infinity, "https://acme.example"],
+          } as never;
         },
-      },
-      [answered(unauthorized), dispatch("answered", { status: 201, step: "second" })],
-    );
-    expect(result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-  });
+        classify: [
+          (input) => {
+            facts = input.facts;
+            return undefined;
+          },
+        ],
+      };
+      const body: Record<string, unknown> = {
+        token: "line_items[0][price]",
+        oneWord: "expired",
+        max: "a".repeat(128),
+        tooLong: "a".repeat(129),
+        number: 12,
+        bool: false,
+        empty: null,
+        infinite: Infinity,
+        prose: "the token expired",
+        url: "https://acme.example",
+        "prose key": true,
+        __proto__: null,
+      };
+      let nested: Record<string, unknown> = body;
+      for (let i = 0; i < 33; i++) {
+        nested.child = {};
+        nested = nested.child as Record<string, unknown>;
+      }
+      nested.secret = "expired";
+      toConnectorCallError(status(400, {}, body), vendor, { classification: "read", dispatches: [] });
+      expect(tokens).toMatchObject({
+        token: "line_items[0][price]",
+        oneWord: "expired",
+        max: "a".repeat(128),
+        number: 12,
+        bool: false,
+        empty: null,
+      });
+      expect(JSON.stringify(tokens)).not.toMatch(/tooLong|prose key|https|token expired|secret/);
+      expect(facts).toMatchObject({ list: ["token", 1, true] });
+      expect(JSON.stringify(facts)).not.toMatch(/text with spaces|https|Infinity/);
+      expect(body.prose).toBe("the token expired");
+    },
+  ],
+  [
+    "INV-6: classification sees every reason; wording sees eight after the verdict is copied",
+    () => {
+      const order: string[] = [];
+      let display: unknown;
+      const reasons = [...Array.from({ length: 8 }, () => "ordinary"), "RATE_LIMIT_EXCEEDED"];
+      const verdict: Verdict = { code: "rate_limited", retryAfterMs: 3000, advice: " Back off." };
+      const vendor: VendorErrors<{ reasons: readonly string[] }> = {
+        ...VENDOR,
+        facts: (body) => body as { reasons: string[] },
+        classify: [
+          (input) => {
+            order.push("rule");
+            expect(input).not.toHaveProperty("body");
+            expect(input).not.toHaveProperty("detail");
+            return input.facts.reasons.includes("RATE_LIMIT_EXCEEDED") ? verdict : undefined;
+          },
+        ],
+        detail: ({ facts }) => {
+          order.push("detail");
+          display = facts.reasons;
+          Object.assign(verdict, { code: "invalid_args", retryAfterMs: 0, advice: "wrong" });
+          return "Quota exhausted.";
+        },
+      };
+      const mapped = toConnectorCallError(status(403, {}, { reasons }), vendor, {
+        classification: "read",
+        dispatches: [],
+      });
+      expect(mapped).toMatchObject({ code: "rate_limited", retryAfterMs: 3000, message: "Quota exhausted." });
+      expect(resendAdviceOf(mapped)).toBe(" Back off.");
+      expect(order).toEqual(["rule", "detail"]);
+      expect(display).toEqual(reasons.slice(0, 8));
+      expectTypeOf<Classified>().not.toHaveProperty("body");
+      expectTypeOf<Classified>().not.toHaveProperty("detail");
+      expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
+      expectTypeOf<NonNullable<Verdict["words"]>>().toEqualTypeOf<(detail: string) => string>();
+      // @ts-expect-error Vendor-specific auth statuses must be declared.
+      const incomplete: VendorErrors["statuses"] = { 401: () => ({ code: "auth_required" }) };
+      expect(incomplete).not.toHaveProperty("404");
+    },
+  ],
+  [
+    "INV-5 INV-6: reviewed headers are bounded and value safety withholds the body before detail",
+    () => {
+      for (const withheld of [true, false]) {
+        let seen: unknown;
+        const vendor: VendorErrors = {
+          ...VENDOR,
+          headers: ["X-Request-Id", "x-long", "x-control", "__proto__"],
+          detail: (input) => {
+            seen = input;
+            return input.withheld ? "Acme's text is withheld." : (input.body as { message: string }).message;
+          },
+          classify: [
+            (input) => {
+              expect(input.headers).toEqual(
+                Object.fromEntries([
+                  ["x-request-id", "r".repeat(128)],
+                  ["__proto__", "safe_token"],
+                ]),
+              );
+              return undefined;
+            },
+          ],
+        };
+        const failure = status(
+          400,
+          {
+            "X-Request-Id": "r".repeat(128),
+            "x-long": "r".repeat(129),
+            "x-control": "one\ttwo",
+            "Set-Cookie": "secret=value",
+          },
+          { message: "stored secret never sent" },
+        );
+        failure.headers.set("__proto__", "safe_token");
+        const mapped = toConnectorCallError(failure, vendor, {
+          classification: "read",
+          dispatches: [],
+          withholds: (operation) => {
+            expect(operation).toBe(OPERATION);
+            return withheld;
+          },
+        });
+        if (withheld) {
+          expect(seen).not.toHaveProperty("body");
+          expect(mapped.message).not.toContain("stored secret");
+        } else expect(mapped.message).toBe("stored secret never sent");
+      }
+    },
+  ],
+  [
+    "INV-9: the kit records only its own served provenance; the core owns 404/409 outcomes",
+    () => {
+      for (const code of [404, 409])
+        for (const mappedCode of ["connector_call_failed", "unavailable", "timeout"] as const) {
+          const failure = status(code);
+          const vendor: VendorErrors = {
+            ...VENDOR,
+            statuses: { ...VENDOR.statuses, [code]: () => ({ code: mappedCode, retryable: false }) },
+          };
+          const own = answered(failure);
+          const ctx = ledger([own]);
+          const mapped = toConnectorCallError(failure, vendor, { classification: "write", dispatches: [own] });
+          expect(mapped.writeOutcome).toBeUndefined();
+          expect(refusalRequest(mapped)).toBe(own.request);
+          const result = finalized(ctx, mapped, vendor);
+          expect(outcomeOf(result)).toBe(mappedCode === "connector_call_failed" ? "failed" : "unknown");
+          expect(result.code).toBe(mappedCode === "unavailable" ? "connector_call_failed" : mappedCode);
+          const later = new Refusal({ error: new ConnectorCallError("invalid_args", "Provider check failed.") });
+          expect(
+            refusalRequest(toConnectorCallError(later, vendor, { classification: "write", dispatches: [own] })),
+          ).toBeUndefined();
+        }
+    },
+  ],
+  [
+    "INV-9: the core keeps refusal retry advice and suppresses resend advice for unknown writes",
+    () => {
+      const vendor: VendorErrors = {
+        ...VENDOR,
+        classify: [
+          () => ({
+            code: "rate_limited",
+            retryable: true,
+            retryAfterMs: 2000,
+            words: (detail) => `${detail} Slow down.`,
+            advice: " Wait before retrying.",
+          }),
+        ],
+      };
+      for (const [code, earlier, known] of [
+        [429, false, true],
+        [503, false, false],
+        [408, false, false],
+        [429, true, false],
+      ] as const) {
+        const failure = status(code);
+        const dispatches = [
+          ...(earlier ? [dispatch("answered", { status: 201, step: "first" })] : []),
+          answered(failure),
+        ];
+        const mapped = decided(failure, vendor, dispatches);
+        expect(mapped.message).not.toContain("Wait before retrying");
+        expect(mapped.retryable).toBe(known);
+        // The merged core retains this diagnostic wait even when it forbids retry.
+        expect(mapped.retryAfterMs).toBe(2000);
+        expect(resendAdviceOf(mapped)).toBe(known ? " Wait before retrying." : undefined);
+        expect(outcomeOf(mapped)).toBe(known ? "failed" : "unknown");
+      }
+    },
+  ],
+  [
+    "INV-9: blocked resends report the first attempt on every classification",
+    () => {
+      for (const classification of ["read", "write"] as const)
+        for (const original of [
+          status(429, { "Retry-After": "2" }),
+          new RequestRefused({ message: "Preparation refused." }),
+        ]) {
+          const first = answered(original, { request: request(original._tag === "StatusFailure" ? 429 : undefined) });
+          const mapped = toConnectorCallError(new ResendRefused({ first }), VENDOR, {
+            classification,
+            dispatches: [first],
+          });
+          expect(mapped.code).toBe(original._tag === "StatusFailure" ? "rate_limited" : "invalid_args");
+          expect(mapped.message).toContain("A second attempt to send it was stopped before it left");
+          if (original._tag === "StatusFailure") expect(refusalRequest(mapped)).toBe(first.request);
+        }
+      for (const first of [
+        dispatch("pending"),
+        dispatch("answered", { status: 200 }),
+        dispatch("answered", { status: 429, request: request(429) }),
+      ]) {
+        const mapped = toConnectorCallError(new ResendRefused({ first }), VENDOR, {
+          classification: "write",
+          dispatches: [first],
+        });
+        expect(mapped.code).toBe(first.status === 429 ? "rate_limited" : "connector_call_failed");
+      }
+    },
+  ],
+  [
+    "INV-9 INV-11: Q8 evidence must be present and match its own raw 401 facts",
+    () => {
+      for (const proof of [{ evidence: " ", matches: () => true }, { evidence: "docs" }, { matches: () => true }])
+        expect(() => validateVendorErrors({ ...VENDOR, authBeforeExecution: proof as never })).toThrow(/evidence/);
+      const vendor: VendorErrors = {
+        ...VENDOR,
+        headers: ["x-auth-phase"],
+        authBeforeExecution: {
+          evidence: "Reviewed fixture authenticates first.",
+          matches: ({ status, headers }) => status === 401 && headers["x-auth-phase"] === "before",
+        },
+      };
+      for (const [phase, known] of [
+        ["before", true],
+        ["after", false],
+      ] as const) {
+        const failure = status(401, { "x-auth-phase": phase });
+        const result = decided(failure, vendor, [answered(failure)]);
+        expect(outcomeOf(result)).toBe(known ? "failed" : "unknown");
+        expect(result.code).toBe("auth_required");
+        expect(result.writeOutcome).toBe(known ? undefined : "unknown");
+      }
+      const outage = status(503, { "x-auth-phase": "before" });
+      expect(decided(outage, vendor, [answered(outage)]).writeOutcome).toBe("unknown");
+    },
+  ],
+  [
+    "INV-9: recorded 401 facts survive cancellation and later auxiliary failure for core settlement",
+    () => {
+      const vendor: VendorErrors = {
+        ...VENDOR,
+        authBeforeExecution: { evidence: "Reviewed fixture.", matches: () => true },
+      };
+      for (const [prior, expected] of [
+        [false, false],
+        [true, true],
+      ] as const) {
+        const unauthorized = answered(status(401));
+        const dispatches = [...(prior ? [dispatch("answered", { status: 201, step: "first" })] : []), unauthorized];
+        const requests = providerRequests(ledger(dispatches))!;
+        recordUnauthorized(vendor, { dispatches });
+        expect(unauthorized.request?.authBeforeExecution).toBe(true);
+        const departed = settleWrite(requests, undefined, true);
+        if (expected)
+          expect(departed).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+        else expect(departed).toBeUndefined();
+      }
+      const unauthorized = answered(status(401));
+      expect(
+        decided(status(429), vendor, [unauthorized, dispatch("answered", { status: 201, step: "second" })]),
+      ).toMatchObject({ code: "auth_required", writeOutcome: "unknown", retryable: false });
+    },
+  ],
+];
+
+describe("failure mapping (decision 0010, B.3)", () => {
+  it.each(MAPPING_RULES)("%s", (_name, check) => check());
 });
 
 describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {

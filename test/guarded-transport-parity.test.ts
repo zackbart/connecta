@@ -16,6 +16,7 @@ import { runEdge } from "../src/runtime/run.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
+import { providerCallFailure } from "../src/write-outcome.js";
 
 const provider = "Tickets";
 const baseUrl = "https://tickets.example/v1";
@@ -38,6 +39,7 @@ interface Fixture {
   response?: () => Response;
   fail?: string;
   admit?: boolean;
+  writeOutcome?: "known" | "unknown";
 }
 const fixtures: Fixture[] = [
   ...["/../escape", "/%2e%2e/escape", "relative", "/items?secret=x", "/items#x"].map((path) => ({
@@ -71,6 +73,18 @@ const fixtures: Fixture[] = [
     response: () => new Response(null, { status, headers: { location: "https://outside.example" } }),
   })),
   { name: "declared ceiling", response: () => new Response("{}", { headers: { "content-length": "1000" } }) },
+  {
+    name: "oversized 400 write",
+    request: { method: "POST" },
+    response: () => new Response("{}", { status: 400, headers: { "content-length": "1000" } }),
+    writeOutcome: "known",
+  },
+  {
+    name: "oversized 2xx write",
+    request: { method: "POST" },
+    response: () => new Response("x".repeat(65)),
+    writeOutcome: "unknown",
+  },
   {
     name: "HEAD declared ceiling",
     request: { method: "HEAD" },
@@ -151,6 +165,7 @@ it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registrat
     ])
       expect(() => factory({ provider, baseUrl: invalid, maxResponseBytes: 64, authenticate: () => ({}) })).toThrow();
   for (const fixture of fixtures) {
+    const classification = fixture.writeOutcome ? "write" : "read";
     const observations = [];
     for (const kind of ["promise", "effect"] as const) {
       const request: GuardedRequest = {
@@ -161,7 +176,7 @@ it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registrat
       };
       const ctx = providerCallContext(
         { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example", requestScope: {} },
-        "read",
+        classification,
       );
       const sent: unknown[] = [];
       let credentials = 0,
@@ -246,7 +261,7 @@ it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registrat
               built,
               Body.raw(request.rawBody, { contentType: request.headers?.["content-type"] }),
             );
-          const lease = fromConnectorContext(ctx, "read");
+          const lease = fromConnectorContext(ctx, classification);
           const dispatches = Context.get(lease.services, Dispatches);
           try {
             const reply = await runEdge(
@@ -273,14 +288,30 @@ it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registrat
             }
             result = { status: reply.status, parsed, retryAfterMs: retryAfterMs(reply.headers) };
           } catch (failure) {
-            throw toConnectorCallError(failure as never, errors, { classification: "read", dispatches });
+            throw toConnectorCallError(failure as never, errors, { classification, dispatches });
           } finally {
             lease.close();
           }
         }
       } catch (error) {
-        result = { error: classifyCallError(error) };
+        let failure = error;
+        if (fixture.writeOutcome) {
+          // The same outer api() boundary settles either transport's facts.
+          closeProviderCall(ctx);
+          failure = providerCallFailure(ctx, { title: provider }, error, {
+            dispatched: true,
+            fallback: "write",
+            finalize: true,
+          });
+        }
+        result = { error: classifyCallError(failure) };
+        if (fixture.writeOutcome) {
+          const mapped = classifyCallError(failure);
+          expect(mapped, fixture.name).toMatchObject({ code: "connector_call_failed", retryable: false });
+          expect(mapped.writeOutcome, fixture.name).toBe(fixture.writeOutcome === "unknown" ? "unknown" : undefined);
+        }
       }
+      if (fixture.writeOutcome) expect(result, fixture.name).toHaveProperty("error");
       expect(pulls, fixture.name).toBeLessThanOrEqual(3);
       if (fixture.name === "streamed ceiling") expect(cancelled).toBe(true);
       const secrets = sentSecretsForRequest(ctx.requestScope!);

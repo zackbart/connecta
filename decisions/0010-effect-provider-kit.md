@@ -42,7 +42,7 @@ The prototype gives four kinds of evidence:
   `conflict`, where Tithe.ly answers `connector_call_failed`; the default is
   gone (B.3).
 - **Against today's mappers.** `src/providers/stripe/kit-prototype.test.ts`
-  maps 360 combinations of status, error body, headers and value-safety
+  maps 16 branch rows of status, error body, headers and value-safety
   verdict through `stripeFailure` and through the kit, and requires the same
   code, message, retry advice and wait, with the advice as its own segment.
 - **Against the core's verdicts (final round).** `test/kit-core-verdicts.test.ts`
@@ -939,6 +939,23 @@ mapping is the vendor's verdict and its provenance, not the write's outcome:
 `Send` before the answer is read, so value safety decides what the failure may
 quote before any detail exists.
 
+**B.3 implementation reconciliation (2026-10-22).** `src/http/errors.ts`
+is the internal failure contract, with one completeness-checked tag vocabulary
+shared by the typed-client boundary. Providers remain unmigrated. Mapping
+rules now have ten compact table rows in `http-kit.test.ts`; Stripe's former
+360-combination comparison is sixteen distinct branch rows, keeping its
+separate token-narrowing and core-provenance checks. The whole-call core table
+remains unchanged.
+
+A blocked physical write reports its first reservation's answer even when
+the tool is classified read: the core's positive-read rule can require write
+capacity for a POST or method override. The default server-error range is
+500–599. The core retains a diagnostic `retryAfterMs` on a generic unknown
+write while forbidding retry; Q8 removes both retryability and wait. The kit
+preserves those core fields and never strips them with a second outcome rule.
+No caller-facing Promise entry is added; B.1's boundary/lifetime matrix and
+B.2's transport/renewal contracts remain the entry points.
+
 **The vendor contract.** Classification and wording are two steps, and the
 first cannot reach prose:
 
@@ -1019,7 +1036,7 @@ The kit runs them in this order for every `StatusFailure`:
   That is code review's to refuse; the contract makes it the only way, and a
   visible one.
 
-**Stripe** (`stripeFailure`, proven equal over 360 cases):
+**Stripe** (`stripeFailure`, proven equal over 16 distinct branch rows):
 
 ```ts
 const stripeErrors: VendorErrors<{ type?; code?; declineCode?; param? }> = {
@@ -1130,10 +1147,19 @@ which answers are refusals. The kit keeps no verdict table:
    or (b), the one request the logical call sent was served a refusal that
    passes `servedRefusal`. Anything else after dispatch is unknown and never
    retryable:
-   - a 2xx followed by an unreadable body or an in-band refusal;
-   - a 408, a 5xx, a redirect or an oversized body;
+   - a non-refusing answer (including 2xx) followed by an oversized or
+     unreadable body, or a 2xx followed by an in-band refusal;
+   - a 408, a 5xx or a redirect;
    - a transport failure or the caller's abort;
    - a second write step, or an auxiliary failure after the write.
+
+   A served 4xx refusal stays known regardless of body size: its provenance
+   comes from the resource server's status, not from reading the body. A
+   mapped `unavailable` or timeout still fails `servedRefusal`. The 401
+   exception follows Q8 below, retaining its unknown outcome and handoff
+   regardless of body size until renewal succeeds; renewal removes the
+   handoff, never the unknown outcome. The shared transport parity table
+   proves the oversized-400 and oversized-2xx write outcomes on both paths.
 
    The core keeps the failure's code as a diagnostic; an `unavailable` that
    is no timeout becomes `connector_call_failed` with the core's
