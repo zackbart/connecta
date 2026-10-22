@@ -66,7 +66,10 @@ with one provider or subsystem per PR. A single cut-over rewrite is rejected.
 - **The MCP SDK is wrapped, not replaced.** Replacing either MCP edge, for
   example with `effect/ai` `McpServer` upward, needs proof of wire contracts and
   request lifetimes. That proof gets its own PR.
-- **The React operator UI is unchanged.**
+- **The React operator UI is unchanged.** _Amended by
+  [0012](./0012-hosted-mcp-runtime-discovery.md):_ C.0 may add display of
+  hosted classification, a copyable `classification` snippet and Re-index
+  now, never live capability policy.
 
 Bundle size is not a constraint on this choice. Every deployment imports the
 root, which already carries the Effect core. Measured on effect 4.0.5
@@ -105,12 +108,15 @@ inside `src/http/` and the goldens catch any drift. Schemas use the stable
 
 - projections that carry meaning (joins, sensitive-field drops, fallbacks)
 - what each vendor's 401, 403 and 404 mean
-- read/write classification
+- read/write classification of authored API tools. A hosted MCP tool's class
+  comes from its annotations and the deployment's `classification` map (0012).
 - value-safety tables
 - MIME, Docs and Slides index math, binary and Range reads, and token exchange
 
 **Agent-facing output is unchanged.** It must match the characterization goldens
-byte for byte unless a PR records a deliberate change. Contract changes to the
+byte for byte unless a PR records a deliberate change. 0012's C.0 items are
+deliberate breaking changes to hosted configuration and exposure, and every
+API golden stays byte-identical through them. Contract changes to the
 agent surface (uniform `{items, next}`, resource and verb naming) are a later
 phase and require evals.
 
@@ -160,7 +166,9 @@ include a `.changes/` fragment; the orchestrator squash-merges clean, green
 PRs. At the owner's direction (2026-10-20), this program departs from two
 repository conventions: Opus builds while GPT-6.1-Sol reviews and tests
 independently (xhigh for security-touching items), and the checklist lives in
-this record instead of GitHub issues.
+this record instead of GitHub issues. _Superseded (2026-10-22):_ AGENTS.md's
+agent policy now decides who builds and who reviews, and
+[#703](https://github.com/zackbart/connecta/issues/703) owns the plan.
 
 **A. Safety net (parallel)**
 
@@ -186,17 +194,76 @@ this record instead of GitHub issues.
 
 **C. Provider migrations (one PR each, by auth family)**
 
-The order follows auth family. The REST family first decides between
-`@effect/openapi-generator` and the pinned operation index.
+_Scope amendment ([0012](./0012-hosted-mcp-runtime-discovery.md)):_ hosted MCP
+has no vendored provider code. Every hosted connection is a generic
+`remoteMcp()` entry. APIs Connecta wraps stay vendored, and their migration
+plan below is unchanged. Which APIs to vendor, keep or expand is a separate
+owner decision.
+
+C.0 moves hosted MCP to generic configuration in four PRs. It uses no kit
+code, so 0010's B.5 gate governs only C.1–C.8. C.0a merges first, because
+C.0b's migration guide documents its options.
+
+- **C.0a, generic options and policy. Can start now.** In `remote-mcp.ts`,
+  `registry.ts`, `tool-safety.ts`, `config.ts` and `catalog-service.ts`:
+  - top-level `headers` under 0012's rules;
+  - `"hidden"` in `ConnectaConfig.classification`, filtered in `loadTools`;
+  - dormant, reported override names for runtime-discovered catalogs, while
+    static catalogs still fail at construction;
+  - the INV-9 fix, with one regression in the remote write-once suite;
+  - INV-1's canonical text and the shipped integration guide.
+
+  The generic `classify` and provider-review code stay as compatibility
+  until C.0c.
+
+- **C.0b, delete the pure-MCP providers. Can start now.** This removes:
+  - the Basecamp, Intercom, Linear, RevenueCat and Wispr Flow folders, with
+    their exports, smoke, Knip, bundle and README entries;
+  - `test/hosted-presets.test.ts` and the `REMOTE_MCP_ONLY` and
+    `REMOTE_ONLY` exemptions;
+  - both pending-list entries and their baseline lines;
+  - the `mcp-catalog` and `oauth-discovery` check types and their parsers,
+    Google's observation captures, and Forms' hosted-absence check.
+
+  It ships the dated operator migration guide with those five mappings. It
+  overlaps B.5 only on the `PENDING` and baseline lines.
+
+- **C.0c, delete the hosted halves. After B.5.** This removes:
+  - the hosted branches, endpoint and header defaults, `*_VETTED_CATALOG`
+    maps and hosted captures of Stripe, Vercel, Cloudflare, Notion, Mixpanel
+    and GitHub, including GitHub's `hosted.ts` and Vercel's recorded MCP
+    documentation;
+  - the `mcp-docs` check type and the hosted manual checks;
+  - `classify`, `owners` and `ProviderKind` from `src/provider.ts`, and
+    `remoteMcp({ classify })`;
+  - `catalog-drift.ts` review code, `generated.hosted` and the UI's drift
+    fields.
+
+  Old hosted selectors throw at construction and name the generic
+  replacement, and a leftover `classify` names `ConnectaConfig.classification`.
+  `github()` keeps its id and six REST tools. The migration guide gains the
+  hosted halves. This waits for B.5: B.4's `src/http/provider.ts` builds on
+  `defineProvider`, and B.5 deletes `stripe/kit-prototype.ts`.
+
+- **C.0d, re-index. Optional, after C.0a.** A maintainer-only Re-index now
+  invalidates one connector's catalog across its partitions. The UI may show
+  "last indexed", the existing `catalog_changed` counts, raw hints beside the
+  effective class, unmatched names and a copyable `classification` snippet.
+  It adds no acknowledgment, scheduler or second store.
+
+The provider migrations follow auth family. The REST family first decides
+between `@effect/openapi-generator` and the pinned operation index.
 
 1. Breeze
 2. Overflow
 3. Planning Center
 4. CCB
 5. Infisical
-6. The Stripe, Vercel, Cloudflare, Notion and Mixpanel REST family
-7. The Google layer and its six products
-8. GitHub's REST complement
+6. The Stripe, Vercel, Cloudflare, Notion and Mixpanel REST family (C.0c
+   already removed their hosted halves)
+7. The Google layer and its six products (C.0b already removed the hosted
+   observation checks)
+8. GitHub's REST complement (C.0c already removed the hosted half)
 
 **D. Effect core (one subsystem per PR)**
 
