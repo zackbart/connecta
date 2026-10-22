@@ -2109,19 +2109,28 @@ compiling and configuring the real thing.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
-- **Call state rides beside the context, keyed on the object.** The caller
-  (`src/connector-caller.ts`), admission permit (`src/call-admission-context.ts`),
-  recovery facts (`src/call-recovery.ts`), sent secrets (`src/sent-secrets.ts`),
-  the call's classification (`src/call-classification.ts`), the OAuth sealer and
-  owner partition, and catalog-cache policy live in side tables keyed on the
-  `ConnectorContext`. A `{ ...ctx }` copy is a new key and starts without any of
-  them. In-repo code copies a context only through `deriveContext`
-  (`src/derived-context.ts`): every table resolves the copy to its origin, so
-  state recorded through either object reaches the other, and the copy keeps the
-  request scope. `api()` hands handlers such a copy and never mutates the
-  registry's context (`test/derived-context.test.ts`). A deployment handler that
-  spreads its context still loses this state; decision 0009 (B.1) replaces the
-  tables with `Context` services.
+- **Operation and call state live in services.** `src/runtime/call.ts` owns
+  the admitted `Caller`, credentials, admission budget, recovery writer,
+  classification, signals, secrets and request ledgers. Registry operations
+  provision caller and operation policy; invocation adds a call lease and
+  finalizes it on every exit. `api()` has a private Effect entry and a shared
+  core with its Promise `callTool`. The public `ConnectorContext` is a view
+  of those services. `deriveContext` shares its entry in the single view
+  bridge; a spread has no caller or admission authority. Candidate credential
+  probes get anonymous read-call services instead of deriving authority.
+  Credentials and charges check closure before and after every await, pending
+  work is interrupted, and late recovery facts are dropped. Invocation owns
+  the recovery and logical-call records it reads after teardown. Closing an
+  outer call also revokes nested calls paused in preparation. Request-owned
+  MCP sessions and token flights outlive individual calls and close with the
+  request; their credential access comes from the operation. Request closure
+  revokes views and calls first, then runs every finalizer in reverse order,
+  collecting failures. The caller's original cancellation signal is retained
+  separately from the lease signal, so normal teardown never looks like caller
+  cancellation (`test/call-services.test.ts`, `test/derived-context.test.ts`).
+  Construction identities and immutable request/failure facts stay in the pure
+  `src/provider-call-facts.ts`, keeping provider stamping and operator sinks
+  free of the Effect call-service graph.
 - **A write leaves once (INV-9).** `src/write-outcome.ts` owns the shared rules
   every transport applies to a write: `unknownOutcome` turns a retryable
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to

@@ -1,3 +1,4 @@
+import { operationContext, openRequest } from "../../runtime/call.js";
 /** In-memory tokens and credential-bound login flights shared only inside one request. */
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -32,13 +33,14 @@ export function requestTokenCache(source: (ctx: ConnectorContext) => Promise<Tok
 
   function start(auth: TokenSource, ctx: ConnectorContext): Flight {
     const controller = new AbortController();
+    openRequest(ctx.requestScope ?? ctx).own(() => controller.abort(new Error("The request ended.")));
     const timer = setTimeout(
       () => controller.abort(new ConnectorCallError("unavailable", "Machine identity login timed out.")),
       LOGIN_TIMEOUT_MS,
     );
     const flight: Flight = { controller, waiters: 0, settled: false, promise: Promise.resolve("") };
     flight.promise = auth
-      .mint(deriveContext(ctx, { signal: controller.signal }))
+      .mint(deriveContext(operationContext(ctx), { signal: controller.signal }))
       .then((minted) => {
         // An abandoned login must not seed a token after cancellation.
         controller.signal.throwIfAborted();

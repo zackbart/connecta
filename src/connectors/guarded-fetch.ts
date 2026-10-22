@@ -1,3 +1,4 @@
+import { duringViewCall } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
  * (#341): path confinement, encoded query and framed bodies, per-request
@@ -93,7 +94,7 @@ export interface GuardedRequest {
    * key its vendor honors that this request carries (among `visibleHeaders`),
    * set only then. An operation hint (a PUT, a content address) is never
    * this proof. Never overrides a served write, and recorded on the logical
-   * call so key-reuse advice can name it (`keyProtectsLogicalCall`).
+   * call so key-reuse advice can name it (`keyProtectsCall`).
    */
   idempotencyKey?: string;
 }
@@ -613,7 +614,14 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       // Authentication is applied last and may not be shadowed. A caller-shaped
       // header that reaches this point wearing the credential's name is a bug
       // worth failing on, not a precedence question worth resolving quietly.
-      for (const [name, value] of Object.entries(await options.authenticate(ctx))) {
+      let authentication: Record<string, string>;
+      try {
+        authentication = await duringViewCall(ctx, () => Promise.resolve(options.authenticate(ctx)));
+      } catch (error) {
+        assertProviderCallOpen(ctx, provider, auxiliary);
+        throw error;
+      }
+      for (const [name, value] of Object.entries(authentication)) {
         const shadow = hasHeader(headers, name);
         if (shadow) {
           throw new ConnectorCallError(

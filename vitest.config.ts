@@ -24,6 +24,7 @@ const WORKERS_SUITES = [
   "test/usage-guide.test.ts",
   // workerd's own fetch, stream, timer and unhandled-rejection behaviour,
   // through real sockets and the MCP SDK edges.
+  "test/call-services.test.ts",
   "test/direct-write-finalizer.test.ts",
   "test/mcp-core.test.ts",
   "test/oauth-refresh-http.test.ts",

@@ -1,3 +1,5 @@
+import { credentialProbe } from "../runtime/credential-probe.js";
+import { registerCallEntry } from "../runtime/call-entry.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
 import { compileValidator, validateCatalogToolInput } from "../validate.js";
@@ -354,8 +356,14 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       callAdmission: opts.callAdmission,
       usageGuide: opts.usageGuide,
       credential: opts.credential,
-      testCredential: opts.testCredential,
-      testCredentials: opts.testCredentials,
+      testCredential: opts.testCredential
+        ? (value: string, ctx: ConnectorContext) =>
+            credentialProbe(ctx, { value }, (view) => opts.testCredential!(value, view))
+        : undefined,
+      testCredentials: opts.testCredentials
+        ? (values: ConnectorCredentialValues, ctx: ConnectorContext) =>
+            credentialProbe(ctx, values, (view) => opts.testCredentials!(values, view))
+        : undefined,
     }),
     ...(oauth
       ? {
@@ -488,6 +496,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
   // This boundary's identity in a logical call, fixed now: this object with
   // this function, never whatever the property or a copy holds by then.
   providerBoundary(connector);
+  registerCallEntry(connector, connector.callTool);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
       // The built-in static OAuth status only reads the stored grant. It never

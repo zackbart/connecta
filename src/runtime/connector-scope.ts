@@ -7,6 +7,7 @@
 import { Duration, Effect, type Scope } from "effect";
 import type { DeferredWork } from "../connector-scope.js";
 import type { Connector, ConnectorContext } from "../types.js";
+import { openRequest } from "./call.js";
 import { detach } from "./run.js";
 
 /** Enough for local transport abort/close without letting cleanup own latency. */
@@ -40,6 +41,11 @@ function waitAtMost(work: Promise<void>, budgetMs: number): Effect.Effect<void> 
  */
 export function closeScope(connector: Connector, ctx: ConnectorContext, defer?: DeferredWork): Effect.Effect<void> {
   return Effect.suspend(() => {
+    try {
+      openRequest(ctx.requestScope ?? ctx).close();
+    } catch {
+      /* Every cleanup step already ran. */
+    }
     let settled: Promise<void>;
     try {
       const closing = connector.closeScope?.(ctx);

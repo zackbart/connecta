@@ -1,3 +1,5 @@
+import { deriveContext } from "../derived-context.js";
+import { operationContext, openRequest } from "../runtime/call.js";
 import {
   assertRemoteOAuthClient,
   declareSelfHostedClient,
@@ -2280,6 +2282,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         credentialDigest: null,
       };
       states.set(key, state);
+      const owned = state;
+      openRequest(key).own(() => {
+        const closing = Scope.closeUnsafe(owned.scope, Exit.void);
+        reset(owned);
+        if (closing) detach(closing);
+      });
     }
     return state;
   };
@@ -2354,6 +2362,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     /** The raw value behind `credentialFramed`, under the same terms. */
     credentialValue: string | null = null,
   ): Transport => {
+    ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
     // Missing records never acquire a fresh write attempt. Only active calls

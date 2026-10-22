@@ -354,6 +354,43 @@ interface CallShapes extends OperationShapes {
 const RequestFacts = Context.Reference<{ effect: "call" | "read"; step?: string; item?: string; operation?: OperationRef }>(…, { defaultValue: () => ({ effect: "call" }) });
 ```
 
+**B.1 implementation reconciliation with #902/#917.** The merged contract
+wins over these prototype details:
+
+- _Superseded:_ the B.1 table/snippet's single `Classification` conflates
+  the effective tool classification with a served verdict on direct calls.
+  `Classification` is the effective verdict; `ServedClassification` is absent
+  for a direct call. `callClassification` reads only the latter. This preserves
+  the merged direct keyed-write exception without granting it to served writes.
+- _Superseded:_ the prototype's single `Signal` is insufficient for the merged
+  direct-call abort contract once API boundary teardown aborts its lease.
+  `SourceSignal` retains the caller's original signal; `Signal` is the revocable
+  lease signal. Settlement reads the former, so ordinary closure cannot turn
+  a mapped failure into caller-cancellation wording.
+- The ledger is the merged append-only physical ledger, including remote MCP
+  and nested boundaries, provided as `Ledger`, `ProviderLedger` and
+  `LogicalLedger`. No physical entries are merged or reused. `settleWrite`
+  remains the single Q8 decider, at invocation or the direct outermost boundary.
+  Invocation retains its logical-call and recovery records across revocation.
+
+B.1 moves the common prototype services and view/request lifetime machinery
+from `src/http/services.ts` to `src/runtime/call.ts`. HTTP-specific dispatch
+reservations, request facts and renewal middleware remain in the unshipped
+kit for B.2/B.4; they import the live common services. The operation entry also
+holds catalog policy/observations, OAuth partition and sealer as services,
+removing their context-keyed security tables along with the call tables.
+`Memo` also owns Google's per-call subject resolution and Cloudflare's per-call
+ownership lookup count; neither retains a context-keyed table.
+
+The #917 nested-call follow-up is fixed: child leases inherit parent closure,
+child ledgers close recursively, and pending authentication is interrupted
+before dispatch. Delegated provenance is deferred: propagating wrapper read,
+auxiliary or declared-refusal proof to each physical delegated send requires
+an explicit transport linkage that survives custom/copied-init delegation.
+Services alone do not prove that relationship. The separate immutable records
+and #917's conservative expectations remain intact; no B.2 transport work is
+included here.
+
 **Operations outside a call (discovery, status, `startAuth`).** Caller state is
 not call state. `catalog-cache.ts` refuses its private fallback without an
 authenticated caller, and `remote-mcp.ts` puts the caller in its negotiation
