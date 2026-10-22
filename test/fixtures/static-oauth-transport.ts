@@ -67,6 +67,8 @@ export async function staticOAuthRequest(
       Effect.provideService(Grant, grantFromOAuth(ctx.oauth!)),
     ),
   };
-  const tool = built === "read" ? read(connection, spec) : write(connection, { ...spec, destructive: true });
+  const tool = built === "read"
+    ? read(connection, { ...spec, review: "Exercise core write classification even for a read-built POST." })
+    : write(connection, { ...spec, destructive: true });
   return tool.handler({}, ctx);
 }

@@ -27,12 +27,18 @@ See AGENTS.md Verification.
 - **A new provider** meets the whole standard from its first commit. It never
   joins `PENDING`; the suite fails an off-standard new folder, and
   `providers:generate` refuses one that breaks D or G.
-  **Transitional:** `providers:generate` writes `drift.json`'s `generated`
-  block and the Conventions section (S.1). Until B.4 (the kit) lands, no `api`
-  or `dual` provider can be built on the kit, and no definition carries the
-  kit facts (`kit`: the operation manifest, page size, hatch verdicts) that
-  `generated.operations` and the paging and hatch Conventions read. Do not add
-  an `api` or `dual` provider before then.
+  Use `defineApiProvider` from `src/http/provider.ts` for a new API
+  implementation: it builds on `defineProvider`, validates construction,
+  and derives `kit.operations`, page size and hatch verdicts for generation.
+  Import kit modules through their explicit source paths, never the root.
+  The kit remains internal; deployment factories return ordinary Connectors
+  and published declarations must name no Effect type. B.5's Tithe.ly gate
+  must pass before Phase C migrations begin.
+  Reviewed path calls need an indexed safety resolver; a caller-supplied
+  template never establishes the operation's policy. Use an explicit global
+  review only when the provider permits unindexed paths. Step-1 migrations
+  may return their complete legacy usage guide from the helper, preserving
+  fragments and option-dependent lines without changing `SKILL.md`.
 - **A migration PR** is step 1 or step 2 for one provider, never both. See
   [Migrating a provider](#migrating-a-provider).
 - **A change to a provider still in `PENDING`** keeps its current shape. See

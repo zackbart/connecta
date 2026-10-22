@@ -1,14 +1,7 @@
-// Prototype for decision 0010, not wired into the live provider: Tithe.ly's
-// get_charge, list_charges, and tithely_api_mutate on the Effect provider kit
-// (src/http/). Its suite compares the tools' catalog entries, outgoing
-// requests, and mapped results with index.ts, and names each deliberate
-// difference (A.2's sensitive fields and decision 0010's 401 rule; every
-// other write verdict is the core's, decided at api()'s boundary). B.5
-// replaces index.ts with this shape.
-//
-// Sections marked "unchanged" are index.ts's projection and argument code,
-// copied verbatim because index.ts does not export them. B.5 moves them; it
-// does not rewrite them (decision 0009: projections stay code).
+// Decision 0010 B.4 reference: all eleven live Tithe.ly tools expressed on
+// the Effect HTTP kit. B.5 owns wiring this into the maintained provider.
+// Catalog order, legacy hatch names, request bytes, and projections stay as
+// shipped; test/http-tithely-reference.test.ts compares the complete surface.
 
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
@@ -17,60 +10,91 @@ import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
 import { Integer, isMaxChars } from "../../http/json-schema.js";
-import { Cursor, lookahead, PageInfo } from "../../http/paging.js";
-import { resultSafety } from "../../http/safety.js";
+import { Cursor, lookahead } from "../../http/paging.js";
+import { defineApiProvider } from "../../http/provider.js";
+import { resultSafety, type SafetyOptions } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
-import { read, write } from "../../http/tools.js";
-import { connect, get, operations, vendor, type Connection } from "../../http/vendor.js";
-import type { ProviderKitFacts } from "../../provider.js";
-import type { ConnectorCredentialValues } from "../../types.js";
+import { get as getTool, list, read, write } from "../../http/tools.js";
+import { connect, get, vendor, type Connection } from "../../http/vendor.js";
+import type { ConnectorCredentialValues, ConnectorUsageGuide } from "../../types.js";
+import { TITHELY_API_BASE_URLS, TITHELY_SENSITIVE_FIELDS, tithely, type TithelyOptions } from "./index.js";
+import { skill } from "./skill.generated.js";
 
 // --- Vendor --------------------------------------------------------------------
 
 const Envelope = Schema.Struct({ status: Schema.optionalKey(Schema.String), type: Schema.optionalKey(Schema.String) });
 
+const Single = (id: string) =>
+  Schema.Struct({
+    ...Envelope.fields,
+    [id]: Schema.optionalKey(Schema.String),
+    object: Schema.optionalKey(Schema.Unknown),
+  });
+const Rows = Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(Schema.Unknown)) });
+const PageQuery = {
+  limit: Integer,
+  order_by: Schema.optionalKey(Schema.Literals(["DESC", "ASC"])),
+  starting_after: Schema.optionalKey(Schema.String),
+};
+const ScopeQuery = {
+  organization_id: Schema.optionalKey(Schema.String),
+  account_id: Schema.optionalKey(Schema.String),
+};
+
+const getOrganization = get("getOrganization", "/organizations/:organizationId", {
+  params: { organizationId: Schema.String },
+  success: Single("organization_id"),
+});
+const listOrganizations = get("listOrganizations", "/organizations-list", { query: PageQuery, success: Rows });
+const getAccount = get("getAccount", "/accounts/:accountId", {
+  params: { accountId: Schema.String },
+  success: Single("account_id"),
+});
+const listAccounts = get("listAccounts", "/accounts-list", { query: PageQuery, success: Rows });
+const listAllAccounts = get("listAllAccounts", "/accounts-list-all", { query: PageQuery, success: Rows });
 const getCharge = get("getCharge", "/charges/:chargeId", {
   params: { chargeId: Schema.String },
-  success: Schema.Struct({
-    ...Envelope.fields,
-    charge_id: Schema.optionalKey(Schema.String),
-    object: Schema.optionalKey(Schema.Unknown),
-  }),
+  success: Single("charge_id"),
 });
-
 const listCharges = get("listCharges", "/charges-list", {
-  // Field order is wire order.
+  // Field order is wire order, including filters before the paging fields.
   query: {
-    organization_id: Schema.optionalKey(Schema.String),
-    account_id: Schema.optionalKey(Schema.String),
+    ...ScopeQuery,
     created_after: Schema.optionalKey(Integer),
     created_before: Schema.optionalKey(Integer),
-    limit: Integer,
-    order_by: Schema.Literals(["DESC", "ASC"]),
-    starting_after: Schema.optionalKey(Schema.String),
+    ...PageQuery,
   },
-  success: Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(Schema.Unknown)) }),
+  success: Rows,
+});
+const getRecurring = get("getRecurring", "/recurring/:recurringId", {
+  params: { recurringId: Schema.String },
+  success: Single("recurring_id"),
+});
+const listRecurring = get("listRecurring", "/recurring-list", {
+  query: { ...ScopeQuery, ...PageQuery },
+  success: Rows,
+});
+const listPaymentMethods = get("listPaymentMethods", "/payment-methods-list", {
+  query: { account_id: Schema.String },
+  success: Rows,
 });
 
-export const TithelyApi = vendor("Tithe.ly", getCharge, listCharges);
+export const TithelyApi = vendor(
+  "Tithe.ly",
+  listOrganizations,
+  getOrganization,
+  listAccounts,
+  listAllAccounts,
+  getAccount,
+  listCharges,
+  getCharge,
+  listRecurring,
+  getRecurring,
+  listPaymentMethods,
+);
 
 const TITHELY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE_SIZE = 99;
-
-/**
- * Decision 0011's `ProviderKitFacts`, as `defineApiProvider` will set them:
- * the operations for `drift.json`'s `generated.operations` and the page size
- * the generated Conventions state. No `hatch`: step 1 keeps
- * `tithely_api_get`/`tithely_api_mutate`, and the standard hatch arrives with
- * step 2.
- */
-export const TITHELY_KIT_FACTS: ProviderKitFacts = {
-  operations: operations(TithelyApi),
-  pageSize: { default: 25, max: MAX_PAGE_SIZE },
-};
-
-/** A.2's privacy projection: an organization's payout bank and legal contact. */
-const TITHELY_SENSITIVE_FIELDS: readonly string[] = ["bank", "legal"];
 
 const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
@@ -136,7 +160,7 @@ const errors: VendorErrors = {
 const failed = (error: ConnectorCallError) => Effect.fail(new Refusal({ error }));
 
 /** One connection: the guarded transport, the status table, and the value-safety boundary. */
-function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return"): Connection {
+function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return", leanOrganizations = false): Connection {
   return connect(
     TithelyApi,
     guardedClient({
@@ -148,19 +172,135 @@ function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return"):
     }),
     {
       errors,
-      safety: resultSafety({
-        review:
-          "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data, dropped below.",
-        sensitiveFields: { names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields },
-      }),
-      // A 2xx JSON body that is not an in-band refusal. Tithe.ly withholds
-      // nothing, so its own reason may be quoted.
-      result: (body) => {
-        const refused = inBandFailure(body);
-        return refused ? failed(refused) : Effect.succeed(body);
-      },
+      safety: resultSafety(tithelySafety(sensitiveFields, leanOrganizations)),
+      result,
     },
   );
+}
+
+function tithelySafety(sensitiveFields: "drop" | "return", leanOrganizations = false): SafetyOptions {
+  return {
+    review:
+      "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data, dropped below.",
+    // Lean organization results have always kept bank.currency. Preserve
+    // only that reviewed scalar before dropping the bank object; the raw
+    // connection and hatches never receive the added projection field.
+    ...(leanOrganizations
+      ? {
+          reviewed: {
+            withholdsErrors: () => false,
+            redact: (body, operation) => {
+              const withCurrency = (value: unknown) => {
+                const record = asRecord(value);
+                return { ...record, payoutCurrency: text(asRecord(record["bank"])["currency"]) };
+              };
+              if (operation.template === "/organizations-list") {
+                const root = asRecord(body);
+                return Array.isArray(root["data"]) ? { ...root, data: root["data"].map(withCurrency) } : body;
+              }
+              return { object: withCurrency(entity(body, "organization_id")) };
+            },
+          },
+        }
+      : {}),
+    sensitiveFields: { names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields },
+  };
+}
+
+// Tithe.ly withholds nothing, so an in-band refusal may quote its own reason.
+const result = (body: unknown) => {
+  const refused = inBandFailure(body);
+  return refused ? failed(refused) : Effect.succeed(body);
+};
+
+/** Complete connector reference; B.5 owns the maintained provider's migration. */
+export const tithelyKit = defineApiProvider<TithelyOptions>({
+  name: "tithely",
+  title: "Tithe.ly",
+  readme: "Tithe.ly",
+  skill,
+  options: tithely.definition.options,
+  displayTitle: (options) => (options.environment === "live" ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
+  description: (options) =>
+    options.environment === "live"
+      ? `Tithe.ly giving — live donors and real money — ${options.purpose}`
+      : `Tithe.ly giving (test environment, no real money) — ${options.purpose}`,
+  vendor: TithelyApi,
+  baseUrl: (options) => options.baseUrl?.trim() || TITHELY_API_BASE_URLS[options.environment],
+  maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
+  headers: { Accept: "application/json" },
+  pageSize: { default: 25, max: MAX_PAGE_SIZE },
+  credential: {
+    label: "Tithe.ly API keys",
+    description:
+      "The public and private key pair for this connection's environment. API access is by request: email support@tithe.ly to have keys issued. Test keys work only against tithelydev.com and live keys only against tithe.ly.",
+    fields: [
+      {
+        name: "publicKey",
+        label: "Public key",
+        description: "Starts with pub_. Sent as the HTTP Basic user name.",
+        placeholder: "pub_…",
+        inputType: "text",
+      },
+      {
+        name: "privateKey",
+        label: "Private key",
+        description: "Starts with pri_. Sent as the HTTP Basic password; never expose it in a browser.",
+        placeholder: "pri_…",
+        inputType: "password",
+      },
+    ],
+  },
+  authenticate,
+  errors,
+  safety: (options) => tithelySafety(options.sensitiveFields ?? "drop"),
+  result,
+  probe: {
+    operation: listOrganizations,
+    request: { query: { limit: 1 } },
+    check: (values) => {
+      const pair = keyPairProblem(values);
+      return typeof pair === "string" ? pair : undefined;
+    },
+    describe: (reply, options) => {
+      const first = asRecord(asArray(asRecord(reply)["data"])[0]);
+      const name = text(first["name"]);
+      const id = text(first["organization_id"]);
+      return name
+        ? `Keys accepted by Tithe.ly (${options.environment}); first organization reached: ${name}${id ? ` (${id})` : ""}.`
+        : `Keys accepted by Tithe.ly (${options.environment}); no organization is visible to them.`;
+    },
+  },
+  guide: usageGuide,
+  tools: ({ connection, pageSize, options }) =>
+    kitTools(
+      options.baseUrl?.trim() || TITHELY_API_BASE_URLS[options.environment],
+      pageSize,
+      options.sensitiveFields ?? "drop",
+      connection,
+    ),
+});
+
+/** Manifest facts from the helper; legacy hatches are retained until step 2. */
+export const TITHELY_KIT_FACTS = tithelyKit.definition.kit!;
+
+function usageGuide(options: Readonly<TithelyOptions>): ConnectorUsageGuide {
+  const instructions = options.instructions?.trim();
+  const live = options.environment === "live";
+  const where = live
+    ? "Live Tithe.ly (tithe.ly): real donors and real money."
+    : "Test Tithe.ly (tithelydev.com): a test account; no real money moves.";
+  const sensitive =
+    options.sensitiveFields === "return"
+      ? "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n"
+      : "  Every result, `raw: true` and the hatches included, leaves them out.\n";
+  return {
+    content: `# Tithe.ly giving usage\n\n${where}\n\nAccount purpose: ${options.purpose}${skill.fragments.guide_0}${sensitive}${skill.fragments.guide_1}${
+      instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""
+    }`,
+    summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
+    required: true,
+  };
 }
 
 // --- Schemas ---------------------------------------------------------------------
@@ -178,6 +318,26 @@ const When = Schema.Union([
   Schema.String.check(Schema.isMinLength(1)),
 ]);
 
+const Address = Schema.Struct({ streetAddress: Text, city: Text, state: Text, postal: Text, country: Text });
+const Organization = Schema.Struct({
+  organizationId: Text,
+  name: Text,
+  ownerAccountId: Text,
+  website: Text,
+  phoneNumber: Text,
+  address: Schema.optionalKey(Address),
+  payoutCurrency: Text,
+  createdAt: Text,
+  funds: Schema.Array(Schema.Struct({ id: Text, name: Schema.String, status: Text })),
+});
+const AccountSummary = Schema.Struct({
+  accountId: Text,
+  firstName: Text,
+  lastName: Text,
+  email: Text,
+  createdAt: Text,
+});
+const Account = Schema.Struct({ ...AccountSummary.fields, phoneNumber: Text, address: Schema.optionalKey(Address) });
 const Donor = Schema.Struct({ firstName: Text, lastName: Text, email: Text });
 
 const Charge = Schema.Struct({
@@ -201,6 +361,26 @@ const Charge = Schema.Struct({
   paymentMethod: Schema.optionalKey(Schema.Struct({ type: Text, brand: Text, last4: Text })),
 });
 
+const Recurring = Schema.Struct({
+  recurringId: Text,
+  amountCents: Cents,
+  currency: Text,
+  fund: Text,
+  term: Text,
+  startAt: Text,
+  organizationId: Text,
+  organizationName: Text,
+  accountId: Text,
+  donor: Schema.optionalKey(Donor),
+  paymentMethodId: Text,
+});
+const PaymentMethod = Schema.Struct({ paymentMethodId: Text, accountId: Text, type: Text, brand: Text, last4: Text });
+const OrganizationId = Id.annotate({ description: "Organization id (org_…) from list_organizations." });
+const AccountId = Id.annotate({ description: "Donor account id (user_…) from list_accounts." });
+const Path = Schema.String.check(Schema.isMinLength(1), isMaxChars(512)).annotate({
+  description: "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string.",
+});
+
 const Pairs = (description: string, value: string) =>
   Schema.Array(
     Schema.Struct({
@@ -213,16 +393,73 @@ const Pairs = (description: string, value: string) =>
     .check(Schema.isMaxLength(50))
     .annotate({ description });
 
+const Query = Pairs(
+  "Query parameters as name/value pairs, e.g. account_id.",
+  "Parameter value; stringified once by the transport.",
+);
+const Form = Pairs(
+  "Form fields as name/value pairs, sent form-encoded as Tithe.ly's documented examples send them. Amounts are integer cents.",
+  "Field value; stringified once by the transport.",
+);
+const HatchResult = Schema.Struct({
+  result: Schema.Unknown.pipe(
+    Schema.annotateKey({
+      description: "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.",
+    }),
+  ),
+});
+
 // --- Tools -----------------------------------------------------------------------
 
 export function kitTools(
   baseUrl: string,
   defaultPageSize: number,
   sensitiveFields: "drop" | "return" = "drop",
+  connection: Connection = tithelyConnection(baseUrl, sensitiveFields),
 ): ApiTool[] {
-  const connection = tithelyConnection(baseUrl, sensitiveFields);
+  const leanOrganizations = tithelyConnection(baseUrl, sensitiveFields, true);
   const { send } = connection;
+  const PageInput = {
+    limit: Schema.optionalKey(
+      Integer.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE_SIZE })).annotate({
+        description: `Rows per page, 1 to ${MAX_PAGE_SIZE} (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to ${defaultPageSize}.`,
+      }),
+    ),
+    cursor: Schema.optionalKey(Cursor),
+    order: Schema.optionalKey(
+      Schema.Literals(["desc", "asc"]).annotate({
+        description: "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging.",
+      }),
+    ),
+    raw: Schema.optionalKey(Raw),
+  };
+  const pageQuery = (args: { order?: "asc" | "desc" }, cursor: string | undefined, ask: number) => ({
+    limit: ask,
+    order_by: args.order === "asc" ? ("ASC" as const) : ("DESC" as const),
+    ...defined({ starting_after: cursor }),
+  });
+  // Step 1 retains raw's historical lean output schema. Keep its one explicit
+  // escape in this helper; every projected row is checked against its Schema.
+  const projectValue = <Row>(value: unknown, raw: boolean | undefined, project: (value: unknown) => Row): Row =>
+    raw === true ? (value as Row) : project(value);
+  const projectRows = <Row>(
+    rows: readonly unknown[],
+    raw: boolean | undefined,
+    project: (row: unknown) => Row,
+  ): readonly Row[] => rows.map((row) => projectValue(row, raw, project));
   return [
+    read(connection, {
+      name: "tithely_api_get",
+      description:
+        "Call any Tithe.ly v1 GET endpoint and return its response, less the sensitive fields this connection drops. Prefer named reads.",
+      input: Schema.Struct({ path: Path, query: Schema.optionalKey(Query) }),
+      output: HatchResult,
+      run: (args) =>
+        connection
+          .sendPath({ method: "GET", path: args.path, template: args.path, query: pairs(args.query) })
+          .pipe(Effect.map(({ data }) => ({ result: data ?? null }))),
+    }),
+    // action would add idempotentHint: false; step 1 keeps the shipped hints.
     write(connection, {
       name: "tithely_api_mutate",
       description:
@@ -233,45 +470,99 @@ export function kitTools(
           description:
             "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method.",
         }),
-        path: Schema.String.check(Schema.isMinLength(1), isMaxChars(512)).annotate({
-          description:
-            "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string.",
-        }),
-        query: Schema.optionalKey(
-          Pairs(
-            "Query parameters as name/value pairs, e.g. account_id.",
-            "Parameter value; stringified once by the transport.",
-          ),
-        ),
-        form: Schema.optionalKey(
-          Pairs(
-            "Form fields as name/value pairs, sent form-encoded as Tithe.ly's documented examples send them. Amounts are integer cents.",
-            "Field value; stringified once by the transport.",
-          ),
-        ),
+        path: Path,
+        query: Schema.optionalKey(Query),
+        form: Schema.optionalKey(Form),
       }),
-      output: Schema.Struct({
-        // Effect drops a value annotation on Unknown; a key annotation renders.
-        result: Schema.Unknown.pipe(
-          Schema.annotateKey({
-            description:
-              "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.",
-          }),
-        ),
-      }),
+      output: HatchResult,
       run: (args) =>
         connection
           .sendPath({
             method: args.method,
             path: args.path,
-            // Tithe.ly has no operation index: its safety is per provider, not per operation.
             template: args.path,
             query: pairs(args.query),
             form: pairs(args.form),
           })
           .pipe(Effect.map(({ data }) => ({ result: data ?? null }))),
     }),
-    read(connection, {
+    list(connection, {
+      name: "list_organizations",
+      description:
+        "List the organizations these keys manage, with their funds (giving types) and status. Omits payout bank and legal-contact details.",
+      input: Schema.Struct(PageInput),
+      key: "organizations",
+      row: Organization,
+      cursor: "plain",
+      page: (args, cursor) =>
+        lookahead({
+          provider: "Tithe.ly",
+          idKey: "organization_id",
+          limit: args.limit ?? defaultPageSize,
+          fetch: (ask) =>
+            (args.raw === true ? connection : leanOrganizations)
+              .send(listOrganizations, { query: pageQuery(args, cursor, ask) })
+              .pipe(Effect.flatMap(({ data }) => listRows(data))),
+        }).pipe(Effect.map(({ rows, page }) => ({ rows: projectRows(rows, args.raw, projectOrganization), page }))),
+    }),
+    getTool(connection, {
+      name: "get_organization",
+      description:
+        "Get one organization with its funds (giving types) and whether each is active, hidden, or archived. Omits payout bank and legal-contact details.",
+      input: Schema.Struct({ organizationId: OrganizationId, raw: Schema.optionalKey(Raw) }),
+      output: Organization,
+      run: (args) =>
+        (args.raw === true ? connection : leanOrganizations)
+          .send(getOrganization, { params: { organizationId: args.organizationId } })
+          .pipe(
+            Effect.map(({ data }) => {
+              const record = entity(data, "organization_id");
+              return projectValue(record, args.raw, projectOrganization);
+            }),
+          ),
+    }),
+    list(connection, {
+      name: "list_accounts",
+      description:
+        "List donor accounts by name, email, and id. Contact details stay on get_account; giving history is list_charges by accountId.",
+      input: Schema.Struct({
+        scope: Schema.optionalKey(
+          Schema.Literals(["all", "api"]).annotate({
+            description:
+              "all (default) lists every account Tithe.ly lets these keys see; api lists only accounts created through this API.",
+          }),
+        ),
+        ...PageInput,
+      }),
+      key: "accounts",
+      row: AccountSummary,
+      cursor: "plain",
+      page: (args, cursor) =>
+        lookahead({
+          provider: "Tithe.ly",
+          idKey: "account_id",
+          limit: args.limit ?? defaultPageSize,
+          fetch: (ask) =>
+            send(args.scope === "api" ? listAccounts : listAllAccounts, { query: pageQuery(args, cursor, ask) }).pipe(
+              Effect.flatMap(({ data }) => listRows(data)),
+            ),
+        }).pipe(Effect.map(({ rows, page }) => ({ rows: projectRows(rows, args.raw, projectAccountSummary), page }))),
+    }),
+    getTool(connection, {
+      name: "get_account",
+      description:
+        "Get one donor account with email, phone, and postal address. Does not include giving; use list_charges with accountId.",
+      input: Schema.Struct({ accountId: AccountId, raw: Schema.optionalKey(Raw) }),
+      output: Account,
+      run: (args) =>
+        send(getAccount, { params: { accountId: args.accountId } }).pipe(
+          Effect.map(({ data }) => {
+            const record = entity(data, "account_id");
+            return args.raw === true ? record : projectAccount(record);
+          }),
+        ),
+    }),
+    list(connection, {
       name: "list_charges",
       description:
         "List gifts (charges) to one organization or from one donor, optionally within a created-date range, with gross, net, and fees in cents.",
@@ -291,21 +582,12 @@ export function kitTools(
         createdBefore: Schema.optionalKey(
           When.annotate({ description: "Only charges created before this time, in the same forms as createdAfter." }),
         ),
-        limit: Schema.optionalKey(
-          Integer.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE_SIZE })).annotate({
-            description: `Rows per page, 1 to ${MAX_PAGE_SIZE} (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to ${defaultPageSize}.`,
-          }),
-        ),
-        cursor: Schema.optionalKey(Cursor),
-        order: Schema.optionalKey(
-          Schema.Literals(["desc", "asc"]).annotate({
-            description: "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging.",
-          }),
-        ),
-        raw: Schema.optionalKey(Raw),
+        ...PageInput,
       }),
-      output: Schema.Struct({ charges: Schema.Array(Charge), page: PageInfo }),
-      run: (args) =>
+      key: "charges",
+      row: Charge,
+      cursor: "plain",
+      page: (args, cursor) =>
         Effect.gen(function* () {
           const after = yield* seconds(args.createdAfter, "createdAfter");
           const before = yield* seconds(args.createdBefore, "createdBefore");
@@ -317,14 +599,7 @@ export function kitTools(
               ),
             );
           }
-          if (args.organizationId === undefined && args.accountId === undefined) {
-            return yield* failed(
-              new ConnectorCallError(
-                "invalid_args",
-                "Tithe.ly lists charges only for an organization or a donor: pass organizationId (from list_organizations) or accountId (from list_accounts).",
-              ),
-            );
-          }
+          const scope = yield* scopeFilters(args, "charges");
           const { rows, page } = yield* lookahead({
             provider: "Tithe.ly",
             idKey: "charge_id",
@@ -332,27 +607,16 @@ export function kitTools(
             fetch: (ask) =>
               send(listCharges, {
                 query: {
-                  ...defined({
-                    organization_id: args.organizationId,
-                    account_id: args.accountId,
-                    created_after: after,
-                    created_before: before,
-                  }),
-                  limit: ask,
-                  order_by: args.order === "asc" ? "ASC" : "DESC",
-                  ...defined({ starting_after: args.cursor }),
+                  ...scope,
+                  ...defined({ created_after: after, created_before: before }),
+                  ...pageQuery(args, cursor, ask),
                 },
               }).pipe(Effect.flatMap(({ data }) => listRows(data))),
           });
-          // The cast is the finding: `raw` returns rows the declared output
-          // does not describe, and the kit's types refuse it (decision 0010).
-          return {
-            charges: args.raw === true ? (rows as ReadonlyArray<typeof Charge.Type>) : rows.map(projectCharge),
-            page,
-          };
+          return { rows: projectRows(rows, args.raw, projectCharge), page };
         }),
     }),
-    read(connection, {
+    getTool(connection, {
       name: "get_charge",
       description:
         "Get one charge with amounts in cents, fund, deposit date, donor name and email, and payment-method brand and last four.",
@@ -369,7 +633,82 @@ export function kitTools(
           }),
         ),
     }),
+    list(connection, {
+      name: "list_recurring_charges",
+      description:
+        "List recurring gifts for one organization or one donor: amount, fund, term, and start date. Does not list the charges they produced.",
+      input: Schema.Struct({
+        organizationId: Schema.optionalKey(
+          Id.annotate({ description: "Organization (org_…) receiving the gifts. This or accountId is required." }),
+        ),
+        accountId: Schema.optionalKey(
+          Id.annotate({ description: "Donor account (user_…) giving. This or organizationId is required." }),
+        ),
+        ...PageInput,
+      }),
+      key: "recurringCharges",
+      row: Recurring,
+      cursor: "plain",
+      page: (args, cursor) =>
+        Effect.gen(function* () {
+          const scope = yield* scopeFilters(args, "recurring gifts");
+          const { rows, page } = yield* lookahead({
+            provider: "Tithe.ly",
+            idKey: "recurring_id",
+            limit: args.limit ?? defaultPageSize,
+            fetch: (ask) =>
+              send(listRecurring, { query: { ...scope, ...pageQuery(args, cursor, ask) } }).pipe(
+                Effect.flatMap(({ data }) => listRows(data)),
+              ),
+          });
+          return { rows: projectRows(rows, args.raw, projectRecurring), page };
+        }),
+    }),
+    getTool(connection, {
+      name: "get_recurring_charge",
+      description:
+        "Get one recurring gift by id: amount in cents, fund, term, start date, organization, and donor name and email.",
+      input: Schema.Struct({
+        recurringId: Id.annotate({ description: "Recurring gift id (rc_…) from list_recurring_charges." }),
+        raw: Schema.optionalKey(Raw),
+      }),
+      output: Recurring,
+      run: (args) =>
+        send(getRecurring, { params: { recurringId: args.recurringId } }).pipe(
+          Effect.map(({ data }) => {
+            const record = entity(data, "recurring_id");
+            return args.raw === true ? record : projectRecurring(record);
+          }),
+        ),
+    }),
+    // This shipped list has no page object and leniently treats non-array data
+    // as empty. The paged list builder would change both contracts.
+    read(connection, {
+      name: "list_payment_methods",
+      description:
+        "List one donor's stored payment methods as type, brand, and last four. Every method in one response; never card numbers or tokens.",
+      input: Schema.Struct({ accountId: AccountId, raw: Schema.optionalKey(Raw) }),
+      output: Schema.Struct({ paymentMethods: Schema.Array(PaymentMethod) }),
+      run: (args) =>
+        send(listPaymentMethods, { query: { account_id: args.accountId } }).pipe(
+          Effect.map(({ data }) => ({
+            paymentMethods: projectRows(asArray(asRecord(data)["data"]), args.raw, projectPaymentMethod),
+          })),
+        ),
+    }),
   ];
+}
+
+function scopeFilters(args: { organizationId?: string; accountId?: string }, noun: string) {
+  if (args.organizationId === undefined && args.accountId === undefined) {
+    return failed(
+      new ConnectorCallError(
+        "invalid_args",
+        `Tithe.ly lists ${noun} only for an organization or a donor: pass organizationId (from list_organizations) or accountId (from list_accounts).`,
+      ),
+    );
+  }
+  return Effect.succeed(defined({ organization_id: args.organizationId, account_id: args.accountId }));
 }
 
 function listRows(payload: unknown): Effect.Effect<unknown[], HttpFailure> {
@@ -391,7 +730,7 @@ function seconds(value: unknown, name: string): Effect.Effect<number | undefined
   });
 }
 
-// --- Unchanged from index.ts -------------------------------------------------------
+// --- Projections and argument helpers from index.ts --------------------------------
 
 type JsonRecord = Record<string, any>;
 
@@ -403,8 +742,14 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function compact<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+type Compact<T> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K];
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
+function compact<T extends object>(value: T): Compact<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Compact<T>;
 }
 
 function text(value: unknown): string | undefined {
@@ -498,13 +843,84 @@ function entity(payload: unknown, idKey: string): JsonRecord {
   return id === undefined ? record : { ...record, [idKey]: id };
 }
 
+function projectAddress(value: unknown): typeof Address.Type | undefined {
+  const address = asRecord(value);
+  if (Object.keys(address).length === 0) return undefined;
+  return compact({
+    streetAddress: text(address["street_address"]),
+    city: text(address["city"]),
+    state: text(address["state"]),
+    postal: text(address["postal"]),
+    country: text(address["country"]),
+  });
+}
+
+const FUND_STATUS: Readonly<Record<string, string>> = {
+  "0": "archived",
+  "1": "active",
+  "2": "hidden",
+};
+
+function projectFunds(organization: JsonRecord) {
+  const full = asArray(organization["giving_types_full"]);
+  if (full.length > 0) {
+    return full.map((value) => {
+      const fund = asRecord(value);
+      const status = fund["status"] === undefined ? undefined : String(fund["status"]);
+      return compact({
+        id: fund["id"] === undefined ? undefined : String(fund["id"]),
+        name: String(fund["name"] ?? ""),
+        status: status === undefined ? undefined : (FUND_STATUS[status] ?? status),
+      });
+    });
+  }
+  return asArray(organization["giving_types"])
+    .filter((name): name is string => typeof name === "string")
+    .map((name) => ({ name }));
+}
+
+function projectOrganization(value: unknown): typeof Organization.Type {
+  const organization = asRecord(value);
+  return compact({
+    organizationId: text(organization["organization_id"]),
+    name: text(organization["name"]),
+    ownerAccountId: text(organization["account_id"]),
+    website: text(organization["website"]),
+    phoneNumber: text(organization["phone_number"]),
+    address: projectAddress(organization["address"]),
+    payoutCurrency: text(organization["payoutCurrency"]),
+    createdAt: isoTime(organization["created_date"]),
+    funds: projectFunds(organization),
+  });
+}
+
+function projectAccountSummary(value: unknown): typeof AccountSummary.Type {
+  const account = asRecord(value);
+  return compact({
+    accountId: text(account["account_id"]),
+    firstName: text(account["first_name"]),
+    lastName: text(account["last_name"]),
+    email: text(account["email"]),
+    createdAt: isoTime(account["created_date"]),
+  });
+}
+
+function projectAccount(value: unknown): typeof Account.Type {
+  const account = asRecord(value);
+  return compact({
+    ...projectAccountSummary(account),
+    phoneNumber: text(account["phone_number"]),
+    address: projectAddress(account["address"]),
+  });
+}
+
 function reference(value: unknown, idKey: string): { id?: string; record: JsonRecord } {
   if (typeof value === "string") return { id: value, record: {} };
   const record = asRecord(value);
   return { ...defined({ id: text(record[idKey]) }), record };
 }
 
-function projectDonor(record: JsonRecord): JsonRecord | undefined {
+function projectDonor(record: JsonRecord): typeof Donor.Type | undefined {
   const donor = compact({
     firstName: text(record["first_name"]),
     lastName: text(record["last_name"]),
@@ -513,7 +929,7 @@ function projectDonor(record: JsonRecord): JsonRecord | undefined {
   return Object.keys(donor).length === 0 ? undefined : donor;
 }
 
-function projectCharge(value: unknown): JsonRecord {
+function projectCharge(value: unknown): typeof Charge.Type {
   const charge = asRecord(value);
   const organization = reference(charge["organization"], "organization_id");
   const donor = reference(charge["donor_account"], "account_id");
@@ -545,6 +961,37 @@ function projectCharge(value: unknown): JsonRecord {
             brand: text(method.record["brand"]),
             last4: text(method.record["last_4_digits"]),
           }),
+  });
+}
+
+function projectRecurring(value: unknown): typeof Recurring.Type {
+  const recurring = asRecord(value);
+  const organization = reference(recurring["organization"], "organization_id");
+  const donor = reference(recurring["donor_account"], "account_id");
+  const method = reference(recurring["payment_method"], "pm_id");
+  return compact({
+    recurringId: text(recurring["recurring_id"]),
+    amountCents: cents(recurring["amount"]),
+    currency: text(recurring["currency"]),
+    fund: text(recurring["giving_type"]),
+    term: text(recurring["term"]),
+    startAt: isoTime(recurring["start_date"]),
+    organizationId: organization.id,
+    organizationName: text(organization.record["name"]),
+    accountId: donor.id,
+    donor: projectDonor(donor.record),
+    paymentMethodId: method.id,
+  });
+}
+
+function projectPaymentMethod(value: unknown): typeof PaymentMethod.Type {
+  const method = asRecord(value);
+  return compact({
+    paymentMethodId: text(method["pm_id"]),
+    accountId: text(method["account_id"]),
+    type: text(method["pm_type"]),
+    brand: text(method["brand"]),
+    last4: text(method["last_4_digits"]),
   });
 }
 

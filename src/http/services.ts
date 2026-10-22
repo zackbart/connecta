@@ -62,6 +62,11 @@ export const IdempotencyKey = Context.Reference<{ readonly header: string; reado
   { defaultValue: () => undefined },
 );
 
+/** The authored read's review; served classification remains the call's own. */
+export const ReadTool = Context.Reference<{ readonly review?: string } | undefined>("connecta/http/ReadTool", {
+  defaultValue: () => undefined,
+});
+
 /** Closed capacity and the requests bound to bulk items, snapshotted before the program runs. */
 export class WriteCapacity extends Context.Service<
   WriteCapacity,

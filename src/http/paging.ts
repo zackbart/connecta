@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.4). Unreachable from src/index.ts.
+// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 //
 // Paging is a strategy plus one cursor codec. A strategy turns "the next page
 // after this cursor" into a vendor request and reads back rows and the next
@@ -12,6 +12,7 @@
 import { Effect, Option, Schema, Stream } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { Refusal, type HttpFailure } from "./errors.js";
+import { confinementBase } from "../http-policy.js";
 
 /** The `page` object every list tool returns. */
 export const PageInfo = Schema.Struct({
@@ -62,12 +63,122 @@ export function lookahead<Row, R>(options: {
   });
 }
 
+/** Vendor-supplied continuation, read only after the connection made its data safe. */
+export function token<Row, R>(options: {
+  readonly fetch: () => Effect.Effect<
+    { readonly rows: readonly Row[]; readonly hasMore: boolean; readonly nextCursor: string | null },
+    HttpFailure,
+    R
+  >;
+}): Effect.Effect<Page<Row>, HttpFailure, R> {
+  return Effect.flatMap(Effect.suspend(options.fetch), ({ rows, hasMore, nextCursor }) => {
+    if (hasMore && !nextCursor) return badPage("The vendor reported another page without a next cursor.");
+    return Effect.succeed({ rows, page: { hasMore, nextCursor: hasMore ? nextCursor : null } });
+  });
+}
+
+/** Offset paging advances by the rows actually returned, with a total when supplied. */
+export function offset<Row, R>(options: {
+  readonly offset: number;
+  readonly limit: number;
+  readonly fetch: (
+    offset: number,
+    limit: number,
+  ) => Effect.Effect<{ readonly rows: readonly Row[]; readonly total?: number }, HttpFailure, R>;
+}): Effect.Effect<Page<Row>, HttpFailure, R> {
+  return Effect.gen(function* () {
+    yield* position(options.offset, 0);
+    yield* position(options.limit, 1);
+    return yield* Effect.map(options.fetch(options.offset, options.limit), ({ rows, total }) => {
+      const next = options.offset + rows.length;
+      const hasMore = rows.length > 0 && (total === undefined ? rows.length >= options.limit : next < total);
+      return { rows, page: { hasMore, nextCursor: hasMore ? String(next) : null } };
+    });
+  });
+}
+
+/** Page numbers from a vendor's safe body or headers, with full-page fallback. */
+export function page<Row, R>(options: {
+  readonly page: number;
+  readonly limit: number;
+  readonly fetch: (
+    page: number,
+    limit: number,
+  ) => Effect.Effect<
+    { readonly rows: readonly Row[]; readonly hasMore?: boolean; readonly totalPages?: number },
+    HttpFailure,
+    R
+  >;
+}): Effect.Effect<Page<Row>, HttpFailure, R> {
+  return Effect.gen(function* () {
+    yield* position(options.page, 1);
+    yield* position(options.limit, 1);
+    return yield* Effect.map(options.fetch(options.page, options.limit), ({ rows, hasMore, totalPages }) => {
+      const more = hasMore ?? (totalPages === undefined ? rows.length >= options.limit : options.page < totalPages);
+      return { rows, page: { hasMore: more, nextCursor: more ? String(options.page + 1) : null } };
+    });
+  });
+}
+
+/** Extract only a cursor from a next URL confined to this connection's origin and path. */
+export function link<Row, R>(options: {
+  readonly baseUrl: string;
+  readonly param: string;
+  readonly fetch: () => Effect.Effect<{ readonly rows: readonly Row[]; readonly next?: string | null }, HttpFailure, R>;
+}): Effect.Effect<Page<Row>, HttpFailure, R> {
+  const base = confinementBase("Paging", options.baseUrl);
+  const prefix = base.pathname.replace(/\/+$/, "");
+  if (!options.param) throw new Error("Link paging needs a cursor parameter.");
+  return Effect.flatMap(Effect.suspend(options.fetch), ({ rows, next }): Effect.Effect<Page<Row>, HttpFailure> => {
+    if (!next) return Effect.succeed({ rows, page: { hasMore: false, nextCursor: null } });
+    let url: URL;
+    try {
+      url = new URL(next, base);
+    } catch {
+      return badPage("The vendor returned an invalid next-page URL.");
+    }
+    if (
+      url.origin !== base.origin ||
+      !`${url.pathname}/`.startsWith(`${prefix}/`) ||
+      url.username ||
+      url.password ||
+      url.hash
+    )
+      return badPage("The vendor returned a next-page URL outside this connection.");
+    const cursors = url.searchParams.getAll(options.param);
+    if (cursors.length !== 1 || !cursors[0]) return badPage("The vendor returned no unique next-page cursor.");
+    return Effect.succeed({ rows, page: { hasMore: true, nextCursor: cursors[0] } });
+  });
+}
+
+function position(value: number, minimum: number): Effect.Effect<void, Refusal> {
+  return Number.isSafeInteger(value) && value >= minimum
+    ? Effect.void
+    : Effect.fail(
+        new Refusal({
+          error: new ConnectorCallError(
+            "invalid_args",
+            "Paging positions and limits must be whole numbers within their bounds.",
+          ),
+        }),
+      );
+}
+
+function badPage(message: string): Effect.Effect<never, Refusal> {
+  return Effect.fail(
+    new Refusal({ error: new ConnectorCallError("connector_call_failed", message, { retryable: false }) }),
+  );
+}
+
 /** Every row of every page, fetched as the stream is pulled. */
 export function allRows<Row, E, R>(
   fetchPage: (cursor: string | undefined) => Effect.Effect<Page<Row>, E, R>,
 ): Stream.Stream<Row, E, R> {
   return Stream.paginate(undefined as string | undefined, (cursor) =>
-    Effect.map(fetchPage(cursor), ({ rows, page }) => [rows, Option.fromNullishOr(page.nextCursor)] as const),
+    Effect.map(
+      fetchPage(cursor),
+      ({ rows, page }) => [rows, Option.fromNullishOr(page.hasMore ? page.nextCursor : null)] as const,
+    ),
   );
 }
 

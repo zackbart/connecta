@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.4). Unreachable from src/index.ts.
+// Provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 //
 // Tool builders. A tool is a name, a description, an input Schema, an output
 // Schema, and a program; the builder renders both Schemas as catalog JSON
@@ -19,11 +19,13 @@ import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
 import { recordUnauthorized, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
+import { boundCursor, PageInfo, type Page } from "./paging.js";
 import {
   Classification,
   Dispatches,
   IdempotencyKey,
   Recovery,
+  ReadTool,
   WriteCapacity,
   writeRequestKey,
   fromConnectorContext,
@@ -76,9 +78,55 @@ export function kitInput(tool: ApiTool): Input | undefined {
 /** A read: admitted to call_tool and programs. */
 export function read<I extends Input, O extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: ToolSpec<I, O> & { readonly review?: string },
+): ApiTool {
+  if (spec.review !== undefined && !spec.review.trim()) throw new Error("A read review must be nonempty.");
+  return build(connection, spec, "read", { readOnlyHint: true }, undefined, spec.review);
+}
+
+/** Fetch one entity with the same read contract as a list. */
+export function get<I extends Input, O extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
   spec: ToolSpec<I, O>,
 ): ApiTool {
-  return build(connection, spec, "read", { readOnlyHint: true });
+  return read(connection, spec);
+}
+
+/** One page, with a cursor that either passes through or is tied to this call. */
+export function list<I extends Input, Row extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: Omit<ToolSpec<I, never>, "output" | "run"> & {
+    readonly key: string;
+    readonly row: Row;
+    readonly cursor?: "plain" | "bound";
+    readonly page: (
+      args: I["Type"],
+      cursor: string | undefined,
+    ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
+  },
+): ApiTool {
+  if (!spec.key || spec.key === "page") throw new Error("A list needs a row key distinct from page.");
+  if (spec.cursor !== undefined && spec.cursor !== "plain" && spec.cursor !== "bound")
+    throw new Error('A list cursor must be "plain" or "bound".');
+  return read(connection, {
+    ...spec,
+    output: Schema.Struct({ [spec.key]: Schema.Array(spec.row), page: PageInfo }),
+    run: (args) =>
+      Effect.gen(function* () {
+        const fields = args as Readonly<Record<string, unknown>>;
+        const supplied = typeof fields.cursor === "string" ? fields.cursor : undefined;
+        const cursor =
+          supplied !== undefined && spec.cursor === "bound"
+            ? yield* boundCursor.decode(spec.name, fields, supplied)
+            : supplied;
+        const result = yield* spec.page(args, cursor);
+        const nextCursor =
+          result.page.nextCursor !== null && spec.cursor === "bound"
+            ? yield* boundCursor.encode(spec.name, fields, result.page.nextCursor)
+            : result.page.nextCursor;
+        return { [spec.key]: result.rows, page: { ...result.page, nextCursor } };
+      }),
+  });
 }
 
 /** An idempotency key the vendor honors, sent on a write's one request. */
@@ -103,6 +151,14 @@ export function write<I extends Input, O extends Schema.Top>(
   );
 }
 
+/** Money, mail, and refunds are always destructive and never idempotent hints. */
+export function action<I extends Input, O extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: ToolSpec<I, O>,
+): ApiTool {
+  return build(connection, spec, "write", { readOnlyHint: false, destructiveHint: true, idempotentHint: false });
+}
+
 /**
  * A key the transport may send: not blank, and only characters an HTTP
  * header carries. The REST layer refuses the same keys before dispatch.
@@ -117,17 +173,29 @@ function build<I extends Input, O extends Schema.Top>(
   verdict: "read" | "write",
   annotations: ApiTool["annotations"],
   idempotency?: Idempotency<I["Type"]>,
+  review?: string,
 ): ApiTool {
   // One key protects one request: a tool with several write steps cannot share it.
   const declared = Object.entries(spec.writeSteps ?? { write: "once" });
   if (idempotency && (declared.length !== 1 || declared[0]?.[1] !== "once" || !idempotency.header.trim())) {
     throw new Error("An idempotency key needs a header name and a tool with one write step sent once.");
   }
+  if (idempotency) {
+    try {
+      new Headers([[idempotency.header, "key"]]);
+    } catch {
+      throw new Error("An idempotency key needs a valid HTTP header name.");
+    }
+  }
   // Snapshot the declaration now; mutations and retries cannot add step names or increase bounds.
   const steps = Object.entries(spec.writeSteps ?? { write: "once" }).map(([name, declaration]) => {
     if (
       !name ||
-      (declaration !== "once" && (!Number.isSafeInteger(declaration.maxItems) || declaration.maxItems < 1))
+      (declaration !== "once" &&
+        (!Number.isSafeInteger(declaration.maxItems) ||
+          declaration.maxItems < 1 ||
+          typeof declaration.items !== "function" ||
+          typeof declaration.request !== "function"))
     ) {
       throw new Error("Write steps need nonempty names and a positive whole maxItems bound.");
     }
@@ -159,7 +227,7 @@ function build<I extends Input, O extends Schema.Top>(
       }),
     );
   };
-  const decode = Schema.decodeUnknownEffect(spec.input);
+  const decode = Schema.decodeUnknownEffect(spec.input, { onExcessProperty: "error" });
   const tool: ApiTool = {
     name: spec.name,
     description: spec.description,
@@ -190,6 +258,7 @@ function build<I extends Input, O extends Schema.Top>(
               // the call still returns the key for reconciliation.
               if (key !== undefined) yield* (yield* Recovery).record({ idempotencyKey: key });
               return yield* Effect.suspend(() => spec.run(decoded)).pipe(
+                Effect.provideService(ReadTool, verdict === "read" ? (review ? { review } : {}) : undefined),
                 Effect.provideService(WriteCapacity, capacity(decoded)),
                 Effect.provideService(
                   IdempotencyKey,
