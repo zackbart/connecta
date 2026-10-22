@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
@@ -55,7 +56,7 @@ describe("request admission", () => {
     vi.useRealTimers();
   });
 
-  it("aborts an in-flight connector call at the total request deadline", async () => {
+  it("aborts an in-flight connector call at the total request deadline", WORKERS, async () => {
     let started = 0;
     let aborted = 0;
     let markStarted!: () => void;
@@ -117,7 +118,7 @@ describe("request admission", () => {
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
   });
 
-  it("ends stalled authorization before a response and returns its permit", async () => {
+  it("ends stalled authorization before a response and returns its permit", WORKERS, async () => {
     const gate = blockingAuth();
     const connecta = createTestConnecta({
       connectors: [],
@@ -148,7 +149,7 @@ describe("request admission", () => {
     gate.release();
   });
 
-  it("ends a still-live response at its configured lifetime and frees admission", async () => {
+  it("ends a still-live response at its configured lifetime and frees admission", WORKERS, async () => {
     let cancellations = 0;
     const auth: InboundAuth = {
       kind: "streaming",
@@ -197,7 +198,7 @@ describe("request admission", () => {
     await first.body?.cancel().catch(() => {});
   });
 
-  it("bounds /mcp before auth and leaves health/operator routes responsive", async () => {
+  it("bounds /mcp before auth and leaves health/operator routes responsive", NODE, async () => {
     const gate = blockingAuth();
     const logger = {
       ...silentLogger,
@@ -286,7 +287,93 @@ describe("request admission", () => {
     });
   });
 
-  it("gives a one-method executor its own smaller bounded pool", async () => {
+  it("removes a cancelled queued request without consuming a permit", WORKERS, async () => {
+    const gate = blockingAuth();
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth: gate.auth,
+      logger: silentLogger,
+      admission: {
+        requests: {
+          concurrency: 1,
+          maxQueueSize: 2,
+          queueTimeoutMs: 1_000,
+        },
+      },
+    });
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
+    await waitFor(() => gate.calls() === 1);
+    const controller = new AbortController();
+    const cancelled = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
+    await settle();
+    controller.abort(new Error("caller left"));
+    await expect(cancelled).rejects.toThrow("caller left");
+
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({
+      admission: {
+        requests: {
+          active: 1,
+          queued: 0,
+          totals: { cancelled: 1 },
+        },
+      },
+    });
+    gate.release();
+    await (await first).text();
+  });
+
+  it("absorbs a rejecting response-stream cancellation and releases once", WORKERS, async () => {
+    let cancellations = 0;
+    const auth: InboundAuth = {
+      kind: "rejecting-stream",
+      authorize() {
+        return {
+          ok: false,
+          response: new Response(
+            new ReadableStream({
+              cancel() {
+                cancellations++;
+                return Promise.reject(new Error("cancel failed"));
+              },
+            }),
+            { status: 401 },
+          ),
+        };
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth,
+      maintainers: [PRINCIPAL],
+      logger: silentLogger,
+      admission: {
+        requests: {
+          concurrency: 1,
+          maxQueueSize: 0,
+          queueTimeoutMs: 1_000,
+        },
+      },
+    });
+    const controller = new AbortController();
+    await connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
+    controller.abort(new Error("caller left"));
+    await settle();
+
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({
+      admission: {
+        requests: {
+          active: 0,
+          queued: 0,
+          totals: { admitted: 1 },
+        },
+      },
+    });
+    expect(cancellations).toBe(1);
+  });
+
+  it("gives a one-method executor its own smaller bounded pool", NODE, async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;

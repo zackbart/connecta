@@ -1,3 +1,4 @@
+import { WORKERS } from "./fixtures/runtime-tags.js";
 // The request pipeline's lifetime rules (P1-S17): a request is one fiber tied
 // to its signal, and what it holds — the admission permit, its McpServer, its
 // discovery probes — ends with it, however it ends.
@@ -44,7 +45,7 @@ const ONE_PERMIT = {
 const OPERATOR = { namespace: "connecta:test", id: "operator" };
 
 describe("request pipeline lifetime", () => {
-  it("releases the permit of an /mcp request whose client leaves during authorization", async () => {
+  it("releases the permit of an /mcp request whose client leaves during authorization", WORKERS, async () => {
     let calls = 0;
     const auth: InboundAuth = {
       kind: "stalled",
@@ -71,7 +72,7 @@ describe("request pipeline lifetime", () => {
     expect(await admission(connecta)).toMatchObject({ active: 0, queued: 0 });
   });
 
-  it("releases the permit of a legacy /mcp request whose client leaves mid-call", async () => {
+  it("releases the permit of a legacy /mcp request whose client leaves mid-call", WORKERS, async () => {
     // A downstream read ignores cancellation. The request permit must still
     // end with the request. OAuth starts now belong to the browser route.
     let started = false;
@@ -116,7 +117,7 @@ describe("request pipeline lifetime", () => {
     expect(await admission(connecta)).toMatchObject({ active: 0, queued: 0 });
   });
 
-  it("hands a released permit to the next queued request", async () => {
+  it("hands a released permit to the next queued request", WORKERS, async () => {
     let calls = 0;
     const auth: InboundAuth = {
       kind: "stalled-first",
@@ -147,7 +148,7 @@ describe("request pipeline lifetime", () => {
     expect(await admission(connecta)).toMatchObject({ active: 0, queued: 0 });
   });
 
-  it("aborts search_tools discovery probes when the request's client leaves", async () => {
+  it("aborts search_tools discovery probes when the request's client leaves", WORKERS, async () => {
     let probeSignal: AbortSignal | undefined;
     const connector: Connector = {
       id: "slow",
@@ -186,7 +187,7 @@ describe("request pipeline lifetime", () => {
     expect(await admission(connecta)).toMatchObject({ active: 0 });
   });
 
-  it("closes each request's McpServer once its response has been read", async () => {
+  it("closes each request's McpServer once its response has been read", WORKERS, async () => {
     const close = vi.spyOn(McpServer.prototype, "close");
     const connecta = createTestConnecta({
       connectors: [],

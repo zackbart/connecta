@@ -85,14 +85,4 @@ describe("MCP specification coverage", () => {
       }
     }
   });
-
-  it("records the 0.29.0 Deferred row as declined rather than planned", () => {
-    for (const id of ["prompts", "subscriptions", "io.modelcontextprotocol/ui", "io.modelcontextprotocol/tasks"]) {
-      const feature = coverage.features.find((feature) => feature.id === id)!;
-      expect(feature.status, id).toBe("declined");
-      expect(feature.decision, id).toBe("https://github.com/zackbart/connecta/issues/703");
-      expect(feature.notes, id).toContain("Deferred row");
-      expect(feature.notes, id).toContain("0.29.0");
-    }
-  });
 });

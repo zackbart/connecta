@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -10,41 +11,46 @@ import { seedGrant } from "./fixtures/oauth.js";
 
 const scope = (storage: KVStorage) => ({ ...connectorContext(storage), requestScope: {} });
 for (const status of [200, 301, 302, 303, 307, 308, 400, 503]) {
-  it(`INV-5 INV-9: native HTTP ${status} revocation removes the grant with one send and no redirect follow`, async () => {
-    const server = await nativeOAuthServer(`sdk-revoke-${status}`);
-    const storage = memoryStorage();
-    const connector = remoteMcp("svc", {
-      url: `${server.issuer}/mcp`,
-      auth: { type: "oauth" },
-      redirects: "same-origin",
-      versionNegotiation: "legacy",
-    });
-    const started = await connector.startAuth!(scope(storage));
-    const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
-    const ctx = scope(storage);
-    expect(await connector.verifyState!(state, ctx)).toBe(true);
-    await connector.finishAuth!("code", ctx, new URLSearchParams({ code: "code", state }));
-    const disconnect = connector.disconnectAuth!(scope(storage));
-    if (status === 200) await disconnect;
-    else {
-      const error = await disconnect.catch((error) => error);
-      expect(error.code).toBe("oauth_revocation_failed");
-      expect(error.cause).toBeUndefined();
-      expect(error.message).not.toContain("REVOCATION_BODY_SENTINEL");
-    }
-    expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
-    await connector.disconnectAuth!(scope(storage));
-    const sends = await server.sent();
-    expect(sends.filter((request) => request.path === "revoke")).toEqual([
-      { path: "revoke", grant: null, credential: "old-refresh" },
-    ]);
-    expect(sends.some((request) => request.path === "revoke-final")).toBe(false);
-  });
+  it(
+    `INV-5 INV-9: native HTTP ${status} revocation removes the grant with one send and no redirect follow`,
+    WORKERS,
+    async () => {
+      const server = await nativeOAuthServer(`sdk-revoke-${status}`);
+      const storage = memoryStorage();
+      const connector = remoteMcp("svc", {
+        url: `${server.issuer}/mcp`,
+        auth: { type: "oauth" },
+        redirects: "same-origin",
+        versionNegotiation: "legacy",
+      });
+      const started = await connector.startAuth!(scope(storage));
+      const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+      const ctx = scope(storage);
+      expect(await connector.verifyState!(state, ctx)).toBe(true);
+      await connector.finishAuth!("code", ctx, new URLSearchParams({ code: "code", state }));
+      const disconnect = connector.disconnectAuth!(scope(storage));
+      if (status === 200) await disconnect;
+      else {
+        const error = await disconnect.catch((error) => error);
+        expect(error.code).toBe("oauth_revocation_failed");
+        expect(error.cause).toBeUndefined();
+        expect(error.message).not.toContain("REVOCATION_BODY_SENTINEL");
+      }
+      expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
+      await connector.disconnectAuth!(scope(storage));
+      const sends = await server.sent();
+      expect(sends.filter((request) => request.path === "revoke")).toEqual([
+        { path: "revoke", grant: null, credential: "old-refresh" },
+      ]);
+      expect(sends.some((request) => request.path === "revoke-final")).toBe(false);
+    },
+  );
 }
 
 describe("reset revocation snapshot", () => {
   it.each(["http://mcp.example/revoke", "http://10.0.0.1/revoke", "ftp://mcp.example/revoke"])(
     "INV-5 INV-6: refuses plaintext or unsupported revocation transport before sending to %s",
+    NODE,
     async (endpoint) => {
       const storage = memoryStorage();
       const issuer = "https://auth.example";
@@ -73,7 +79,7 @@ describe("reset revocation snapshot", () => {
     },
   );
 
-  it("INV-5 INV-9: concurrent disconnects revoke only the snapshot removed by a winning CAS", async () => {
+  it("INV-5 INV-9: concurrent disconnects revoke only the snapshot removed by a winning CAS", WORKERS, async () => {
     const server = await nativeOAuthServer("sdk-revoke-200");
     const storage = memoryStorage();
     await seedGrant(storage, {

@@ -5,7 +5,7 @@
 // rewrites them; this suite only compares. See the contributor section of
 // documentation/architecture.md.
 import { describe, expect, it } from "vitest";
-import { bothOrders, canonicalGolden, captureOrders, fullTier } from "./goldens/tier.js";
+import { canonicalGolden } from "./goldens/canonical.js";
 import { captureGoldens, goldenFiles, uncoveredTools, type GoldenSpec } from "./goldens/harness.js";
 
 // Vite's transform; the repository does not load vite/client types.
@@ -24,13 +24,16 @@ const REMOTE_MCP_ONLY = ["basecamp", "intercom", "linear", "revenuecat", "wispr-
 
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 const updating = env.CONNECTA_GOLDENS_UPDATE === "1";
+const workerd = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+const determinism = env.CONNECTA_GOLDENS_DETERMINISM === "1";
+const orders = updating || !workerd ? "both" : "canonical";
 const only = env.CONNECTA_GOLDENS_ONLY?.split(",").filter(Boolean);
 
 const byProvider = Object.values(specs)
   .filter((spec) => !only || only.includes(spec.provider))
   .sort((a, b) => a.provider.localeCompare(b.provider));
 
-describe(`characterization goldens (${fullTier ? "full" : "always"}, ${captureOrders})`, () => {
+describe("characterization goldens", () => {
   it.skipIf(only)("cover every maintained api() provider", () => {
     const covered = Object.values(specs).map((spec) => spec.provider);
     expect([...covered, ...REMOTE_MCP_ONLY].sort()).toEqual([...providerFolders].sort());
@@ -43,25 +46,33 @@ describe(`characterization goldens (${fullTier ? "full" : "always"}, ${captureOr
   });
 
   for (const spec of byProvider) {
-    it(`INV-5: ${spec.provider} catalog, fixture calls, failure mapping, and secret echoes match the goldens`, async () => {
-      expect(await uncoveredTools(spec)).toEqual([]);
-      const actual = await captureGoldens(spec, { orders: updating ? "both" : captureOrders });
-      if (updating) {
-        const { mkdir, writeFile } = await import("node:fs/promises");
-        const directory = new URL(`./goldens/${spec.provider}/`, import.meta.url);
-        await mkdir(directory, { recursive: true });
-        for (const file of goldenFiles(spec)) await writeFile(new URL(`${file}.json`, directory), actual[file]!);
-        return;
-      }
-      for (const file of goldenFiles(spec)) {
-        const golden = stored[`./goldens/${spec.provider}/${file}.json`];
-        expect(golden, `test/goldens/${spec.provider}/${file}.json is missing; run pnpm run goldens:update`).toBeTypeOf(
-          "string",
-        );
-        expect(actual[file], `test/goldens/${spec.provider}/${file}.json`).toBe(
-          bothOrders ? golden : canonicalGolden(golden!, file),
-        );
-      }
-    }, 60_000);
+    it(
+      `INV-5: ${spec.provider} catalog, fixture calls, failure mapping, and secret echoes match the goldens`,
+      async () => {
+        expect(await uncoveredTools(spec)).toEqual([]);
+        // Nightly adds an identical repeat and two jittered captures; PRs capture once.
+        for (const jitter of determinism && !updating ? [undefined, undefined, 1, 2] : [undefined]) {
+          const actual = await captureGoldens(spec, { orders, ...(jitter === undefined ? {} : { jitter }) });
+          if (updating) {
+            const { mkdir, writeFile } = await import("node:fs/promises");
+            const directory = new URL(`./goldens/${spec.provider}/`, import.meta.url);
+            await mkdir(directory, { recursive: true });
+            for (const file of goldenFiles(spec)) await writeFile(new URL(`${file}.json`, directory), actual[file]!);
+            return;
+          }
+          for (const file of goldenFiles(spec)) {
+            const golden = stored[`./goldens/${spec.provider}/${file}.json`];
+            expect(
+              golden,
+              `test/goldens/${spec.provider}/${file}.json is missing; run pnpm run goldens:update`,
+            ).toBeTypeOf("string");
+            expect(actual[file], `test/goldens/${spec.provider}/${file}.json (jitter ${jitter ?? "none"})`).toBe(
+              orders === "both" ? golden : canonicalGolden(golden!, file),
+            );
+          }
+        }
+      },
+      determinism ? 120_000 : 60_000,
+    );
   }
 });

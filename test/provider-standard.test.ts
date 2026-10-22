@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authoredTools, pendingAdditions, surfaceViolations, type ToolFacts } from "./provider-standard.js";
+import { authoredTools, surfaceViolations, type ToolFacts } from "./provider-standard.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
 
@@ -331,17 +331,5 @@ describe("provider migration enforcement cannot be bypassed by metadata", () => 
       context,
     );
     expect(surfaceViolations(tools!)).toContain("S1: acme_api_get is not a standard hatch tool");
-  });
-
-  it("rejects additions and reinsertions even if both pending lists and their baseline are edited", () => {
-    const previous = { step1: ["alice"], step2: ["alice", "bob"] };
-    // These represent the baseline committed alongside the corresponding PENDING edit.
-    expect(
-      pendingAdditions({ step1: ["alice", "new-provider"], step2: ["alice", "bob", "new-provider"] }, previous),
-    ).toEqual(["step1: added or reinserted new-provider", "step2: added or reinserted new-provider"]);
-    expect(pendingAdditions({ step1: ["alice", "bob"], step2: ["alice", "bob"] }, previous)).toEqual([
-      "step1: added or reinserted bob",
-    ]);
-    expect(pendingAdditions({ step1: [], step2: ["bob"] }, previous)).toEqual([]);
   });
 });

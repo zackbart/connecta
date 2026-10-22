@@ -1,3 +1,4 @@
+import { WORKERS } from "./fixtures/runtime-tags.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
 
@@ -7,31 +8,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("INV-7: the real SDK transport cancels an oversized body before any SDK reader or clone receives it", async () => {
-  const cancel = vi.fn();
-  const response = new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array(1_048_577));
-      },
-      cancel,
-    }),
-  );
-  const reader = vi.spyOn(response, "json");
-  const clone = vi.spyOn(response, "clone");
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => response),
-  );
-  const pending = new Set<Promise<unknown>>();
-  await expect(createByteReadingClerkClient(options, undefined, pending).users.getUser("user_alice")).rejects.toThrow();
-  expect(cancel).toHaveBeenCalledTimes(1);
-  expect(reader).not.toHaveBeenCalled();
-  expect(clone).not.toHaveBeenCalled();
-  expect(pending.size).toBe(0);
-});
+it(
+  "INV-7: the real SDK transport cancels an oversized body before any SDK reader or clone receives it",
+  WORKERS,
+  async () => {
+    const cancel = vi.fn();
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(1_048_577));
+        },
+        cancel,
+      }),
+    );
+    const reader = vi.spyOn(response, "json");
+    const clone = vi.spyOn(response, "clone");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response),
+    );
+    const pending = new Set<Promise<unknown>>();
+    await expect(
+      createByteReadingClerkClient(options, undefined, pending).users.getUser("user_alice"),
+    ).rejects.toThrow();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(reader).not.toHaveBeenCalled();
+    expect(clone).not.toHaveBeenCalled();
+    expect(pending.size).toBe(0);
+  },
+);
 
-it("INV-7: a real SDK user lookup cancels and settles its stalled body with its authorization", async () => {
+it("INV-7: a real SDK user lookup cancels and settles its stalled body with its authorization", WORKERS, async () => {
   const owner = new AbortController();
   const cancel = vi.fn();
   let entered!: () => void;
@@ -55,7 +62,7 @@ it("INV-7: a real SDK user lookup cancels and settles its stalled body with its 
   expect(pending.size).toBe(0);
 });
 
-it("INV-7: the SDK transport deadline aborts and settles a fetch that never sends headers", async () => {
+it("INV-7: the SDK transport deadline aborts and settles a fetch that never sends headers", WORKERS, async () => {
   vi.useFakeTimers();
   let outbound: AbortSignal | null | undefined;
   vi.stubGlobal(
