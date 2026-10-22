@@ -2,8 +2,8 @@
 // downstream OAuth grant. A fake CCB stands in for both the token endpoint and
 // the API. Request shapes, projections, and status mapping live in the
 // characterization goldens; these tests pin the consent URL, the code exchange
-// with CCB's own Accept header, rotating single-use refresh tokens, the 401
-// replay, paging edges, the sensitive-field boundary, and grant isolation.
+// with CCB's own Accept header, rotating single-use refresh tokens, one-attempt
+// POST renewal, paging edges, the sensitive-field boundary, and grant isolation.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
@@ -390,27 +390,28 @@ describe("ccb() escape hatches (H14)", () => {
     expect(fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(0);
   });
 
-  it("INV-9: after a 401 the grant refreshes, a search (a POST read) replays once, and a mutation is never resent", async () => {
+  it("INV-9: a 401 renews POST search and mutation grants for the next call without replay", async () => {
     const { fake, call } = await connected({ access: "read-write" });
     fake.route(
       on("POST", "/search/individuals/results", () => json([{ id: 1 }], { "x-next-page": "" })),
       on("POST", "/individuals/42/notes", () => json({ id: 3 })),
     );
-    fake.expireAccess();
-    expect((await call("ccb_api_search", { domain: "individuals", body: {} })).result).toEqual([{ id: 1 }]);
-    expect(fake.requests.filter((request) => request.url.pathname === "/search/individuals/results")).toHaveLength(2);
-
-    fake.expireAccess();
-    expect(
-      await failure(
-        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
-      ),
-    ).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(fake.requests.filter((request) => request.url.pathname === "/individuals/42/notes")).toHaveLength(1);
-    // The renewed grant serves the deliberate repeat.
-    expect(
-      await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
-    ).toEqual({ result: { id: 3 } });
+    for (const [tool, args, path, result] of [
+      ["ccb_api_search", { domain: "individuals", body: {} }, "/search/individuals/results", [{ id: 1 }]],
+      [
+        "ccb_api_mutate",
+        { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
+        "/individuals/42/notes",
+        { id: 3 },
+      ],
+    ] as const) {
+      fake.expireAccess();
+      expect(await failure(call(tool, args))).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(fake.requests.filter((request) => request.url.pathname === path)).toHaveLength(1);
+      // The renewed grant serves the deliberate repeat.
+      expect((await call(tool, args)).result).toEqual(result);
+      expect(fake.requests.filter((request) => request.url.pathname === path)).toHaveLength(2);
+    }
   });
 });
 

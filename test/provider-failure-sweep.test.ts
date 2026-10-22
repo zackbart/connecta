@@ -11,7 +11,7 @@ import { deriveContext } from "../src/derived-context.js";
 import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { providerRequests, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
+import { providerRequests, readRequest, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
 import { AppAuth } from "../src/providers/github/auth.js";
 import { restConnector } from "../src/providers/github/rest.js";
 import { parseScopes, ScopePolicy } from "../src/providers/github/scope.js";
@@ -206,8 +206,10 @@ describe("API provider failure sweep", () => {
           // stays, and a renewal that succeeded never resends a write.
           it(`INV-9: ${address}${suffix} served ${classification} → 401`, async () => {
             const requests: string[] = [];
+            let oneAttempt = false;
             const fail = (request: Request): Response => {
               requests.push(`${request.method} ${request.url}`);
+              oneAttempt ||= !readRequest({ classification, method: request.method }, request.headers);
               // Stripe's API stamps every answer with a Request-Id, which its
               // reviewed evidence requires.
               return Response.json(
@@ -223,7 +225,7 @@ describe("API provider failure sweep", () => {
             const error = (result.structuredContent as { error: CallErrorDetails }).error;
             const context = JSON.stringify(error);
             expect(result.structuredContent, context).toMatchObject({ ok: false, error: { retryable: false } });
-            if (classification === "write") {
+            if (oneAttempt) {
               // Sent once each: no renewal resends a write (INV-9).
               expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
               expect(requests.length, context).toBe(
@@ -243,8 +245,9 @@ describe("API provider failure sweep", () => {
               });
               expect(error).not.toHaveProperty("writeOutcome");
               expect(error.instructions, context).toContain("retry the original call");
-            } else if (classification === "write" && RENEWS.has(provider.name)) {
-              // Renewal succeeded, so nothing is left to authorize: no handoff, still unknown.
+            } else if (oneAttempt && RENEWS.has(provider.name)) {
+              // The actual request can be a write inside a served read (POST
+              // search). Renewal leaves its original 401, with no handoff.
               expect(error).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown" });
               expect(error.message).toContain(
                 "The credential is renewed for the next call, but the write was not sent again",
