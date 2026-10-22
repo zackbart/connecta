@@ -371,6 +371,9 @@ wins over these prototype details:
   `SourceSignal` retains the caller's original signal; `Signal` is the revocable
   lease signal. Settlement reads the former, so ordinary closure cannot turn
   a mapped failure into caller-cancellation wording.
+  Request-owned joins retain the original request signal separately from an
+  invocation's deadline signal: finalizing that deadline must not revoke
+  auxiliary work that still belongs to the open request.
 - The ledger is the merged append-only physical ledger, including remote MCP
   and nested boundaries, provided as `Ledger`, `ProviderLedger` and
   `LogicalLedger`. No physical entries are merged or reused. `settleWrite`

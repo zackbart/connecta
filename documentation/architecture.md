@@ -2190,8 +2190,12 @@ compiling and configuring the real thing.
   MCP sessions and token flights outlive individual calls and close with the
   request; their credential access comes from the operation. Operation views
   resolve request cancellation even without an external signal; auxiliary
-  authentication, sends and response handling all use that signal. Shared
-  MCP sessions bind renewal preparation to the challenged call's signal,
+  authentication, sends and response handling all use that signal. The
+  invocation deadline and original request cancellation remain separate,
+  so deadline cleanup cannot end request-owned auxiliary work.
+  Concurrent operator probes use separate row scopes, so finalizing a failed
+  row cannot revoke a sibling that is still running.
+  Shared MCP sessions bind renewal preparation to the challenged call's signal,
   rather than the connection's longer lifetime. OAuth renewal
   is call-owned until its first durable claim CAS is submitted. Submission
   transfers preparation, token exchange and fenced rotation commit to the
