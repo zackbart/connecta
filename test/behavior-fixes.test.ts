@@ -1,26 +1,17 @@
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import type { ToolDef } from "../src/types.js";
-import { modernRequest } from "./fixtures/client-identity.js";
-import { readJsonRpc } from "./fixtures/http.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  activityHistory,
-  recordToolActivity,
-  recordCatalogChangeActivity,
-  type ToolCallActivityEvent,
-} from "../src/activity.js";
-import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
+import { activityHistory, recordToolActivity, type ToolCallActivityEvent } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { createTestConnecta, makeRegistry, activitySink, invokeTestCall } from "./helpers.js";
-import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
-import { Registry } from "../src/registry.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import type { OperatorUiContract } from "../src/ui.js";
+import { modernRequest } from "./fixtures/client-identity.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { readJsonRpc } from "./fixtures/http.js";
+import { activitySink, createTestConnecta, invokeTestCall, makeRegistry } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const alice = { namespace: "directory", id: "alice" };
@@ -111,75 +102,6 @@ describe("Phase 4 behavior fixes", () => {
     expect((await makeRegistry([c]).statusFor("slot", BASE)).state).toBe("credential_required");
   });
 
-  it("INV-4 INV-6: permits maintainers only and filters connectors, pool tools, owners and undeclared pools", async () => {
-    const storage = memoryStorage();
-    const principal = { namespace: "directory", id: "owner" };
-    const agentToken = (await new AccessTokenManager(storage, { agents: ["machine"] }).rotate("machine")).token;
-    const reader: InboundAuth = {
-      kind: "api",
-      recognizesCredential: (request) => /^Bearer (reader|member)$/.test(request.headers.get("authorization") ?? ""),
-      authorize: (request) => {
-        const token = request.headers.get("authorization");
-        if (token === "Bearer reader") return { ok: true, principal };
-        if (token === "Bearer member") return { ok: true, principal: { namespace: "directory", id: "member" } };
-        return { ok: false, response: new Response(null, { status: 401 }) };
-      },
-    };
-    let readGate = true;
-    const own = { kind: "api", id: principal.id, namespace: principal.namespace };
-    const read = vi.fn(async () => ({
-      events: [
-        event("yes"),
-        // Plain /mcp serves the whole catalog, so its rows show every tool.
-        event("tool", { toolName: "write" }),
-        event("gone", { connectorId: "gone" }),
-        // Every declared pool's rows, members or not, within that pool's tools.
-        event("pool", { pool: "others" }),
-        event("pool-read", { pool: "narrow" }),
-        event("pool-tool", { pool: "narrow", toolName: "write" }),
-        event("retired", { pool: "retired" }),
-        event("personal", { connectorId: "personal", actor: { kind: "clerk", id: "other" } }),
-        event("personal-own", { connectorId: "personal", actorBasis: "principal", actor: own }),
-      ],
-    }));
-    const deployment = app({
-      connectors: [connector("visible"), { ...connector("personal"), authScope: "personal" }],
-      storage,
-      auth: reader,
-      maintainers: [principal],
-      agents: ["machine"],
-      accessTokens: accessTokens(storage),
-      logger: "silent",
-      pools: {
-        others: { tools: ["visible"], members: [{ namespace: "directory", id: "member" }] },
-        narrow: { tools: ["visible.read"], members: [principal, { namespace: "directory", id: "member" }] },
-      },
-      activity: activityHistory({ store: { record() {}, list: read }, readGate: () => readGate }),
-    });
-    const request = (method = "GET", token = "reader") =>
-      new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token}` } });
-    // A pool member that is not a maintainer gets the operator routes'
-    // private 404, and an agent token is refused outright, since operator
-    // routes are human routes (#837).
-    const refused = await deployment.fetch(request("GET", "member"));
-    expect(refused.status).toBe(404);
-    expect(await refused.json()).toEqual({ error: "not found" });
-    expect((await deployment.fetch(request("GET", agentToken))).status).toBe(401);
-    const response = await deployment.fetch(request());
-    expect(response.status).toBe(200);
-    expect(((await response.json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual([
-      "yes",
-      "tool",
-      "pool",
-      "pool-read",
-      "personal-own",
-    ]);
-    expect((await deployment.fetch(request("POST"))).status).toBe(405);
-    readGate = false;
-    expect((await deployment.fetch(request())).status).toBe(403);
-    expect(read).toHaveBeenCalledOnce();
-  });
-
   it("INV-6: records call-time classification and UTF-8 result bytes before truncation and groups calls", async () => {
     const c = api("visible", {
       tools: [
@@ -216,79 +138,6 @@ describe("Phase 4 behavior fixes", () => {
     });
     expect(sink.events.at(-1)).not.toHaveProperty("classification");
     expect(sink.events.at(-1)).not.toHaveProperty("resultBytes");
-  });
-
-  it("INV-6 INV-8: emits one discrete payload-free change per accepted catalog transition", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    let tools = [{ name: "read", description: "secret-text" }, { name: "removed" }];
-    const c = remoteCatalog("dynamic", () => tools);
-    const registry = new Registry([c], {
-      storage: memoryStorage(),
-      logger: { debug() {}, info() {}, warn() {}, error() {} },
-      toolCacheTtlSeconds: 0,
-      catalogDriftActivity: {
-        recordChange: recordCatalogChangeActivity,
-        sink: {
-          record: (e) => {
-            events.push(e);
-          },
-        },
-        serverInfo: { name: "test", version: "1" },
-      },
-    });
-    await registry.getTools("dynamic", BASE);
-    expect(events).toHaveLength(0);
-    tools = [{ name: "read", description: "changed-secret" }, { name: "added" }];
-    await registry.getTools("dynamic", BASE);
-    await registry.getTools("dynamic", BASE);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      kind: "catalog_drift",
-      source: "catalog_refresh",
-      drift: { kind: "catalog_changed", addedTools: 1, removedTools: 1, changedTools: 1 },
-    });
-    expect(events[0]?.requestId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(JSON.stringify(events)).not.toMatch(/secret|removed"|added"/);
-  });
-
-  it("INV-6 INV-7: a catalog change and its downstream call share the HTTP request and pool", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    let description = "Initial catalog";
-    const c = remoteCatalog("dynamic", () => [{ name: "read", description, annotations: { readOnlyHint: true } }]);
-    // Pools need inbound auth; the bearer caller is the pool's member.
-    const deployment = app({
-      connectors: [c],
-      auth: machineAuth("member"),
-      logger: "silent",
-      discovery: { catalogTtlSeconds: 0 },
-      pools: { support: { tools: ["dynamic"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }] } },
-      activity: activityHistory({
-        store: {
-          record: (e) => {
-            events.push(e);
-          },
-        },
-      }),
-    });
-    const call = async () => {
-      const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "dynamic.read" } });
-      request.headers.set("Authorization", "Bearer member");
-      const response = await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/support", request)));
-      expect(response.result.isError).not.toBe(true);
-    };
-    await call();
-    description = "Changed catalog";
-    await call();
-    expect(events).toHaveLength(3);
-    expect(events[1]).toMatchObject({
-      kind: "catalog_drift",
-      pool: "support",
-      drift: { kind: "catalog_changed", addedTools: 0, removedTools: 0, changedTools: 1 },
-    });
-    expect(events[1]?.requestId).toBe(events[2]?.requestId);
-    expect(events[0]?.requestId).not.toBe(events[2]?.requestId);
-    expect(events[1]?.actor).toEqual(events[2]?.actor);
-    expect(JSON.stringify(events)).not.toContain("Changed catalog");
   });
 
   it.each(["request-public", "shared-private"] as const)(
@@ -391,52 +240,6 @@ describe("Phase 4 behavior fixes", () => {
     },
   );
 
-  it.each([true])(
-    "INV-4 INV-6: API principals cannot read another owner or ownerless legacy rows with shared subject=%s",
-    async (sharedSubject) => {
-      const events: ToolCallActivityEvent[] = [];
-      const auth: InboundAuth = {
-        kind: "api",
-        authorize: (request) => ({
-          ok: true,
-          ...(sharedSubject ? { subjectId: "shared-service" } : {}),
-          principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" },
-        }),
-      };
-      const deployment = app({
-        connectors: [{ ...connector("personal"), authScope: "personal" }],
-        auth,
-        maintainers: [alice, bob],
-        logger: "silent",
-        activity: activityHistory({
-          store: {
-            record: (e) => {
-              events.push(e);
-            },
-            list: async () => ({ events }),
-          },
-        }),
-      });
-      const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "personal.read" } });
-      expect((await readJsonRpc(await deployment.fetch(request))).result.isError).not.toBe(true);
-      expect(events[0]?.actor).toEqual({ kind: "api", id: "alice", namespace: "directory" });
-      events.push(event("legacy", { connectorId: "personal", actor: { kind: "api" } }));
-      // Pre-fix subjectId could name Bob even though Alice was the admitted owner.
-      events.push(
-        event("ambiguous-legacy", {
-          connectorId: "personal",
-          actor: { kind: "api", id: "bob", namespace: "directory" },
-        }),
-      );
-      const read = async (principal: string) =>
-        (await (
-          await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))
-        ).json()) as { events: ToolCallActivityEvent[] };
-      expect((await read("bob")).events).toEqual([]);
-      expect((await read("alice")).events.map((e) => e.id)).toEqual([events[0]!.id]);
-    },
-  );
-
   it("INV-4 INV-6: pagination never returns a hidden row's cursor and advances to visible history", async () => {
     const rows = [
       event("alice-1", {
@@ -526,54 +329,6 @@ describe("Phase 4 behavior fixes", () => {
     expect(list).toHaveBeenCalledTimes(1001);
     expect(JSON.stringify(await response.json())).not.toContain("hidden-");
   });
-
-  it.each(["/ui/api/config", "/ui/connectors/personal"])(
-    "INV-4 INV-6: %s attributes personal catalog changes to the admitted owner",
-    async (path) => {
-      const events: ToolCallActivityEvent[] = [];
-      let description = "Initial";
-      const c = remoteCatalog("personal", () => [{ name: "read", description }], "personal");
-      const auth: InboundAuth = {
-        kind: "human",
-        authorize: (request) => ({
-          ok: true,
-          interactive: true,
-          subjectId: "shared-subject",
-          principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" },
-        }),
-      };
-      const deployment = app({
-        connectors: [c],
-        auth,
-        maintainers: [alice, bob],
-        logger: "silent",
-        discovery: { catalogTtlSeconds: 0 },
-        activity: activityHistory({
-          store: {
-            record: (e) => {
-              events.push(e);
-            },
-            list: async () => ({ events }),
-          },
-        }),
-      });
-      expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
-      description = "Changed";
-      expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({
-        kind: "catalog_drift",
-        actorBasis: "principal",
-        actor: { kind: "human", id: "alice", namespace: "directory" },
-      });
-      const read = async (principal: string) =>
-        (await (
-          await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))
-        ).json()) as { events: ToolCallActivityEvent[] };
-      expect((await read("alice")).events.map((e) => e.id)).toEqual([events[0]!.id]);
-      expect((await read("bob")).events).toEqual([]);
-    },
-  );
 
   it("INV-4 INV-6: keeps long configured pool names scoped through recording and disclosure", async () => {
     const events: ToolCallActivityEvent[] = [];

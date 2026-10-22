@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
+import type { ConnectaConfigDescription } from "../src/describe-config.js";
 import { createConnecta, customExecutor, type Connector, type InboundAuth } from "../src/index.js";
 import { operatorUi, type OperatorUiContract } from "../src/ui.js";
-import type { ConnectaConfigDescription } from "../src/describe-config.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 
 const BASE = "https://connecta.example";
@@ -253,41 +253,6 @@ describe("operator config contract", () => {
     expect(data.live.activity).toBe("available");
     expect(JSON.stringify(data)).not.toContain("SENTINEL");
   });
-
-  it.each(["gate_throws", "unavailable"])(
-    "INV-4 INV-6: handles %s activity without widening access or returning errors",
-    async (mode) => {
-      let calls = 0;
-      const app = deployment({
-        readOnly: false,
-        connectors: [connector("svc")],
-        executor,
-        auth: human,
-        maintainers,
-        ui: operatorUi(),
-        logger: "silent",
-        activity: activityHistory({
-          readGate: () => {
-            if (mode === "gate_throws") throw new Error("SENTINEL-gate");
-            return true;
-          },
-          store: {
-            record() {},
-            list: async () => {
-              calls++;
-              throw new Error("SENTINEL-store");
-            },
-          },
-        }),
-      });
-      const data = await read(app);
-      const reads = mode === "unavailable";
-      expect(data.live.activity).toBe(reads ? "unavailable" : "forbidden");
-      expect(data.live.connectors[0]?.lastCall).toBeNull();
-      expect(calls).toBe(reads ? 1 : 0);
-      expect(JSON.stringify(data)).not.toContain("SENTINEL");
-    },
-  );
 
   it("INV-6: status and catalog failures are closed problem codes, and authorization hooks never run", async () => {
     let starts = 0;

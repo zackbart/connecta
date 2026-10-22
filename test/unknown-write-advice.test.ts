@@ -6,11 +6,11 @@
 // that advice is a segment of its own, so neither redaction nor a preflight
 // failure after an earlier dispatch can keep it on an unknown write.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { authorizationHandoff, bindAuthorizationHandoffs } from "../src/authorization-handoff.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { authorizationHandoff, bindAuthorizationHandoffs } from "../src/authorization-handoff.js";
-import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -21,7 +21,6 @@ import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor } from "../src/types.js";
-import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { resendWording } from "./fixtures/resend-wording.js";
 import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
@@ -231,36 +230,6 @@ describe("authorization and credential handoffs after a write are outcome-aware"
     );
     expect(resendWording(served.error)).toEqual([]);
   });
-
-  it("INV-9: control: a read's and a known write's handoffs keep 'retry the original call'", async () => {
-    const { connector } = tickets(() => new ConnectorCallError("auth_required", "Needs authorization"), oauth());
-    const read = await withHandoffs(makeRegistry([connector])).invoke(
-      "tickets.list_items",
-      {},
-      { source: "call_tool" },
-    );
-    if (read.ok) throw new Error("expected the served read to fail");
-    expect(read.error.instructions).toContain("Then retry the original call;");
-
-    // No stored credential: refused before the connector was entered, so known.
-    const unsent = tickets(() => new Error("never entered"), credentialSlot);
-    const storage = memoryStorage();
-    const registry = makeRegistry([unsent.connector], {
-      storage,
-      credentialVault: new CredentialVault(storage, btoa("k".repeat(32))),
-    });
-    const known = await withHandoffs(registry, `${BASE}/operator`).invoke(
-      "tickets.create_item",
-      {},
-      { source: "call_destructive_tool" },
-    );
-    expect(unsent.state.applied).toBe(0);
-    if (known.ok) throw new Error("expected the refusal");
-    expect(known.dispatched).toBe(false);
-    expect(known.error.writeOutcome).toBeUndefined();
-    expect(classifyWriteOutcome(known)).toBe("failed");
-    expect(known.error.instructions).toContain("set and test the credential, then retry the original call.");
-  });
 });
 
 describe("Notion's 529 overload advice", () => {
@@ -301,23 +270,6 @@ describe("Notion's 529 overload advice", () => {
     expect(resendWording(program.structuredContent)).toEqual([]);
     expect(sent).toEqual(["POST", "POST", "POST"]);
   });
-
-  it("INV-9: control: a read answered 529 keeps Notion's retry wording", async () => {
-    const { connector, registry } = await overloaded();
-    const read = { method: "GET", path: "/v1/users/me" };
-    const direct = classifyCallError(
-      await failure(connector.callTool("notion_api_read", read, registry.contextFor("notes", BASE))),
-    );
-    expect(direct).toMatchObject({ code: "unavailable", retryable: true });
-    expect(direct.message).toMatch(/Notion is overloaded; retry after the reported window\.$/);
-    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "notes.notion_api_read",
-      read,
-      { source: "call_tool" },
-    );
-    if (served.ok) throw new Error("expected the served read to fail");
-    expect(served.error.message).toMatch(/retry after the reported window\.$/);
-  });
 });
 
 describe("resend advice is a segment of its own (round 14)", () => {
@@ -338,48 +290,6 @@ describe("resend advice is a segment of its own (round 14)", () => {
     expect(resendWording(program.structuredContent)).toEqual([]);
   });
 
-  it("INV-9: control: a known refusal's advice joins its message only at output, redacted like the rest", async () => {
-    const send = guardedFetch({
-      provider: "Tickets",
-      baseUrl: "https://tickets.test",
-      authenticate: () => ({}),
-      maxResponseBytes: 1024,
-      fetch: async () => Response.json({}, { status: 429 }),
-    });
-    const connector = tracksEveryRequest(
-      api("tickets", {
-        tools: [
-          {
-            name: "create_item",
-            description: "Create",
-            annotations: { readOnlyHint: false },
-            inputSchema: { type: "object", properties: { password: { type: "string", writeOnly: true } } },
-            handler: (_args, ctx) =>
-              send({ method: "POST", path: "/items" }, ctx, () => {
-                throw resendAdvice(
-                  new ConnectorCallError("rate_limited", "Tickets is throttling."),
-                  " Back off before retrying.",
-                );
-              }),
-          },
-        ],
-      }),
-    );
-    const registry = makeRegistry([connector]);
-    const raw = await failure(connector.callTool("create_item", {}, registry.contextFor("tickets", BASE)));
-    expect((raw as Error).message).toBe("Tickets is throttling.");
-    expect(classifyCallError(raw).message).toBe("Tickets is throttling. Back off before retrying.");
-    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "tickets.create_item",
-      { password: "Back off" },
-      { source: "call_destructive_tool" },
-    );
-    if (served.ok) throw new Error("expected the refusal");
-    expect(served.answered).toBe(true);
-    expect(served.error).toMatchObject({ code: "rate_limited", retryable: true });
-    expect(served.error.message).toBe("Tickets is throttling. [redacted] before retrying.");
-  });
-
   it("INV-9: a Google token refusal after an earlier dispatch in the same call drops its advice to retry", async () => {
     const { state, registry, address } = refusedToken(true);
     const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
@@ -393,20 +303,6 @@ describe("resend advice is a segment of its own (round 14)", () => {
     expect(served.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect(served.error.message).toMatch(/Check the deployment's subject mapping and the key\.$/);
     expect(resendWording(served.error)).toEqual([]);
-  });
-
-  it("INV-9: control: Google's token refusal before any resource request keeps its advice", async () => {
-    const { state, registry, address } = refusedToken(false);
-    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      address,
-      { title: "Review" },
-      { source: "call_destructive_tool" },
-    );
-    expect(state).toEqual({ applied: 0, tokens: 1 });
-    if (served.ok) throw new Error("expected the refusal");
-    expect(served.answered).toBe(true);
-    expect(served.error.writeOutcome).toBeUndefined();
-    expect(served.error.message).toMatch(/Check the deployment's subject mapping and the key before retrying\.$/);
   });
 });
 

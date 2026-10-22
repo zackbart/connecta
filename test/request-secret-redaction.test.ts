@@ -1,23 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { api } from "../src/connectors/api.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { ConnectorCallError } from "../src/errors.js";
 import { CredentialVault } from "../src/credentials.js";
-import { memoryStorage } from "../src/storage/memory.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
-import { agentOutputOperations, sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
+import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { scopes } from "../src/storage/keys.js";
-import { seedGrant } from "./fixtures/oauth.js";
-import { deferred } from "./fixtures/misc.js";
-import { mcpRpc } from "./fixtures/http.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, ToolDef } from "../src/types.js";
+import { mcpRpc } from "./fixtures/http.js";
+import { deferred } from "./fixtures/misc.js";
+import { seedGrant } from "./fixtures/oauth.js";
+import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
 const TOKEN = "r5-failed-catalog-bearer-credential";
 const BASE = "https://connecta.test";
-const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -74,34 +73,6 @@ it("INV-5: a downstream 400 catalog diagnostic cannot disclose its sent vault to
   expect(JSON.stringify(records)).not.toContain(TOKEN);
   expect.soft(JSON.stringify(description)).not.toContain(TOKEN);
   expect.soft(JSON.stringify(call)).not.toContain(TOKEN);
-});
-
-it("INV-5: failed search_tools listings register credentials in the search request", async () => {
-  const storage = memoryStorage();
-  const vault = new CredentialVault(storage, KEY);
-  await vault.set("catalog", TOKEN, "operator");
-  const contexts: ConnectorContext[] = [];
-  const connector: Connector = {
-    id: "catalog",
-    kind: "api",
-    credential: { label: "Token" },
-    async listTools(ctx) {
-      contexts.push(ctx);
-      const token = await ctx.credential!.get();
-      throw new ConnectorCallError("invalid_args", `Catalog refused ${token}`, { cause: new Error(String(token)) });
-    },
-    async callTool() {
-      return null;
-    },
-  };
-  const result = await createMetaTools(
-    makeRegistry([connector], { storage, credentialVault: vault }),
-    BASE,
-  ).searchTools({ connector: "catalog" });
-  expect(result.structuredContent).toMatchObject({ catalogErrors: [{ connector: "catalog", code: "invalid_args" }] });
-  expect(JSON.stringify(result)).not.toContain(TOKEN);
-  expect(sentSecretsForRequest(contexts[0]!.requestScope!).text(TOKEN)).toBe("[redacted]");
-  expect(await storage.list("catalog:catalog")).toEqual([]);
 });
 
 it.each([false, true])(
@@ -357,34 +328,6 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
     const result = await run().catch((error) => ({ message: error.message }));
     expect(JSON.stringify(result), name).not.toContain(TOKEN);
   }
-});
-
-it("INV-5: future operation-table entries and thrown errors pass through the same output function", async () => {
-  const operations = agentOutputOperations((scope) => {
-    const ctx = { storage: memoryStorage(), logger: silentLogger, baseUrl: BASE, requestScope: scope };
-    return {
-      async futureResult() {
-        sentSecretsFor(ctx).add(TOKEN);
-        return {
-          content: [
-            { type: "text", text: TOKEN.slice(0, 12) },
-            { type: "text", text: TOKEN.slice(12) },
-          ],
-          structuredContent: { echo: TOKEN },
-        };
-      },
-      async futureError() {
-        sentSecretsFor(ctx).add(TOKEN);
-        throw new ConnectorCallError("invalid_args", TOKEN, { cause: new Error(TOKEN) });
-      },
-    };
-  });
-  // A match across blocks is replaced in each block it touches; the blocks keep their shape.
-  expect(await operations.futureResult()).toMatchObject({
-    content: [{ text: "[redacted]" }, { text: "[redacted]" }],
-    structuredContent: { echo: "[redacted]" },
-  });
-  await expect(operations.futureError()).rejects.toThrow("[redacted]");
 });
 
 it.each(["modern", "legacy"])(

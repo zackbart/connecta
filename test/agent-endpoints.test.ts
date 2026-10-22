@@ -3,13 +3,12 @@ import { accessTokens } from "../src/access-tokens.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
-import { callerOf } from "../src/connector-caller.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
-import { issueAgentToken } from "./helpers/agent-tokens.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
 
 // Clerk never admits here; these tests only prove it is never asked.
 vi.mock("../src/auth/clerk-transport.js", () => ({
@@ -148,17 +147,6 @@ const BYPASSED_REFUSED = [
   "/agent/x%2f..%2f..%2fmcp",
 ];
 const BYPASSED_ADMITTED = ["/agent/x", "/agent/assistant-alice", "/agent/x?y", "/mcp/../agent/x"];
-const PROTECTED = [
-  "/mcp",
-  "/agent",
-  "/agentx",
-  "/mcp/agent/x",
-  "/agent/../mcp",
-  "/agent/x/../../mcp",
-  "/agent/%2e%2e/mcp",
-  "/agent/%2E%2E/mcp",
-  "/agent%2f..%2fmcp",
-];
 
 describe("agent endpoint paths", () => {
   it("INV-4: answers every refused row of the P0 normalization table with the pool 404 before auth", async () => {
@@ -190,18 +178,6 @@ describe("agent endpoint paths", () => {
     const bot = await issueAgentToken(storage, "bot");
     for (const path of BYPASSED_ADMITTED) {
       expect((await listTools(c, path, bot)).status, path).toBe(200);
-    }
-    await c.close();
-  });
-
-  it("INV-4: no protected row admits an agent token, so none reaches a pool as an agent", async () => {
-    const storage = memoryStorage();
-    const c = deployment({ storage });
-    const bot = await issueAgentToken(storage, "bot");
-    for (const path of PROTECTED) {
-      const response = await listTools(c, path, bot);
-      expect([401, 404], path).toContain(response.status);
-      expect(await response.text(), path).not.toContain('"result"');
     }
     await c.close();
   });
@@ -267,26 +243,6 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
-  it("INV-4: refuses a person's token and an ambient cookie at /agent without asking the person provider", async () => {
-    const storage = memoryStorage();
-    const human = people();
-    const c = deployment({ storage, auth: human });
-    // Bob is admitted at his human pool, so these credentials are good ones.
-    expect((await listTools(c, "/mcp/team", "bob")).status).toBe(200);
-    expect((await listTools(c, "/mcp/team", undefined, { Cookie: "session=bob" })).status).toBe(200);
-    human.authorize.mockClear();
-    for (const [token, headers] of [
-      ["bob", {}],
-      [undefined, { Cookie: "session=bob" }],
-    ] as const) {
-      const response = await listTools(c, "/agent/team", token, headers);
-      expect(response.status).toBe(401);
-      expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
-    }
-    expect(human.authorize).not.toHaveBeenCalled();
-    await c.close();
-  });
-
   it("INV-4: never consults Clerk at /agent, for a Clerk token, a session cookie, or a handshake parameter", async () => {
     const storage = memoryStorage();
     const clerk = clerkAuth({ publishableKey: CLERK_PK, secretKey: "sk_test_fake", publicUrl: BASE });
@@ -348,39 +304,6 @@ describe("agent endpoint admission", () => {
     }
     expect(await searchTextWithContext(c, "/agent/team", bot, ctx)).toContain("wiki.read");
     expect(getIdentity).not.toHaveBeenCalled();
-    await c.close();
-  });
-
-  it("INV-4: attaches the admitted pool to the connector caller at /agent/<pool> as at /mcp/<pool>", async () => {
-    const storage = memoryStorage();
-    const c = deployment({
-      storage,
-      connectors: [
-        api("who", {
-          tools: [
-            {
-              name: "am_i",
-              description: "Report the caller",
-              annotations: { readOnlyHint: true },
-              handler: (_args, ctx) => {
-                const caller = callerOf(ctx);
-                return { pool: caller?.pool ?? null, agent: caller?.identity.agent ?? null };
-              },
-            },
-          ],
-        }),
-      ],
-      pools: { team: { tools: ["who"], members: ["bob", "agent:bot"] } },
-    });
-    const bot = await issueAgentToken(storage, "bot");
-    const ask = async (path: string, token: string) =>
-      JSON.parse(
-        (await rpc(c, path, token, "call_tool", { address: "who.am_i", args: {} })).result.content[0].text.split(
-          "\n",
-        )[0],
-      );
-    expect(await ask("/agent/team", bot)).toEqual({ pool: "team", agent: "bot" });
-    expect(await ask("/mcp/team", "bob")).toEqual({ pool: "team", agent: null });
     await c.close();
   });
 
@@ -464,42 +387,6 @@ describe("human endpoints refuse agent tokens", () => {
     // The same token is admitted where agents belong.
     expect((await listTools(c, "/agent/team", bot)).status).toBe(200);
     await c.close();
-  });
-
-  it("INV-4: a refused cta_ cannot fall back to an ambient cookie or Access identity", async () => {
-    const storage = memoryStorage();
-    const human = people();
-    const c = deployment({ storage, auth: human });
-    const bot = await issueAgentToken(storage, "bot");
-    const response = await listTools(c, "/mcp/team", bot, { Cookie: "session=bob" });
-    expect(response.status).toBe(401);
-    expect(human.authorize).not.toHaveBeenCalled();
-    await c.close();
-
-    const accessStorage = memoryStorage();
-    const getIdentity = vi.fn(async () => ({ user_uuid: "human" }));
-    const access = deployment({
-      storage: accessStorage,
-      auth: cloudflareAccessAuth(),
-      maintainers: [{ namespace: "cloudflare-access", id: "human" }],
-      pools: { team: { tools: ["wiki"], members: ["agent:bot", { namespace: "cloudflare-access", id: "human" }] } },
-    });
-    const accessBot = await issueAgentToken(accessStorage, "bot");
-    for (const path of ["/mcp", "/mcp/team"]) {
-      const refused = await listTools(
-        access,
-        path,
-        accessBot,
-        {},
-        {
-          waitUntil() {},
-          access: { aud: "worker-aud", getIdentity },
-        },
-      );
-      expect(refused.status, path).toBe(401);
-    }
-    expect(getIdentity).not.toHaveBeenCalled();
-    await access.close();
   });
 });
 

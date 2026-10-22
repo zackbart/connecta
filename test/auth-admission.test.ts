@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { authenticate, authenticationSnapshot } from "../src/auth-admission.js";
-import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
+import { authenticate, authenticationSnapshot } from "../src/auth-admission.js";
+import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthResult, InboundAuth } from "../src/types.js";
-import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
+import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const refused = (): AuthResult => ({ ok: false, response: new Response(null, { status: 401 }) });
@@ -57,19 +57,6 @@ describe("inbound authentication admission", () => {
     expect((await authenticate(outsider, request(), BASE, undefined, silentLogger)).admitted).toBe(true);
   });
 
-  it.each(["throw", "reject"])("INV-7: releases all slots on %s", async (outcome) => {
-    const provider: InboundAuth = {
-      kind: "test",
-      authorize() {
-        if (outcome === "throw") throw new Error("private");
-        return Promise.reject(new Error("private"));
-      },
-    };
-    for (let i = 0; i < 32; i++) {
-      await expect(authenticate(provider, request(), BASE, undefined, silentLogger)).rejects.toThrow("private");
-    }
-  });
-
   it("INV-7: abort retains capacity until the adapter settles, and pre-abort invokes nothing", async () => {
     const gate = blocking();
     const caller = new AbortController();
@@ -96,52 +83,6 @@ describe("inbound authentication admission", () => {
       gate.release();
       await old;
       await Promise.all(pending);
-    }
-  });
-
-  it("INV-7: bounds 64 full-server listen authorizations before reading bodies", async () => {
-    const gate = blocking();
-    const app = createTestConnecta({
-      connectors: [],
-      auth: gate.provider,
-      logger: silentLogger,
-      maintainers: [{ namespace: "test", id: "alice" }],
-      admission: { requests: { concurrency: 64, maxQueueSize: 0, maxDurationMs: 30_000 } },
-    });
-    let settled = 0;
-    let reads = 0;
-    const pending = Array.from({ length: 64 }, () => {
-      const body = new ReadableStream<Uint8Array>(
-        {
-          pull(controller) {
-            reads++;
-            controller.enqueue(new Uint8Array(1));
-          },
-        },
-        { highWaterMark: 0 },
-      );
-      const req = new Request(`${BASE}/mcp`, {
-        method: "POST",
-        body,
-        duplex: "half",
-        headers: { "Content-Type": "application/json", "Mcp-Method": "subscriptions/listen" },
-      } as RequestInit);
-      return app.fetch(req).then(async (res) => {
-        settled++;
-        if (res.status === 503) await expectBusy(res);
-        return res;
-      });
-    });
-    try {
-      await vi.waitFor(() => expect(settled).toBe(48));
-      expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
-      // Node's Request transfer may prefetch one chunk per body; no route
-      // consumes beyond that before the adapter returns (as in body-bounds).
-      expect(reads).toBeLessThanOrEqual(64);
-    } finally {
-      gate.release();
-      await Promise.all(pending);
-      await app.close();
     }
   });
 

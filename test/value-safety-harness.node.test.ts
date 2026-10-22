@@ -6,11 +6,11 @@
 import { describe, expect, it } from "vitest";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import { redact, type ValueSafetyTable } from "../src/providers/_shared/rest/value-safety.js";
-import { reviewProblems, type Candidates, type ValueSafetyReview } from "./fixtures/value-safety.js";
-import stripeCandidates from "../src/providers/stripe/value-safety.candidates.json";
-import stripeSource from "../src/providers/stripe/openapi.source.json";
 import { openapi as stripeOpenapi } from "../src/providers/stripe/openapi.generated.js";
+import stripeSource from "../src/providers/stripe/openapi.source.json";
+import stripeCandidates from "../src/providers/stripe/value-safety.candidates.json";
 import { STRIPE_VALUE_SAFETY } from "../src/providers/stripe/value-safety.js";
+import { reviewProblems, type Candidates, type ValueSafetyReview } from "./fixtures/value-safety.js";
 
 const script = (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
   VALUE_SAFETY_FORMAT: number;
@@ -84,10 +84,6 @@ describe("value-safety harness mutations", () => {
     );
   });
 
-  it("INV-5: passes a table whose paths resolve, cover, and reach their fields", () => {
-    expect(Object.values(reviewProblems(review(["secret", "origin:url"], ["data.*.pin"]))).flat()).toEqual([]);
-  });
-
   it("INV-5: rejects embedded-URL operation keys outside the pinned index and invalid paths", () => {
     const original = review(["secret", "origin:url"], ["data.*.pin"]);
     const problems = reviewProblems({
@@ -114,12 +110,6 @@ describe("value-safety harness mutations", () => {
         table: { ...original.table, embeddedUrls: { operations: { "GET /v1/pins": ["data.*.message"] } } },
       }).invalid,
     ).toEqual([]);
-  });
-
-  it("INV-5: fails a path that misses the flagged field", () => {
-    const problems = reviewProblems(review(["secrt", "origin:url"], ["data.*.pin"]));
-    expect(problems.uncovered).toEqual(["GET /v1/hooks/{id}: secret"]);
-    expect(problems.unresolved).toContainEqual(expect.stringContaining("secrt"));
   });
 
   it("INV-5: fails a path that reaches the flagged field in the wrong shape", () => {

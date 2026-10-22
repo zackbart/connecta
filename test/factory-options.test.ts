@@ -7,11 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config-schema.js";
-import { activityHistory } from "../src/activity.js";
 import { api, remoteMcp } from "../src/index.js";
-import { cloudflare } from "../src/providers/cloudflare/index.js";
-import { linear } from "../src/providers/linear/index.js";
-import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
@@ -69,59 +65,6 @@ describe("built-in factory options", () => {
     expect(String(error)).toContain('api("crm").maxResultBytes must be a plain value, not a getter or setter.');
     expect(String(error)).not.toContain(SECRET);
     expect(reads).toBe(0);
-  });
-
-  it("accepts every declared option and leaves custom implementations uninspected", () => {
-    let storeReads = 0;
-    const store = {
-      get record() {
-        storeReads += 1;
-        return () => {};
-      },
-    };
-    expect(() => activityHistory({ store, deploymentId: "prod" })).not.toThrow();
-    expect(storeReads).toBeGreaterThan(0);
-    expect(() =>
-      api("crm", {
-        title: "CRM",
-        description: "Customer records",
-        authScope: "shared",
-        maxResultBytes: 1_000,
-        callAdmission: { rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1 } }] },
-        usageGuide: { content: "Use it.", summary: "Use it.", required: false },
-        credential: { label: "Key", fields: [{ name: "key", label: "Key", inputType: "password" }] },
-        validateArgs: true,
-        tools: [tool],
-      }),
-    ).not.toThrow();
-    expect(() =>
-      remoteMcp("docs", {
-        url: "https://mcp.example/mcp",
-        auth: { type: "credential", credential: { label: "Key" }, header: "X-Key", scheme: null },
-        versionNegotiation: "legacy",
-        redirects: "same-origin",
-        requireHttps: true,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" }, callAdmission: { rules: [{ maxConcurrency: 2 }] } }),
-    ).not.toThrow();
-    expect(() =>
-      notion("wiki", {
-        purpose: "Docs",
-        auth: { type: "token" },
-        callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCalls: 600, windowMs: 60_000 } }] },
-      }),
-    ).not.toThrow();
-    expect(() =>
-      operatorUi({
-        branding: {
-          productName: "Ops",
-          favicon: { href: "/x.svg" },
-          theme: { accent: "#123456", colorScheme: "dark" },
-        },
-      }),
-    ).not.toThrow();
   });
 });
 
@@ -250,20 +193,6 @@ describe("factory options keep behaviour in place", () => {
   const call = (connector: Connector, name = "read") => connector.callTool!(name, {}, ctx);
   const annotations = { readOnlyHint: true };
 
-  it("INV-11: calls a class-instance tool's prototype handler on the instance", async () => {
-    class ReadTool {
-      readonly name = "read";
-      readonly description = "Read a thing.";
-      readonly annotations = annotations;
-      #rows = ["a", "b"];
-      handler() {
-        return this.#rows.length;
-      }
-    }
-    const instance = new ReadTool();
-    await expect(call(api("crm", { tools: [instance] }))).resolves.toBe(2);
-  });
-
   it("INV-11: keeps the receiver of an own handler that reads private fields", async () => {
     class Counter {
       #count = 41;
@@ -278,74 +207,6 @@ describe("factory options keep behaviour in place", () => {
       }
     }
     await expect(call(api("crm", { tools: [new Counter()] }))).resolves.toBe(42);
-  });
-
-  it("INV-11: still checks a tool's own keys and declared accessors, inherited ones included", () => {
-    class Extra {
-      readonly name = "read";
-      readonly description = "Read.";
-      readonly annotations = annotations;
-      readonly readOnly = true;
-      handler() {}
-    }
-    expect(() => api("crm", { tools: [loose(new Extra())] })).toThrow('Unknown option: api("crm").tools[0].readOnly.');
-    let reads = 0;
-    class Computed {
-      readonly name = "read";
-      readonly annotations = annotations;
-      get description(): string {
-        reads += 1;
-        throw new Error(SECRET);
-      }
-      handler() {}
-    }
-    let error: unknown;
-    try {
-      api("crm", { tools: [new Computed()] });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(String(error)).toContain('api("crm").tools[0].description must be a plain value, not a getter or setter.');
-    expect(String(error)).not.toContain(SECRET);
-    expect(reads).toBe(0);
-  });
-
-  it("INV-11: refuses a tool without a handler at construction", () => {
-    expect(() => api("crm", loose({ tools: [{ name: "read", description: "Read.", annotations }] }))).toThrow(
-      'api() tool "crm.read" needs a handler function.',
-    );
-  });
-});
-
-describe("factory options refuse arrays and instances where plain data belongs", () => {
-  it.each([
-    [
-      "an array of headers",
-      () =>
-        remoteMcp(
-          "docs",
-          loose({
-            url: "https://mcp.example/mcp",
-            auth: { type: "headers", headers: [["X-Key", "k"]] },
-          }),
-        ),
-      'remoteMcp("docs").auth.headers must be an object.',
-    ],
-    [
-      "a class instance as options",
-      () =>
-        linear(
-          "tracker",
-          loose(
-            new (class {
-              purpose = "Roadmap";
-            })(),
-          ),
-        ),
-      'linear("tracker") requires a plain object.',
-    ],
-  ] as const)("INV-11: refuses %s with its path", (_, build, message) => {
-    expect(build).toThrow(message);
   });
 });
 

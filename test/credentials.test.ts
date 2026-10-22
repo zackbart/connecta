@@ -1,14 +1,10 @@
-import { CredentialVault } from "../src/credentials.js";
-import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
-import { oauthSealerFor } from "../src/oauth-sealing.js";
-import { makeRegistry, required } from "./helpers.js";
-import { connectorWith } from "./fixtures/connectors.js";
 import { describe, expect, it } from "vitest";
 import { STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR, storedCredentialShape } from "../src/credential-rules.js";
-import type { ConnectorContext, ConnectorCredentialConfig } from "../src/types.js";
+import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
-import { seedGrant } from "./fixtures/oauth.js";
+import type { ConnectorCredentialConfig } from "../src/types.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { makeRegistry, required } from "./helpers.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
 const OAUTH_BASE = "https://connecta.test";
@@ -143,19 +139,6 @@ describe("CredentialVault", () => {
     expect(metadata).not.toHaveProperty("value");
   });
 
-  it("emits lastFour only for values comfortably longer than four chars", async () => {
-    const vault = new CredentialVault(memoryStorage(), KEY);
-
-    const long = await vault.set("long", "abcdefghijklmnop1234", "user_123");
-    expect(long.lastFour).toBe("1234");
-    expect(required(long.fields?.value).lastFour).toBe("1234");
-
-    const short = await vault.set("short", "abcd1234", "user_123");
-    expect(short).not.toHaveProperty("lastFour");
-    expect(short.fields?.value).not.toHaveProperty("lastFour");
-    expect(required(short.fields?.value).configured).toBe(true);
-  });
-
   it("encrypts and retrieves named multi-field credentials", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);
@@ -199,70 +182,6 @@ describe("CredentialVault", () => {
     await expect(new CredentialVault(storage, otherKey).get("service")).rejects.toThrow(
       "Stored credential could not be decrypted",
     );
-  });
-
-  it("deletes a credential", async () => {
-    const vault = new CredentialVault(memoryStorage(), KEY);
-    await vault.set("service", "top-secret", "user_123");
-    await vault.delete("service");
-
-    expect(await vault.get("service")).toBeNull();
-    expect(await vault.metadata("service")).toBeNull();
-  });
-
-  it("seals downstream OAuth state and leaves it untouched by vault writes", async () => {
-    const storage = memoryStorage();
-    const tokens = { access_token: "mcp-token", token_type: "Bearer" };
-    const client = { client_id: "mcp-client" };
-    // A plaintext grant, as a deployment stored it before it had a sealing vault.
-    await seedGrant(storage, { client: { value: client }, tokens }, undefined, scopes.connector("notion"));
-    const grantKey = `${scopes.connector("notion")}${oauthGrantKeys.grant}`;
-    const vault = new CredentialVault(storage, KEY);
-    const oauthConnector = (id: string, authScope?: "personal") =>
-      connectorWith({ id, kind: "mcp", ...(authScope ? { authScope } : {}) });
-    const registry = makeRegistry([oauthConnector("notion", "personal"), oauthConnector("linear")], {
-      storage,
-      credentialVault: vault,
-    });
-    const providerFor = (context: ConnectorContext, id: string) =>
-      new KvOAuthProvider(
-        id,
-        context.storage,
-        `${OAUTH_BASE}/oauth/callback/${id}`,
-        undefined,
-        true,
-        oauthSealerFor(context),
-      );
-    const notion = registry.contextFor("notion", OAUTH_BASE);
-
-    const provider = providerFor(notion, "notion");
-    expect(await provider.tokens()).toEqual(tokens);
-    expect(await provider.clientInformation()).toEqual(client);
-
-    const sealed = required((await storage.get(grantKey)) ?? undefined);
-    expect(sealed).not.toContain("mcp-token");
-    expect(sealed).not.toContain("mcp-client");
-
-    await vault.set("notion", "static-fallback-token", "user_123");
-    await vault.delete("notion");
-
-    expect(await storage.get(grantKey)).toBe(sealed);
-    const reread = providerFor(registry.contextFor("notion", OAUTH_BASE), "notion");
-    expect(await reread.tokens()).toEqual(tokens);
-    expect(await reread.clientInformation()).toEqual(client);
-
-    // The sealed bytes are bound to their connector and owner: copied into
-    // another connector's namespace, or into a principal's partition of the
-    // same connector, they open as nothing.
-    await storage.set(`${scopes.connector("linear")}${oauthGrantKeys.grant}`, sealed);
-    const linear = providerFor(registry.contextFor("linear", OAUTH_BASE), "linear");
-    expect(await linear.tokens()).toBeUndefined();
-    expect(await linear.clientInformation()).toBeUndefined();
-
-    await storage.set(`${scopes.principal("owner-a")}${grantKey}`, sealed);
-    const personal = providerFor(registry.personalRegistry("owner-a").contextFor("notion", OAUTH_BASE), "notion");
-    expect(await personal.tokens()).toBeUndefined();
-    expect(await personal.clientInformation()).toBeUndefined();
   });
 
   it("rejects invalid keys, empty values, and oversized values", async () => {

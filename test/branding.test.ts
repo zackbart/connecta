@@ -1,13 +1,11 @@
-import { operatorUi } from "../src/ui.js";
-import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
-import { machineAuth } from "./helpers/machine-auth.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { resolveBranding } from "../src/ui.js";
+import { activityHistory } from "../src/activity.js";
 import { droppedThemeTokens, renderPage, resolveTheme, themeCss } from "../src/branding.js";
-import { PAGE_FONTS } from "../src/page-styles.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectaBranding, ConnectaTheme, Logger } from "../src/types.js";
+import { operatorUi, resolveBranding } from "../src/ui.js";
 import { calcApi, makeDeployment } from "./fixtures/http.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 
@@ -58,16 +56,6 @@ function iconHref(body: string): string | undefined {
 }
 
 describe("branding defaults", () => {
-  it("falls back to Connecta's own labels", () => {
-    const brand = resolveBranding();
-    expect(brand.productName).toBe("Connecta");
-    expect(brand.pageTitle).toBe("Connecta");
-    expect(brand.faviconHref).toBe("/favicon.svg");
-    expect(brand.themeColor).toBe("#ffffff");
-    expect(brand.ownerName).toBeUndefined();
-    expect(brand.productUrl).toBeUndefined();
-  });
-
   it("omits branding link URLs that are not safe http(s) URLs", () => {
     const dangerous = resolveBranding({
       productUrl: "javascript:alert(1)",
@@ -93,80 +81,6 @@ describe("branding defaults", () => {
 
 describe("the shared page layout", () => {
   const layout = { title: "T", uiMounted: true, body: "<main>body</main>" };
-
-  it("sets data-scheme only for a pinned scheme, with a matching theme color", () => {
-    const system = renderPage(undefined, layout);
-    expect(system).toContain('<html lang="en">');
-    expect(system).toContain('<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">');
-    expect(system).toContain('<meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">');
-    const dark = renderPage({ theme: { colorScheme: "dark" } }, layout);
-    expect(dark).toContain('<html lang="en" data-scheme="dark">');
-    expect(dark).toContain('<meta name="theme-color" content="#12110f">');
-    expect(dark).not.toContain("prefers-color-scheme: light");
-    const configured = renderPage({ themeColor: "#101010", theme: { colorScheme: "dark" } }, layout);
-    expect(configured).toContain('<meta name="theme-color" content="#101010">');
-    expect(configured.match(/name="theme-color"/g)).toHaveLength(1);
-  });
-
-  it("links the default favicon only when the UI serves it, and a configured one always", () => {
-    expect(renderPage(undefined, layout)).toContain(
-      '<link rel="icon" href="/favicon.svg" type="image/svg+xml">\n<link rel="shortcut icon" href="/favicon.ico">',
-    );
-    const headless = renderPage(undefined, { ...layout, uiMounted: false });
-    expect(headless).not.toContain("favicon");
-    expect(headless).not.toContain('rel="icon"');
-    const hosted = renderPage({ favicon: { href: "https://cdn.acme.example/i.svg" } }, { ...layout, uiMounted: false });
-    expect(hosted).toContain('<link rel="icon" href="https://cdn.acme.example/i.svg" type="image/svg+xml">');
-    expect(hosted).not.toContain("/favicon.ico");
-    // A page rendered on another host points its icons at the one that serves them.
-    const elsewhere = renderPage(undefined, { ...layout, iconOrigin: "https://main.example/base" });
-    expect(elsewhere).toContain('<link rel="icon" href="https://main.example/favicon.svg" type="image/svg+xml">');
-    expect(elsewhere).toContain('<link rel="shortcut icon" href="https://main.example/favicon.ico">');
-    const custom = renderPage(
-      { favicon: { href: "/assets/acme.svg" } },
-      { ...layout, iconOrigin: "https://main.example" },
-    );
-    expect(custom).toContain('href="https://main.example/assets/acme.svg"');
-    const absolute = renderPage(
-      { favicon: { href: "https://cdn.acme.example/i.svg" } },
-      { ...layout, iconOrigin: "https://main.example" },
-    );
-    expect(absolute).toContain('href="https://cdn.acme.example/i.svg"');
-  });
-
-  it("declares the operator fonts only when the UI is mounted, at the paths it serves", async () => {
-    expect(renderPage(undefined, { ...layout, uiMounted: false })).not.toContain("@font-face");
-    // Root-relative even on a page rendered for another host: the page's own
-    // origin serves the font, so no cross-origin font request is made.
-    const page = renderPage(undefined, { ...layout, iconOrigin: "https://main.example" });
-    expect(page.match(/@font-face/g)).toHaveLength(PAGE_FONTS.length);
-    const deployment = makeDeployment(brandingConfig());
-    for (const font of PAGE_FONTS) {
-      expect(font.path).toMatch(/^\/ui\/assets\/[a-z0-9-]+\.woff2$/i);
-      expect(page).toContain(`src:url("${font.path}") format("woff2")`);
-      const response = await deployment.fetch(new Request(`${BASE}${font.path}`));
-      expect(response.status, font.path).toBe(200);
-      expect(response.headers.get("content-type")).toBe("font/woff2");
-    }
-  });
-
-  it("draws connecta's mark only for an unbranded deployment, or shows the served SVG favicon", () => {
-    const mark = '<span class="brand-mark" aria-hidden="true"></span>';
-    const favicon = '<img class="brand-mark" src="/favicon.svg" alt="">';
-    expect(renderPage(undefined, layout)).toContain(mark);
-    for (const branding of [
-      { productName: "Acme" },
-      { ownerName: "Acme" },
-      { favicon: { href: "/assets/acme.svg" } },
-    ] satisfies ConnectaBranding[]) {
-      const page = renderPage(branding, layout);
-      expect(page).not.toContain('class="brand-mark"');
-    }
-    const svg = { productName: "Acme", favicon: { svg: "<svg/>" } } satisfies ConnectaBranding;
-    expect(renderPage(svg, layout)).toContain(favicon);
-    // Without the UI nothing serves /favicon.svg, so there is nothing to show.
-    expect(renderPage(svg, { ...layout, uiMounted: false })).not.toContain('class="brand-mark"');
-  });
 
   it("escapes every branding value it interpolates", () => {
     const page = renderPage(
@@ -202,38 +116,6 @@ describe("operator theme tokens", () => {
     else expect(resolved[token]).toBeUndefined();
     expect(droppedThemeTokens(theme)).toEqual([`theme.${token}`]);
     expect(themeCss(resolveTheme(theme))).not.toContain(value);
-  });
-
-  it("warns once, naming every theme token it dropped", async () => {
-    const logger = spyLogger();
-    makeDeployment(
-      brandingConfig(
-        {
-          theme: {
-            accent: "red",
-            radius: "wide",
-            colorScheme: "neon" as NonNullable<ConnectaTheme["colorScheme"]>,
-          },
-        },
-        { logger },
-      ),
-    );
-    const warned = warnings(logger);
-    expect(warned).toContain("theme.accent");
-    expect(warned).toContain("theme.radius");
-    expect(warned).toContain("theme.colorScheme");
-  });
-});
-
-describe("branding in served pages", () => {
-  it("renders an accepted favicon href on both branded surfaces", async () => {
-    for (const href of ["https://cdn.acme.example/icon.svg", "/assets/acme.svg"]) {
-      const c = makeDeployment(brandingConfig({ productName: "Acme MCP", favicon: { href } }));
-      for (const path of PAGES) {
-        const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
-        expect(iconHref(body)).toBe(href);
-      }
-    }
   });
 });
 

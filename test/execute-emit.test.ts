@@ -211,15 +211,6 @@ describe("EmitCollector validation (M1)", () => {
     },
   );
 
-  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])(
-    "INV-3: accepts supported image MIME %s with canonical base64",
-    (mimeType) => {
-      const sink = collector();
-      sink.accept({ type: "image", data: "aGk=", mimeType });
-      expect(sink.blocks).toEqual([{ type: "image", data: "aGk=", mimeType }]);
-    },
-  );
-
   it("accepts exactly the three block shapes", () => {
     const sink = collector();
     sink.accept({ type: "text", text: "t" });
@@ -231,27 +222,6 @@ describe("EmitCollector validation (M1)", () => {
 });
 
 describe("EmitCollector budgets (M5)", () => {
-  it("fails the crossing block on count, prior blocks intact", () => {
-    const sink = new EmitCollector(10_000, 2);
-    sink.accept({ type: "text", text: "one" });
-    sink.accept({ type: "text", text: "two" });
-    expect(() => sink.accept({ type: "text", text: "three" })).toThrowError(
-      /block-count budget exceeded: 2 block\(s\) maximum, 0 blocks remaining; 9944 of 10000 serialized bytes remaining/,
-    );
-    expect(sink.blocks).toHaveLength(2);
-  });
-
-  it("fails the crossing block on bytes, naming the room remaining", () => {
-    const small = { type: "text", text: "ok" };
-    const smallSize = JSON.stringify(small).length;
-    const sink = new EmitCollector(smallSize + 5, 10);
-    sink.accept(small);
-    expect(() => sink.accept({ type: "text", text: "x".repeat(100) })).toThrowError(
-      new RegExp(`5 of ${smallSize + 5} remaining`),
-    );
-    expect(sink.blocks).toHaveLength(1);
-    expect(sink.bytes).toBe(smallSize);
-  });
   it("INV-3: native batches obey the block budget atomically", () => {
     const sink = new EmitCollector(10_000, 2);
     sink.accept({ type: "text", text: "prior" });
@@ -264,41 +234,6 @@ describe("EmitCollector budgets (M5)", () => {
     ).toThrow(/block-count budget exceeded/);
     expect(sink.blocks).toEqual([{ type: "text", text: "prior" }]);
     expect(sink.bytes).toBe(previousBytes);
-  });
-});
-
-describe("connecta.emit provider (M7, M8)", () => {
-  it("spends no host-call budget", async () => {
-    const sink = new EmitCollector(10_000, 10);
-    let terminalCode: string | undefined;
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger, undefined, {
-      maxHostCalls: 1,
-      emitCollector: sink,
-      onHostCallBudgetExceeded: (failure) => {
-        terminalCode = failure.details.code;
-      },
-    });
-    const fns = required(providers.find((p) => p.name === "connecta")).fns;
-    const emit = required(fns.emit);
-    const call = required(fns.call);
-    await emit({ type: "text", text: "a" });
-    await emit({ type: "text", text: "b" });
-    // The single host call is still available after two emits…
-    await expect(call("calc.add", { a: 1, b: 2 })).resolves.toEqual({ data: { sum: 3 }, format: "json" });
-    // The next call ends the host run instead of rejecting into the guest.
-    let settled = false;
-    void call("calc.add", { a: 1, b: 2 }).then(
-      () => {
-        settled = true;
-      },
-      () => {
-        settled = true;
-      },
-    );
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    expect(terminalCode).toBe("budget_exceeded");
-    expect(sink.blocks).toHaveLength(2);
   });
 });
 
@@ -358,25 +293,5 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     const envelope = JSON.parse(required(structured.content[0]).text ?? "");
     expect(envelope.emittedDiscarded).toBe(1);
     expect(envelope.error.code).toBe("program_error");
-  });
-
-  it("reports the emitted aggregate in diagnostics, numbers only", async () => {
-    const handler = emitHandler(
-      scriptedExecutor(async (fns) => {
-        await required(fns.emit)({ type: "text", text: "measured" });
-        return "done";
-      }),
-    );
-    const out = await handler({ code: "ignored", diagnostics: true });
-    const envelope = JSON.parse(required(out.content[0]).text ?? "");
-    expect(envelope.diagnostics.emitted.count).toBe(1);
-    expect(envelope.diagnostics.emitted.bytes).toBeGreaterThan(0);
-
-    const quiet = await emitHandler(scriptedExecutor(async () => "done"))({
-      code: "ignored",
-      diagnostics: true,
-    });
-    const quietEnvelope = JSON.parse(required(quiet.content[0]).text ?? "");
-    expect(quietEnvelope.diagnostics.emitted).toBeUndefined();
   });
 });

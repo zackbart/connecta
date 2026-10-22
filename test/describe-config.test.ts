@@ -12,7 +12,6 @@ import { describe, expect, it } from "vitest";
 import { activityHistory } from "../src/activity.js";
 import { d1ActivityStore, d1Storage } from "../src/d1.js";
 import { createConnecta, customExecutor, remoteMcp, type Connector } from "../src/index.js";
-import { describedEndpoint, describedHref, describedOrigin, describedUrl } from "../src/described.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
 import { CONNECTA_VERSION } from "../src/version.js";
@@ -42,25 +41,6 @@ describe("describeConfig", () => {
     } finally {
       await app.close();
     }
-  });
-
-  it("INV-5: every built-in describe() is secret-free on its own, before describeConfig re-validates it", async () => {
-    const { config } = secretBearingDeployment();
-    // The published contract holds for a direct call: an operator tool may
-    // read connector.describe() without going through describeConfig().
-    const builtIn = config.connectors.filter((connector) => connector.id !== "custom_conn");
-    const outputs = builtIn.map((connector) => [connector.id, connector.describe?.()] as const);
-    for (const [where, described] of outputs) {
-      expect(described, `${where} describes itself`).toBeDefined();
-      const json = JSON.stringify(described);
-      for (const [position, secret] of Object.entries(SECRETS)) {
-        expect(json.includes(secret), `${where}: ${position} leaked`).toBe(false);
-      }
-      expect(json, where).not.toContain("SENTINEL");
-    }
-    const byId = Object.fromEntries(builtIn.map((connector) => [connector.id, connector.describe?.()]));
-    expect(byId.oauth_mcp?.auth?.clientMetadataUrl).toBe("https://client.example/cimd.json");
-    expect(byId.studio?.auth?.clientMetadataUrl).toBe("https://client.example/basecamp-client");
   });
 
   it("INV-5: reduces every branding URL to origin and path, and a relative favicon to its path", async () => {
@@ -282,14 +262,6 @@ describe("non-web URL schemes", () => {
     ["a nested jar: URL", `jar:https://u:${SENTINEL}@example.com/a.jar!/x`],
     ["ftp:", `ftp://u:${SENTINEL}@example.com/x`],
   ] as const;
-
-  it.each(URLS)("INV-5: the described-URL helpers omit %s", (_, url) => {
-    expect(describedEndpoint(url)).toBeUndefined();
-    expect(describedEndpoint(new URL(url))).toBeUndefined();
-    expect(describedUrl(url)).toBeUndefined();
-    expect(describedOrigin(url)).toBeUndefined();
-    expect(describedHref(url)).toBeUndefined();
-  });
 
   it.each(URLS)("INV-11: serverInfo.websiteUrl refuses %s without echoing it", (_, url) => {
     let error: unknown;

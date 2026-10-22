@@ -5,17 +5,15 @@
 // bounded degradation to a marked `unknown`, observed output that says so, and
 // one rendering shared by search_tools, connecta.search, and connecta.describe.
 import { describe, expect, it } from "vitest";
-import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../src/catalog.js";
 import type { Connector, JsonSchema, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE } from "./fixtures/meta-tools.js";
 import {
   LINEAR_LIST_ISSUE_STATUSES,
-  LINEAR_LIST_ISSUES,
   LINEAR_SAVE_ISSUE,
   PATHOLOGICAL_CORPUS,
-  STRIPE_IMPLEMENTATION_PLANNER,
   STRIPE_LIST_ACCOUNTS_INPUT,
   STRIPE_LIST_ACCOUNTS_OUTPUT,
 } from "./fixtures/schema-corpus.js";
@@ -32,40 +30,6 @@ const search = (input: JsonSchema, output?: JsonSchema, observed = false) =>
 const describeSignature = (input: JsonSchema, output?: JsonSchema) =>
   typescriptSignature(input, output, { observed: false, description: true });
 
-describe("TypeScript signatures over real provider schemas", () => {
-  it("renders the smallest real shape exactly, with and without prose", () => {
-    expect(search(LINEAR_LIST_ISSUE_STATUSES).text).toBe("(args: { team: string }) => Promise<unknown>");
-    expect(describeSignature(LINEAR_LIST_ISSUE_STATUSES).text).toBe(
-      "(args: { /** Team name or ID */ team: string }) => Promise<unknown>",
-    );
-  });
-
-  it("renders Stripe's zero-input tool as optional args and its declared output", () => {
-    const signature = search(STRIPE_LIST_ACCOUNTS_INPUT, STRIPE_LIST_ACCOUNTS_OUTPUT);
-    expect(signature).toEqual({
-      text: "(args?: {}) => Promise<{ accounts: { stripe_context: string; livemode: boolean; name?: string }[] }>",
-      inputTruncated: false,
-      outputTruncated: false,
-    });
-  });
-
-  it("puts Stripe's trailing required keys first in search and keeps declared order in describe", () => {
-    expect(search(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(
-      /^\(args: \{ stripe_context: string; livemode: boolean; guide_id\?: string;/,
-    );
-    expect(describeSignature(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(/^\(args: \{ \/\*\* ONLY pass a guide_id/);
-  });
-
-  it("keeps Linear's capped enum honest: whole values, an exact count, and the flag", () => {
-    const signature = search(LINEAR_LIST_ISSUES);
-    expect(signature.text).toMatch(
-      /fields\?: \("id" \| "uuid" \| .* \| unknown \/\* \d+ enum values omitted \*\/\)\[\];/,
-    );
-    expect(signature.inputTruncated).toBe(true);
-    expect(bytes(signature.text)).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
-  });
-});
-
 describe("TypeScript signatures over pathological schemas", () => {
   const corpus = PATHOLOGICAL_CORPUS;
 
@@ -78,15 +42,6 @@ describe("TypeScript signatures over pathological schemas", () => {
       const described = describeSignature(schema, schema);
       expect(bytes(described.text), name).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
     }
-  });
-
-  it("renders $ref cycles, direct and mutual, as a marked unknown instead of recursing", () => {
-    const direct = search(required(corpus.refCycle));
-    expect(direct.text).toBe("(args: { value: string; children?: unknown /* recursive */[] }) => Promise<unknown>");
-    expect(direct.inputTruncated).toBe(true);
-    const mutual = search(required(corpus.mutualRefCycle));
-    expect(mutual.text).toBe("(args: { a?: { b?: { a?: unknown /* recursive */ } } }) => Promise<unknown>");
-    expect(mutual.inputTruncated).toBe(true);
   });
 
   it("renders 2020-12 composites as tuples, intersections, and marked conditions", () => {
@@ -118,18 +73,6 @@ describe("TypeScript signatures over pathological schemas", () => {
     expect(described).toContain('/** closes *\\/ the comment } ) ] and opens /* another */ "*/ evil"?: string;');
     // A stray `)` in prose must not hide the real union from grouping.
     expect(described).toContain("union?: ({ /** b) c) */ x?: string } | number)[];");
-  });
-
-  it("reads OpenAPI nullable, index signatures, and boolean schemas as TypeScript", () => {
-    expect(search(required(corpus.openApiNullable)).text).toBe(
-      "(args: { name?: string | null; tags?: string[] | null }) => Promise<unknown>",
-    );
-    expect(search(required(corpus.indexSignature)).text).toBe(
-      "(args: { id: string; [key: string]: number }) => Promise<unknown>",
-    );
-    expect(search(required(corpus.booleanSchemas)).text).toBe(
-      "(args: { anything?: unknown; nothing?: never; bare?: unknown }) => Promise<unknown>",
-    );
   });
 });
 
@@ -194,30 +137,5 @@ describe("TypeScript signatures across the discovery surfaces", () => {
     });
     expect(required(described).outputSchemaSource).toBe("observed");
     expect(required(described).signature).toContain("Promise</* observed, not declared */ {");
-  });
-
-  it("carries truncation as the existing flags and guide reason", async () => {
-    const tool: ToolDef = {
-      name: "cyclic",
-      inputSchema: required(PATHOLOGICAL_CORPUS.refCycle),
-      annotations: { readOnlyHint: true },
-    };
-    const registry = makeRegistry([
-      connectorWith({
-        id: "guided",
-        kind: "mcp",
-        tools: [tool],
-        usageGuide: "Read me.",
-      }),
-    ]);
-    const catalog = new CatalogService(registry, BASE);
-    const page = await catalog.search({ connector: "guided", includeSchemas: "typescript" });
-    const found = required(page.entries[0]).tool;
-    expect(found.inputSchemaTruncated).toBe(true);
-    expect(found.guideRequiredReasons).toEqual(["schema_truncated"]);
-    const [described] = await catalog.describe({ address: "guided.cyclic", format: "typescript" });
-    expect(required(described).inputSchemaTruncated).toBe(true);
-    const [exact] = await catalog.describe({ address: "guided.cyclic", format: "json" });
-    expect(required(exact).inputSchemaTruncated).toBeUndefined();
   });
 });

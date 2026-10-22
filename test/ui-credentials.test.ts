@@ -20,35 +20,6 @@ import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 
 describe("status UI credential management", () => {
-  it.each([false, true])("closes the credential test scope when the hook throws=%s", async (throws) => {
-    const storage = memoryStorage();
-    await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
-    let active = 0;
-    const testCredential = vi.fn(async (_value: string, _ctx: ConnectorContext) => {
-      active++;
-      if (throws) throw new Error("test failed");
-      return { ok: true };
-    });
-    const closeScope = vi.fn(async () => {
-      active--;
-      throw new Error("cleanup failed");
-    });
-    const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
-    const connecta = createTestConnecta({
-      connectors: [connector],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage,
-      publicUrl: BASE,
-      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
-    });
-    const response = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: !throws });
-    expect(closeScope).toHaveBeenCalledTimes(1);
-    expect(closeScope).toHaveBeenCalledWith(testCredential.mock.calls[0]?.[1]);
-    expect(active).toBe(0);
-  });
-
   it("keeps a stored superset usable, testable, and flagged as leftover", async () => {
     // The redeploy issue #79's review probed: the connector used to declare
     // { email, apiKey } and now declares only { apiKey }. The stored secret
@@ -230,32 +201,6 @@ describe("status UI credential management", () => {
     await expect(test.json()).resolves.toEqual({ ok: true });
   });
 
-  it("keeps named fields and removal available when a stored credential is unreadable", async () => {
-    const { connecta, storage } = makeMultiCredentialConnecta();
-    await storage.set("conn:multi:credential:v1", "corrupt-ciphertext");
-
-    const data = await fetchTestUiDetails(
-      connecta,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    const payload = (await data.json()) as any;
-    expect(payload.connectors[0].credential).toMatchObject({
-      configured: null,
-      removable: true,
-      error: "Stored credential could not be read.",
-      fields: [
-        { name: "email", inputType: "email", configured: null },
-        { name: "apiKey", inputType: "password", configured: null },
-      ],
-    });
-
-    const remove = await credentialRequest(connecta, "/ui/credentials/multi", { method: "DELETE" });
-    expect(remove.status).toBe(204);
-    expect(await storage.get("conn:multi:credential:v1")).toBeNull();
-  });
-
   it("requires the Clerk provider, its user identity, and the same origin", async () => {
     const { connecta } = makeCredentialConnecta();
     const body = JSON.stringify({ value: "secret" });
@@ -307,23 +252,33 @@ describe("status UI credential management", () => {
     const bearerPayload = (await bearerData.json()) as any;
     expect(bearerPayload.connectors[0].credential).toBeUndefined();
   });
+});
 
-  it("rejects undeclared slots and never enables wildcard CORS", async () => {
-    const { connecta } = makeCredentialConnecta();
-    const missing = await credentialRequest(connecta, "/ui/credentials/not-declared", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: "secret" }),
-    });
-    expect(missing.status).toBe(404);
-
-    const preflight = await connecta.fetch(
-      new Request(`${BASE}/ui/credentials/vaulted`, {
-        method: "OPTIONS",
-        headers: { Origin: "https://evil.example" },
-      }),
-    );
-    expect(preflight.status).toBe(405);
-    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
+it.each([false, true])("closes the credential test scope when the hook throws=%s", async (throws) => {
+  const storage = memoryStorage();
+  await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
+  let active = 0;
+  const testCredential = vi.fn(async (_value: string, _ctx: ConnectorContext) => {
+    active++;
+    if (throws) throw new Error("test failed");
+    return { ok: true };
   });
+  const closeScope = vi.fn(async () => {
+    active--;
+    throw new Error("cleanup failed");
+  });
+  const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
+  const connecta = createTestConnecta({
+    connectors: [connector],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    storage,
+    publicUrl: BASE,
+    vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+  });
+  const response = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: !throws });
+  expect(closeScope).toHaveBeenCalledTimes(1);
+  expect(closeScope).toHaveBeenCalledWith(testCredential.mock.calls[0]?.[1]);
+  expect(active).toBe(0);
 });

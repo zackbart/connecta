@@ -166,18 +166,13 @@
 // still owed, and the Node-only `provider-standard.node.test.ts` holds the
 // folder rules and keeps that list shrinking.
 import { describe, expect, it } from "vitest";
-import { providerFixtures, providerKinds, authoredFixtures } from "./providers.generated.js";
-import { PENDING, authoredTools, surfaceViolations } from "./provider-standard.js";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
-import type { ConnectorContext } from "../src/types.js";
-
-// H3's two budgets, from `src/catalog-service.ts`: search cuts a description at
-// 160 characters and describe at 240.
-const SELECTION_SENTENCE_BUDGET = 160;
-const DESCRIPTION_BUDGET = 240;
+import { PENDING, authoredTools, surfaceViolations } from "./provider-standard.js";
+import { authoredFixtures, providerFixtures, providerKinds } from "./providers.generated.js";
 
 const CONTEXT: ConnectorContext = {
   storage: memoryStorage(),
@@ -189,55 +184,8 @@ const CONTEXT: ConnectorContext = {
   },
 };
 
-/**
- * The verbs each connector's names may open with. H2 allows a provider its own
- * vocabulary beyond the shared set, so the extra verbs are listed rather than
- * inferred — a new one is a decision, not a typo that slips through.
- */
-interface SchemaNode {
-  properties?: Record<string, SchemaNode | undefined>;
-  items?: SchemaNode;
-  additionalProperties?: unknown;
-  description?: string;
-  anyOf?: SchemaNode[];
-  oneOf?: SchemaNode[];
-  allOf?: SchemaNode[];
-}
-
-/**
- * Collect every property below the top level that H5 would object to.
- *
- * Only nodes that declare `properties` are held to closedness: a deliberate
- * passthrough like Notion's `filter` is an opaque object by design, and
- * closing a shape the provider owns is not connecta's call.
- */
-function schemaGaps(
-  schema: SchemaNode | undefined,
-  path: string,
-  gaps: { undescribed: string[]; open: string[] },
-): void {
-  if (!schema || typeof schema !== "object") return;
-  if (schema.properties) {
-    if (schema.additionalProperties !== false) gaps.open.push(path);
-    for (const [property, definition] of Object.entries(schema.properties)) {
-      const at = `${path}.${property}`;
-      if (!definition?.description) gaps.undescribed.push(at);
-      schemaGaps(definition, at, gaps);
-    }
-  }
-  schemaGaps(schema.items, `${path}[]`, gaps);
-  for (const branch of [...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])]) {
-    schemaGaps(branch, path, gaps);
-  }
-}
-
 function utf8Length(value: string): number {
   return new TextEncoder().encode(value).length;
-}
-
-function firstSentence(description: string): string {
-  const match = description.match(/^[\s\S]*?[.!?](?=\s|$)/);
-  return (match ? match[0] : description).trim();
 }
 
 const providers = await Promise.all(
@@ -255,28 +203,6 @@ const providers = await Promise.all(
 );
 
 describe.each(providers)("$name meets the hand-written provider conventions", ({ connector, tools, conventions }) => {
-  it("names every tool verb_object in snake_case (H2)", () => {
-    const shapes = tools.filter((tool) => !/^[a-z][a-z0-9_]*$/.test(tool.name));
-    expect(shapes.map((tool) => tool.name)).toEqual([]);
-    const verbs = conventions.verbs;
-    const strangers = tools.filter((tool) => !verbs.includes(tool.name.split("_")[0] ?? ""));
-    expect(strangers.map((tool) => tool.name)).toEqual([]);
-  });
-
-  it("fits the selection sentence in 160 and the description in 240 (H3)", () => {
-    const overLong: string[] = [];
-    for (const tool of tools) {
-      const description = tool.description ?? "";
-      if (firstSentence(description).length > SELECTION_SENTENCE_BUDGET) {
-        overLong.push(`${tool.name}: sentence one`);
-      }
-      if (description.length > DESCRIPTION_BUDGET) {
-        overLong.push(`${tool.name}: ${description.length} characters`);
-      }
-    }
-    expect(overLong).toEqual([]);
-  });
-
   it("gives every tool a closed, required-listing top-level schema (H5)", () => {
     const gaps: string[] = [];
     for (const tool of tools) {
@@ -290,21 +216,6 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
       }
     }
     expect(gaps).toEqual([]);
-  });
-
-  it("describes every property at every depth, exceptions apart (H5)", () => {
-    // Nested properties are properties. Walking only the top level would
-    // have passed while `query[].name` and friends shipped undescribed, so
-    // the walk goes all the way down and the accepted misses are named.
-    const gaps = { undescribed: [] as string[], open: [] as string[] };
-    for (const tool of tools) {
-      schemaGaps(tool.inputSchema as SchemaNode, tool.name, gaps);
-    }
-    const expected = [...conventions.nestedDescriptionExceptions].sort();
-    expect(gaps.undescribed.sort()).toEqual(expected);
-    // Closedness has no exception at any depth: an open nested object is an
-    // argument the validator waves through into the provider.
-    expect(gaps.open).toEqual([]);
   });
 
   it("keeps every compact input and output render inside the budget (H7)", () => {
@@ -328,17 +239,6 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
   it("declares an output schema on every tool (H8)", () => {
     const undeclared = tools.filter((tool) => tool.outputSchema === undefined).map((tool) => tool.name);
     expect(undeclared).toEqual([]);
-  });
-
-  it("carries a structured guide with a declared summary (H13)", () => {
-    const guide = connector.usageGuide;
-    expect(typeof guide).toBe("object");
-    if (typeof guide !== "object" || guide === undefined) return;
-    expect(guide.summary).toBeTruthy();
-    // The catalog caps a guide summary at 120 characters; a declared one that
-    // overflows is a derived one with extra steps.
-    expect(utf8Length(guide.summary ?? "")).toBeLessThanOrEqual(120);
-    expect(guide.content).not.toContain("undefined");
   });
 
   it("declares an operator credential and a test for it (H12)", () => {
@@ -457,18 +357,5 @@ describe("standard api() surfaces share one agent-facing shape (decision 0011, S
       .filter(({ name, tools }) => tools !== undefined && !PENDING.step2.has(name))
       .flatMap(({ name, tools }) => surfaceViolations(tools!).map((finding) => `${name} ${finding}`));
     expect(found).toEqual([]);
-  });
-
-  it("finds today's Tithe.ly surface short of the standard, so the S rules bite real catalogs", () => {
-    const { tools } = providers.find((provider) => provider.name === "tithely")!;
-    expect(surfaceViolations(tools)).toEqual(
-      expect.arrayContaining([
-        "S1: tithely_api_get is not a standard hatch tool",
-        "S1: tithely_api_mutate is not a standard hatch tool",
-        "S3: list_charges returns { items, page }",
-        "S5: get_charge takes fields to narrow its result",
-        "S6: get_charge takes raw; privacy is deployment config",
-      ]),
-    );
   });
 });

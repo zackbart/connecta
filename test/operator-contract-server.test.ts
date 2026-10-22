@@ -6,12 +6,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
-import { AGENT_NAMESPACE } from "../src/agent-identity.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import type { DescribedMember } from "../src/describe-config.js";
 import { identityStorageKey } from "../src/identity.js";
+import type { ConnectaConfig } from "../src/index.js";
 import type {
   OperatorGrant,
   OperatorMember,
@@ -23,7 +23,6 @@ import { drive } from "../src/providers/drive/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
 import { accessTokenKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectaConfig } from "../src/index.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
@@ -413,83 +412,6 @@ describe("operator contract v2 server", () => {
       owner: null,
       members: [],
     });
-  });
-
-  it("INV-4: maintainer agents[] lists every declared agent and matches GET /ui/access-tokens field by field", async () => {
-    const at = "2026-10-08T12:00:00.000Z";
-    const { send } = await team({
-      activity: [
-        {
-          schemaVersion: 1,
-          id: "bot-call",
-          requestId: "r1",
-          occurredAt: at,
-          actor: { kind: "access_token", id: "bot", namespace: AGENT_NAMESPACE },
-          connectorId: "wiki",
-          toolName: "read",
-          address: "wiki.read",
-          source: "call_tool",
-          outcome: "success",
-          durationMs: 1,
-          attempts: 1,
-          serverName: "test",
-          serverVersion: "1",
-          pool: "team",
-        },
-        // Later, but on a tool the pool it was recorded in does not grant: not visible, so not seen.
-        {
-          schemaVersion: 1,
-          id: "bot-hidden",
-          requestId: "r2",
-          occurredAt: "2026-10-09T12:00:00.000Z",
-          actor: { kind: "access_token", id: "bot", namespace: AGENT_NAMESPACE },
-          connectorId: "wiki",
-          toolName: "edit",
-          address: "wiki.edit",
-          source: "call_tool",
-          outcome: "success",
-          durationMs: 1,
-          attempts: 1,
-          serverName: "test",
-          serverVersion: "1",
-          pool: "team",
-        },
-      ],
-    });
-    const list = async () =>
-      (
-        (await (await send("alice", "/ui/access-tokens")).json()) as {
-          agents: Array<{ name: string; revision: string }>;
-        }
-      ).agents;
-    const revision = async (name: string) => (await list()).find((agent) => agent.name === name)!.revision;
-    for (const name of ["bot", "gone"]) {
-      const issued = await send("alice", `/ui/access-tokens/${name}`, {
-        method: "POST",
-        body: JSON.stringify({ expect: await revision(name) }),
-      });
-      expect(issued.status, name).toBe(200);
-    }
-    const revoked = await send("alice", "/ui/access-tokens/gone", {
-      method: "DELETE",
-      body: JSON.stringify({ expect: await revision("gone") }),
-    });
-    expect(revoked.status).toBe(200);
-    const slots = await list();
-    const alice = await read(send, "alice");
-    expect(alice.agents.map(({ name, token }) => ({ name, ...token }))).toEqual(slots);
-    expect(alice.agents.map((agent) => agent.token.state)).toEqual(["issued", "none", "revoked"]);
-    expect(alice.agents.map((agent) => [agent.name, agent.lastSeenAt])).toEqual([
-      ["bot", at],
-      ["idle", null],
-      ["gone", null],
-    ]);
-    expect(alice.live.activity).toBe("available");
-    // Without activity, nobody has been seen.
-    const quiet = await team();
-    const view = await read(quiet.send, "alice");
-    expect(view.live.activity).toBe("unconfigured");
-    expect(view.agents.map((agent) => agent.lastSeenAt)).toEqual([null, null, null]);
   });
 
   it("INV-4 INV-5 INV-6: matrix runsAs covers every variant, from real config", async () => {

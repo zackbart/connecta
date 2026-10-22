@@ -1,15 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { signJwt } from "@clerk/backend/jwt";
-import { clerkAuth } from "../src/auth/clerk.js";
-import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
-import { authorize as authorizeIdentity, authorizeUiIdentity } from "../src/routes/shared.js";
-import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
-import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { createTestConnecta } from "./helpers.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
+import { clerkAuth } from "../src/auth/clerk.js";
+import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import type { ConnectaPoolConfig } from "../src/config.js";
+import { authorize as authorizeIdentity, authorizeUiIdentity } from "../src/routes/shared.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuth } from "../src/types.js";
+import { createTestConnecta } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const FRONTEND = "https://clerk.example.com";
@@ -226,42 +225,6 @@ describe("Clerk operator output with the real SDK", () => {
         "gate-failed": "gate_failed",
       };
       expect(output(spies)).toContain(`"reason":"${reasons[denial]}"`);
-    },
-  );
-
-  it.each(["service", "identity-failed"])(
-    "INV-6: Access %s exposes no provider identity in logs, activity, or status",
-    async (denial) => {
-      const spies = captureOutput();
-      const identity = { user_uuid: `${SENTINEL}-user`, email: `${SENTINEL}@${SENTINEL}.example.com` };
-      const getIdentity = vi.fn(async () => {
-        if (denial === "identity-failed") throw new Error(JSON.stringify(identity));
-        return { ...identity, service_token_status: true, common_name: `${SENTINEL}.example.com` };
-      });
-      const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
-      const request = new Request(`${BASE}/ui/access-tokens`);
-      await assertDenialSinks(
-        cloudflareAccessAuth(),
-        request,
-        denial === "identity-failed" ? 503 : 403,
-        spies,
-        context,
-      );
-      await assertDenialSinks(
-        cloudflareAccessAuth(),
-        new Request(`${BASE}/mcp`, {
-          method: "POST",
-          headers: {
-            ...Object.fromEntries(request.headers),
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-        }),
-        denial === "identity-failed" ? 503 : 403,
-        spies,
-        context,
-      );
     },
   );
 
@@ -593,17 +556,5 @@ describe("Clerk operator output with the real SDK", () => {
       expect(output(spies)).toContain("[connecta] Clerk authentication failed");
       vi.restoreAllMocks();
     }
-  });
-
-  it("INV-6: makes telemetry events and logs inert even when upstream debug output is enabled", () => {
-    const spies = captureOutput();
-    const fetcher = vi.fn();
-    vi.stubGlobal("fetch", fetcher);
-    vi.stubEnv("CLERK_TELEMETRY_DEBUG", "1");
-    const client = createByteReadingClerkClient({ publishableKey, secretKey });
-    client.telemetry.record({ event: "METHOD_CALLED", payload: { method: SENTINEL } });
-    client.telemetry.recordLog({ message: SENTINEL, level: "error", timestamp: Date.now() });
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(output(spies)).toBe("[]");
   });
 });

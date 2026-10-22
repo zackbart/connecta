@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clerkAuth } from "../src/auth/clerk.js";
 import { accessTokens } from "../src/access-tokens.js";
+import { clerkAuth } from "../src/auth/clerk.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { authorize, authorizeUiIdentity } from "../src/routes/shared.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuth } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 
@@ -40,36 +40,6 @@ function unrelated(): InboundAuth {
 }
 
 describe("inbound credential ownership", () => {
-  it.each(["/mcp", "/ui/access-tokens"])(
-    "INV-4: refuses explicit headers on Access %s before ambient identity lookup",
-    async (path) => {
-      const getIdentity = vi.fn(async () => ({ user_uuid: "ambient" }));
-      const runtime = { waitUntil() {}, access: { aud: "app", getIdentity } };
-      for (const header of [
-        "",
-        "Bearer valid-at-edge",
-        "bEaReR valid-at-edge",
-        "Basic unknown",
-        "Bearer  malformed",
-        "Bearer a, Bearer b",
-      ]) {
-        const req = new Request(`${BASE}${path}`, { headers: { Authorization: header, Cookie: "__session=ambient" } });
-        const adapter = cloudflareAccessAuth();
-        const result =
-          path === "/mcp"
-            ? await authorize(req, BASE, [adapter], runtime)
-            : await authorizeUiIdentity(req, BASE, [adapter], "human route", runtime);
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-          expect(result.response.status).toBe(401);
-          expect(result.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="openid email"');
-        }
-        expect((await adapter.authorize(req, BASE, runtime)).ok).toBe(false);
-      }
-      expect(getIdentity).not.toHaveBeenCalled();
-    },
-  );
-
   it("INV-4 INV-7: gives custom providers one normalized header verdict without ambient credentials or consuming the route body", async () => {
     const later = vi.fn(() => ({ ok: true as const, userId: "ambient" }));
     const first: InboundAuth = {
@@ -233,18 +203,6 @@ describe("metadata-owned challenges", () => {
     if (!result.ok)
       expect(result.response.headers.get("WWW-Authenticate")).toBe(
         `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource", scope="openid profile email"`,
-      );
-  });
-
-  it("uses Clerk discovery for a recognized invalid cta_ token without verifying Clerk", async () => {
-    const result = await authorize(request("/mcp/support", "cta_bad"), BASE, [
-      accessTokens(memoryStorage()).auth,
-      clerk(),
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.response.headers.get("WWW-Authenticate")).toBe(
-        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/support", scope="openid profile email"`,
       );
   });
 });

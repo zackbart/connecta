@@ -39,8 +39,3 @@ export function downstreamValue(kind: Connector["kind"], result: unknown): { dat
   }
   return { data: result, format: "json" };
 }
-
-/** Preserve the raw-value API for internal callers that already know its format. */
-export function unwrapMcpResult(kind: Connector["kind"], result: unknown): unknown {
-  return downstreamValue(kind, result).data;
-}

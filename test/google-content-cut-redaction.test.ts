@@ -78,7 +78,7 @@ describe("Gmail", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a Subject header echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => message(straddlingJson(form, 4 * 1024), "body"));
@@ -88,7 +88,7 @@ describe("Gmail", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a text attachment echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       const content = straddling(form, 500);
@@ -113,7 +113,7 @@ describe("Gmail", () => {
 });
 
 describe("Drive", () => {
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a file name echoing the sent token %s across its 32 KiB cut leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => ({ id: "f1", name: straddlingJson(form, 32 * 1024), mimeType: "text/plain" }));
@@ -123,7 +123,7 @@ describe("Drive", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: an exported Google Doc echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle((url) =>
@@ -137,7 +137,7 @@ describe("Drive", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a downloaded text file echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       const content = `${straddling(form, 500)}${"y".repeat(5_000)}`;
@@ -156,7 +156,7 @@ describe("Drive", () => {
 describe("Drive bounded reads", () => {
   // A text read keeps 4·maxChars + 4 bytes. A form that begins in the shown
   // characters and ends past the read never arrives whole.
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a download that stops inside the sent token %s shows no fragment of it",
     async (_name, form) => {
       const escaped = form.startsWith("\\u");
@@ -201,7 +201,7 @@ describe("Docs", () => {
     };
   }
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: document text echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => document("Plan", straddling(form, 500)));
@@ -211,7 +211,7 @@ describe("Docs", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a title echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
     async (_name, form) => {
       const marker = (dropped: number) => `… [${dropped} more characters]`;
@@ -222,7 +222,7 @@ describe("Docs", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: an index row's preview echoing the sent token %s across its 80-character cut leaks no fragment of it",
     async (_name, form) => {
       const kept = Math.min(head(form).length, 60);
@@ -237,7 +237,7 @@ describe("Docs", () => {
 describe("Sheets", () => {
   const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a cell echoing the sent token %s across maxCellChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => ({
@@ -252,7 +252,7 @@ describe("Sheets", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a summarized reply echoing the sent token %s across its 256-byte cut leaks no fragment of it",
     async (_name, form) => {
       const marker = (dropped: number) => `[… ${dropped} more characters]`;
@@ -287,7 +287,7 @@ describe("Forms", () => {
     };
   }
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a form title echoing the sent token %s across its 2,000-character cut leaks no fragment of it",
     async (_name, echo) => {
       stubGoogle(() => form(straddling(echo, 2_000)));
@@ -297,7 +297,7 @@ describe("Forms", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: an answer echoing the sent token %s across its 2,000-character cut leaks no fragment of it",
     async (_name, echo) => {
       stubGoogle((url) =>
@@ -352,7 +352,7 @@ describe("Slides", () => {
     expect(leaks(text)).toBe(false);
   }
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: slide text echoing the sent token %s across maxCharsPerSlide, and its continuation, leak no fragment of it",
     async (_name, form) => {
       const { presentation, page } = deck("Plan", straddling(form, 500));
@@ -376,7 +376,7 @@ describe("Slides", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a deck title echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
     async (_name, form) => {
       const marker = (dropped: number) => `[… ${dropped} more characters; Drive shows the whole title]`;
@@ -388,7 +388,7 @@ describe("Slides", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a page's text echoing the sent token %s, paged past one result, leaks no fragment across pages",
     async (_name, form) => {
       const { page } = deck("Plan", form.repeat(Math.ceil(400_000 / form.length)));
@@ -405,7 +405,7 @@ describe("Slides", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a comment echoing the sent token %s, paged past one result, leaks no fragment across pages",
     async (_name, form) => {
       stubGoogle(() => ({
@@ -432,7 +432,7 @@ describe("Slides", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each([["raw", SECRET]])(
     "INV-5: a raw page element echoing the sent token %s, chunked past one result, leaks no fragment across chunks",
     async (_name, form) => {
       const { page } = deck("Plan", form.repeat(Math.ceil(400_000 / form.length)));

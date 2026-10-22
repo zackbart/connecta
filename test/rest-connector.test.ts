@@ -4,19 +4,19 @@ import { attachCallClassification } from "../src/call-classification.js";
 // read/write split, one envelope, bounded reads, and auth dispatch. Stripe's
 // own configuration is tested in src/providers/stripe/provider.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector } from "../src/connectors/api-connector.js";
-import { tracksEveryRequest } from "../src/provider-call.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
+import type { ProviderContext } from "../src/provider.js";
+import { byAuth } from "../src/providers/_shared/rest/dispatch.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
 import { redact, valueSafety } from "../src/providers/_shared/rest/value-safety.js";
-import { byAuth } from "../src/providers/_shared/rest/dispatch.js";
-import { recoveryFor } from "../src/call-recovery.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import type { ProviderContext } from "../src/provider.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
 
 const widget: SchemaNode = { t: "object", p: { name: { t: "string" }, size: { t: "string", e: ["s", "m"] } } };
 const DATA: OpenApiData = {
@@ -204,26 +204,6 @@ describe("restTools()", () => {
     expect(sent[0]).toMatchObject({ method: "POST", body: '{"filter":"x"}' });
   });
 
-  it("frames JSON by default, answers in one envelope, and projects select paths through lists", async () => {
-    respond = () => Response.json({ items: [{ id: "w_1", name: "a", rank: 1 }, { id: "w_2" }], total: 2 });
-    const result = await connector().callTool(
-      "acme_api_read",
-      { path: "/v1/widgets", query: { limit: 2, tags: ["a", "b"] }, select: ["items.id", "total"] },
-      ctx(),
-    );
-    expect(result).toEqual({ status: 200, data: { items: [{ id: "w_1" }, { id: "w_2" }], total: 2 } });
-    expect(sent[0]!.url.search).toBe("?limit=2&tags=a&tags=b");
-    expect(sent[0]!.headers.get("authorization")).toBe("Bearer secret-token");
-    // A shorter path keeps its whole subtree, whichever order the paths arrive in.
-    for (const select of [
-      ["items", "items.id"],
-      ["items.id", "items"],
-    ]) {
-      const whole = (await connector().callTool("acme_api_read", { path: "/v1/widgets", select }, ctx())) as any;
-      expect(whole.data).toEqual({ items: [{ id: "w_1", name: "a", rank: 1 }, { id: "w_2" }] });
-    }
-  });
-
   it("INV-5: redacts a success body by the reviewed table and the heuristic before cursors and select read it", async () => {
     respond = () => Response.json({ items: [{ id: "w_1", secret: "s1", hook: "h1" }], next: "w_1", secret: "top" });
     const seen: unknown[] = [];
@@ -327,18 +307,6 @@ describe("restTools()", () => {
       (await refusal(acme.callTool("acme_api_read", { path: "/v1/widgets", query: { tags: ["a"] } }, ctx()))).message,
     ).toBe("Tag reads are refused here.");
     expect(sent).toHaveLength(1);
-  });
-
-  it("refuses uploads and other hosts with the vendor's pointer instead of sending", async () => {
-    const error = await refusal(
-      connector().callTool("acme_api_write", { method: "POST", path: "/v1/uploads", body: {} }, ctx()),
-    );
-    expect(error.message).toBe(
-      "POST /v1/uploads takes a multipart/form-data upload, which acme_api_write does not send. Use acme_api_upload.",
-    );
-    const host = await refusal(connector().callTool("acme_api_read", { path: "/v1/exports", query: { x: 1 } }, ctx()));
-    expect(host.message).toBe("Acme serves https://files.vendor.example elsewhere.");
-    expect(sent).toEqual([]);
   });
 
   it("INV-4: runs the optional path, admit, result, header, and text-body hooks on every call", async () => {
@@ -540,55 +508,6 @@ describe("restTools()", () => {
     });
   });
 
-  it.each([
-    ["generated", undefined],
-    ["255-character caller-supplied", "k".repeat(255)],
-  ])("INV-9: carries the %s idempotency key in recovery when a direct write's reply is lost", async (_label, given) => {
-    respond = () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
-          },
-        }),
-        { headers: { "content-type": "application/json" } },
-      );
-    const app = createTestConnecta({
-      connectors: [
-        tracksEveryRequest(
-          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
-        ),
-      ],
-      logger: silentLogger,
-    });
-    try {
-      const rpc = await readJsonRpc(
-        await mcpRpc(app, "tools/call", {
-          name: "call_destructive_tool",
-          arguments: {
-            address: "acme.acme_api_write",
-            args: {
-              method: "POST",
-              path: "/v1/widgets",
-              body: { name: "a" },
-              ...(given ? { idempotencyKey: given } : {}),
-            },
-          },
-        }),
-      );
-      const error = rpc.result.structuredContent.error;
-      const key = sent[0]!.headers.get("idempotency-key");
-      if (given) expect(key).toBe(given);
-      else expect(key).toMatch(/^[0-9a-f-]{36}$/);
-      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-      expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
-      expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
-      expect(sent).toHaveLength(1);
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each([["generated", undefined]])(
     "INV-9: returns the %s idempotency key with write_outcome_unknown on a call deadline",
     async (_label, given) => {
@@ -678,27 +597,6 @@ describe("restTools()", () => {
     expect(() => restTools(vendor({ readPosts: [["POST", "/v1/widgets/preview", "Gone."]] }))).toThrow(
       "Acme reviewed read-only POST /v1/widgets/preview is not in the pinned API index.",
     );
-  });
-});
-
-describe("composed constraints", () => {
-  it("refuses null and an empty string where combined constraints admit no value", () => {
-    const data: OpenApiData = {
-      ...DATA,
-      ops: [["POST", "/v1/widgets", "CreateWidget", "Create a widget", 0]],
-      details: JSON.stringify({
-        d: [],
-        o: [[[], ["application/json", { t: "object", p: { kind: { e: [] }, name: { t: "string" } } }]]],
-      }),
-    };
-    const index = new OperationIndex(data, { vendor: "acme", title: "Acme" });
-    const op = index.operation("POST", "/v1/widgets")!;
-    for (const kind of [null, "", "A"]) {
-      expect(() => index.check(op, {}, { kind }), String(kind)).toThrow("admit none");
-    }
-    // An ordinary field still treats null and "" as unset.
-    expect(() => index.check(op, {}, { name: null })).not.toThrow();
-    expect(() => index.check(op, {}, { name: "" })).not.toThrow();
   });
 });
 

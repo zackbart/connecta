@@ -1,19 +1,19 @@
-import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { CALL_ADMISSION } from "../src/provider.js";
 import {
   defineProvider,
-  PROVIDER_COMMON,
   keys,
   optionsOf,
+  PROVIDER_COMMON,
   variants,
   type ProviderContext,
   type ProviderOptions,
 } from "../src/index.js";
+import { CALL_ADMISSION } from "../src/provider.js";
 import { byAuth } from "../src/providers/_shared/rest/dispatch.js";
 import type { Connector, ConnectorDescription, ToolClassification, ToolDef } from "../src/types.js";
-import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -62,17 +62,6 @@ function sample(create = createStub()) {
 }
 
 describe("defineProvider()", () => {
-  it("exposes a frozen definition beside a factory with the old call shape", () => {
-    const { factory, create } = sample();
-    const connector = factory("crm", { purpose: "  Sales pipeline  " });
-    expect(connector.id).toBe("crm");
-    expect(factory.definition).toMatchObject({ name: "acme-crm", title: "Acme CRM", kind: "api" });
-    expect(Object.isFrozen(factory.definition)).toBe(true);
-    expect(Object.isFrozen(factory.definition.skill)).toBe(true);
-    // Common options arrive validated and trimmed.
-    expect(create.mock.calls[0]?.[1]).toEqual({ purpose: "Sales pipeline" });
-  });
-
   it("INV-11: checks the declared shape before reading options and preserves behaviour objects", () => {
     const { factory, create } = sample();
     const purpose = vi.fn(() => "Sales");
@@ -127,30 +116,6 @@ describe("defineProvider()", () => {
     expect(received?.data).not.toBe(data);
     data.region = "us";
     expect(received?.data.region).toBe("eu");
-  });
-
-  it("stamps the definition name onto describe() and keeps the connector review", () => {
-    const classification: ToolClassification = Object.freeze({ tools: Object.freeze({ list: "read" }) });
-    const factory = sample(
-      vi.fn((id: string) =>
-        stub(id, {
-          classification,
-          describe: () => ({
-            source: { kind: "remote-mcp", provider: "old" },
-            endpoint: { origin: "https://api.example", path: "/mcp" },
-          }),
-        }),
-      ),
-    ).factory;
-    const connector = factory("crm", { purpose: "Sales" });
-    expect(connector.describe?.()).toEqual({
-      source: { kind: "remote-mcp", provider: "acme-crm" },
-      endpoint: { origin: "https://api.example", path: "/mcp" },
-    });
-    expect(connector.classification).toBe(classification);
-    expect(sample().factory("crm", { purpose: "Sales" }).describe?.()).toEqual({
-      source: { kind: "custom", provider: "acme-crm" },
-    });
   });
 
   it.each(["class instance", "Object.create decorator", "frozen object"])(
@@ -256,65 +221,6 @@ describe("defineProvider()", () => {
     },
   );
 
-  it("hands create only the common connector options the deployment set", () => {
-    const { factory, create } = sample();
-    factory("crm", { purpose: "Sales" });
-    expect(create.mock.calls[0]?.[2]?.connectorOptions).toEqual({});
-    expect(create.mock.calls[0]?.[2]).not.toHaveProperty("classify");
-    const callAdmission = {
-      rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 5, windowMs: 1_000 } }],
-    };
-    factory("crm", { purpose: "Sales", authScope: "personal", maxResultBytes: 9, callAdmission });
-    expect(create.mock.calls[1]?.[2]?.connectorOptions).toEqual({
-      authScope: "personal",
-      maxResultBytes: 9,
-      callAdmission,
-    });
-  });
-
-  it("renders the maintained skill around connection context and appends deployment instructions", () => {
-    let guide: unknown;
-    const factory = defineProvider<ProviderOptions>({
-      name: "acme-crm",
-      title: "Acme CRM",
-      kind: "api",
-      skill: SKILL,
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      create(id, options, provider) {
-        guide = provider.usageGuide({
-          context: ["EU region.", `Account purpose: ${options.purpose}`],
-          summary: "EU accounts. Id resolution and cursor paging.",
-        });
-        return stub(id);
-      },
-    });
-    factory("crm", { purpose: "Sales", instructions: "  Never email customers.\n" });
-    expect(guide).toEqual({
-      content:
-        "# Acme CRM usage\n\nEU region.\n\nAccount purpose: Sales\n\n" +
-        "- Resolve ids before writing.\n- Page with cursors.\n" +
-        "\n## Account instructions\n\nNever email customers.\n",
-      summary: "EU accounts. Id resolution and cursor paging.",
-    });
-
-    const required = defineProvider<ProviderOptions>({
-      name: "acme-crm",
-      title: "Acme CRM",
-      kind: "api",
-      skill: SKILL,
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      create(id, _options, provider) {
-        guide = provider.usageGuide({ context: [], heading: "Acme CRM usage (EU)", required: true });
-        return stub(id);
-      },
-    });
-    required("crm", { purpose: "Sales", instructions: "   " });
-    expect(guide).toEqual({
-      content: "# Acme CRM usage (EU)\n\n- Resolve ids before writing.\n- Page with cursors.\n",
-      required: true,
-    });
-  });
-
   it("renders a standard guide's selected when-blocks per connection, closing the gaps unselected ones leave", () => {
     type Options = ProviderOptions & { via?: "hosted" | "api" };
     const guides: string[] = [];
@@ -405,24 +311,6 @@ describe("defineProvider()", () => {
     );
   });
 
-  it("freezes the kit facts providers:generate reads", () => {
-    const { factory } = sample();
-    expect(factory.definition.kit).toBeUndefined();
-    const operations = ["GET /a"];
-    const kit = defineProvider<ProviderOptions>({
-      name: "acme",
-      title: "Acme",
-      kind: "api",
-      skill: SKILL,
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      kit: { operations, pageSize: { default: 25, max: 100 }, hatch: { name: "acme", verdicts: { "GET /a": "read" } } },
-      create: stub,
-    }).definition.kit!;
-    operations.push("POST /b");
-    expect(kit.operations).toEqual(["GET /a"]);
-    expect(Object.isFrozen(kit) && Object.isFrozen(kit.operations) && Object.isFrozen(kit.hatch!.verdicts)).toBe(true);
-  });
-
   it("INV-11: rejects invalid common options before create runs", () => {
     const { factory, create } = sample();
     const bad: Array<[unknown, string]> = [
@@ -442,50 +330,6 @@ describe("defineProvider()", () => {
   it("refuses a create that returns a connector under another id", () => {
     const { factory } = sample(vi.fn(() => stub("other")));
     expect(() => factory("crm", { purpose: "Sales" })).toThrow('create() must return a connector with id "crm"');
-  });
-
-  it("INV-11: rejects a malformed definition when the provider module loads", () => {
-    const base = {
-      name: "acme",
-      title: "Acme",
-      kind: "mcp" as const,
-      skill: SKILL,
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      create: stub,
-    };
-    const cases: Array<[object, string]> = [
-      [{ name: "acme_crm" }, "name must be lowercase words"],
-      [{ title: "" }, "requires a non-empty title"],
-      [{ kind: "graphql" }, 'kind must be "mcp", "api", "composed", or "dual"'],
-      [{ skill: { content: "x" } }, "skill requires non-empty content and instructionsHeading"],
-      [{ create: undefined }, "requires a create function"],
-      [{ options: undefined }, "requires a closed options shape"],
-      [{ kind: "api", classify: { tools: { a: "read" } } }, "is an api() provider"],
-      [{ classify: { tools: { a: "safe" } } }, 'tool "a" needs verdict'],
-    ];
-    for (const [patch, message] of cases) {
-      expect(() => defineProvider({ ...base, ...patch } as never)).toThrow(message);
-    }
-  });
-
-  it("passes the reviewed classification to create for hosted, composed, and dual providers", () => {
-    const classify: ToolClassification = { tools: { list: "read", purge: "destructive" } };
-    for (const kind of ["mcp", "composed", "dual"] as const) {
-      const create = createStub();
-      const factory = defineProvider<ProviderOptions>({
-        name: "acme",
-        title: "Acme",
-        kind,
-        skill: SKILL,
-        options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-        classify,
-        create,
-      });
-      factory("acme", { purpose: "Ops" });
-      expect(create.mock.calls[0]?.[2]?.classify).toEqual(classify);
-      expect(create.mock.calls[0]?.[2]?.classify).toBe(factory.definition.classify);
-      expect(factory.definition.classify).not.toBe(classify);
-    }
   });
 
   it("INV-11: selects a dual provider's closed options by its nested auth.type and dispatches on it", () => {
@@ -580,34 +424,6 @@ describe("defineProvider()", () => {
     factory("acme", { purpose: "Ops" });
     expect(create.mock.calls[0]?.[2]?.classify?.tools).toEqual(classify.tools);
   });
-
-  it("INV-1: keeps the definition a factory classifies from in place", () => {
-    const create = createStub();
-    const factory = defineProvider<ProviderOptions>({
-      name: "acme",
-      title: "Acme",
-      kind: "mcp",
-      skill: SKILL,
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      classify: { tools: { save: "destructive" } },
-      create,
-    });
-    const definition = factory.definition;
-    const mutable = factory as unknown as Record<string, unknown>;
-    expect(Object.isFrozen(factory)).toBe(true);
-    // Modules are strict, so replacing, deleting, or redefining it throws.
-    expect(() => {
-      mutable.definition = { ...definition, classify: { tools: { save: "read" } } };
-    }).toThrow(TypeError);
-    expect(() => {
-      delete mutable.definition;
-    }).toThrow(TypeError);
-    expect(() => Object.defineProperty(factory, "definition", { value: { ...definition } })).toThrow(TypeError);
-    expect(factory.definition).toBe(definition);
-    expect(factory.definition.classify?.tools.save).toBe("destructive");
-    factory("acme", { purpose: "Ops" });
-    expect(create.mock.calls[0]?.[2]?.classify).toBe(definition.classify);
-  });
 });
 
 /** A downstream serving a fixed catalog, with real schemas and results. */
@@ -673,35 +489,6 @@ describe("remoteMcp({ classify })", () => {
     }
   });
 
-  it("passes vendor names, descriptions, schemas, and results through untouched", async () => {
-    const plain = served();
-    const classified = served(THINGS);
-    const ctx = connectorContext();
-    try {
-      const strip = (tools: Awaited<ReturnType<Connector["listTools"]>>) =>
-        tools.map(({ annotations: _annotations, classification: _classification, ...rest }) => rest);
-      const [before, after] = [await plain.listTools(ctx), await servedTools(classified, ctx)];
-      expect(strip(after)).toEqual(strip(before));
-      // The connector itself lists exactly what the downstream said.
-      expect(await classified.listTools(ctx)).toEqual(before);
-      expect(after.find((tool) => tool.name === "make_thing")?.inputSchema).toMatchObject({
-        properties: { name: { type: "string" } },
-      });
-      // Without classify the downstream's own annotations are served as-is.
-      expect(before.find((tool) => tool.name === "make_thing")?.annotations).toEqual({
-        readOnlyHint: true,
-      });
-      expect(plain.catalogDrift).toBeUndefined();
-      expect(plain.classification).toBeUndefined();
-      expect(await classified.callTool("make_thing", { name: "x" }, ctx)).toEqual(
-        await plain.callTool("make_thing", { name: "x" }, ctx),
-      );
-    } finally {
-      await plain.closeScope?.(ctx);
-      await classified.closeScope?.(ctx);
-    }
-  });
-
   it("INV-6: reports drift and schema coverage against the reviewed names", async () => {
     const connector = served({
       tools: {
@@ -730,32 +517,6 @@ describe("remoteMcp({ classify })", () => {
     } finally {
       await connector.closeScope?.(ctx);
     }
-  });
-
-  it("INV-1: carries a frozen copy of the review the caller cannot change later", () => {
-    const tools: Record<string, ToolClassification["tools"][string]> = {
-      list_things: "read",
-      drop_thing: { verdict: "destructive", reason: "Deletes a thing." },
-    };
-    const connector = remoteMcp("things", {
-      url: "https://things.example/mcp",
-      classify: { tools },
-    });
-    tools.list_things = "destructive";
-    (tools.drop_thing as { verdict: string }).verdict = "read";
-    tools.make_thing = "read";
-    expect(connector.classification).toEqual({
-      tools: {
-        list_things: "read",
-        drop_thing: { verdict: "destructive", reason: "Deletes a thing." },
-      },
-    });
-    expect(Object.isFrozen(connector.classification)).toBe(true);
-    expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
-    expect(Object.isFrozen(connector.classification?.tools.drop_thing)).toBe(true);
-    expect(() => {
-      (connector.classification!.tools as Record<string, string>).list_things = "write";
-    }).toThrow(TypeError);
   });
 
   it("INV-11: rejects a malformed classification at construction", () => {

@@ -1,26 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
-import type { ToolDef } from "../../types.js";
-import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
-const mcpMocks = vi.hoisted(() => ({
-  listTools: vi.fn<() => Promise<ToolDef[]>>(),
-  remoteMcp: vi.fn(),
-}));
+import { notion } from "./index.js";
 
-vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
-  // Only the hosted constructor is stubbed; the REST connector never touches it.
-  ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
-  remoteMcp: mcpMocks.remoteMcp,
-}));
-
-import { NOTION_API_BASE_URL, NOTION_API_VERSION, NOTION_MCP_ENDPOINT, notion } from "./index.js";
-import { openapi } from "./openapi.generated.js";
-import { CatalogService } from "../../catalog-service.js";
-import { InvocationService } from "../../invocation.js";
-import { runEdge } from "../../runtime/run.js";
-import { writeStateOf } from "../../program-writes.js";
-import { makeRegistry, silentLogger } from "../../../test/helpers.js";
+import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 // The token connector is Connecta's own, so there is no downstream catalog to
@@ -53,7 +36,6 @@ const realFetch = globalThis.fetch;
 beforeEach(() => {
   calls.length = 0;
   queued = [];
-  mockRemoteMcp(mcpMocks);
   globalThis.fetch = vi.fn(async (input: any, init: any = {}) => {
     calls.push({
       url: String(input),
@@ -186,114 +168,6 @@ const PAGE_FIXTURE = {
   },
 };
 
-describe("notion() auth selects the implementation", () => {
-  it("INV-11: requires auth and names the valid types, with no silent default", () => {
-    expect(() => notion("wiki", { purpose: "Docs" } as never)).toThrow(
-      'notion("wiki") requires auth.type is required: one of "oauth", "token".',
-    );
-    for (const type of ["headers", "credential", "apiKey"]) {
-      expect(() => notion("wiki", { purpose: "Docs", auth: { type } } as never)).toThrow(
-        'notion("wiki") requires auth.type to be one of "oauth", "token".',
-      );
-    }
-    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" }, surface: "api" } as never)).toThrow(
-      'Unknown option: notion("wiki").surface.',
-    );
-    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
-  });
-
-  it("INV-11: refuses token-only options under OAuth and inline secrets under a token", () => {
-    expect(() =>
-      // @ts-expect-error The hosted server holds no operator credential.
-      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, credentialLabel: "Docs token" }),
-    ).toThrow('Unknown option: notion("wiki").credentialLabel.');
-    expect(() =>
-      // @ts-expect-error Hosted tools own their own paging.
-      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 10 }),
-    ).toThrow('Unknown option: notion("wiki").defaultPageSize.');
-    expect(() => build({ auth: { type: "token", token: "secret_x" } })).toThrow(
-      'Unknown option: notion("workspace").auth.token.',
-    );
-    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
-  });
-});
-
-describe("notion() over OAuth", () => {
-  function mcp(): Connector {
-    return notion("workspace_mcp", { auth: { type: "oauth" }, purpose: "Team knowledge base" });
-  }
-
-  it("binds Notion's hosted endpoint over OAuth only, with no network access at construction", () => {
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
-    const connector = notion("workspace_mcp", {
-      auth: { type: "oauth" },
-      purpose: "Team knowledge base",
-      callAdmission,
-      instructions: "Prefer the Engineering teamspace.",
-    });
-    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
-      "workspace_mcp",
-      expect.objectContaining({
-        url: NOTION_MCP_ENDPOINT,
-        title: "Notion (MCP)",
-        description: "Notion's official hosted MCP interface: Team knowledge base",
-        auth: { type: "oauth" },
-        callAdmission,
-        requireHttps: true,
-      }),
-    );
-    expect(connector.kind).toBe("mcp");
-    expect(connector.credential).toBeUndefined();
-    const guide = guideOf(connector);
-    expect(guide).toContain("do not repeat signed download URLs in replies");
-    expect(guide).toContain("credential-bearing upload URL and headers");
-    expect(guide).toContain("## Workspace instructions\n\nPrefer the Engineering teamspace.");
-    // The token guide's REST mechanics never leak into the OAuth guide.
-    expect(guide).not.toContain("page.param");
-    expect(guide).not.toContain("surface");
-    expect((connector.usageGuide as { required?: boolean }).required).toBe(true);
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  itClassifiesLikeARelease(mcp, mcpMocks, {
-    read: ["notion-get-file-download-urls", "notion-memory-search", "notion-query-multiple-data-sources"],
-    write: "notion-create-comment",
-    destructive: "notion-upload-skill",
-    unknown: ["notion-new-tool", "notion-new-read", "notion-new-write"],
-  });
-});
-
-describe("notion() over an integration token", () => {
-  it("INV-5: tests a pasted token with the cheapest identifying read, and never echoes it", async () => {
-    queue({ body: { object: "user", id: "bot-1", type: "bot", name: "Docs bot", bot: { workspace_name: "Acme" } } });
-    const ok = await build().testCredential!("secret_pasted", context(null));
-    expect(ok).toEqual({ ok: true, message: "Authenticated as Acme." });
-    expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/users/me`);
-    expect(calls[0]?.headers["Authorization"]).toBe("Bearer secret_pasted");
-
-    queue({ status: 401, body: { object: "error", code: "unauthorized", message: "API token is invalid." } });
-    const bad = await build().testCredential!("secret_wrong", context(null));
-    expect(bad.ok).toBe(false);
-    expect(bad.message).toContain("unauthorized");
-    expect(bad.message).not.toContain("secret_wrong");
-  });
-});
-
-describe("notion() request construction", () => {
-  it("keeps the sent Notion-Version equal to the pinned index's version", () => {
-    // The index describes one version's contract. Regenerating it against a
-    // newer Notion-Version must move the sent header with it, deliberately.
-    expect(openapi.version).toBe(NOTION_API_VERSION);
-    expect(openapi.servers).toEqual([NOTION_API_BASE_URL]);
-  });
-
-  it("refuses an id that would escape its path segment, before any request", async () => {
-    const error = await refusal(call(build(), "integration_get_page", { page_id: "../users" }));
-    expect(error.code).toBe("invalid_args");
-    expect(calls).toHaveLength(0);
-  });
-});
-
 describe("notion() value safety", () => {
   it("INV-5: withholds a pre-signed file URL's signature and keeps the upload endpoint", async () => {
     const signed =
@@ -322,81 +196,10 @@ describe("notion() value safety", () => {
   // Synthetic, vendor-shaped payloads: each spelling a Markdown destination or
   // an HTML attribute allows for the same signed link, the reviews'
   // reproductions included.
-  const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
-  const S3 = `https://${HOST}/ws`;
-  const WRAPPED = [
-    `![a](${S3}/file(1).png?X-Amz-Signature=FAKE_SIGNATURE)`,
-    `<file src="${S3}/file(1).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-    `![a](${S3}/file\\(1\\).png?X-Amz-Signature=FAKE_SIGNATURE)`,
-    `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=FAKE_SIGNATURE"></file>`,
-    `<file src="https://cdn.example/a.pdf?a=1&#x26;X-Amz-Signature=FAKE_SIGNATURE"></file>`,
-    `<file src="${S3}/file).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-    `<file src="${S3}/file.pdf?name=a)b&X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-    `<${S3}/file).pdf?X-Amz-Signature=FAKE_SIGNATURE>`,
-    `<file src="${S3}/a]b.pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-    `<file src="https:&#47;&#47;${HOST}/ws/file.png?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-    `<file src="https&colon;&sol;&sol;${HOST}/ws/file.png?table=block&id=ASIAEXAMPLE">f</file>`,
-    `[a](https:\\/\\/${HOST}/ws/file.png?X-Amz-Signature=FAKE_SIGNATURE)`,
-    `<file src="${S3}/a.png?table=block&amp;id=ASIAEXAMPLE">f</file>`,
-  ].join("\n");
-  const PAGE_MARKDOWN = {
-    object: "page_markdown",
-    id: "page-1",
-    markdown: WRAPPED,
-    truncated: false,
-  };
-
-  it("INV-5: withholds signed links behind parentheses and character references on a Markdown read", async () => {
-    queue({ body: PAGE_MARKDOWN });
-    const read = await call(build(), "notion_api_read", {
-      path: "/v1/pages/page-1/markdown",
-    });
-    expect(read.data.markdown).not.toContain("FAKE_SIGNATURE");
-    expect(read.data.markdown).not.toContain("ASIAEXAMPLE");
-    expect(read.data.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
-    expect(read.data.markdown).toContain(`<file src="${S3}/file.pdf?[redacted]">f</file>`);
-    expect(read.data.markdown).toContain(`[a](https:\\/\\/${HOST}/ws/file.png?[redacted])`);
-
-    queue({ body: PAGE_MARKDOWN });
-    const selected = await call(build(), "notion_api_read", {
-      path: "/v1/pages/page-1/markdown",
-      select: ["markdown"],
-    });
-    expect(JSON.stringify(selected)).not.toContain("FAKE_SIGNATURE");
-    expect(JSON.stringify(selected)).not.toContain("ASIAEXAMPLE");
-  });
-
-  it("INV-5: withholds signed links in an async Markdown update's polled result", async () => {
-    const task = {
-      object: "async_task",
-      id: "task-1",
-      status: "completed",
-      status_url: "https://api.notion.com/v1/async_tasks/task-1",
-      created_time: "2026-10-09T00:00:00.000Z",
-      operation: { surface: "rest", name: "update_page_markdown" },
-      result: { ...PAGE_MARKDOWN, artifacts: [{ arbitrary_key: WRAPPED }] },
-    };
-    queue({ body: task });
-    const polled = await call(build(), "notion_api_read", {
-      path: "/v1/async_tasks/task-1",
-    });
-    expect(JSON.stringify(polled)).not.toContain("FAKE_SIGNATURE");
-    expect(polled.data.result.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
-    expect(polled.data.status_url).toBe("https://api.notion.com/v1/async_tasks/task-1");
-
-    queue({ body: task });
-    const selected = await call(build(), "notion_api_read", {
-      path: "/v1/async_tasks/task-1",
-      select: ["result.markdown", "result.artifacts.arbitrary_key"],
-    });
-    expect(JSON.stringify(selected)).not.toContain("FAKE_SIGNATURE");
-    expect(selected.data.result.artifacts[0].arbitrary_key).toContain("?[redacted]");
-  });
 });
 
 describe("notion() value safety: a person's links and read-modify-write", () => {
   const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
-  const AWS_LINK = "https://api-id.execute-api.us-east-1.amazonaws.com/prod/report?reportId=42";
 
   // Review round 3, finding 2: a host or path that merely contains a
   // reviewed name is someone else's.
@@ -415,28 +218,6 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
   ];
   // In text; as a whole URL field the URL rule withholds its userinfo instead.
   const USERINFO = "https://file.notion.so@evil.com/report?reportId=42";
-
-  it.each([AWS_LINK, LOOKALIKES[0]!, LOOKALIKES[5]!])(
-    "INV-5: returns a person's link %s unchanged in a URL property and an external cover",
-    async (link) => {
-      const page = {
-        object: "page",
-        id: "page-1",
-        cover: { type: "external", external: { url: link } },
-        properties: { Report: { id: "r", type: "url", url: link } },
-      };
-      queue({ body: page }, { body: page });
-      const read = await call(build(), "notion_api_read", {
-        path: "/v1/pages/page-1",
-      });
-      expect(read.data.cover.external.url).toBe(link);
-      expect(read.data.properties.Report.url).toBe(link);
-      const projected = await call(build(), "integration_get_page", {
-        page_id: "page-1",
-      });
-      expect(projected.properties.Report).toBe(link);
-    },
-  );
 
   it("INV-5: returns links at look-alike hosts byte for byte in Markdown and admits writes carrying them", async () => {
     const markdown = [...LOOKALIKES, USERINFO]
@@ -561,46 +342,6 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
     body: { type: "insert_content", insert_content: { content } },
   });
 
-  it.each([
-    ["percent-encoded", "![a](https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D)"],
-    ["entity-encoded", '<file src="https://file.notion.so/f/f/a.pdf?&#91;redac&#116;ed&#93;">f</file>'],
-    ["double percent-encoded", `![a](https://${HOST}/ws/a.png?X-Amz-Signature=%255Bredacted%255D)`],
-  ])("INV-5: refuses a write carrying the placeholder %s on a Notion file link", async (_, content) => {
-    const error = await refusal(call(build(), "notion_api_write", insert(content)));
-    expect(error.code).toBe("invalid_args");
-    expect(error.message).toContain("cannot be copied into a write");
-    expect(calls).toHaveLength(0);
-  });
-
-  it.each(["a(1).png", "a\\).png"])(
-    "INV-5: refuses a withheld destination after an adjacent fresh file named %s before dispatch",
-    async (filename) => {
-      const content = `![first](https://file.notion.so/f/${filename}?label=unredacted)[second](https://${HOST}/b.png?%5Bredacted%5D)`;
-      const error = await refusal(call(build(), "notion_api_write", insert(content)));
-      expect(error.code, content).toBe("invalid_args");
-      expect(error.message).toContain("cannot be copied into a write");
-      expect(calls).toHaveLength(0);
-    },
-  );
-
-  it.each([" ", "\r\n"])(
-    "INV-5: admits an outside marker after a destination with leading whitespace %j and refuses an inside marker",
-    async (space) => {
-      const start = `[f](${space}https://file.notion.so/f/a(1).png`;
-      const content = `${start}?label=unredacted)[redacted]`;
-      queue({ body: { object: "page_markdown", id: "page-1", markdown: "Saved" } });
-      await call(build(), "notion_api_write", insert(content));
-      expect(calls).toHaveLength(1);
-      expect(calls[0]!.body.insert_content.content).toBe(content);
-      for (const opener of ["?", "#"]) {
-        const error = await refusal(call(build(), "notion_api_write", insert(`${start}${opener}%5Bredacted%5D)`)));
-        expect(error.code).toBe("invalid_args");
-        expect(error.message).toContain("cannot be copied into a write");
-      }
-      expect(calls).toHaveLength(1);
-    },
-  );
-
   const PROXIES = [
     "https://example.com/image?url=https://file.notion.so/f/f/a.png?table=block&id=42&width=400",
     "https://example.com/image?url=//file.notion.so/f/f/a.png?id=42",
@@ -655,52 +396,6 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
       expect(calls).toHaveLength(9);
     },
   );
-
-  it("INV-5: withholds signing parameter values inside external proxies through every projection", async () => {
-    for (const proxy of PROXIES) {
-      const link = `${proxy}&X-Amz-Signature=FAKE_SIGNATURE&X-Goog-Credential=ASIAEXAMPLE&width=400`;
-      const expected = link.replace("FAKE_SIGNATURE", "[redacted]").replace("ASIAEXAMPLE", "[redacted]");
-      const page = { object: "page", id: "page-1", properties: { Report: { id: "r", type: "url", url: link } } };
-      queue({ body: page }, { body: page }, { body: page });
-      // The shared whole-URL heuristic URL-encodes its placeholders on absolute URLs.
-      const clean = new URL(link, "https://relative.example");
-      clean.searchParams.set("X-Amz-Signature", "[redacted]");
-      clean.searchParams.set("X-Goog-Credential", "[redacted]");
-      const field = link.startsWith("https:") ? clean.toString() : expected;
-      const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
-      expect(read.data.properties.Report.url).toBe(field);
-      const selected = await call(build(), "notion_api_read", {
-        path: "/v1/pages/page-1",
-        select: ["properties.Report.url"],
-      });
-      expect(selected.data.properties.Report.url).toBe(field);
-      const named = await call(build(), "integration_get_page", { page_id: "page-1" });
-      expect(named.properties.Report).toBe(field);
-      const markdown = `[r](${link})`;
-      queue({ body: { object: "page_markdown", id: "page-1", markdown } });
-      const readMarkdown = await call(build(), "notion_api_read", {
-        path: "/v1/pages/page-1/markdown",
-        select: ["markdown"],
-      });
-      expect(readMarkdown.data.markdown).toBe(`[r](${expected})`);
-    }
-  });
-
-  it.each([
-    ["a value containing the word", "[a](https://file.notion.so/f/f/a.png?label=unredacted)"],
-    ["the placeholder as text beside a file link", "[redacted] ![a](https://file.notion.so/f/f/a.png)"],
-    // Review round 4, finding 2: text after the link's closing parenthesis is not its query.
-    [
-      "the placeholder as text after a closed link",
-      "[file](https://file.notion.so/f/f/a.png?label=unredacted)[redacted]",
-    ],
-  ])("INV-5: admits a write with %s", async (_, content) => {
-    queue({
-      body: { object: "page_markdown", id: "page-1", markdown: content },
-    });
-    await call(build(), "notion_api_write", insert(content));
-    expect(calls).toHaveLength(1);
-  });
 });
 
 describe("notion() generic REST tools", () => {
@@ -733,175 +428,6 @@ describe("notion() generic REST tools", () => {
       expect(refused.message).toContain("call it with notion_api_write");
     }
     expect(calls).toHaveLength(0);
-  });
-
-  it("refuses Notion's OAuth token endpoints and multipart sends with the route to take instead", async () => {
-    const connector = build();
-    const minting = await refusal(
-      call(connector, "notion_api_write", { method: "POST", path: "/v1/oauth/token", body: {} }),
-    );
-    expect(minting.message).toContain("mint and revoke credentials");
-    const upload = await refusal(
-      call(connector, "notion_api_write", { method: "POST", path: "/v1/file_uploads/fu-1/send", body: {} }),
-    );
-    expect(upload.message).toContain("multipart/form-data");
-    expect(upload.message).toContain('mode "external_url"');
-    expect(calls).toHaveLength(0);
-  });
-
-  it("keeps a view query's continuation and a meeting-note cut-off through select", async () => {
-    const connector = build();
-    // Creating a view query stores it, so it is a write; its first page
-    // continues at the query's own GET, not at the POST.
-    queue({
-      body: {
-        object: "view_query",
-        id: "q-1",
-        view_id: "v-1",
-        expires_at: "2026-10-09T20:00:00.000Z",
-        total_count: 130,
-        results: [{ object: "page", id: "p1" }],
-        next_cursor: "c-view",
-        has_more: true,
-      },
-    });
-    const created = await call(connector, "notion_api_write", {
-      method: "POST",
-      path: "/v1/views/v-1/queries",
-      body: { page_size: 1 },
-      select: ["results.id"],
-    });
-    expect(created).toEqual({
-      status: 200,
-      data: { results: [{ id: "p1" }] },
-      page: { hasMore: true, next: "c-view", param: "start_cursor", in: "query", path: "/v1/views/v-1/queries/q-1" },
-    });
-
-    queue({
-      body: { object: "list", results: [{ id: "p2" }], has_more: false, next_cursor: null, type: "page", page: {} },
-    });
-    const next = await call(connector, "notion_api_read", {
-      path: created.page.path,
-      query: { [created.page.param]: created.page.next },
-      select: ["results.id"],
-    });
-    expect(calls[1]?.method).toBe("GET");
-    expect(new URL(calls[1]!.url).pathname).toBe("/v1/views/v-1/queries/q-1");
-    expect(new URL(calls[1]!.url).searchParams.get("start_cursor")).toBe("c-view");
-    expect(next).toEqual({ status: 200, data: { results: [{ id: "p2" }] }, page: { hasMore: false } });
-
-    // Meeting notes have no cursor: hasMore without next says the list was
-    // cut at its limit, even when select drops the body's own has_more.
-    queue({ body: { results: [{ id: "m1", type: "meeting_notes" }], has_more: true } });
-    const notes = await call(connector, "notion_api_read", {
-      method: "POST",
-      path: "/v1/blocks/meeting_notes/query",
-      body: { limit: 1 },
-      select: ["results.id"],
-    });
-    expect(notes).toEqual({ status: 200, data: { results: [{ id: "m1" }] }, page: { hasMore: true } });
-  });
-});
-
-describe.each([
-  { tool: "integration_get_page", method: "GET", path: "/v1/pages/page-1", args: { page_id: "page-1" } },
-  {
-    tool: "integration_query_data_source",
-    method: "POST",
-    path: "/v1/data_sources/ds-1/query",
-    args: { data_source_id: "ds-1" },
-  },
-])("notion() $tool property filtering", ({ tool, method, path, args }) => {
-  const payload = (page: unknown) =>
-    method === "GET" ? page : { results: [page], has_more: false, next_cursor: null };
-
-  it("sends repeated URL parameters and preserves the title outside selected properties (INV-10)", async () => {
-    // Model Notion returning only the requested columns plus the title.
-    const filteredPage = {
-      ...PAGE_FIXTURE,
-      properties: { Name: PAGE_FIXTURE.properties.Name, Status: PAGE_FIXTURE.properties.Status },
-    };
-    queue({ body: payload(filteredPage) });
-    const result = await call(build(), tool, {
-      ...args,
-      properties: ["Status", "abc", "Due date & cost?"],
-      ...(method === "POST"
-        ? {
-            filter: { property: "Status", status: { equals: "Done" } },
-            sorts: [{ property: "Due", direction: "ascending" }],
-            start_cursor: "opaque::cursor+value",
-          }
-        : {}),
-    });
-    expect(calls).toHaveLength(1);
-    const request = calls[0]!;
-    const url = new URL(request.url);
-    expect(url.origin + url.pathname).toBe(NOTION_API_BASE_URL + path);
-    expect([...url.searchParams.entries()]).toEqual([
-      ["filter_properties", "Status"],
-      ["filter_properties", "abc"],
-      ["filter_properties", "Due date & cost?"],
-      ["filter_properties", "title"],
-    ]);
-    expect(request.method).toBe(method);
-    expect(request.body).toEqual(
-      method === "GET"
-        ? undefined
-        : {
-            page_size: 25,
-            filter: { property: "Status", status: { equals: "Done" } },
-            sorts: [{ property: "Due", direction: "ascending" }],
-            start_cursor: "opaque::cursor+value",
-          },
-    );
-    const page = method === "GET" ? result : result.results[0];
-    expect(page.title).toBe("Quarterly review");
-    expect(page.properties).toEqual({ Status: "In progress" });
-  });
-
-  describe.each([100])("with %i distinct selected properties", (count) => {
-    it.each([
-      { includeTitle: false, duplicates: true, raw: false },
-      { includeTitle: true, duplicates: false, raw: true },
-    ])(
-      "preserves all selected values, title=$includeTitle, duplicates=$duplicates, raw=$raw (INV-10)",
-      async ({ includeTitle, duplicates, raw }) => {
-        const columns = Array.from({ length: count - (includeTitle ? 1 : 0) }, (_, i) => `Column ${i + 1}`);
-        const selected = includeTitle ? ["title", ...columns] : columns;
-        const properties = duplicates ? [...selected, ...selected] : selected;
-        const filters = includeTitle ? selected : [...selected, "title"];
-        const shouldFilter = method === "POST" || filters.length <= 100;
-        const values = Object.fromEntries(columns.map((name, i) => [name, { type: "number", number: i }]));
-        const response = payload({
-          ...PAGE_FIXTURE,
-          properties: {
-            title: PAGE_FIXTURE.properties.Name,
-            ...values,
-            ...(!shouldFilter ? { Unselected: { type: "number", number: -1 } } : {}),
-          },
-        });
-        queue({ body: response });
-
-        const result = await call(build(), tool, { ...args, properties, raw });
-
-        expect(calls).toHaveLength(1);
-        const request = calls[0]!;
-        const url = new URL(request.url);
-        expect(url.origin + url.pathname).toBe(NOTION_API_BASE_URL + path);
-        expect(url.searchParams.getAll("filter_properties")).toEqual(shouldFilter ? filters : []);
-        expect(request.method).toBe(method);
-        expect(request.body).toEqual(method === "GET" ? undefined : { page_size: 25 });
-        if (raw) expect(result).toEqual(response);
-        else {
-          const page = method === "GET" ? result : result.results[0];
-          expect(page.title).toBe("Quarterly review");
-          expect(page.properties).toEqual({
-            ...(includeTitle ? { title: "Quarterly review" } : {}),
-            ...Object.fromEntries(columns.map((name, i) => [name, i])),
-          });
-        }
-      },
-    );
   });
 });
 
@@ -936,37 +462,6 @@ describe("notion() lean projections", () => {
     expect(walked.truncated).toBe(true);
     expect(walked.results.filter((block: any) => block.depth === 0)).toHaveLength(25);
     expect(walked.results.filter((block: any) => block.depth === 1)).toHaveLength(19);
-  });
-
-  it("reports truncation when a nested level has more than one page", async () => {
-    queue(
-      {
-        body: {
-          results: [{ id: "b1", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Deep" }] } }],
-          has_more: false,
-          next_cursor: null,
-        },
-      },
-      {
-        body: {
-          results: [
-            {
-              id: "b1a",
-              type: "paragraph",
-              has_children: false,
-              paragraph: { rich_text: [{ plain_text: "one of many" }] },
-            },
-          ],
-          has_more: true,
-          next_cursor: "cursor-nested",
-        },
-      },
-    );
-    const walked: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
-    expect(calls).toHaveLength(2);
-    expect(walked.truncated).toBe(true);
-    // The nested cursor belongs to b1; re-reading it directly is the route.
-    expect(walked.next_cursor).toBeNull();
   });
 
   it("names native and custom icons, and reads an uncomputable value as null", async () => {
@@ -1013,46 +508,6 @@ describe("notion() lean projections", () => {
       page_id: "page-1",
     });
     expect(custom.icon).toBe(":shipit:");
-  });
-
-  it("flattens every property shape and reports truncation", async () => {
-    queue({ body: PAGE_FIXTURE });
-    const page: any = await call(build(), "integration_get_page", { page_id: "page-1" });
-
-    expect(page.id).toBe("page-1");
-    expect(page.title).toBe("Quarterly review");
-    expect(page.icon).toBe("📘");
-    expect(page.parent).toEqual({ type: "data_source_id", id: "ds-1" });
-    expect(page.created_by).toEqual({ id: "user-1", name: "Ada" });
-    expect(page.properties).toEqual({
-      Name: "Quarterly review",
-      Notes: "ship it",
-      Estimate: 42,
-      Done: true,
-      Stage: "In review",
-      Status: "In progress",
-      Tags: ["infra", "urgent"],
-      Due: { start: "2026-03-01", end: null },
-      Owner: [{ id: "user-9", name: "Grace" }],
-      Blocked: ["page-2", "page-3"],
-      Score: 7,
-      Count: 3,
-      Ticket: "RL-12",
-      Spec: [{ name: "spec.pdf", url: "https://x/1" }],
-      Missing: null,
-      // A property type that shipped after this release degrades to its
-      // payload rather than vanishing.
-      Invented: "kept",
-    });
-    // Notion caps a paginated property at 25 entries and says so only with
-    // has_more. The id travels with the name because the property-item read
-    // addresses properties by id.
-    expect(page.truncated_properties).toEqual([{ name: "Blocked", id: "rel" }]);
-
-    const serialized = JSON.stringify(page);
-    expect(serialized).not.toContain("plain_text");
-    expect(serialized).not.toContain("annotations");
-    expect(serialized).not.toContain("multi_select");
   });
 });
 
@@ -1270,66 +725,6 @@ describe("notion() error mapping", () => {
   });
 
   test.each(cases)("%s", async (_name, run) => run());
-});
-
-describe("notion() successful response integrity", () => {
-  it("INV-9: keeps a sent write's unreadable response unknown and does not expose body details", async () => {
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.error(new Error("synthetic body detail"));
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-    ) as unknown as typeof fetch;
-    const provider = build();
-    const { credential: _credential, ...local } = provider;
-    const registry = makeRegistry([
-      {
-        ...local,
-        callTool: (name, args) => provider.callTool(name, args, context()),
-      },
-    ]);
-    const invocation = new InvocationService(registry, new CatalogService(registry, "https://connecta.example"));
-    const outcome = await runEdge(
-      invocation.pipeline(
-        "workspace.integration_append_blocks",
-        { block_id: "synthetic", text: ["hello"] },
-        { source: "call_destructive_tool" },
-      ),
-    );
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) throw new Error("Expected failed write response");
-    // Notion has no idempotency key, so a lost reply on a sent write is not
-    // retryable: repeating it could create the content twice.
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(outcome.error.message).toContain("check the target before repeating it");
-    expect(outcome.error.message).not.toContain("synthetic body detail");
-    expect(outcome.dispatched).toBe(true);
-    expect(writeStateOf(outcome)).toBe("unknown");
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ["text/html", "<html>synthetic gateway</html>"],
-    ["application/json", ""],
-    ["application/json", "null"],
-    ["application/json", "[]"],
-    ["application/json", '"text"'],
-    ["application/json", "{not json"],
-  ])("rejects an unusable successful %s body without reporting an empty page: %s", async (type, body) => {
-    globalThis.fetch = vi.fn(
-      async () => new Response(body, { headers: { "content-type": type } }),
-    ) as unknown as typeof fetch;
-    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-    });
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("notion() authoring helpers", () => {

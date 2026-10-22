@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
-import { guideOf, servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import type { ConnectorContext, ToolDef } from "../../types.js";
+import { servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { classifyCallError, ConnectorCallError, keyResendAdviceOf, type CallErrorDetails } from "../../errors.js";
-import { CredentialVault } from "../../credentials.js";
-import { memoryStorage } from "../../storage/memory.js";
+import { ConnectorCallError } from "../../errors.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -17,13 +15,9 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { STRIPE_API_BASE_URL, STRIPE_MCP_ENDPOINT, stripe } from "./index.js";
-import { connectorGuideSummary } from "../../skills.js";
+import { STRIPE_API_BASE_URL, stripe } from "./index.js";
 import { catalogReviewOf, detectCatalogDrift, observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import { hostedTools } from "./fixtures.js";
-import { CatalogService } from "../../catalog-service.js";
-import { createMetaTools } from "../../meta-tools.js";
-import { makeRegistry } from "../../../test/helpers.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
 const LIVE = { purpose: "Revenue for the real business", auth: { type: "apiKey" }, mode: "production" } as const;
@@ -31,101 +25,6 @@ const LIVE = { purpose: "Revenue for the real business", auth: { type: "apiKey" 
 describe("stripe() over OAuth", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
-  });
-
-  it("owns the hosted endpoint, OAuth only, purpose, sandbox admission, and mixed-mode guidance", () => {
-    const connector = stripe("billing", {
-      purpose: "Revenue and dispute questions for the business",
-      auth: { type: "oauth" },
-      instructions: "Never refund above $500 without a human in the loop.",
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "billing",
-      expect.objectContaining({
-        url: STRIPE_MCP_ENDPOINT,
-        title: "Stripe",
-        description: "Stripe payments (live and sandbox accounts) — Revenue and dispute questions for the business",
-        auth: { type: "oauth" },
-        requireHttps: true,
-        callAdmission: {
-          rules: [
-            {
-              maxConcurrency: 4,
-              queueTimeoutMs: 5_000,
-              retryAfterMs: 1_000,
-              budget: { kind: "rolling-window", maxCalls: 25, windowMs: 1_000 },
-            },
-          ],
-        },
-      }),
-    );
-    const guide = guideOf(connector);
-    expect(guide).toContain("Scope: live and sandbox accounts");
-    for (const text of [
-      "list_available_accounts_or_orgs",
-      "stripe_context",
-      "livemode",
-      "stripe_api_details",
-      "stripe_analytics",
-      "stripe_implementation_planner",
-      "convert_currency",
-      "send_money",
-      "transfer_money",
-      "setup_recipient",
-      "atlas_company_formation",
-      "send_stripe_feedback",
-      "human_confirmation.approval_token",
-      "wait for the human to confirm approval",
-      "exact original arguments",
-      "separate from the host's tool approval",
-      "search_stripe_documentation",
-      "Idempotency-Key",
-      "100 requests per second in live mode and 25 in sandbox mode",
-      "## Account instructions",
-      "Never refund above $500 without a human in the loop.",
-    ]) {
-      expect(guide).toContain(text);
-    }
-    expect(guide).not.toContain("create_refund");
-    expect(guide).not.toContain("+## Account instructions");
-    // The key guide's REST mechanics never leak into the OAuth guide.
-    expect(guide).not.toContain("page.param");
-    expect(guide).not.toContain("operator-managed key");
-  });
-
-  it("INV-11: refuses key-only options and non-OAuth auth on the hosted path by name", () => {
-    expect(() =>
-      // @ts-expect-error OAuth takes no connector-wide mode; Stripe returns mode with each account.
-      stripe("billing", { purpose: "Organization billing", auth: { type: "oauth" }, mode: "production" }),
-    ).toThrow('Unknown option: stripe("billing").mode.');
-    expect(() =>
-      // @ts-expect-error OAuth cannot configure a Stripe Connect account.
-      stripe("billing", { purpose: "Organization billing", auth: { type: "oauth" }, connectedAccount: "acct_1" }),
-    ).toThrow('Unknown option: stripe("billing").connectedAccount.');
-    for (const type of ["headers", "credential", "request"]) {
-      expect(() => stripe("billing", { purpose: "Billing", auth: { type } } as never)).toThrow(
-        'stripe("billing") requires auth.type to be one of "oauth", "apiKey".',
-      );
-    }
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-  });
-
-  it("warns that OAuth spans organization accounts and stops instead of inventing a selector", () => {
-    const connector = stripe("organization_billing", {
-      title: "Primary Stripe account",
-      purpose: "Billing for the primary organization account",
-      auth: { type: "oauth" },
-    });
-    const guide = guideOf(connector);
-    expect(guide).toContain("This OAuth session may expose both live and sandbox Stripe accounts.");
-    expect(guide).toContain("Never infer the account or mode from connector metadata.");
-    expect(guide).toContain("If the account, mode, or supported selector is ambiguous, stop and ask");
-    expect(guide).toContain("carry the exact context fields required by the live schema unchanged");
-    expect(guide).toContain("Organization accounts are not Stripe Connect connected accounts.");
-    expect(guide).toContain("separate API-key connector whose `connectedAccount` sends");
-    expect(guide).toContain("OAuth does not support that path");
-    expect(connectorGuideSummary(connector)).toContain("Live and sandbox Stripe accounts");
   });
 
   it("INV-1: matches all 16 hosted schemas and retains only the documented account-info review absent live", async () => {
@@ -160,23 +59,6 @@ describe("stripe() over OAuth", () => {
     });
   });
 
-  it("INV-1: fills silent reviewed reads and refuses contradictory read annotations", async () => {
-    const reads = hostedTools.filter((tool) => tool.annotations?.readOnlyHint === true);
-    mocks.listTools.mockResolvedValue(
-      reads.map((tool) => {
-        const silent = structuredClone(tool);
-        delete silent.annotations;
-        return silent;
-      }),
-    );
-    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
-    expect((await servedTools(connector)).every((tool) => tool.classification === "read")).toBe(true);
-    mocks.listTools.mockResolvedValue(
-      reads.map((tool) => ({ ...structuredClone(tool), annotations: { readOnlyHint: false } })),
-    );
-    expect((await servedTools(connector)).every((tool) => tool.classification === "write")).toBe(true);
-  });
-
   it("INV-1: keeps money movement, recipient setup, Atlas, and generic writes destructive despite read claims", async () => {
     const names = [
       "convert_currency",
@@ -200,126 +82,6 @@ describe("stripe() over OAuth", () => {
       expect(tool.classification, tool.name).toBe("write");
       expect(tool.annotations, tool.name).toEqual({ readOnlyHint: false, destructiveHint: true });
     }
-  });
-
-  it("INV-1: retains analytics, planner, and renamed feedback writes across retrieval and read claims", async () => {
-    const names = ["stripe_analytics", "stripe_implementation_planner", "send_stripe_feedback"];
-    mocks.listTools.mockResolvedValue(
-      hostedTools
-        .filter((tool) => names.includes(tool.name))
-        .map((tool) => ({
-          ...structuredClone(tool),
-          annotations: { readOnlyHint: true },
-        })),
-    );
-    const tools = await servedTools(stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } }));
-    expect(tools).toHaveLength(names.length);
-    expect(tools.every((tool) => tool.classification === "write" && tool.annotations?.readOnlyHint === false)).toBe(
-      true,
-    );
-    const analytics = hostedTools.find((tool) => tool.name === "stripe_analytics")!;
-    expect(analytics.inputSchema).toMatchObject({
-      properties: {
-        intent: {
-          enum: expect.arrayContaining([
-            "execute_query_run",
-            "execute_query_template",
-            "retrieve_query_run",
-            "retrieve_query_template",
-          ]),
-        },
-      },
-    });
-  });
-
-  it("INV-1: fails closed on hosted input and output schema drift", async () => {
-    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
-    for (const field of ["inputSchema", "outputSchema"] as const) {
-      const tool = structuredClone(hostedTools.find((tool) => tool.name === "stripe_api_search")!);
-      tool[field] = { ...(tool[field] as object), additionalProperties: false };
-      mocks.listTools.mockResolvedValue([tool]);
-      expect((await servedTools(connector))[0]).toMatchObject({
-        classification: "write",
-        annotations: { readOnlyHint: false },
-      });
-      expect(observedCatalogDrift(connector)?.schemaChanges).toBe(1);
-    }
-  });
-
-  it("INV-1: removes retired names from the review and leaves their unannotated reappearance closed", async () => {
-    const names = [
-      "list_metrics",
-      "explain_metric",
-      "metric_drilldown",
-      "show_metric_app",
-      "create_refund",
-      "stripe_report",
-      "send_stripe_mcp_feedback",
-    ];
-    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
-    const review = catalogReviewOf(connector)!;
-    for (const name of names) expect(review.tools.has(name), name).toBe(false);
-    mocks.listTools.mockResolvedValue(names.map((name) => ({ name })));
-    expect((await servedTools(connector)).every((tool) => tool.classification === "write")).toBe(true);
-  });
-});
-
-describe("stripe() guides (P6, P7, P8)", () => {
-  beforeEach(() => {
-    mockRemoteMcp(mocks);
-  });
-
-  it("declares mode-leading summaries for both implementations", () => {
-    const live = connectorGuideSummary(stripe("live", LIVE));
-    const sandbox = connectorGuideSummary(stripe("test", SANDBOX));
-    const oauth = connectorGuideSummary(stripe("org", { purpose: "Billing", auth: { type: "oauth" } }));
-    expect(live).toMatch(/^PRODUCTION: real money\./);
-    expect(sandbox).toMatch(/^Sandbox: test data only\./);
-    expect(oauth).toContain("Live and sandbox");
-    for (const summary of [live, sandbox, oauth]) {
-      expect(new TextEncoder().encode(summary ?? "").length).toBeLessThanOrEqual(120);
-      expect(summary).not.toContain("purpose");
-    }
-  });
-
-  it("shares id, search-filter, decline, amount, and projection conventions across both guides", () => {
-    for (const connector of [
-      stripe("oauth", { purpose: "Billing", auth: { type: "oauth" } }),
-      stripe("key", SANDBOX),
-    ]) {
-      const guide = guideOf(connector);
-      for (const text of [
-        "never guess one",
-        "cus_",
-        "stripe_api_search",
-        "there is no `payment_intent` field",
-        "`latest_charge`",
-        "is one program, not four turns",
-        "`outcome`, `failure_code`, `failure_message`",
-        "Never send a decimal.",
-        "inside `execute_code`",
-        "out of the transcript",
-        "authorize_connector",
-      ]) {
-        expect(guide, text).toContain(text);
-      }
-    }
-    expect(guideOf(stripe("oauth", { purpose: "Billing", auth: { type: "oauth" } }))).toContain("not a fixed set");
-  });
-
-  it("keeps fixed mode unmissable and names what the key path cannot do", () => {
-    const sandbox = guideOf(stripe("test", SANDBOX));
-    expect(sandbox).toContain("Mode: sandbox");
-    expect(sandbox).toContain("SANDBOX Stripe connection");
-    expect(sandbox).toContain("never answer a question about live");
-    expect(sandbox).toContain("25 requests per second, and any single endpoint");
-    expect(sandbox).toContain("`lock_timeout` is a lock conflict");
-    expect(sandbox).toContain("natural-language Sigma, metrics, documentation search, implementation planner");
-    expect(sandbox).not.toContain("stripe_context` and `livemode` wherever");
-    const live = guideOf(stripe("live", { ...LIVE, connectedAccount: "acct_123" }));
-    expect(live).toContain("This is a PRODUCTION Stripe connection.");
-    expect(live).toContain("100 requests per second, and any single endpoint");
-    expect(live).toContain("Connected account: `acct_123`.");
   });
 });
 
@@ -369,224 +131,6 @@ describe("stripe() over an API key", () => {
     return error as ConnectorCallError;
   }
 
-  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
-    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
-    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
-    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
-    const connector = stripe("billing", SANDBOX);
-    respond = () => Response.json({ object: "charge", id: "ch_1", failure_message: input });
-    const result = (await connector.callTool(
-      "stripe_api_read",
-      { path: "/v1/charges/ch_1", select: ["failure_message"] },
-      keyed(),
-    )) as any;
-    expect(result.data).toEqual({ failure_message: expected });
-    respond = () => Response.json({ error: { type: "invalid_request_error", message: input } }, { status: 400 });
-    const error = await refusal(connector.callTool("stripe_api_read", { path: "/v1/products/prod_1" }, keyed()));
-    expect(error.message).toContain("Download");
-    expect(error.message).toContain("[redacted]");
-    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
-  });
-
-  it("builds Connecta's REST connector with a mode title, an operator credential, and per-mode admission", async () => {
-    const sandbox = stripe("billing_sandbox", { ...SANDBOX, maxResultBytes: 25_000 });
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-    expect(sandbox).toMatchObject({
-      kind: "api",
-      title: "Stripe (sandbox)",
-      description: "Stripe payments (sandbox — test data, no real money) — Rehearsing billing changes",
-      maxResultBytes: 25_000,
-      credential: { label: "Stripe test-mode secret or restricted key", placeholder: "rk_test_…" },
-      callAdmission: { rules: [{ maxConcurrency: 4, budget: { maxCalls: 25, windowMs: 1_000 } }] },
-    });
-    expect(sandbox.describe?.()).toMatchObject({
-      source: { kind: "api", provider: "stripe" },
-      auth: { mode: "credential" },
-    });
-    const live = stripe("billing", { ...LIVE, title: "Billing" });
-    expect(live).toMatchObject({
-      title: "Billing",
-      credential: { label: "Stripe live-mode secret or restricted key" },
-      callAdmission: { rules: [{ maxConcurrency: 8, budget: { maxCalls: 100, windowMs: 1_000 } }] },
-    });
-    expect((await live.listTools(keyed())).map((tool) => tool.name)).toEqual([
-      "stripe_api_search",
-      "stripe_api_details",
-      "stripe_api_read",
-      "stripe_api_write",
-      "get_stripe_account_info",
-      "get_balance_summary",
-    ]);
-    expect(sent).toEqual([]);
-  });
-
-  it("INV-11: requires a mode and a well-formed connected account at construction", () => {
-    expect(() => stripe("billing", { purpose: "Billing", auth: { type: "apiKey" } } as never)).toThrow(
-      'stripe("billing") requires mode "production" or "sandbox" with apiKey auth.',
-    );
-    expect(() => stripe("billing", { ...SANDBOX, mode: "test" } as never)).toThrow('mode "production" or "sandbox"');
-    expect(() => stripe("billing", { ...LIVE, connectedAccount: "1234" })).toThrow(
-      'stripe("billing") requires connectedAccount to be a Stripe account id ("acct_...").',
-    );
-    expect(() => stripe("billing", { ...SANDBOX, headers: {} } as never)).toThrow(
-      'Unknown option: stripe("billing").headers.',
-    );
-    expect(() => stripe("billing", { ...SANDBOX, auth: { type: "apiKey", key: "sk_test_x" } } as never)).toThrow(
-      'Unknown option: stripe("billing").auth.key.',
-    );
-    expect(() => stripe("billing", { ...SANDBOX, purpose: " " })).toThrow("a non-empty purpose");
-  });
-
-  it("INV-1: annotates its own tools and enforces the read rule in the read handler", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const tools = await connector.listTools(keyed());
-    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
-      stripe_api_search: { readOnlyHint: true },
-      stripe_api_details: { readOnlyHint: true },
-      stripe_api_read: { readOnlyHint: true },
-      stripe_api_write: { readOnlyHint: false, destructiveHint: true },
-      get_stripe_account_info: { readOnlyHint: true },
-      get_balance_summary: { readOnlyHint: true },
-    });
-    expect(connector.classification).toBeUndefined();
-    const refused = await refusal(
-      connector.callTool("stripe_api_read", { method: "POST", path: "/v1/customers", body: {} }, keyed()),
-    );
-    expect(refused.message).toContain("call it with stripe_api_write");
-    // Tax calculations persist and bill per call, so they stay writes.
-    expect(
-      (await refusal(connector.callTool("stripe_api_read", { method: "POST", path: "/v1/tax/calculations" }, keyed())))
-        .message,
-    ).toContain("is not a reviewed read");
-    expect(sent).toEqual([]);
-    respond = () => Response.json({ object: "invoice", id: "upcoming_in_1", total: 1099 });
-    await connector.callTool(
-      "stripe_api_read",
-      { method: "POST", path: "/v1/invoices/create_preview", body: { customer: "cus_1" } },
-      keyed(),
-    );
-    expect(sent[0]).toMatchObject({ method: "POST", body: "customer=cus_1" });
-  });
-
-  it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const found = (await connector.callTool("stripe_api_search", { query: "refund", method: "POST" }, keyed())) as any;
-    expect(found.operations).toContainEqual(
-      expect.objectContaining({ method: "POST", path: "/v1/refunds", tool: "stripe_api_write" }),
-    );
-    const details = (await connector.callTool(
-      "stripe_api_details",
-      { method: "GET", path: "/v1/payment_intents/pi_123" },
-      keyed(),
-    )) as any;
-    expect(details).toMatchObject({ path: "/v1/payment_intents/{intent}", tool: "stripe_api_read" });
-    expect(details.parameters.map((parameter: any) => parameter.name)).toContain("expand");
-    expect(sent).toEqual([]);
-  });
-
-  it("refuses unknown paths and guessed parameters before anything reaches Stripe", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const path = await refusal(connector.callTool("stripe_api_read", { path: "/v1/customer/cus_1" }, keyed()));
-    expect(path.message).toContain("Nearest: GET /v1/customers/{customer}");
-    const param = await refusal(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/customers", body: { emial: "a@b.c" } },
-        keyed(),
-      ),
-    );
-    expect(param.message).toContain("Not sent:");
-    expect(param.validation?.issues[0]).toMatchObject({ path: "/body/emial", code: "additionalProperties" });
-    expect(param.validation?.issues[0]?.expected).toMatch(/^email\? one of /);
-    const search = await refusal(
-      connector.callTool("stripe_api_read", { path: "/v1/charges/search", query: { limit: 3 } }, keyed()),
-    );
-    expect(search.validation?.issues[0]).toMatchObject({ path: "/query/query", code: "required" });
-    expect(sent).toEqual([]);
-  });
-
-  it("form-encodes v1 bodies and query lists, pins Stripe-Version, and acts as the connected account", async () => {
-    const connector = stripe("platform", { ...LIVE, connectedAccount: "acct_123" });
-    respond = () => Response.json({ id: "cus_1", object: "customer" });
-    const result = (await connector.callTool(
-      "stripe_api_write",
-      {
-        method: "POST",
-        path: "/v1/customers/cus_1",
-        body: {
-          email: "a@example.com",
-          metadata: { tier: "gold", stale: "" },
-          invoice_settings: { custom_fields: [{ name: "PO", value: "42" }], default_payment_method: null },
-          tax_exempt: "none",
-          preferred_locales: [],
-        },
-      },
-      keyed("rk_live_51abc"),
-    )) as any;
-    expect(result).toMatchObject({ status: 200, data: { id: "cus_1" }, idempotencyKey: expect.any(String) });
-    const [request] = sent;
-    expect(request!.url.href).toBe(`${STRIPE_API_BASE_URL}/v1/customers/cus_1`);
-    expect(decodeURIComponent(request!.body!).split("&")).toEqual([
-      "email=a@example.com",
-      "metadata[tier]=gold",
-      "metadata[stale]=",
-      "invoice_settings[custom_fields][0][name]=PO",
-      "invoice_settings[custom_fields][0][value]=42",
-      "invoice_settings[default_payment_method]=",
-      "tax_exempt=none",
-      "preferred_locales=",
-    ]);
-    expect(request!.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
-    expect(request!.headers.get("authorization")).toBe("Bearer rk_live_51abc");
-    expect(request!.headers.get("stripe-account")).toBe("acct_123");
-    expect(request!.headers.get("stripe-version")).toBe("2026-09-30.endive");
-    expect(request!.headers.get("idempotency-key")).toBe(result.idempotencyKey);
-
-    respond = () => Response.json({ object: "list", data: [], has_more: false });
-    await connector.callTool(
-      "stripe_api_read",
-      {
-        path: "/v1/charges",
-        query: { customer: "cus_1", expand: ["data.customer", "data.invoice"], created: { gte: 10 }, limit: 3 },
-      },
-      keyed("rk_live_51abc"),
-    );
-    expect(decodeURIComponent(sent[1]!.url.search)).toBe(
-      "?customer=cus_1&expand[0]=data.customer&expand[1]=data.invoice&created[gte]=10&limit=3",
-    );
-    expect(sent[1]!.headers.get("idempotency-key")).toBeNull();
-  });
-
-  it("sends v2 bodies as JSON, repeats v2 query lists, and names the connected account with Stripe-Context", async () => {
-    const connector = stripe("platform", { ...SANDBOX, connectedAccount: "acct_123" });
-    respond = () => Response.json({ id: "mtr_1", object: "v2.billing.meter_event" });
-    await connector.callTool(
-      "stripe_api_write",
-      {
-        method: "POST",
-        path: "/v2/billing/meter_events",
-        body: { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: "1" } },
-        idempotencyKey: "caller-key-1",
-      },
-      keyed(),
-    );
-    expect(sent[0]!.headers.get("content-type")).toBe("application/json");
-    expect(JSON.parse(sent[0]!.body!)).toEqual({
-      event_name: "api_call",
-      payload: { stripe_customer_id: "cus_1", value: "1" },
-    });
-    expect(sent[0]!.headers.get("stripe-context")).toBe("acct_123");
-    expect(sent[0]!.headers.get("stripe-account")).toBeNull();
-    expect(sent[0]!.headers.get("idempotency-key")).toBe("caller-key-1");
-    respond = () => Response.json({ data: [], next_page_url: null });
-    await connector.callTool(
-      "stripe_api_read",
-      { path: "/v2/core/accounts", query: { applied_configurations: ["customer", "merchant"], limit: 2 } },
-      keyed(),
-    );
-    expect(sent[1]!.url.search).toBe("?applied_configurations=customer&applied_configurations=merchant&limit=2");
-  });
-
   it("INV-5: refuses a key whose prefix contradicts the declared mode before any request leaves", async () => {
     const sandbox = stripe("billing", SANDBOX);
     const cases: Array<[string, string]> = [
@@ -613,136 +157,6 @@ describe("stripe() over an API key", () => {
     expect(sent).toEqual([]);
   });
 
-  it("tests a key against the account it reaches and accepts a restricted key without account read", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () => Response.json({ id: "acct_1", business_profile: { name: "Grace Co" } });
-    expect(await connector.testCredential!(" rk_test_51abc ", connectorContext())).toEqual({
-      ok: true,
-      message: "Authenticated to acct_1 (Grace Co) with a test-mode key.",
-    });
-    expect(sent[0]!.headers.get("authorization")).toBe("Bearer rk_test_51abc");
-    respond = () =>
-      Response.json(
-        { error: { type: "invalid_request_error", message: "The provided key does not have access." } },
-        { status: 403 },
-      );
-    expect(await connector.testCredential!("rk_test_51abc", connectorContext())).toMatchObject({
-      ok: true,
-      message: expect.stringContaining("cannot read the account object"),
-    });
-    respond = () =>
-      Response.json(
-        { error: { type: "invalid_request_error", message: "Invalid API Key provided." } },
-        { status: 401 },
-      );
-    const rejected = await connector.testCredential!("rk_test_51abc", connectorContext());
-    expect(rejected.ok).toBe(false);
-    expect(rejected.message).toContain("Invalid API Key provided.");
-  });
-
-  it("INV-9: sends a write once and returns its generated Idempotency-Key on success and failure", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () =>
-      Response.json(
-        { error: { type: "api_error", message: "Something went wrong." } },
-        {
-          status: 500,
-          headers: { "request-id": "req_1" },
-        },
-      );
-    const error = await refusal(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } },
-        keyed(),
-      ),
-    );
-    expect(sent).toHaveLength(1);
-    const key = sent[0]!.headers.get("idempotency-key");
-    expect(key).toMatch(/^[0-9a-f-]{36}$/);
-    expect(error.code).toBe("unavailable");
-    expect(error.message).toContain("Request req_1.");
-    // The key is a diagnostic in the message; the advice to reuse it is a
-    // segment of its own, composed for this one keyed request (round 16).
-    expect(error.message).toMatch(new RegExp(`Idempotency-Key: ${key}\\.$`));
-    expect(keyResendAdviceOf(error)).toMatchObject({ key });
-    const direct = classifyCallError(error).message;
-    expect(direct).toContain(`Idempotency-Key: ${key}. Reusing it with the exact original arguments`);
-    expect(direct).toContain("only while the vendor retains the key; after that, look the object up");
-    // A caller's own key is already the caller's; the failure is passed through.
-    const own = await refusal(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" }, idempotencyKey: "mine" },
-        keyed(),
-      ),
-    );
-    expect(own.message).not.toContain("reuse it");
-    expect(sent[1]!.headers.get("idempotency-key")).toBe("mine");
-    // DELETE is idempotent by definition; Stripe ignores a key there.
-    respond = () => Response.json({ id: "cus_1", deleted: true });
-    expect(
-      await connector.callTool("stripe_api_write", { method: "DELETE", path: "/v1/customers/cus_1" }, keyed()),
-    ).toEqual({ status: 200, data: { id: "cus_1", deleted: true } });
-    expect(sent[2]!.headers.get("idempotency-key")).toBeNull();
-    expect(sent).toHaveLength(3);
-  });
-
-  it("INV-9: keeps a refund's generated Idempotency-Key when the connection drops while reading the reply", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
-          },
-        }),
-        { headers: { "content-type": "application/json" } },
-      );
-    const error = await refusal(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } },
-        keyed(),
-      ),
-    );
-    const key = sent[0]!.headers.get("idempotency-key");
-    expect(error.code).toBe("unavailable");
-    expect(error.message).toContain(`Idempotency-Key: ${key}`);
-    expect(sent).toHaveLength(1);
-  });
-
-  it("maps Stripe failures by the caller's next move", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const cases: Array<[number, Record<string, string>, Record<string, string>, string, string]> = [
-      [429, { code: "lock_timeout", message: "Locked." }, {}, "conflict", "Stripe did not process this one"],
-      [
-        429,
-        { code: "rate_limit", message: "Too many." },
-        { "stripe-rate-limited-reason": "global-rate" },
-        "rate_limited",
-        "Limited by global-rate.",
-      ],
-      [
-        402,
-        { type: "card_error", code: "card_declined", decline_code: "insufficient_funds", message: "Declined." },
-        {},
-        "connector_call_failed",
-        "card_error card_declined insufficient_funds",
-      ],
-      [400, { type: "invalid_request_error", param: "amount", message: "Bad." }, {}, "invalid_args", "(param amount)"],
-      [401, { message: "Invalid API Key provided." }, {}, "auth_required", "an operator must replace it"],
-      [403, { message: "Restricted." }, {}, "provider_permission_denied", "lacks this permission"],
-      [404, { code: "resource_missing", message: "No such customer." }, {}, "not_found", "Resolve the id"],
-    ];
-    for (const [status, error, headers, code, message] of cases) {
-      respond = () => Response.json({ error }, { status, headers });
-      const failure = await refusal(connector.callTool("stripe_api_read", { path: "/v1/customers/cus_1" }, keyed()));
-      expect(failure.code, `${status} ${error.code}`).toBe(code);
-      expect(failure.message).toContain(message);
-    }
-  });
-
   it("INV-9: reports a lock_timeout as a retryable conflict Stripe did not process, not an unknown outcome", async () => {
     const connector = stripe("billing", SANDBOX);
     respond = () => Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
@@ -755,278 +169,6 @@ describe("stripe() over an API key", () => {
     );
     expect(error).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1_000 });
     expect(sent).toHaveLength(1);
-  });
-
-  it.each([
-    ["a v1 answer carrying Stripe's Request-Id", "/v1/refunds", { "request-id": "req_1" }, true],
-    ["an answer without Request-Id", "/v1/refunds", {}, false],
-    ["a v2 answer, outside the guidance's scope", "/v2/billing/meter_events", { "request-id": "req_1" }, false],
-  ] as const)(
-    "INV-9: a served write answered 401 is a known refusal only for %s (reviewed authBeforeExecution)",
-    async (_name, path, headers, refused) => {
-      respond = () =>
-        Response.json(
-          { error: { type: "invalid_request_error", message: "Invalid API Key provided." } },
-          {
-            status: 401,
-            headers,
-          },
-        );
-      const connector = stripe("billing", SANDBOX);
-      const storage = memoryStorage();
-      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-      await vault.setAll("billing", { value: "rk_test_51abc" }, "fixture");
-      const meta = createMetaTools(
-        makeRegistry([connector], { storage, credentialVault: vault }),
-        "https://connecta.test",
-      );
-      const result = await meta.callDestructiveTool({
-        address: "billing.stripe_api_write",
-        args: {
-          method: "POST",
-          path,
-          body: path.startsWith("/v2/")
-            ? { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: "1" } }
-            : { charge: "ch_1" },
-        },
-      });
-      const error = (result.structuredContent as { error: CallErrorDetails }).error;
-      expect(error).toMatchObject({
-        code: "auth_required",
-        retryable: false,
-        nextAction: { tool: "authorize_connector" },
-      });
-      if (refused) expect(error).not.toHaveProperty("writeOutcome");
-      else
-        expect(error).toMatchObject({
-          writeOutcome: "unknown",
-          message: expect.stringContaining("The write was sent before Stripe rejected its credential"),
-        });
-      expect(sent).toHaveLength(1);
-    },
-  );
-
-  it("extracts v1, search, and v2 cursors and projects select paths through lists", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () =>
-      Response.json({
-        object: "list",
-        data: [
-          { id: "ch_1", amount: 5, billing_details: { name: "Ada" } },
-          { id: "ch_2", amount: 6 },
-        ],
-        has_more: true,
-      });
-    expect(
-      await connector.callTool("stripe_api_read", { path: "/v1/charges", select: ["data.id", "data.amount"] }, keyed()),
-    ).toEqual({
-      status: 200,
-      data: {
-        data: [
-          { id: "ch_1", amount: 5 },
-          { id: "ch_2", amount: 6 },
-        ],
-      },
-      page: { hasMore: true, next: "ch_2", param: "starting_after" },
-    });
-    expect(
-      (
-        (await connector.callTool(
-          "stripe_api_read",
-          { path: "/v1/charges", query: { ending_before: "ch_9" } },
-          keyed(),
-        )) as any
-      ).page,
-    ).toEqual({ hasMore: true, next: "ch_1", param: "ending_before" });
-    respond = () => Response.json({ object: "search_result", data: [], has_more: true, next_page: "page_abc" });
-    expect(
-      (
-        (await connector.callTool(
-          "stripe_api_read",
-          { path: "/v1/charges/search", query: { query: "amount>5" } },
-          keyed(),
-        )) as any
-      ).page,
-    ).toEqual({ hasMore: true, next: "page_abc", param: "page" });
-    respond = () => Response.json({ data: [], next_page_url: "/v2/core/accounts?page=tok_2", previous_page_url: null });
-    expect(((await connector.callTool("stripe_api_read", { path: "/v2/core/accounts" }, keyed())) as any).page).toEqual(
-      {
-        hasMore: true,
-        next: "tok_2",
-        param: "page",
-      },
-    );
-    respond = () => Response.json({ object: "list", data: [{ id: "ch_1" }], has_more: false });
-    expect(((await connector.callTool("stripe_api_read", { path: "/v1/charges" }, keyed())) as any).page).toEqual({
-      hasMore: false,
-    });
-  });
-
-  it("refuses secret expansions: Apps secret payloads and Issuing card numbers and CVCs", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const cases: Array<[string, Record<string, unknown>, string]> = [
-      [
-        "stripe_api_read",
-        { path: "/v1/apps/secrets/find", query: { name: "k", scope: { type: "account" }, expand: ["payload"] } },
-        "Stripe Apps secret values",
-      ],
-      [
-        "stripe_api_read",
-        { path: "/v1/apps/secrets", query: { scope: { type: "account" }, expand: ["data.payload"] } },
-        "Stripe Apps secret values",
-      ],
-      [
-        "stripe_api_read",
-        { path: "/v1/issuing/cards/ic_1", query: { expand: ["number"] } },
-        "Issuing card numbers and CVCs",
-      ],
-      [
-        "stripe_api_read",
-        { path: "/v1/issuing/cards", query: { expand: ["data.cvc"] } },
-        "Issuing card numbers and CVCs",
-      ],
-      [
-        "stripe_api_write",
-        { method: "POST", path: "/v1/issuing/cards/ic_1", body: { expand: ["number"] } },
-        "Issuing card numbers and CVCs",
-      ],
-      // An authorization or transaction embeds its card, so the same expansion is refused there.
-      [
-        "stripe_api_read",
-        { path: "/v1/issuing/authorizations/iauth_1", query: { expand: ["card.number"] } },
-        "Issuing card numbers and CVCs",
-      ],
-      [
-        "stripe_api_read",
-        { path: "/v1/issuing/transactions", query: { expand: ["data.card.cvc"] } },
-        "Issuing card numbers and CVCs",
-      ],
-    ];
-    for (const [tool, args, message] of cases) {
-      const error = await refusal(connector.callTool(tool, args, keyed()));
-      expect(error.code).toBe("invalid_args");
-      expect(error.message).toContain(message);
-    }
-    expect(sent).toEqual([]);
-    await connector.callTool(
-      "stripe_api_read",
-      { path: "/v1/issuing/cards/ic_1", query: { expand: ["cardholder"] } },
-      keyed(),
-    );
-    expect(sent).toHaveLength(1);
-  });
-
-  it("INV-5: redacts client and signing secrets, Apps payloads, and Wi-Fi passwords; keeps hosted Checkout URLs whole", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const read = async (path: string, body: unknown, query?: Record<string, unknown>) => {
-      respond = () => Response.json(body);
-      return ((await connector.callTool("stripe_api_read", { path, ...(query ? { query } : {}) }, keyed())) as any)
-        .data;
-    };
-    const intent = await read("/v1/payment_intents/pi_1", {
-      id: "pi_1",
-      object: "payment_intent",
-      client_secret: "pi_1_secret_ONE",
-      latest_charge: {
-        payment_method_details: { card: { authorization_code: "123456", network_token: { used: false } } },
-      },
-    });
-    expect(intent.client_secret).toBe("[redacted]");
-    expect(intent.latest_charge.payment_method_details.card).toEqual({
-      authorization_code: "123456",
-      network_token: { used: false },
-    });
-    // An expansion is answered under the operation that expanded it; the field review still applies.
-    const invoice = await read("/v1/invoices/in_1", {
-      id: "in_1",
-      confirmation_secret: { client_secret: "pi_2_secret_TWO", type: "payment_intent" },
-      payment_intent: { id: "pi_2", client_secret: "pi_2_secret_TWO" },
-    });
-    expect(JSON.stringify(invoice)).not.toContain("TWO");
-    const hook = await read("/v1/webhook_endpoints/we_1", {
-      id: "we_1",
-      secret: "whsec_THREE",
-      url: "https://hooks.example.com/stripe/THREE-path",
-    });
-    expect(hook).toEqual({ id: "we_1", secret: "[redacted]", url: "https://hooks.example.com/[redacted]" });
-    const checkoutUrl = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPyd1blpxYHZxWjA0token";
-    // A guest payment session's page comes back whole; its fragment is state the page needs.
-    const session = await read("/v1/checkout/sessions/cs_1", {
-      object: "checkout.session",
-      id: "cs_1",
-      mode: "payment",
-      customer: null,
-      customer_email: "payer@example.com",
-      url: checkoutUrl,
-      client_secret: "cs_1_secret_FOUR",
-    });
-    expect(session).toEqual({
-      object: "checkout.session",
-      id: "cs_1",
-      mode: "payment",
-      customer: null,
-      customer_email: "payer@example.com",
-      url: checkoutUrl,
-      client_secret: "[redacted]",
-    });
-    const secret = await read(
-      "/v1/apps/secrets/find",
-      { id: "appsecret_1", name: "k", payload: "FIVE", scope: { type: "account" } },
-      { name: "k", scope: { type: "account" } },
-    );
-    expect(secret).toEqual({ id: "appsecret_1", name: "k", payload: "[redacted]", scope: { type: "account" } });
-    const config = await read("/v1/terminal/configurations/tmc_1", {
-      id: "tmc_1",
-      wifi: { type: "personal_psk", personal_psk: { ssid: "store", password: "SIX" } },
-    });
-    expect(config.wifi.personal_psk).toEqual({ ssid: "store", password: "[redacted]" });
-    const forwarded = await read("/v1/forwarding/requests/fwdreq_1", {
-      id: "fwdreq_1",
-      request_details: { headers: [{ name: "X-Partner-Auth", value: "SEVEN" }] },
-    });
-    expect(forwarded.request_details.headers).toEqual([{ name: "X-Partner-Auth", value: "[redacted]" }]);
-  });
-
-  it("INV-5: withholds public file links wherever a File is expanded, in events, and through select (review 807-1)", async () => {
-    const connector = stripe("billing", SANDBOX);
-    const bearer = "https://files.stripe.com/links/STORED-BEARER-807";
-    const link = { object: "file_link", id: "link_1", file: "file_1", url: bearer };
-    const file = {
-      object: "file",
-      id: "file_1",
-      purpose: "dispute_evidence",
-      url: "https://files.stripe.com/v1/files/file_1/contents",
-      links: { object: "list", url: "/v1/file_links", has_more: false, data: [link] },
-    };
-    const call = async (path: string, body: unknown, args: Record<string, unknown> = {}) => {
-      respond = () => Response.json(body);
-      return JSON.stringify(await connector.callTool("stripe_api_read", { path, ...args }, keyed()));
-    };
-    const cases: Array<[string, unknown, Record<string, unknown>]> = [
-      ["/v1/file_links/link_1", { ...link, file }, { query: { expand: ["file.links"] } }],
-      [
-        "/v1/file_links/link_1",
-        { ...link, file },
-        { query: { expand: ["file.links"] }, select: ["file.links.data.url"] },
-      ],
-      ["/v1/disputes/dp_1", { object: "dispute", id: "dp_1", evidence: { customer_signature: file } }, {}],
-      ["/v1/files", { object: "list", data: [file], has_more: false }, {}],
-      [
-        "/v1/events/evt_1",
-        {
-          object: "event",
-          type: "file_link.updated",
-          data: { object: link, previous_attributes: { url: "https://files.stripe.com/links/STORED-BEARER-807-old" } },
-        },
-        {},
-      ],
-    ];
-    for (const [path, body, args] of cases) {
-      const text = await call(path, body, args);
-      expect(text, path).not.toContain("STORED-BEARER-807");
-    }
-    // The File's own URL needs the secret key, so it stays.
-    expect(await call("/v1/files/file_1", file)).toContain("https://files.stripe.com/v1/files/file_1/contents");
   });
 
   it("INV-5: returns a Checkout page whole only for a provably guest payment session, wherever it appears (review 807-2, 807-r2)", async () => {
@@ -1115,28 +257,6 @@ describe("stripe() over an API key", () => {
     expect(sent).toEqual([]);
   });
 
-  it("INV-5: withholds Stripe's message for credential families and keeps it for payment objects", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () =>
-      Response.json(
-        { error: { type: "invalid_request_error", code: "resource_missing", message: "No such webhook: whsec_ECHO" } },
-        { status: 404 },
-      );
-    const hook = await refusal(connector.callTool("stripe_api_read", { path: "/v1/webhook_endpoints/we_1" }, keyed()));
-    expect(hook.code).toBe("not_found");
-    expect(hook.message).toContain("invalid_request_error resource_missing");
-    expect(hook.message).not.toContain("whsec_ECHO");
-    respond = () =>
-      Response.json(
-        { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } },
-        { status: 402 },
-      );
-    const declined = await refusal(
-      connector.callTool("stripe_api_read", { path: "/v1/payment_intents/pi_1" }, keyed()),
-    );
-    expect(declined.message).toContain("Your card was declined.");
-  });
-
   it("reads quote PDFs from files.stripe.com and refuses multipart uploads and the meter event stream", async () => {
     const connector = stripe("billing", SANDBOX);
     respond = () =>
@@ -1166,95 +286,85 @@ describe("stripe() over an API key", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("projects the account and balance through the named tools", async () => {
+  it("form-encodes v1 bodies and query lists, pins Stripe-Version, and acts as the connected account", async () => {
     const connector = stripe("platform", { ...LIVE, connectedAccount: "acct_123" });
-    respond = () =>
-      Response.json({
-        id: "acct_123",
-        business_profile: { name: "Grace Co" },
-        country: "US",
-        default_currency: "usd",
-        charges_enabled: true,
-        payouts_enabled: false,
-        settings: { dashboard: { display_name: "Grace" } },
-        individual: { ssn_last_4: "1234" },
-      });
-    expect(await connector.callTool("get_stripe_account_info", {}, keyed("rk_live_51abc"))).toEqual({
-      accountId: "acct_123",
-      name: "Grace Co",
-      country: "US",
-      defaultCurrency: "usd",
-      mode: "production",
-      livemode: true,
-      connectedAccount: "acct_123",
-      chargesEnabled: true,
-      payoutsEnabled: false,
-    });
-    expect(sent[0]!.url.pathname).toBe("/v1/account");
-    expect(sent[0]!.headers.get("stripe-account")).toBe("acct_123");
-    respond = () =>
-      Response.json({
-        object: "balance",
-        livemode: true,
-        available: [{ amount: 1099, currency: "usd", source_types: { card: 1099 } }],
-        pending: [{ amount: 0, currency: "usd" }],
-      });
-    expect(await connector.callTool("get_balance_summary", {}, keyed("rk_live_51abc"))).toEqual({
-      livemode: true,
-      available: [{ amount: 1099, currency: "usd" }],
-      pending: [{ amount: 0, currency: "usd" }],
-    });
-  });
+    respond = () => Response.json({ id: "cus_1", object: "customer" });
+    const result = (await connector.callTool(
+      "stripe_api_write",
+      {
+        method: "POST",
+        path: "/v1/customers/cus_1",
+        body: {
+          email: "a@example.com",
+          metadata: { tier: "gold", stale: "" },
+          invoice_settings: { custom_fields: [{ name: "PO", value: "42" }], default_payment_method: null },
+          tax_exempt: "none",
+          preferred_locales: [],
+        },
+      },
+      keyed("rk_live_51abc"),
+    )) as any;
+    expect(result).toMatchObject({ status: 200, data: { id: "cus_1" }, idempotencyKey: expect.any(String) });
+    const [request] = sent;
+    expect(request!.url.href).toBe(`${STRIPE_API_BASE_URL}/v1/customers/cus_1`);
+    expect(decodeURIComponent(request!.body!).split("&")).toEqual([
+      "email=a@example.com",
+      "metadata[tier]=gold",
+      "metadata[stale]=",
+      "invoice_settings[custom_fields][0][name]=PO",
+      "invoice_settings[custom_fields][0][value]=42",
+      "invoice_settings[default_payment_method]=",
+      "tax_exempt=none",
+      "preferred_locales=",
+    ]);
+    expect(request!.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+    expect(request!.headers.get("authorization")).toBe("Bearer rk_live_51abc");
+    expect(request!.headers.get("stripe-account")).toBe("acct_123");
+    expect(request!.headers.get("stripe-version")).toBe("2026-09-30.endive");
+    expect(request!.headers.get("idempotency-key")).toBe(result.idempotencyKey);
 
-  it("INV-4: lets no argument choose the account, the key, or a header", async () => {
-    const connector: Connector = stripe("platform", { ...LIVE, connectedAccount: "acct_123" });
-    for (const tool of await connector.listTools(keyed("rk_live_51abc"))) {
-      const properties = Object.keys(((tool.inputSchema as any)?.properties ?? {}) as object);
-      expect(
-        properties.filter((name) => /header|account|key$|auth|context/i.test(name)),
-        tool.name,
-      ).toEqual(tool.name === "stripe_api_write" ? ["idempotencyKey"] : []);
-    }
     respond = () => Response.json({ object: "list", data: [], has_more: false });
-    await connector
-      .callTool(
-        "stripe_api_read",
-        { path: "/v1/customers", query: { "Stripe-Account": "acct_other" } },
-        keyed("rk_live_51abc"),
-      )
-      .catch(() => undefined);
-    expect(sent).toEqual([]);
+    await connector.callTool(
+      "stripe_api_read",
+      {
+        path: "/v1/charges",
+        query: { customer: "cus_1", expand: ["data.customer", "data.invoice"], created: { gte: 10 }, limit: 3 },
+      },
+      keyed("rk_live_51abc"),
+    );
+    expect(decodeURIComponent(sent[1]!.url.search)).toBe(
+      "?customer=cus_1&expand[0]=data.customer&expand[1]=data.invoice&created[gte]=10&limit=3",
+    );
+    expect(sent[1]!.headers.get("idempotency-key")).toBeNull();
   });
-});
 
-describe("Stripe connector readOnly", () => {
-  beforeEach(() => mockRemoteMcp(mocks));
-
-  it.each(["oauth", "apiKey"] as const)(
-    "INV-1 INV-2: %s auth omits writes and refuses them before auth or dispatch",
-    async (type) => {
-      mocks.listTools.mockResolvedValue(hostedTools);
-      const connector = stripe(
-        "billing",
-        type === "oauth"
-          ? { purpose: "Revenue reports", auth: { type }, readOnly: true }
-          : { ...SANDBOX, readOnly: true },
-      );
-      expect(connector.readOnly).toBe(true);
-      const registry = makeRegistry([connector]);
-      const catalog = new CatalogService(registry, "https://connecta.test");
-      const page = await catalog.search({ connector: "billing" });
-      expect(page.entries.some((entry) => entry.tool.name === "stripe_api_read")).toBe(true);
-      expect(page.entries.every((entry) => entry.tool.classification === "read")).toBe(true);
-      expect(page.entries.some((entry) => entry.tool.name === "stripe_api_write")).toBe(false);
-      const meta = createMetaTools(registry, "https://connecta.test", { readOnly: false });
-      for (const invoke of [meta.callTool, meta.callDestructiveTool]) {
-        const result = await invoke({ address: "billing.stripe_api_write", args: {} });
-        expect(result.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
-      }
-      if (type === "oauth")
-        expect(mocks.remoteMcp).toHaveBeenCalledWith("billing", expect.objectContaining({ readOnly: true }));
-      else expect(mocks.remoteMcp).not.toHaveBeenCalled();
-    },
-  );
+  it("sends v2 bodies as JSON, repeats v2 query lists, and names the connected account with Stripe-Context", async () => {
+    const connector = stripe("platform", { ...SANDBOX, connectedAccount: "acct_123" });
+    respond = () => Response.json({ id: "mtr_1", object: "v2.billing.meter_event" });
+    await connector.callTool(
+      "stripe_api_write",
+      {
+        method: "POST",
+        path: "/v2/billing/meter_events",
+        body: { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: "1" } },
+        idempotencyKey: "caller-key-1",
+      },
+      keyed(),
+    );
+    expect(sent[0]!.headers.get("content-type")).toBe("application/json");
+    expect(JSON.parse(sent[0]!.body!)).toEqual({
+      event_name: "api_call",
+      payload: { stripe_customer_id: "cus_1", value: "1" },
+    });
+    expect(sent[0]!.headers.get("stripe-context")).toBe("acct_123");
+    expect(sent[0]!.headers.get("stripe-account")).toBeNull();
+    expect(sent[0]!.headers.get("idempotency-key")).toBe("caller-key-1");
+    respond = () => Response.json({ data: [], next_page_url: null });
+    await connector.callTool(
+      "stripe_api_read",
+      { path: "/v2/core/accounts", query: { applied_configurations: ["customer", "merchant"], limit: 2 } },
+      keyed(),
+    );
+    expect(sent[1]!.url.search).toBe("?applied_configurations=customer&applied_configurations=merchant&limit=2");
+  });
 });

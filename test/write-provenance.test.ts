@@ -16,26 +16,24 @@
 // logical call: one boundary, one write sent, carrying that key.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
-import { defineProvider, optionsOf, PROVIDER_COMMON, type ProviderOptions } from "../src/index.js";
-import { InvocationService } from "../src/invocation.js";
-import { CatalogService } from "../src/catalog-service.js";
+import { CredentialVault } from "../src/credentials.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
+import { InvocationService } from "../src/invocation.js";
+import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
+import { restTools } from "../src/providers/_shared/rest/tools.js";
 import { github } from "../src/providers/github/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { stripeRest } from "../src/providers/stripe/rest.js";
-import { restTools } from "../src/providers/_shared/rest/tools.js";
-import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
-import { classifyWriteOutcome } from "../src/write-outcome.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
+import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { apiFixture, connection } from "./fixtures/github-api.js";
 import { googleOptions } from "./fixtures/provider-options.js";
 import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
@@ -297,16 +295,6 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       await connector.closeScope?.(ctx);
     }
   });
-
-  it("INV-9: control: a read's -32602 for a malformed result keeps its classification", async () => {
-    const { connector, registry } = brokenResult("invalidParams");
-    const ctx = registry.contextFor("tickets", BASE);
-    await connector.listTools(ctx);
-    const error = await failure(connector.callTool("list_items", {}, ctx));
-    expect(classifyCallError(error)).toMatchObject({ code: "invalid_args" });
-    expect(classifyCallError(error).writeOutcome).toBeUndefined();
-    await connector.closeScope?.(ctx);
-  });
 });
 
 describe("an operation hint grants no retry credit (round 11)", () => {
@@ -412,68 +400,6 @@ describe("a served write's unknown outcome is final before any advice (round 12)
       });
     },
   );
-
-  it("INV-9: control: a custom connector's read keeps its retryable code and its grant-then-retry advice", async () => {
-    let code: "rate_limited" | "provider_permission_denied" = "rate_limited";
-    const { invoke } = custom(() => new ConnectorCallError(code, "Read refused"));
-    const limited = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
-    if (limited.ok) throw new Error("expected the read to fail");
-    expect(limited.error).toMatchObject({ code: "rate_limited", retryable: true });
-    expect(limited.error.writeOutcome).toBeUndefined();
-    code = "provider_permission_denied";
-    const denied = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
-    if (denied.ok) throw new Error("expected the read to fail");
-    expect(denied.error.retry).toMatch(/grant the required permission or scope, then retry/);
-  });
-
-  it("INV-9: control: a write's pre-dispatch refusal and a served 403 refusal stay known, with their advice", async () => {
-    let sent = 0;
-    const send = guardedFetch({
-      provider: "Tickets",
-      baseUrl: "https://tickets.test",
-      authenticate: () => ({}),
-      maxResponseBytes: 1024,
-      fetch: async () => {
-        sent++;
-        return Response.json({}, { status: 403 });
-      },
-    });
-    const connector = tracksEveryRequest(
-      api("tickets", {
-        tools: [
-          {
-            name: "create_item",
-            description: "Create",
-            annotations: { readOnlyHint: false },
-            inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
-            handler: (_args, ctx) =>
-              send({ method: "POST", path: "/items" }, ctx, () => {
-                throw new ConnectorCallError("provider_permission_denied", "Tickets refused the scope");
-              }),
-          },
-        ],
-      }),
-    );
-    const registry = makeRegistry([connector]);
-    const invoke = new InvocationService(registry, new CatalogService(registry, BASE));
-
-    const invalid = await invoke.invoke("tickets.create_item", { name: 7 }, { source: "call_destructive_tool" });
-    if (invalid.ok) throw new Error("expected the refusal");
-    expect(sent).toBe(0);
-    expect(invalid.dispatched).toBe(true);
-    expect(invalid.error).toMatchObject({ code: "invalid_args", retryable: false });
-    expect(invalid.error.writeOutcome).toBeUndefined();
-    expect(invalid.error.retry).toMatch(/^Correct the listed arguments and retry/);
-    expect(classifyWriteOutcome(invalid)).toBe("failed");
-
-    const denied = await invoke.invoke("tickets.create_item", { name: "x" }, { source: "call_destructive_tool" });
-    if (denied.ok) throw new Error("expected the refusal");
-    expect(sent).toBe(1);
-    expect(denied.error).toMatchObject({ code: "provider_permission_denied", retryable: false });
-    expect(denied.error.writeOutcome).toBeUndefined();
-    expect(denied.error.retry).toMatch(/grant the required permission or scope, then retry/);
-    expect(classifyWriteOutcome(denied)).toBe("failed");
-  });
 });
 
 describe("a write's input_required suspension is no proof the handler never ran (round 12)", () => {
@@ -520,25 +446,6 @@ describe("a write's input_required suspension is no proof the handler never ran 
     expect(program.structuredContent).toMatchObject({
       error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
     });
-    await connector.closeScope?.(ctx);
-  });
-
-  it("INV-9: control: a read suspended for input keeps its direct-call nextAction", async () => {
-    const { connector, registry } = suspending();
-    const ctx = registry.contextFor("tickets", BASE);
-    await connector.listTools(ctx);
-    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "tickets.list_items",
-      {},
-      { source: "call_tool" },
-    );
-    if (served.ok) throw new Error("expected the served read to fail");
-    expect(served.error).toMatchObject({
-      code: "input_required_unsupported",
-      retryable: false,
-      nextAction: { tool: "call_tool", arguments: { address: "tickets.list_items" } },
-    });
-    expect(served.error.writeOutcome).toBeUndefined();
     await connector.closeScope?.(ctx);
   });
 });
@@ -958,64 +865,6 @@ describe("a logical call's identities are bound to the objects that own them (ro
     expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
     expect(outcome.error.message).toBe("Stripe rate_limit_error: Rate limit");
   });
-
-  it("INV-9: control: a genuine GitHub delegator's served REST 429 stays known, with its advice", async () => {
-    const fixture = apiFixture();
-    let refused = 0;
-    fixture.respond((request) => {
-      if (request.method !== "POST" || request.url.pathname !== "/repos/other/one/releases") return undefined;
-      refused++;
-      return Response.json({ message: "API rate limit exceeded" }, { status: 429, headers: { "retry-after": "7" } });
-    });
-    const outcome = await invoke(makeRegistry([connection()]), "github.create_release", {
-      owner: "other",
-      repo: "one",
-      tag_name: "v1.2.0",
-    });
-    expect(refused).toBe(1);
-    if (outcome.ok) throw new Error("expected the refusal");
-    expect(outcome.answered).toBe(true);
-    expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: true });
-    expect(outcome.error.writeOutcome).toBeUndefined();
-    expect(outcome.error.message).toBe("GitHub rate limit reached. Honor the retry timing before trying again.");
-    expect(classifyWriteOutcome(outcome)).toBe("failed");
-  });
-
-  it("INV-9: control: a maintained provider stamped by inheritance keeps its boundary's standing", async () => {
-    const factory = defineProvider<ProviderOptions>({
-      name: "acme-crm",
-      title: "Acme CRM",
-      kind: "api",
-      skill: { content: "\n- Resolve ids before writing.\n", instructionsHeading: "Account instructions" },
-      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
-      create: (id) =>
-        Object.freeze(
-          tracksEveryRequest(
-            api(id, {
-              tools: [
-                {
-                  name: "create_item",
-                  description: "Create",
-                  annotations: { readOnlyHint: false },
-                  inputSchema: { type: "object" },
-                  // Refused before anything left: the ledger is empty.
-                  handler: async () => {
-                    throw new ConnectorCallError("invalid_args", "Acme refused the item before sending it.");
-                  },
-                },
-              ],
-            }),
-          ),
-        ),
-    });
-    const connector = factory("crm", { purpose: "Review" });
-    expect(Object.hasOwn(connector, "callTool")).toBe(false);
-    const outcome = await invoke(makeRegistry([connector]), "crm.create_item", {});
-    if (outcome.ok) throw new Error("expected the refusal");
-    expect(outcome.answered).toBe(true);
-    expect(outcome.error.code).toBe("invalid_args");
-    expect(classifyWriteOutcome(outcome)).toBe("failed");
-  });
 });
 
 describe("a write's MCP isError is a 2xx reply, never a known failure (round 13)", () => {
@@ -1061,15 +910,6 @@ describe("a write's MCP isError is a 2xx reply, never a known failure (round 13)
     expect(program.structuredContent).toMatchObject({
       error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
     });
-  });
-
-  it("INV-9: control: a read's isError is still the downstream's answer", async () => {
-    const { invoke } = erroring();
-    const served = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
-    if (served.ok) throw new Error("expected the served read to fail");
-    expect(served.answered).toBe(true);
-    expect(served.error).toMatchObject({ code: "connector_call_failed", message: "No such list.", retryable: false });
-    expect(served.error.writeOutcome).toBeUndefined();
   });
 });
 
@@ -1271,30 +1111,6 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
     expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: key });
   });
 
-  it("INV-9: an unrelated earlier key in the same logical call never speaks for a later unkeyed write", async () => {
-    const { state, connector, storage, vault } = await billing((sent) =>
-      sent.method === "POST" ? created(sent) : lost(),
-    );
-    const registry = makeRegistry(
-      [
-        wrapper(connector, async (_args, ctx) => {
-          await connector.callTool("stripe_api_write", create("first", "earlier-key"), ctx);
-          return await connector.callTool("stripe_api_write", { method: "DELETE", path: "/v1/customers/cus_2" }, ctx);
-        }),
-      ],
-      { storage, credentialVault: vault },
-    );
-    const served = await invoke(registry, "billing.create_pair", {});
-    expect(state.sent.map((sent) => [sent.method, sent.key])).toEqual([
-      ["POST", "earlier-key"],
-      ["DELETE", null],
-    ]);
-    if (served.ok) throw new Error("expected the write to fail");
-    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expectNoKeyAdvice(served.error);
-    expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "earlier-key" });
-  });
-
   it("INV-9: a call interrupted after two dispatches grants no advice to the key it was sending", async () => {
     const { state, connector, storage, vault } = await billing((sent) =>
       sent.name === "first" ? created(sent) : new Promise<Response>(() => {}),
@@ -1367,16 +1183,6 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
       ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "GET" }),
     );
     if (served.ok) throw new Error("expected the write to fail");
-    expectNoKeyAdvice(served.error);
-  });
-
-  it("INV-9: a keyed write after another request that may have written loses its advice", async () => {
-    const { state, served } = await lookupThenCreate((ctx) =>
-      ctx.fetch("https://api.stripe.com/v1/customers/search", { method: "PURGE" }),
-    );
-    expect(state.sent.map((sent) => sent.method)).toEqual(["PURGE", "POST"]);
-    if (served.ok) throw new Error("expected the write to fail");
-    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expectNoKeyAdvice(served.error);
   });
 

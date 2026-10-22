@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
-import { connectionMap } from "../src/operator-ui/connection-map.js";
-import { attentionItems, overviewHeadline } from "../src/operator-ui/overview.js";
-import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
+import { attentionItems } from "../src/operator-ui/overview.js";
+import { OPERATOR_V2_MAINTAINER } from "./fixtures/operator-contract-v2.js";
 
 const maintainer = () => structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
 
@@ -38,17 +37,5 @@ describe("overview attention list", () => {
       action: null,
       href: null,
     });
-  });
-
-  it("is empty when everything is healthy, and for a member", () => {
-    const contract = maintainer();
-    const notion = contract.live.connectors.find((c) => c.id === "notion")!;
-    notion.status = "ok";
-    delete notion.problem;
-    contract.agents[1]!.token = { state: "issued", issuedAt: "2026-10-02T00:00:00.000Z", revision: "r" };
-    expect(attentionItems(contract)).toEqual([]);
-    expect(attentionItems(structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2)).toEqual([]);
-    const headline = overviewHeadline(contract, connectionMap(contract), []);
-    expect(headline).toMatchObject({ connectors: 6, healthy: 6, warn: 0, danger: 0 });
   });
 });

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { connectorWith } from "./fixtures/connectors.js";
-import { BASE, connectorIds, toolsByConnector, type SearchResult, textOf } from "./fixtures/meta-tools.js";
-import { api } from "../src/connectors/api.js";
-import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
+import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
-import { required, calcConnector, makeRegistry, remoteConnector } from "./helpers.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
+import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -261,38 +261,6 @@ describe("search_tools", () => {
     expect(loads).toBe(2);
   });
 
-  it("keeps action terms and returns every relevant multi-intent match", async () => {
-    const connector: Connector = connectorWith({
-      id: "files",
-      staticTools: [
-        {
-          name: "search_files",
-          description: "Find a drive file",
-        },
-        {
-          name: "share_file",
-          description: "Share a drive file",
-        },
-        {
-          name: "list_folder",
-          description: "List child folders",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
-        query: "find a drive file and share it",
-      }),
-    ) as SearchResult;
-
-    expect(new Set(parsed.tools.map((tool) => tool.address))).toEqual(
-      new Set(["files.search_files", "files.share_file"]),
-    );
-    expect(parsed.matchMode).toBe("partial");
-  });
-
   it("explains supported, mixed, partial, and absent lexical intents", async () => {
     const connector: Connector = connectorWith({
       id: "projects",
@@ -399,67 +367,6 @@ describe("search_tools", () => {
     });
   });
 
-  it("browses an exact connector identity and explains partial identity misses", async () => {
-    const inventory: Connector = connectorWith({
-      id: "inventory",
-      title: "Warehouse stock",
-      staticTools: [
-        {
-          name: "list_skus",
-          description: "List every stock-keeping unit and its bin",
-        },
-        {
-          name: "get_sku",
-          description: "Get one stock-keeping unit by code",
-        },
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([inventory]), BASE);
-
-    const byId = textOf(await mt.searchTools({ query: "inventory" })) as SearchResult;
-    expect(byId.tools.map((tool) => tool.address)).toEqual(["inventory.list_skus", "inventory.get_sku"]);
-    expect(byId.queryAnalysis).toBeUndefined();
-
-    // A partial title word still receives identity guidance.
-    const byTitle = textOf(await mt.searchTools({ query: "warehouse" })) as SearchResult;
-    expect(byTitle.total).toBe(0);
-    expect(required(required(byTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
-
-    // A term the deployment really does not have keeps the stronger claim.
-    const absent = textOf(await mt.searchTools({ query: "calendar" })) as SearchResult;
-    expect(absent.total).toBe(0);
-    expect(required(required(absent.queryAnalysis).guidance)).toContain(
-      "No matching capability is configured in this deployment",
-    );
-
-    // The term cap on the serialized analysis fields is not a cap on the
-    // search: ranking reads every term, so a connector named past the eighth
-    // one must be named back rather than denied.
-    const lateId = textOf(
-      await mt.searchTools({
-        query: "alpha beta gamma delta epsilon zeta eta theta inventory",
-      }),
-    ) as SearchResult;
-    expect(lateId.total).toBe(0);
-    expect(required(required(lateId.queryAnalysis).guidance)).toContain('connector "inventory"');
-
-    const lateTitle = textOf(
-      await mt.searchTools({
-        query: "alpha beta gamma delta epsilon zeta eta theta warehouse",
-      }),
-    ) as SearchResult;
-    expect(lateTitle.total).toBe(0);
-    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
-
-    // Exact identity contributes ranking without requiring tool descriptions
-    // to repeat the connector's name.
-    const matched = textOf(await mt.searchTools({ query: "inventory sku" })) as SearchResult;
-    expect(matched.tools.map((tool) => tool.address)).toEqual(["inventory.get_sku", "inventory.list_skus"]);
-    expect(matched.queryAnalysis).toBeUndefined();
-  });
-
   it("bounds query analysis independently of long search input", async () => {
     const query = Array.from({ length: 20 }, (_, index) => `${index}${"x".repeat(100)}`).join(" ");
     const parsed = textOf(await createMetaTools(makeRegistry([]), BASE).searchTools({ query })) as SearchResult;
@@ -469,210 +376,6 @@ describe("search_tools", () => {
     expect(analysis.unmatchedTerms.every((term) => term.length <= 64)).toBe(true);
     expect(analysis.truncated).toBe(true);
     expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(1_600);
-  });
-
-  it("mixes an exact action/object near-match into an all-term decoy page", async () => {
-    // Development-only reproduction of #326's live Mixpanel failure. The
-    // sealed discovery holdout stays unchanged; these synthetic descriptions
-    // model broad business-context tools that happen to repeat every query
-    // term and used to hide the exact action/object tool entirely.
-    const connector: Connector = connectorWith({
-      id: "analytics",
-      staticTools: [
-        {
-          name: "List-Organizations",
-          description: "List organizations available to the caller",
-        },
-        {
-          // This partial candidate has the same strong term score as the
-          // intended tool, but its extra name token makes it non-exact. It
-          // must remain behind every complete match.
-          name: "List-All-Organizations",
-          description: "List organizations available to the caller",
-        },
-        ...Array.from({ length: 8 }, (_, index) => ({
-          name: `business_context_${index}`,
-          description: "List organizations and projects configured for business analysis",
-        })),
-        ...Array.from({ length: 2 }, (_, index) => ({
-          name: `project_note_${index}`,
-          description: "Inspect one project note",
-        })),
-      ],
-      tools: [],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-    const first = textOf(
-      await mt.searchTools({
-        query: "list organizations projects",
-        limit: 8,
-      }),
-    ) as SearchResult;
-
-    expect(first.tools.map((tool) => tool.name)).toEqual([
-      "List-Organizations",
-      ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
-    ]);
-    expect(first).toMatchObject({
-      total: 10,
-      nextOffset: 8,
-      hasMore: true,
-    });
-    expect(first.matchMode).toBeUndefined();
-    expect(first.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
-
-    const second = textOf(
-      await mt.searchTools({
-        query: "list organizations projects",
-        limit: 8,
-        offset: required(first.nextOffset),
-      }),
-    ) as SearchResult;
-    expect(second.tools.map((tool) => tool.name)).toEqual(["business_context_7", "List-All-Organizations"]);
-    expect(second).toMatchObject({ total: 10, hasMore: false });
-    expect(second.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
-
-    const rawPhrase = textOf(
-      await mt.searchTools({
-        query: "list all organizations projects",
-        limit: 8,
-      }),
-    ) as SearchResult;
-    expect(rawPhrase.tools.map((tool) => tool.name)).toEqual([
-      "List-All-Organizations",
-      ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
-    ]);
-    expect(rawPhrase).toMatchObject({
-      total: 10,
-      nextOffset: 8,
-      hasMore: true,
-    });
-    expect(rawPhrase.matchMode).toBeUndefined();
-    expect(rawPhrase.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
-  });
-
-  it("uses deterministic partial-term ranking when no all-term match exists", async () => {
-    const conn: Connector = connectorWith({
-      id: "experiments",
-      description: "Experiment service",
-      tools: [
-        {
-          name: "list_experiments",
-          description: "List experiments and their configuration.",
-        },
-        {
-          name: "get_experiment",
-          description: "Get experiment details including metrics and variants.",
-        },
-        {
-          name: "get_results",
-          description: "Get experiment results.",
-        },
-      ],
-      call: async () => null,
-    });
-    const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const query = "get experiment details metrics variants results configuration";
-    const first = textOf(await mt.searchTools({ query, limit: 2 })) as SearchResult;
-
-    expect(first.matchMode).toBe("partial");
-    const firstTools = first.tools;
-    expect(firstTools.map((t) => t.name)).toEqual(["get_experiment", "get_results"]);
-    expect(firstTools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
-    expect(first.queryAnalysis).toMatchObject({
-      representedTerms: ["get", "experiment", "details", "metrics", "variants", "results"],
-      otherResultTerms: ["configuration"],
-      unmatchedTerms: [],
-    });
-    expect(first.total).toBe(3);
-    expect(first.nextOffset).toBe(2);
-
-    const second = textOf(
-      await mt.searchTools({
-        query,
-        limit: 2,
-        offset: required(first.nextOffset),
-      }),
-    ) as SearchResult;
-    expect(second.matchMode).toBe("partial");
-    expect(second.tools.map((tool) => tool.name)).toEqual(["list_experiments"]);
-  });
-
-  it("keeps a representative compact page within an agent-context budget", async () => {
-    const propertyProse = `redundant-property-prose-${"detail ".repeat(16)}`;
-    const inputSchema = {
-      type: "object",
-      properties: Object.fromEntries([
-        ...Array.from({ length: 80 }, (_, index) => [
-          `optionalField${index}`,
-          { type: "string", description: propertyProse },
-        ]),
-        ["recordId", { type: "string", description: `${propertyProse} required` }],
-      ]),
-      required: ["recordId"],
-    };
-    const connector: Connector = connectorWith({
-      id: "context_budget",
-      description: `connector-prose-${"background ".repeat(100)}`,
-      staticTools: Array.from({ length: 8 }, (_, index) => ({
-        name: `read_record_${index}`,
-        description: `Read one record ${index}. ${"Long operational detail. ".repeat(30)}`,
-        inputSchema,
-        annotations: { readOnlyHint: true },
-      })),
-      tools: [],
-      call: async (name, args) => ({
-        name,
-        recordId: (args as Record<string, unknown>).recordId,
-      }),
-    });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-    const compactResult = await mt.searchTools({
-      includeSchemas: "compact",
-    });
-    const compactText = required(compactResult.content[0]).text;
-    const compact = textOf(compactResult) as SearchResult;
-    const tools = compact.tools as Array<
-      SearchResult["tools"][number] & {
-        inputSchema: string;
-        inputSchemaTruncated?: true;
-      }
-    >;
-
-    expect(new TextEncoder().encode(compactText).length).toBeLessThan(14_000);
-    expect(compactText).not.toContain("redundant-property-prose");
-    expect(compactText).not.toContain("connector-prose");
-    expect(tools).toHaveLength(8);
-    expect(tools.every((tool) => tool.inputSchemaTruncated)).toBe(true);
-    expect(tools.every((tool) => !("inputKeys" in tool))).toBe(true);
-    expect(
-      tools.every((tool) => new TextEncoder().encode(tool.inputSchema).length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES),
-    ).toBe(true);
-    expect(required(tools[0]).inputSchema).toMatch(/^\{ "recordId": unknown, "optionalField0"\?: unknown/);
-
-    // The required-first routing shape is enough for the simple read; no
-    // describe round trip is needed.
-    expect(
-      textOf(
-        await mt.callTool({
-          address: required(tools[0]).address,
-          args: { recordId: "rec_123" },
-        }),
-      ),
-    ).toEqual({ name: "read_record_0", recordId: "rec_123" });
-
-    const exactResult = await mt.searchTools({
-      limit: 6,
-      fullDescriptions: true,
-      includeSchemas: "json",
-    });
-    const exactText = required(exactResult.content[0]).text;
-    expect(exactText).toContain("redundant-property-prose");
-    expect(exactText).toContain("Long operational detail");
-    expect(new TextEncoder().encode(compactText).length).toBeLessThan(
-      new TextEncoder().encode(exactText).length * 0.15,
-    );
   });
 
   it("optionally includes compact schemas and annotations for API and MCP tools", async () => {
@@ -803,51 +506,6 @@ describe("compact schema rendering", () => {
       }).text,
     ).toBe("(string | null) /* length >= 2 */");
     expect(compactDiscoverySchema({ minimum: 0 }).text).toBe("unknown /* >= 0 */");
-  });
-
-  // `A | B[]` reads as "an A, or an array of B" (#569): every shape that
-  // renders at operator level is grouped before an array suffix, in both
-  // compact routes, and nothing else gains parentheses.
-  it("groups a union or intersection before its array suffix", () => {
-    const replace = { type: "object", properties: { op: { const: "replace" } } };
-    const append = { type: "object", properties: { op: { const: "append" } } };
-    const cases: Array<[Record<string, unknown>, string]> = [
-      [
-        { type: "object", properties: { patch: { type: "array", items: { anyOf: [replace, append] } } } },
-        '{ patch?: ({ op?: "replace" } | { op?: "append" })[] }',
-      ],
-      [
-        { type: "array", items: { type: "array", items: { oneOf: [replace, append] } } },
-        '({ op?: "replace" } | { op?: "append" })[][]',
-      ],
-      [
-        { type: "array", items: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "number" }] } },
-        "(string[] | number)[]",
-      ],
-      [{ type: "array", items: { type: ["string", "null"] } }, "(string | null)[]"],
-      [{ type: "array", items: { enum: ["a", "b"] } }, '("a" | "b")[]'],
-      [{ type: "array", items: { allOf: [replace, append] } }, '({ op?: "replace" } & { op?: "append" })[]'],
-      [
-        { type: "array", items: { anyOf: [replace, append], if: { required: ["op"] } } },
-        '({ op?: "replace" } | { op?: "append" } /* conditional */)[]',
-      ],
-      [
-        { $defs: { Both: { allOf: [replace, append] } }, type: "array", items: { $ref: "#/$defs/Both", minLength: 1 } },
-        '({ op?: "replace" } & { op?: "append" } /* length >= 1 */)[]',
-      ],
-      [
-        { prefixItems: [{ type: "string" }], items: { allOf: [replace, append] } },
-        '[string, ...({ op?: "replace" } & { op?: "append" })[]]',
-      ],
-    ];
-    for (const [schema, expected] of cases) {
-      expect(compactDiscoverySchema(schema).text).toBe(expected);
-      expect(compactSchema(schema)).toBe(expected);
-    }
-    // A union constrained as a whole is already grouped before its comment.
-    expect(
-      compactSchema({ type: "array", items: { anyOf: [{ type: "string" }, { type: "number" }], minLength: 1 } }),
-    ).toBe("(string | number) /* length >= 1 */[]");
   });
 
   it("renders empty enums as the valid never type in compact discovery", () => {

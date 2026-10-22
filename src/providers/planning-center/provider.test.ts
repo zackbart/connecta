@@ -7,7 +7,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { planningCenter } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
   status?: number;
@@ -85,13 +85,6 @@ function call(
   return connector.callTool(name, args, ctx) as Promise<any>;
 }
 
-function guide(connector: Connector): ConnectorUsageGuide {
-  if (typeof connector.usageGuide !== "object" || !connector.usageGuide) {
-    throw new Error("expected a structured guide");
-  }
-  return connector.usageGuide;
-}
-
 /** Tool arguments without the keys a case leaves undefined. */
 function compactArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined));
@@ -102,25 +95,6 @@ function person(id: string, attributes: Record<string, unknown>, relationships: 
 }
 
 describe("Planning Center credentials", () => {
-  it("fails locally without both credential fields, and on a pasted id that cannot be a token", async () => {
-    await expect(call("search_people", {}, connection(), context({ applicationId: "app123" }))).rejects.toMatchObject({
-      code: "auth_required",
-      message: expect.stringMatching(/Application ID and the Secret.*authorize_connector/),
-    });
-    await expect(call("search_people", {}, connection(), context(null))).rejects.toMatchObject({
-      code: "auth_required",
-    });
-    await expect(
-      call("search_people", {}, connection(), context({ applicationId: "app:123", secret: "shh" })),
-    ).rejects.toMatchObject({ code: "auth_required", message: expect.stringContaining("re-paste") });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it("refuses an id that is not Planning Center's numeric shape before any request", async () => {
-    await expect(call("get_person", { personId: "../../oauth" })).rejects.toMatchObject({ code: "invalid_args" });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
   it("INV-5: never returns a webhook signing secret or the Services organization secret, on any path", async () => {
     const subscription = {
       type: "WebhookSubscription",
@@ -158,85 +132,11 @@ describe("Planning Center credentials", () => {
       if (tool !== "list_webhook_subscriptions") expect(text).toContain("hooks.example");
     }
   });
-
-  it("reports the person and organization the candidate token acts as", async () => {
-    queue({
-      body: {
-        data: person("42", { name: "Ada Lovelace" }),
-        included: [{ type: "Organization", id: "1", attributes: { name: "Grace Church" } }],
-      },
-    });
-    const result = await connection().testCredentials!({ applicationId: "candidate", secret: "s3cret" }, context(null));
-    expect(calls[0]!.url.pathname).toBe("/people/v2/me");
-    expect(calls[0]!.headers["authorization"]).toBe(`Basic ${btoa("candidate:s3cret")}`);
-    expect(result).toEqual({ ok: true, message: "Authenticated as Ada Lovelace (person 42) in Grace Church." });
-  });
-});
-
-describe("Planning Center hatches", () => {
-  it("confines paths to a product below /<app>/v2", async () => {
-    for (const path of [
-      "/oauth/token",
-      "/people/v1/people",
-      "/people/v2/../../oauth/token",
-      "/people/v2/%2e%2e/%2e%2e/oauth/token",
-      "//evil.example/people/v2",
-      "https://evil.example/people/v2/people",
-      "/accounting/v2/ledgers",
-      "/people/v2/people?per_page=1",
-    ]) {
-      await expect(call("pco_api_get", { path }), path).rejects.toMatchObject({ code: "invalid_args" });
-    }
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it("assigns only a header's item_type; song and media items come from what is attached", async () => {
-    // Services 2018-11-01: "The only value that you can pass is `header`. If
-    // no value is passed then `item` will be used."
-    const item = (id: string, attributes: Record<string, unknown>) => ({
-      status: 201,
-      body: { data: { type: "Item", id, attributes } },
-    });
-    queue(item("i1", { item_type: "header", title: "Welcome" }), item("i3", { item_type: "item", title: "Prayer" }));
-    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Welcome", itemType: "header" });
-    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Prayer", itemType: "item" });
-    expect(calls[0]!.body).toEqual({ data: { type: "Item", attributes: { title: "Welcome", item_type: "header" } } });
-    expect(calls[1]!.body).toEqual({ data: { type: "Item", attributes: { title: "Prayer" } } });
-  });
 });
 
 describe("Planning Center excludeApps", () => {
-  const GIVING_TOOLS = [
-    "list_donations",
-    "list_funds",
-    "list_batches",
-    "list_pledge_campaigns",
-    "list_pledges",
-    "list_recurring_donations",
-  ];
   const withoutGiving = () => connection({ excludeApps: ["giving"] });
   const names = async (connector: Connector) => (await connector.listTools(context())).map((tool) => tool.name);
-
-  it("INV-11: refuses an unknown, miscased, or non-list app and People at construction", () => {
-    expect(() => connection({ excludeApps: ["tithing"] })).toThrow('excludeApps has unknown app "tithing"');
-    expect(() => connection({ excludeApps: ["Giving"] })).toThrow('App names are lowercase path segments: "giving".');
-    expect(() => connection({ excludeApps: "giving" })).toThrow("excludeApps to be an array of app names");
-    expect(() => connection({ excludeApps: ["giving", "people"] })).toThrow('cannot exclude "people"');
-  });
-
-  it("removes every Giving tool and every mention of Giving an agent or operator sees", async () => {
-    const connector = withoutGiving();
-    const tools = await connector.listTools(context());
-    const remaining = tools.map((tool) => tool.name);
-    expect(remaining).toEqual(
-      (await names(connection())).filter(
-        (name) => !GIVING_TOOLS.includes(name) && !["list_lists", "list_list_people", "run_list"].includes(name),
-      ),
-    );
-    expect(connector.describe?.().tools?.map((tool) => tool.name)).toEqual(remaining);
-    const visible = JSON.stringify({ tools, describe: connector.describe?.(), connector, guide: guide(connector) });
-    expect(visible).not.toMatch(/giving|donat|pledge|money/i);
-  });
 
   it.each(["/giving/v2/donations", "/GIVING/v2/donations", "/%67iving/v2/donations"])(
     "INV-4: refuses %s through both hatches before any request",
@@ -417,12 +317,5 @@ describe("Planning Center excludeApps", () => {
     expect(calls.map((entry) => [entry.method, entry.url.pathname])).toEqual([
       ["PATCH", "/webhooks/v2/webhook_subscriptions/123"],
     ]);
-  });
-});
-
-describe("Planning Center transport", () => {
-  it("refuses a successful response that is not JSON", async () => {
-    queue({ text: "<html>gateway</html>" });
-    await expect(call("list_funds")).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
   });
 });

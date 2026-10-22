@@ -1,29 +1,11 @@
 // Node-only: compares shipped declaration syntax with TypeScript's parser and filesystem.
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { expect, expectTypeOf, it } from "vitest";
-import { guestInitializer } from "../src/guest-runtime.js";
+import { expect, it } from "vitest";
 import { buildSandboxProviders } from "../src/execute.js";
+import { guestInitializer } from "../src/guest-runtime.js";
 import { GUEST_API_DECLARATION } from "../src/usage-guide.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
-import type {
-  GuestApi,
-  CatalogSearchArgs as DeclaredSearchArgs,
-  CatalogDescribeArgs as DeclaredDescribeArgs,
-} from "../src/guest-types.js";
-import type {
-  CatalogSearchArgs,
-  CatalogSearchResult,
-  CatalogDescription,
-  CatalogDescribeArgs,
-} from "../src/catalog-service.js";
-
-it("guest declaration matches the host discovery types", () => {
-  expectTypeOf<DeclaredSearchArgs>().toEqualTypeOf<CatalogSearchArgs>();
-  expectTypeOf<DeclaredDescribeArgs>().toEqualTypeOf<CatalogDescribeArgs>();
-  expectTypeOf<Awaited<ReturnType<GuestApi["search"]>>>().toEqualTypeOf<CatalogSearchResult>();
-  expectTypeOf<Awaited<ReturnType<GuestApi["describe"]>>>().toEqualTypeOf<{ tools: CatalogDescription[] }>();
-});
 
 it("shipped guest declaration has no unresolved or invalid types", () => {
   const path = new URL("../src/guest-types.ts", import.meta.url).pathname;

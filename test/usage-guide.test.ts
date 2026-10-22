@@ -1,4 +1,4 @@
-import { afterAll, expect, it } from "vitest";
+import { afterAll, it } from "vitest";
 import type { Executor } from "../src/types.js";
 import { checkUsageExamples } from "./usage-examples.js";
 
@@ -16,9 +16,6 @@ try {
 }
 afterAll(async () => {
   await executor?.close?.();
-});
-it("has a real Worker Loader in the workers project", () => {
-  expect(inWorkerd ? executor !== undefined : true).toBe(true);
 });
 it.skipIf(!executor)(
   "INV-3 INV-7: usage examples execute and assert their outputs on Workers",

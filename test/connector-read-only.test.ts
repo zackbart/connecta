@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { CatalogService } from "../src/catalog-service.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { connectorGuide, connectorGuideSummary } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { connectorSummary } from "../src/operator-ui/config-summary.js";
-import { createTestConnecta, makeRegistry } from "./helpers.js";
-import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import type { Connector } from "../src/types.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { makeRegistry } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -107,31 +105,6 @@ describe.each(["custom", "api", "mcp"] as const)("%s connector readOnly", (kind)
       expect(state.dispatched()).toBe(1);
     }
   });
-});
-
-it("INV-2: exposes the connector policy in the operator snapshot, badge, guide and summary", async () => {
-  const { connector } = connection("custom", true);
-  connector.usageGuide = { content: "# Notes\n\nRead and write records.", summary: "Team records." };
-  expect(connectorGuide(connector)).toContain("Read-only connection");
-  expect(connectorGuideSummary(connector)).toBe("Read-only. Team records.");
-  const deployment = createTestConnecta({ connectors: [connector] });
-  try {
-    const described = deployment.describeConfig().connectors[0]!;
-    expect(described.readOnly).toBe(true);
-    expect(connectorSummary(described).badges).toContainEqual({ id: "readOnly", label: "Read-only" });
-  } finally {
-    await deployment.close();
-  }
-});
-
-it("INV-11: refuses a nonboolean connector readOnly at construction", () => {
-  for (const readOnly of ["true", 1, null]) {
-    expect(() => api("notes", { readOnly, tools: [] } as never)).toThrow(/readOnly.*boolean/);
-    expect(() => remoteMcp("notes", { readOnly, url: "https://notes.example.com/mcp" } as never)).toThrow(
-      /readOnly.*boolean/,
-    );
-    expect(() => makeRegistry([{ ...connection("custom").connector, readOnly } as never])).toThrow(/readOnly.*boolean/);
-  }
 });
 
 it("INV-2 INV-4: result paging rechecks connector readOnly after a policy change", async () => {

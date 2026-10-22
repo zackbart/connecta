@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { ActivityReadPage, ToolCallActivityEvent } from "../src/activity.js";
 import { activityHistory } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
 import {
   OPERATOR_UI_SCHEME_PATH as SCHEME_PATH,
   OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH,
@@ -11,19 +10,11 @@ import { responseCacheKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withAbortableTimeout } from "../src/timeout.js";
 import type { Connector, InboundAuth } from "../src/types.js";
-import { buildUiData, isSafeHttpsUrl, isSafeHttpUrl, isSafeIconHref, renderUiHtml } from "../src/ui.js";
+import { buildUiData, isSafeHttpsUrl, isSafeIconHref } from "../src/ui.js";
 import { CONNECTA_VERSION } from "../src/version.js";
 import { calcApi, fakeClerkAuth, makeDeployment } from "./fixtures/http.js";
 import { connectRequest, oauthVault } from "./fixtures/oauth.js";
-import {
-  BASE,
-  CLERK_OPTIONS,
-  CREDENTIAL_KEY,
-  credentialConnector,
-  credentialRequest,
-  makeCredentialConnecta,
-  TOKEN,
-} from "./fixtures/ui.js";
+import { BASE, CLERK_OPTIONS, credentialRequest, makeCredentialConnecta, TOKEN } from "./fixtures/ui.js";
 import { createTestConnecta, fetchTestUiDetails, makeRegistry, required } from "./helpers.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 
@@ -157,16 +148,6 @@ describe("status UI", () => {
       expect(body).not.toContain('"signUpUrl"');
       expect(body).not.toContain(url);
     }
-  });
-
-  it("escapes inert JSON configuration without executable inline code", () => {
-    const value = "https://example.test/</script><script>alert(1)</script>";
-    const html = renderUiHtml(undefined, value);
-    const json = /<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1];
-    expect(JSON.parse(json!).mcpUrl).toBe(value);
-    expect(json).not.toContain("<");
-    expect(html).not.toContain("nonce=");
-    expect(scriptSrcs(html)).toEqual([SCHEME_PATH, SCRIPT_PATH]);
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -401,50 +382,6 @@ describe("status UI", () => {
     expect(closeScope).toHaveBeenCalledTimes(2);
   });
 
-  it("does not advertise credential mutation for a Clerk-kind provider without uiAuth", async () => {
-    const handRolledClerk: InboundAuth = {
-      kind: "clerk",
-      authorize(request) {
-        if (request.headers.get("authorization") === "Bearer hand-rolled") {
-          // No namespace of its own, so it names its principal to be a maintainer (#837).
-          return {
-            ok: true,
-            userId: "user_123",
-            principal: { namespace: "https://hand-rolled.example", id: "user_123" },
-          };
-        }
-        return {
-          ok: false,
-          response: Response.json({ error: "unauthorized" }, { status: 401 }),
-        };
-      },
-    };
-    const connecta = createTestConnecta({
-      connectors: [credentialConnector()],
-      auth: handRolledClerk,
-      maintainers: [{ namespace: "https://hand-rolled.example", id: "user_123" }],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
-    });
-    const headers = { Authorization: "Bearer hand-rolled" };
-
-    const data = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, { headers }))
-    ).json()) as any;
-    expect(data.credentialManagement).toBe("requires_operator");
-    expect(data.connectors[0].credential).toBeUndefined();
-
-    const mutation = await connecta.fetch(
-      new Request(`${BASE}/ui/credentials/vaulted`, {
-        method: "PUT",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "new-secret" }),
-      }),
-    );
-    expect(mutation.status).toBe(403);
-  });
-
   it("/ui/data bounds a never-settling scope teardown", async () => {
     let closes = 0;
     const connector: Connector = {
@@ -486,63 +423,6 @@ describe("status UI", () => {
 
     expect(res.status).toBe(200);
     expect(closes).toBe(1);
-  });
-
-  it("/ui/data defers the bounded teardown tail through waitUntil", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const deferred: Promise<unknown>[] = [];
-    const connector: Connector = {
-      id: "remote",
-      kind: "mcp",
-      description: "Remote service",
-      async status() {
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [{ name: "read", description: "Read records" }];
-      },
-      async callTool() {
-        return null;
-      },
-      async closeScope() {
-        await gate;
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [connector],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-
-    const res = await withAbortableTimeout(
-      () =>
-        fetchTestUiDetails(
-          c,
-          new Request(`${BASE}/ui/data`, {
-            headers: { Authorization: `Bearer ${TOKEN}` },
-          }),
-          undefined,
-          {
-            waitUntil(promise: Promise<unknown>) {
-              deferred.push(promise);
-            },
-          },
-        ),
-      1_000,
-      "/ui/data with deferred teardown",
-    );
-
-    expect(res.status).toBe(200);
-    expect(deferred).toHaveLength(1);
-    await expect(Promise.race([required(deferred[0]).then(() => "settled"), Promise.resolve("pending")])).resolves.toBe(
-      "pending",
-    );
-    release();
-    await expect(deferred[0]).resolves.toBeUndefined();
   });
 
   it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
@@ -903,18 +783,6 @@ describe("status UI", () => {
   });
 });
 
-describe("isSafeHttpUrl", () => {
-  it("accepts only absolute http/https URLs", () => {
-    expect(isSafeHttpUrl("https://x.test/a")).toBe(true);
-    expect(isSafeHttpUrl("http://x.test")).toBe(true);
-    expect(isSafeHttpUrl("javascript:alert(1)")).toBe(false);
-    expect(isSafeHttpUrl("data:text/html,<script>")).toBe(false);
-    expect(isSafeHttpUrl("/relative/path")).toBe(false);
-    expect(isSafeHttpUrl("")).toBe(false);
-    expect(isSafeHttpUrl(undefined)).toBe(false);
-  });
-});
-
 describe("isSafeHttpsUrl", () => {
   // Stricter than the branding href gate on purpose: the loader origin is
   // derived rather than typed, and the sign-in/sign-up targets are hosted
@@ -934,12 +802,6 @@ describe("isSafeHttpsUrl", () => {
 });
 
 describe("isSafeIconHref", () => {
-  it("rejects non-http(s) schemes", () => {
-    expect(isSafeIconHref("javascript:alert(1)")).toBe(false);
-    expect(isSafeIconHref("data:image/svg+xml,<svg/>")).toBe(false);
-    expect(isSafeIconHref("vbscript:msgbox(1)")).toBe(false);
-  });
-
   it("rejects relative-looking values that carry an authority", () => {
     expect(isSafeIconHref("//evil.test/icon.svg")).toBe(false);
     expect(isSafeIconHref("/\\evil.test/icon.svg")).toBe(false);

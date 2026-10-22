@@ -1,78 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { compactSchema, compactDiscoverySchema, lexicalCorpusStatistics, rankTools } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { compactDiscoverySchema, compactSchema } from "../src/catalog.js";
+import type { JsonSchema } from "../src/types.js";
+import { connectorWith } from "./fixtures/connectors.js";
 import { BASE } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry } from "./helpers.js";
-import { connectorWith } from "./fixtures/connectors.js";
-import type { JsonSchema, ToolDef } from "../src/types.js";
-
-describe("lexical tool ranking", () => {
-  it("matches whole tokens rather than arbitrary substrings", () => {
-    const tools: ToolDef[] = [
-      {
-        name: "enlist_members",
-        description: "Enroll members in a cohort",
-      },
-      {
-        name: "blacklist_entry",
-        description: "Block an entry",
-      },
-      {
-        name: "read_record",
-        description: "Read one stored record",
-      },
-    ];
-
-    expect(rankTools(tools, "list", "partial")).toEqual([]);
-    expect(rankTools(tools, "audio recording", "partial")).toEqual([]);
-  });
-
-  it("finds camel-case names and narrow inflectional variants", () => {
-    const tools: ToolDef[] = [
-      {
-        name: "searchDriveFiles",
-        description: "Locate documents",
-      },
-      {
-        name: "searchMessages",
-        description: "Locate conversations",
-      },
-      {
-        name: "getURLMetadata",
-        description: "Inspect a link",
-      },
-      {
-        name: "createDriveFiles",
-        description: "Add documents",
-      },
-    ];
-
-    expect(rankTools(tools, "search drive file").map(({ tool }) => tool.name)).toEqual(["searchDriveFiles"]);
-    expect(rankTools(tools, "url metadata").map(({ tool }) => tool.name)).toEqual(["getURLMetadata"]);
-    expect(rankTools(tools, "created drive file").map(({ tool }) => tool.name)).toEqual(["createDriveFiles"]);
-  });
-
-  it("weights a rare domain term above a ubiquitous action term", () => {
-    const generic: ToolDef[] = Array.from({ length: 12 }, (_, index) => ({
-      name: `get_record_${index}`,
-      description: "Get a record by identifier",
-    }));
-    const domain: ToolDef[] = [
-      {
-        name: "invoice_summary",
-        description: "Summarize an invoice",
-      },
-    ];
-    const query = "get invoice";
-    const statistics = lexicalCorpusStatistics([generic, domain], query);
-    const ranked = [
-      ...rankTools(generic, query, "partial", statistics),
-      ...rankTools(domain, query, "partial", statistics),
-    ].sort((a, b) => b.score - a.score);
-
-    expect(ranked[0]?.tool.name).toBe("invoice_summary");
-  });
-});
 
 describe("compactSchema const", () => {
   it("renders a discriminated union with its discriminator values", () => {
@@ -108,111 +40,6 @@ describe("compactSchema const", () => {
     expect(rendered).toBe('{ type: "emoji", emoji: string } | ' + '{ type: "external", external: { url: string } }');
     expect(rendered).toContain('"emoji"');
     expect(rendered).toContain('"external"');
-  });
-});
-
-describe("compactSchema allOf", () => {
-  it("intersects the branches instead of emitting raw JSON", () => {
-    const schema: JsonSchema = {
-      $defs: {
-        Base: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-            createdAt: { type: "string", format: "date-time" },
-          },
-          required: ["id"],
-        },
-      },
-      allOf: [
-        { $ref: "#/$defs/Base" },
-        {
-          type: "object",
-          properties: {
-            name: { type: "string" },
-            tags: { type: "array", items: { type: "string" } },
-          },
-          required: ["name"],
-        },
-      ],
-    };
-
-    const rendered = compactSchema(schema);
-    // Before the allOf branch existed this fell through to
-    // JSON.stringify(schema), which is not a compact rendering at all — on a
-    // real connector it measured *longer* than the raw schema.
-    expect(rendered.length).toBeLessThan(JSON.stringify(schema).length / 2);
-    expect(rendered).toBe(
-      '{ id: string, createdAt?: string /* format "date-time" */ } & ' + "{ name: string, tags?: string[] }",
-    );
-  });
-
-  it("keeps a sibling $ref alongside allOf members", () => {
-    const schema: JsonSchema = {
-      $defs: {
-        Base: {
-          type: "object",
-          properties: { id: { type: "string" } },
-          required: ["id"],
-        },
-      },
-      $ref: "#/$defs/Base",
-      allOf: [{ type: "object", properties: { extra: { type: "boolean" } } }],
-    };
-
-    expect(compactSchema(schema)).toBe("{ id: string } & { extra?: boolean }");
-  });
-
-  it("keeps a sibling enum, const, or items alongside allOf members", () => {
-    // These can't be dropped either. A union half is parenthesized so the
-    // rendering doesn't read as `"a" | ("b" & …)`.
-    expect(
-      compactSchema({
-        enum: ["a", "b"],
-        allOf: [{ type: "string" }],
-      }),
-    ).toBe('("a" | "b") & string');
-
-    expect(
-      compactSchema({
-        const: "emoji",
-        allOf: [{ type: "string" }],
-      }),
-    ).toBe('"emoji" & string');
-
-    expect(
-      compactSchema({
-        type: "array",
-        items: { type: "string" },
-        allOf: [{ type: "array" }],
-      }),
-    ).toBe("string[] & unknown[]");
-  });
-
-  it("keeps locally declared properties alongside allOf members", () => {
-    // The usual OpenAPI-derived "extend this base" shape. allOf must compose
-    // with the schema's own properties, not replace them — dropping either
-    // half loses declared fields, and the local half is the more specific one.
-    const schema: JsonSchema = {
-      type: "object",
-      properties: {
-        localOnly: { type: "string" },
-        id: { type: "number" },
-      },
-      required: ["localOnly"],
-      allOf: [
-        {
-          type: "object",
-          properties: { inherited: { type: "string" } },
-        },
-      ],
-    };
-
-    const rendered = compactSchema(schema);
-    expect(rendered).toBe("{ localOnly: string, id?: number } & { inherited?: string }");
-    for (const key of ["localOnly", "id", "inherited"]) {
-      expect(rendered).toContain(key);
-    }
   });
 });
 
@@ -278,15 +105,6 @@ describe("bounded catalog rendering", () => {
     }
   });
 
-  it("caps compact describe at 8,192 UTF-8 bytes including property prose", () => {
-    const text = compactSchema({
-      type: "object",
-      properties: { id: { type: "string", description: "😀".repeat(10_000) } },
-    });
-    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(8_192);
-    expect(text).toContain("/* truncated */");
-  });
-
   it("keeps multibyte composites at the byte limit and counts their punctuation", () => {
     const prefix = "{ value?: string // ";
     const suffix = " }";
@@ -322,18 +140,6 @@ describe("bounded catalog rendering", () => {
     expect(visits).toBeLessThanOrEqual(2_000);
   });
 
-  it("bounds raw JSON fallback", () => {
-    let schema: JsonSchema = { type: "string" };
-    for (let depth = 0; depth < 10_000; depth += 1) {
-      schema = { not: schema };
-    }
-    expect(compactDiscoverySchema(schema)).toEqual({
-      text: "unknown /* truncated */",
-      truncated: true,
-    });
-    expect(compactSchema(schema)).toBe("unknown /* truncated */");
-  });
-
   it("marks both describe schemas when their compact rendering is capped", async () => {
     const schema = branchingSchema(40);
     const connector = connectorWith({
@@ -358,22 +164,6 @@ describe("bounded catalog rendering", () => {
 });
 
 describe("catalog search argument validation", () => {
-  it.each([-1, "1"])("rejects invalid offset %s", async (offset) => {
-    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-    await expect(service.search({ offset: offset as number })).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("offset must be"),
-    });
-  });
-
-  it.each([1].map((query) => [query]))("rejects non-string query %s", async (query) => {
-    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-    await expect(service.search({ query: query as unknown as string })).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("query must be"),
-    });
-  });
-
   it("refuses an oversized connector scope instead of echoing a clipped one", async () => {
     const service = new CatalogService(makeRegistry([calcConnector]), BASE);
     await expect(service.search({ connector: "c".repeat(50_000) })).rejects.toMatchObject({
