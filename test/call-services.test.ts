@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect";
+import { Context } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { chargeConnectorCall } from "../src/call-admission-context.js";
@@ -31,7 +31,6 @@ import {
 } from "../src/runtime/call.js";
 import { callEntry } from "../src/runtime/call-entry.js";
 import { runEdge } from "../src/runtime/run.js";
-import { duringCall, fromConnectorContext } from "../src/http/services.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { makeRegistry, required } from "./helpers.js";
@@ -99,7 +98,10 @@ describe("live call services (B.1)", () => {
       const registry = makeRegistry([fixture(async () => ({}))]);
       const operation = registry.contextFor("crm", BASE, scope);
       lease = callFromContext(operation, "read", { credentials: paused, charge: paused });
-      view = contextView(lease, { ...operation, credential: { get: async () => null, getAll: async () => null } });
+      view = contextView(
+        lease,
+        deriveContext(operation, { credential: { get: async () => null, getAll: async () => null } }),
+      );
       const credentials = view.credential!.getAll().catch((error: unknown) => error);
       const budget = chargeConnectorCall(view).catch((error: unknown) => error);
       expect(seen).toHaveLength(2);
@@ -107,40 +109,6 @@ describe("live call services (B.1)", () => {
       for (const result of await Promise.all([credentials, budget]))
         expect(result).toMatchObject({ code: "connector_call_failed" });
       expect(seen.every((signal) => signal.aborted)).toBe(true);
-    },
-  );
-
-  it.each(["call", "request"] as const)(
-    "INV-7: closing the %s aborts paused grant renewal without releasing it or updating state",
-    WORKERS,
-    async (boundary) => {
-      const scope = {};
-      let kept!: CallLease;
-      let changed = false;
-      let signal!: AbortSignal;
-      const registry = makeRegistry([
-        fixture(async (ctx) => {
-          kept = fromConnectorContext(ctx, "read");
-          signal = Context.get(kept.services, Signal)!;
-          const renewal = duringCall(
-            Effect.tryPromise({ try: () => new Promise<never>(() => {}), catch: (error) => error }),
-          ).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                changed = true;
-              }),
-            ),
-            Effect.provideContext(kept.services),
-          );
-          return await runEdge(renewal);
-        }),
-      ]);
-      const pending = createMetaTools(registry, BASE, { requestScope: scope }).callTool({ address: "crm.run" });
-      await vi.waitFor(() => expect(kept).toBeDefined());
-      (boundary === "call" ? kept : openRequest(scope)).close();
-      expect((await pending).isError).toBe(true);
-      expect(signal.aborted).toBe(true);
-      expect(changed).toBe(false);
     },
   );
 

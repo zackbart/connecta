@@ -171,14 +171,35 @@ export function openCall(inputs: CallInputs): CallLease {
     (signal): signal is AbortSignal => signal !== undefined,
   );
   const controller = new AbortController();
+  const detachParents: Array<() => void> = [];
+  const failures: unknown[] = [];
+  const attempt = (step: () => void) => {
+    try {
+      step();
+    } catch (failure) {
+      failures.push(failure);
+    }
+  };
+  // Revocation never throws, including when reached by a parent's abort
+  // listener. Report detach failures at the next explicit close, once every
+  // capability and listener is revoked. Abort before touching any facade.
+  const revoke = (reason: unknown) => {
+    if (!open) return;
+    open = false;
+    attempt(() => controller.abort(reason));
+    for (const detach of detachParents.splice(0)) attempt(detach);
+  };
   // Forward structurally rather than passing a caller's signal to a native
   // brand check: adapters can supply a signal facade owned by their request.
-  const detachParents = parents.map((signal) => {
-    const abort = () => controller.abort(signal.reason);
+  for (const signal of parents) {
+    if (!open) break;
+    const abort = () => revoke(signal.reason);
     if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
-    return () => signal.removeEventListener("abort", abort);
-  });
+    else {
+      detachParents.push(() => signal.removeEventListener("abort", abort));
+      signal.addEventListener("abort", abort, { once: true });
+    }
+  }
   // Closure settles the Effect immediately and interrupts its Promise bridge.
   // Inputs receive that cancellation too, so their owned I/O can be aborted.
   const live = <A>(
@@ -255,10 +276,8 @@ export function openCall(inputs: CallInputs): CallLease {
     },
     closed: () => !open || controller.signal.aborted,
     close: () => {
-      if (!open) return;
-      open = false;
-      for (const detach of detachParents) detach();
-      controller.abort(ended());
+      revoke(ended());
+      if (failures.length) throw new AggregateError(failures.splice(0), "Closing the call: signal cleanup failed.");
     },
   };
   return lease;
@@ -306,11 +325,16 @@ export function viewClosed(view: ConnectorContext): boolean {
   const entry = views.get(view);
   return entry !== undefined && (!requestOf(entry.request).open || entry.call?.closed() === true);
 }
+/** Request revocation is independent of call authority, including on an unregistered copy. */
+export function requestClosed(view: ConnectorContext): boolean {
+  const scope = views.get(view)?.request ?? view.requestScope ?? view;
+  return requests.get(scope)?.open === false;
+}
 export function setViewService<I, S>(view: ConnectorContext, key: Context.Key<I, S>, value: S): void {
   const entry = ensureOperation(view);
   if (requestOf(entry.request).open) entry.services = Context.add(entry.services, key, value);
 }
-function ensureOperation(base: ConnectorContext): Entry {
+function ensureOperation(base: ConnectorContext, explicitOperation = false): Entry {
   const existing = views.get(base);
   if (existing) {
     // Custom contexts can acquire an explicit requestScope after their caller
@@ -333,6 +357,10 @@ function ensureOperation(base: ConnectorContext): Entry {
     }
     return existing;
   }
+  // A copied view has no authority. Request membership is evidence only that
+  // authority is required, never a way to recover the original call's state.
+  // Registry operations and anonymous probes are constructed explicitly.
+  if (!explicitOperation && callScopeKnown(base)) throw ended();
   const request = base.requestScope ?? base;
   const secrets = new SentSecrets();
   const all = sentSecretsForRequest(request);
@@ -348,7 +376,8 @@ function ensureOperation(base: ConnectorContext): Entry {
 }
 export function operationView(base: ConnectorContext, caller: ConnectorCaller | undefined): ConnectorContext {
   const view = { ...base, requestScope: base.requestScope ?? {} };
-  setViewService(view, Caller, caller);
+  const entry = ensureOperation(view, true);
+  if (requestOf(entry.request).open) entry.services = Context.add(entry.services, Caller, caller);
   return view;
 }
 export function deriveView<T extends ConnectorContext = ConnectorContext>(
@@ -461,9 +490,6 @@ export function openRequest(scope: object): {
     close: () => {
       if (!state.open) return;
       state.open = false;
-      for (const call of state.calls) call.close();
-      state.calls.clear();
-      state.entries.clear();
       const failures: unknown[] = [];
       const attempt = (step: () => void) => {
         try {
@@ -472,6 +498,15 @@ export function openRequest(scope: object): {
           failures.push(failure);
         }
       };
+      for (const call of state.calls) {
+        try {
+          call.close();
+        } catch (failure) {
+          failures.push(...(failure instanceof AggregateError ? failure.errors : [failure]));
+        }
+      }
+      state.calls.clear();
+      state.entries.clear();
       attempt(() => state.controller.abort(new Error("The request ended.")));
       for (const finalizer of state.finalizers.splice(0).reverse()) attempt(finalizer);
       if (failures.length)

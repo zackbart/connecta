@@ -48,7 +48,8 @@ import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialRe
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
-import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
+import type { ConnectorCaller } from "./connector-caller.js";
+import { operationView } from "./runtime/call.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
 import { workspaceSubjectOf } from "./workspace-subject.js";
 import { runEdge } from "./runtime/run.js";
@@ -728,17 +729,19 @@ export class Registry implements RegistryView {
         getAll: readValues,
       };
     }
-    const context: ConnectorContext = {
-      storage: namespaced(this.opts.storage, scopes.connector(id)),
-      logger: this.opts.logger,
-      baseUrl,
-      ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
-      ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
-      ...(credentialAccess ? { credential: credentialAccess } : {}),
-      requestScope,
-      ...callOptions,
-    };
-    attachCaller(context, scope?.caller);
+    const context = operationView(
+      {
+        storage: namespaced(this.opts.storage, scopes.connector(id)),
+        logger: this.opts.logger,
+        baseUrl,
+        ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
+        ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
+        ...(credentialAccess ? { credential: credentialAccess } : {}),
+        requestScope,
+        ...callOptions,
+      },
+      scope?.caller,
+    );
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),
