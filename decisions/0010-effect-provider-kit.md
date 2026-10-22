@@ -1147,10 +1147,19 @@ which answers are refusals. The kit keeps no verdict table:
    or (b), the one request the logical call sent was served a refusal that
    passes `servedRefusal`. Anything else after dispatch is unknown and never
    retryable:
-   - a 2xx followed by an unreadable body or an in-band refusal;
-   - a 408, a 5xx, a redirect or an oversized body;
+   - a non-refusing answer (including 2xx) followed by an oversized or
+     unreadable body, or a 2xx followed by an in-band refusal;
+   - a 408, a 5xx or a redirect;
    - a transport failure or the caller's abort;
    - a second write step, or an auxiliary failure after the write.
+
+   A served 4xx refusal stays known regardless of body size: its provenance
+   comes from the resource server's status, not from reading the body. A
+   mapped `unavailable` or timeout still fails `servedRefusal`. The 401
+   exception follows Q8 below, retaining its unknown outcome and handoff
+   regardless of body size until renewal succeeds; renewal removes the
+   handoff, never the unknown outcome. The shared transport parity table
+   proves the oversized-400 and oversized-2xx write outcomes on both paths.
 
    The core keeps the failure's code as a diagnostic; an `unavailable` that
    is no timeout becomes `connector_call_failed` with the core's
