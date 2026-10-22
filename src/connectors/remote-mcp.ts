@@ -118,7 +118,7 @@ import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { classifyTool, sourceClassification } from "../tool-safety.js";
+import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
   recordProviderResponse,
@@ -131,6 +131,7 @@ import {
   type ProviderRequest,
 } from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
+import { recordRequestField } from "../provider-call-facts.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
@@ -259,8 +260,9 @@ export interface RemoteMcpOptions {
   auth?: RemoteMcpAuth;
   /**
    * Non-secret resource context headers. Never credentials: use auth for those.
-   * Auth-owned, HTTP transport/session, OAuth client-auth and mirrored tool
-   * headers are reserved. Cannot be combined with inline headers auth.
+   * Auth-owned, HTTP transport/session and OAuth client-auth headers are
+   * reserved. Cannot be combined with inline headers auth. Sent only at the
+   * resource URL path; echoed values are redacted at eight characters or more.
    */
   headers?: Record<string, string>;
   /**
@@ -1488,6 +1490,8 @@ function registrationErrorCode(body: string): string | undefined {
 interface CallDispatch {
   /** At most one request for this call may leave connecta. */
   write: boolean;
+  /** Source policy requires write outcome accounting even when served as a read. */
+  sourceWrite: boolean;
   /** A request for this call was handed to fetch; no other one may be. */
   sent: boolean;
   /** The answer was a 401, so the SDK renews the grant and resends. */
@@ -1514,8 +1518,8 @@ interface CallDispatch {
  */
 const DISPATCH = Symbol("connecta.dispatch");
 
-function newDispatch(write: boolean): CallDispatch {
-  return { write, sent: false, unauthorized: false, redirected: false, resendRefused: false };
+function newDispatch(write: boolean, sourceWrite: boolean): CallDispatch {
+  return { write, sourceWrite, sent: false, unauthorized: false, redirected: false, resendRefused: false };
 }
 
 function withDispatch<T extends object>(params: T, dispatch: CallDispatch): T {
@@ -2167,24 +2171,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   /** Wrap the public request seam, before listTools aggregates or auto-caches.
    * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
    * an advertised successor is never proof of a complete catalog (INV-8). */
-  const assertExtraHeaderDeclarations = (tools: readonly Tool[]): void => {
-    if (!extraHeaders || Object.keys(extraHeaders).length === 0) return;
-    const pending: unknown[] = tools.map((tool) => tool.inputSchema);
-    while (pending.length) {
-      const node = pending.pop();
-      if (!node || typeof node !== "object") continue;
-      const schema = node as Record<string, unknown>;
-      const name = schema["x-mcp-header"];
-      if (typeof name === "string" && Object.hasOwn(extraHeaders, name.toLowerCase())) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "Downstream tool header conflicts with a configured resource header.",
-          { retryable: false },
-        );
-      }
-      for (const child of Object.values(schema)) pending.push(child);
-    }
-  };
   const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
   const installCatalogIntake = (
     client: Client,
@@ -2294,7 +2280,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw error;
       }
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
-      if (method === "tools/list") assertExtraHeaderDeclarations((page as ListToolsResult).tools);
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
@@ -2514,7 +2499,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           method: init?.method ?? "GET",
         });
       const entry = request?.entry;
-      if (request && entry) dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+      if (request && entry) {
+        if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+        dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+      }
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
@@ -3387,7 +3375,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       listingContexts.set(options, ctx);
       try {
         const result = await client.listTools(undefined, options);
-        assertExtraHeaderDeclarations(result.tools);
         clean = redactCatalog(ctx, result.tools);
       } catch (err) {
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
@@ -3457,20 +3444,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // dispatched definition's, else a reviewed write or the annotations.
           const reviewed = classification?.tools[name];
           const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
-          const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
-          // Deployment overrides affect exposure, never the server hints' replay safety.
-          const serverWrite = definition
-            ? sourceClassification(definition) === "write"
-            : state.toolDefinitions.has(name) &&
-              classifyTool({ name, ...(annotations ? { annotations } : {}) }) === "write";
-          const write =
-            serverWrite ||
-            (callClassification(ctx) ??
-              definition?.classification ??
-              (verdict !== undefined && verdict !== "read"
-                ? "write"
-                : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
-          const dispatch = newDispatch(write);
+          const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
+          const sourceFacts = definition ?? {
+            name,
+            ...(facts.annotations ? { annotations: facts.annotations as NonNullable<ToolDef["annotations"]> } : {}),
+          };
+          // Reviews remain source policy until C.0c; deployment overrides never are.
+          const source = sourceClassification(sourceFacts, verdict === undefined ? undefined : { verdict });
+          const serverWrite =
+            (definition !== undefined || state.toolDefinitions.has(name) || verdict !== undefined) &&
+            source === "write";
+          const write = serverWrite || (callClassification(ctx) ?? definition?.classification ?? source) === "write";
+          const dispatch = newDispatch(write, serverWrite);
           dispatch.request = {
             entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
             ctx,
@@ -3549,10 +3534,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // exists, this call is still a proven unsent failure.
         if (!active) throw knownProviderFailure(err);
         const { state, client, dispatch, write } = active;
-        // An effective-read invocation cannot finalize the server's write.
-        const direct = write && callClassification(ctx) !== "write";
-        // Only a served write can defer its abort to invocation. Direct writes
-        // and server writes served as reads finalize it here: it may have left.
+        const direct = write && callClassification(ctx) === undefined;
+        // Served calls defer their abort to invocation, whose ledger retains
+        // source-write provenance even when the effective class is read.
         const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
         if (ownAbort && !direct) throw err;
         // A grant revoked after connect surfaces here, not in ensureConnected.
@@ -3608,7 +3592,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           dispatched: dispatch.sent,
           ...(status === undefined ? {} : { status }),
           fallback: "write",
-          ...(callClassification(ctx) === "read" ? { sourceWrite: true as const } : {}),
           request: dispatch.request?.entry,
         });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);

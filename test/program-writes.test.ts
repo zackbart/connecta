@@ -533,9 +533,15 @@ describe("classification and pool endpoints (#706)", () => {
       const registry = makeRegistry([connector], { classification, logger });
       expect(await registry.getTools("notes", BASE, {})).toEqual([]);
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"notes.returning" is dormant'));
+      await registry.getTools("notes", BASE, {});
+      expect(logger.warn.mock.calls.filter(([message]) => message.includes("is dormant"))).toHaveLength(1);
       present = true;
       const tools = await registry.getTools("notes", BASE, {});
       expect(tools.map((tool) => tool.classification)).toEqual(verdict === "hidden" ? [] : [verdict]);
+      present = false;
+      await registry.getTools("notes", BASE, {});
+      await registry.getTools("notes", BASE, {});
+      expect(logger.warn.mock.calls.filter(([message]) => message.includes("is dormant"))).toHaveLength(2);
     }
   });
 

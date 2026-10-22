@@ -296,12 +296,12 @@ not source literals.
 Use optional top-level `headers` for non-secret resource context:
 `remoteMcp("crm", { url: "https://crm.example/mcp", headers: {
 "X-MCP-Toolsets": "tickets,notes" }, readOnly: true })`. These headers apply to
-MCP handshake, catalog and call requests at the resource origin, never OAuth
+MCP handshake, catalog and call requests at the exact resource URL path, never OAuth
 metadata, token or registration requests. Values are included in cache and
-negotiation identities and are redacted if echoed; configuration descriptions
+negotiation identities; values of at least eight characters are redacted if echoed. Configuration descriptions
 show only names. Never put credentials here. Use `auth` for secrets. Extra
 headers cannot be combined with `auth.type: "headers"`, collide with an
-auth-owned or `x-mcp-header` mirrored name, or set HTTP transport/session headers
+auth-owned name, or set HTTP transport/session headers
 (`Accept`, `Cookie`, `Host`, `Content-*`, hop-by-hop headers, `Last-Event-ID`,
 `Mcp-*`), OAuth client-auth headers, or credential-named headers such as
 `X-Api-Key`. Names are case-insensitive.
@@ -318,11 +318,14 @@ classification: {
 
 `"write"` requires the host's approval path. `"hidden"` omits a tool from search
 and describe and refuses guessed-name calls, including programs. An absent
-runtime tool leaves its override dormant with an operator warning; the override
+runtime tool leaves its override dormant with an operator warning once per catalog change; the override
 applies if that exact name returns. Unknown static tool names fail construction.
 No argument can change these rules. A write-to-read override changes exposure
-and approval, but a server-declared write still gets one wire attempt across
-OAuth renewal, reconnect and transport recovery. After possible dispatch, its
+and approval. Replay and failure decisions treat a call as a write when either its
+effective class or its source class is write. The source class is the verified
+provider review, where one exists during migration, otherwise the server annotations;
+deployment overrides never change it. A write gets one wire attempt across
+OAuth renewal, reconnect, transport and authorization recovery, including program re-runs. After possible dispatch, its
 failure also reports an unknown outcome with no retry or wait advice; a proven
 unsent failure retains its own recovery advice. Connector `readOnly` remains
 optional and composes with endpoint policy.

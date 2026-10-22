@@ -1,6 +1,6 @@
 import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { cloneTool, writeRefusal } from "./tool-safety.js";
+import { cloneTool, isWriteLike, writeRefusal } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
@@ -355,6 +355,9 @@ export class InvocationService {
       let dispatchedToConnector = false;
       // The logical call bridge; recovery is a separate invocation-owned record.
       let logicalCall: LogicalCall | undefined;
+      // The served class owns gating and presentation. Physical source-write
+      // provenance additionally owns failure settlement, after dispatch only.
+      const sentSourceWrite = () => logicalCall?.sent.some((request) => request.sourceWrite === true) === true;
       const recoveryState = recoveryRecord();
       let preInvocationAuthFailure = false;
       let answered = false;
@@ -422,13 +425,19 @@ export class InvocationService {
           !settled && keyProtectsCall(logicalCall, recovery?.["idempotencyKey"])
             ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
             : "";
-        if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
+        if (
+          isTimeoutFailure(error) &&
+          dispatchedToConnector &&
+          (resolved?.definition.classification === "write" || sentSourceWrite())
+        ) {
           const echoed = argumentEcho;
+          const { retryAfterMs: _wait, ...facts } = error;
           return {
-            ...error,
+            ...facts,
             code: "write_outcome_unknown",
             message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
+            ...(sentSourceWrite() ? { writeOutcome: "unknown" as const } : {}),
             connector: target.connector.id,
             operation: `${target.connector.id}.${target.toolName}`,
             uncertainCall: {
@@ -448,13 +457,17 @@ export class InvocationService {
           };
         }
         const enteredWrite =
-          dispatchedToConnector && resolved !== undefined && resolved.definition.classification !== "read";
+          dispatchedToConnector &&
+          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
         // A dispatched write without refusal provenance is unknown whatever
         // its connector's code says, a custom connector's included: never
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
           enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
-        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
+        if (unknownWrite) {
+          const { retryAfterMs: _wait, ...facts } = error;
+          error = { ...facts, retryable: false, writeOutcome: "unknown" };
+        }
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
@@ -583,7 +596,7 @@ export class InvocationService {
         // recorded requests alone decide whether a 401 left it unknown.
         if (
           dispatchedToConnector &&
-          resolved?.definition.classification !== "read" &&
+          (resolved?.definition.classification !== "read" || sentSourceWrite()) &&
           (error.code === "cancelled" || isTimeoutFailure(error))
         ) {
           const departed = settleWrite(logicalCall?.sent ?? [], undefined, true);
@@ -598,7 +611,7 @@ export class InvocationService {
           recordAuthFailure(
             this.catalog.requestScope,
             target.connector.id,
-            (resolved?.definition.classification === "read" && resolved.classificationFresh === true) ||
+            (resolved !== undefined && !isWriteLike(resolved.definition) && resolved.classificationFresh === true) ||
               preInvocationAuthFailure ||
               (!resolved && context.source === "call_tool"),
           );
@@ -703,6 +716,7 @@ export class InvocationService {
           sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
           const write = target.definition.classification !== "read";
+          const writeLike = isWriteLike(target.definition);
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input =
             context.source !== "execute_code"
@@ -712,7 +726,8 @@ export class InvocationService {
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
             expectedDigest !== undefined &&
-            (target.classificationFresh !== true ||
+            (writeLike ||
+              target.classificationFresh !== true ||
               (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)
           ) {
             return {
@@ -836,7 +851,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 {
                   address: canonicalAddress,
-                  classification: write ? "write" : "read",
+                  classification: writeLike ? "write" : "read",
                   fresh: target.classificationFresh === true,
                 },
                 target.definition,
@@ -919,16 +934,17 @@ export class InvocationService {
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
             const thrown = Cause.squash(attempt.cause);
             if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
-            answered = answeredFailure(thrown, write, logicalCall);
+            const failureWrite = write || sentSourceWrite();
+            answered = answeredFailure(thrown, failureWrite, logicalCall);
             // Q8 is decided here for every served write, whatever its
             // connector made of the 401: over the logical call's whole ledger.
-            const attemptError = write ? settleWrite(logicalCall?.sent ?? [], thrown, answered) : thrown;
+            const attemptError = failureWrite ? settleWrite(logicalCall?.sent ?? [], thrown, answered) : thrown;
             if (attemptError !== thrown) answered = false;
             failureAdvice = resendAdviceOf(attemptError);
             failureKeyAdvice = keyResendAdviceOf(attemptError);
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
-            if (write && !answered) forgetProviderFailure(details);
+            if (failureWrite && !answered) forgetProviderFailure(details);
             return details;
           }
           if ("inputRequired" in attempt.value) {
@@ -984,7 +1000,7 @@ export class InvocationService {
       // Q8 settles a result too: a write an undeclared 401 left unknown is no
       // success, whatever its handler made of the 401, and its result is not
       // processed.
-      if (dispatchedToConnector && completed.definition.classification !== "read") {
+      if (dispatchedToConnector && (completed.definition.classification !== "read" || sentSourceWrite())) {
         const unknown = settleWriteResult(logicalCall?.sent ?? []);
         if (unknown) {
           failureAdvice = failureKeyAdvice = undefined;

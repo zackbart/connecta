@@ -8,12 +8,15 @@ import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { scriptedExecutor } from "./fixtures/misc.js";
+import { guestErrorText, guestFailureFacts, scriptedExecutor } from "./fixtures/misc.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { seedGrant } from "./fixtures/oauth.js";
-import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
 
 // Remote MCP writes through the real SDK client and transport against a real
 // MCP server: a write leaves once whatever answers it (INV-9), and a read may
@@ -54,6 +57,9 @@ function setup(
     oauth?: boolean;
     overrideRead?: boolean;
     sameOriginOAuth?: boolean;
+    public?: boolean;
+    reviewedRead?: boolean;
+    onApplied?: () => void;
     headers?: Record<string, string>;
     refresh?: "rotate" | "dead" | "outage";
     redirects?: "same-origin";
@@ -73,10 +79,14 @@ function setup(
         return { content: [{ type: "text", text: JSON.stringify({ created: id }) }] };
       },
     );
-    server.registerTool("list_items", { inputSchema: z.object({}), annotations: { readOnlyHint: true } }, async () => {
-      applied.push("list_items");
-      return { content: [{ type: "text", text: "[]" }] };
-    });
+    server.registerTool(
+      "list_items",
+      { inputSchema: z.object({}), ...(options.reviewedRead ? {} : { annotations: { readOnlyHint: true } }) },
+      async () => {
+        applied.push("list_items");
+        return { content: [{ type: "text", text: "[]" }] };
+      },
+    );
   });
   /** Every tools/call POST that left connecta, by tool name and bearer token. */
   const sent: Array<{ name: string; authorization: string | null }> = [];
@@ -129,7 +139,7 @@ function setup(
     const answer = answers.get(name) ?? "pass";
     if (answer === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     sent.push({ name, authorization });
-    if (answer === 401 && authorization === `Bearer ${STALE}`) {
+    if (answer === 401 && (options.public || authorization === `Bearer ${STALE}`)) {
       options.onUnauthorized?.();
       return new Response(null, {
         status: 401,
@@ -173,6 +183,7 @@ function setup(
     // signal ends the call, rejecting fetch with its reason.
     if (answer === "deadline") {
       const signal = init!.signal!;
+      options.onApplied?.();
       return await new Promise<Response>((_resolve, reject) => {
         if (signal.aborted) reject(signal.reason);
         else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -186,9 +197,14 @@ function setup(
     versionNegotiation: options.versionNegotiation ?? "legacy",
     ...(options.redirects ? { redirects: options.redirects } : {}),
     ...(options.headers ? { headers: options.headers } : {}),
-    auth: options.oauth
-      ? { type: "oauth" }
-      : { type: "headers", headers: { Authorization: "Bearer HEADER_CREDENTIAL" } },
+    ...(options.reviewedRead ? { classify: { tools: { list_items: "read" as const } } } : {}),
+    ...(options.public
+      ? {}
+      : {
+          auth: options.oauth
+            ? { type: "oauth" as const }
+            : { type: "headers" as const, headers: { Authorization: "Bearer HEADER_CREDENTIAL" } },
+        }),
   });
   const registry = makeRegistry([connector], {
     storage,
@@ -258,6 +274,7 @@ function setup(
     context: (options?: { signal?: AbortSignal; timeoutMs?: number }) =>
       registry.contextFor("svc", BASE, undefined, options),
     registry,
+    storage,
     seedOAuth,
     applied,
     answers,
@@ -267,8 +284,68 @@ function setup(
   };
 }
 
+/** Exercise the URL-elicitation replay boundary with the same real downstream. */
+async function authRecoveryRow(surface: "program" | "call_tool") {
+  const flow = setup({ overrideRead: true, public: true });
+  flow.connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.test/authorize" });
+  flow.answers.set(surface === "program" ? "list_items" : "create_item", 401);
+  const app = createTestConnecta({
+    connectors: [flow.connector],
+    storage: flow.storage,
+    vault: encryptedCredentialVault(flow.storage, CREDENTIAL_KEY),
+    publicUrl: BASE,
+    logger: "silent",
+    auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
+    classification: { svc: { create_item: "read" } },
+    pools: { trusted: { tools: ["svc"], members: ["alice"], readOnly: false } },
+    executor: {
+      execute: async (_code, providers) => {
+        const call = required(providers.find((provider) => provider.name === "connecta")).fns.call!;
+        try {
+          await call("svc.create_item", { id: 1 });
+          return { result: await call("svc.list_items", {}) };
+        } catch (error) {
+          return { result: undefined, error: guestErrorText(error), failure: guestFailureFacts(error) };
+        }
+      },
+    },
+  });
+  const rpc = async (state?: string) => {
+    const name = surface === "program" ? "execute_code" : "call_tool";
+    const request = mcpRpc("tools/call", {
+      name,
+      arguments: surface === "program" ? { code: "program" } : { address: "svc.create_item", args: { id: 1 } },
+      ...(state ? { requestState: state, inputResponses: { connecta_auth: { action: "accept" } } } : {}),
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+      },
+    });
+    request.headers.set("MCP-Protocol-Version", "2026-07-28");
+    request.headers.set("Mcp-Method", "tools/call");
+    request.headers.set("Mcp-Name", name);
+    request.headers.set("Authorization", "Bearer alice");
+    if (surface === "call_tool") request.headers.set("Mcp-Param-Address", "svc.create_item");
+    return (
+      await readJsonRpc(await app.fetch(surface === "program" ? new Request(`${BASE}/mcp/trusted`, request) : request))
+    ).result;
+  };
+  try {
+    const first = await rpc();
+    if (first.resultType === "input_required") {
+      flow.answers.clear();
+      await rpc(first.requestState);
+    }
+    expect.soft(first.resultType, surface).not.toBe("input_required");
+    expect.soft(flow.sent("create_item"), surface).toHaveLength(1);
+    expect.soft(first.structuredContent ?? first, surface).toMatchObject({ error: { reconciliationRequired: true } });
+  } finally {
+    await app.close();
+  }
+}
+
 describe("remote MCP OAuth writes after a 401", () => {
-  it("INV-4 INV-9: write-to-read overrides never replay server writes after renewal, reconnect or transport recovery", async () => {
+  it("INV-4 INV-9: write-to-read overrides never replay source writes through recovery and settle every dispatched failure", async () => {
     for (const [answer, oauth, versionNegotiation, sameOriginOAuth, recover] of [
       [401, true, "legacy", false, false],
       [401, true, "legacy", true, false],
@@ -276,7 +353,19 @@ describe("remote MCP OAuth writes after a 401", () => {
       ["mismatch", false, "auto", false, true],
       ["reset", false, "legacy", false, false],
       ["prepare", false, "legacy", false, false],
+      ["invoke-timeout", false, "legacy", false, false],
+      ["invoke-cancel", false, "legacy", false, false],
+      ["program", false, "legacy", false, false],
+      ["call_tool", false, "legacy", false, false],
+      ["reviewed-read", true, "legacy", false, false],
     ] as const) {
+      if (answer === "program" || answer === "call_tool") {
+        await authRecoveryRow(answer);
+        vi.unstubAllGlobals();
+        continue;
+      }
+      const controller = new AbortController();
+      const interrupted = answer === "invoke-timeout" || answer === "invoke-cancel";
       if (answer === "prepare") {
         vi.spyOn(Client.prototype, "callTool").mockRejectedValue(
           new ConnectorCallError("rate_limited", "Unsent preparation refusal.", { retryAfterMs: 50 }),
@@ -295,12 +384,36 @@ describe("remote MCP OAuth writes after a 401", () => {
         oauth,
         versionNegotiation,
         overrideRead: true,
+        reviewedRead: answer === "reviewed-read",
+        ...(answer === "invoke-cancel" ? { onApplied: () => controller.abort(new Error("Caller left.")) } : {}),
         sameOriginOAuth,
         ...(oauth ? { headers: { "X-Context": "tenant_selector" } } : {}),
       });
       if (oauth) await flow.seedOAuth();
-      if (answer !== "prepare") flow.answers.set("create_item", answer);
-      const failed = await flow.outcome("create_item", { id: 1 });
+      if (answer === "reviewed-read") {
+        flow.answers.set("list_items", 401);
+        expect(await flow.outcome("list_items")).not.toHaveProperty("error");
+        expect(flow.sent("list_items")).toHaveLength(2);
+        expect(flow.refreshes()).toBe(1);
+        vi.unstubAllGlobals();
+        continue;
+      }
+      if (answer !== "prepare") flow.answers.set("create_item", interrupted ? "deadline" : answer);
+      const invoked = interrupted
+        ? await new InvocationService(flow.registry, new CatalogService(flow.registry, BASE)).invoke(
+            "svc.create_item",
+            { id: 1 },
+            {
+              source: "call_tool",
+              ...(answer === "invoke-timeout" ? { timeoutMs: 1000 } : { requestSignal: controller.signal }),
+            },
+          )
+        : undefined;
+      const failed = invoked
+        ? invoked.ok
+          ? {}
+          : { error: invoked.error }
+        : await flow.outcome("create_item", { id: 1 });
       expect.soft(failed.error, String(answer)).toBeDefined();
       if (answer === "prepare") {
         expect.soft(failed.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 50 });
@@ -309,6 +422,10 @@ describe("remote MCP OAuth writes after a 401", () => {
         expect.soft(failed.error, String(answer)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
         expect.soft(failed.error).not.toHaveProperty("retryAfterMs");
       }
+      if (interrupted)
+        expect
+          .soft(failed.error?.code, answer)
+          .toBe(answer === "invoke-timeout" ? "write_outcome_unknown" : "cancelled");
       expect.soft(flow.sent("create_item"), String(answer)).toHaveLength(answer === "prepare" ? 0 : 1);
       expect.soft(flow.applied).toEqual(answer === 401 || answer === "prepare" ? [] : ["create_item 1"]);
       expect.soft(flow.refreshes()).toBe(oauth ? 1 : 0);
@@ -331,7 +448,7 @@ describe("remote MCP OAuth writes after a 401", () => {
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
     }
-  });
+  }, 20_000);
 
   it("INV-9: sends an ordinary write once, refreshes the grant, and lets a deliberate repeat use it", async () => {
     const flow = setup({ oauth: true });

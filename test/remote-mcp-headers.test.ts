@@ -66,7 +66,7 @@ it("INV-5 INV-11: extra header rules reject credentials, transport ownership and
   }
 });
 
-it("INV-4 INV-5 INV-8: normalized extra headers partition negotiation and catalogs, redact echoes and refuse mirrored names", async () => {
+it("INV-4 INV-5 INV-8: normalized extra headers partition negotiation and catalogs, redact echoes and coexist with mirrored names", async () => {
   const requests: { method: string; headers: Headers }[] = [];
   let mirrored = false;
   vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit) => {
@@ -126,7 +126,11 @@ it("INV-4 INV-5 INV-8: normalized extra headers partition negotiation and catalo
   const connector = remoteMcp("down", { url: URL, headers: { "X-Context": "new_context" } });
   const ctx = connectorContext(storage);
   try {
-    await expect(connector.listTools(ctx)).rejects.toMatchObject({ code: "connector_call_failed" });
+    const [tool] = await connector.listTools(ctx);
+    await connector.callTool(tool!.name, { scope: "argument_context" }, ctx);
+    const sent = requests.at(-1)!.headers;
+    expect(sent.get("x-context")).toBe("new_context");
+    expect(sent.get("mcp-param-x-context")).toBe("argument_context");
   } finally {
     await connector.closeScope?.(ctx);
   }

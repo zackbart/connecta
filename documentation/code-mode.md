@@ -1061,11 +1061,15 @@ all calls this deployment can make through it.
 
 Unknown connector override keys fail construction. Unknown static tool keys
 fail construction. An absent runtime-discovered tool leaves its override
-dormant and emits an operator warning; the override applies if the name returns.
+dormant and emits an operator warning once per catalog change; the override applies if the name returns.
 Hidden tools are absent from search and describe and refuse every call, including
 a guessed name. `"write"` selects the host approval path. MCP recovery sends a
-tool only once when either its effective class or its original server hints say
-write, even when an override changes write to read. Overrides are exact tool names, including names containing dots.
+tool only once when either its effective or source class is write, even when an
+override changes write to read. The source class is the verified provider review
+where present during migration, otherwise the server annotations. It also governs
+authorization recovery, program re-runs and ambiguous failure outcomes: after
+dispatch, an unknown outcome has no retry or wait advice, including on timeout or
+cancellation. Overrides are exact tool names, including names containing dots.
 They are never inferred from descriptions or arguments.
 
 **W9.** Programs on a writable endpoint may write. A dispatched write is awaited even

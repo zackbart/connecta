@@ -130,8 +130,8 @@ export function providerCallResult(
  * every `remoteMcp().callTool()` write, direct or served. Nothing passes a
  * direct write's failure on ahead of it, the caller's own abort included.
  *
- * The served verdict outranks transport defaults. Remote MCP can additionally
- * supply its raw server-write provenance for local failure finalization.
+ * The served verdict outranks transport defaults. A remote MCP dispatch's
+ * source-write ledger mark additionally requires write outcome accounting.
  * Dispatch facts come from the transport, never from a provider's
  * interpretation of its HTTP method. A write is a known failure only on
  * refusal provenance recorded where the evidence was observed: (a) the
@@ -157,8 +157,6 @@ export function providerCallFailure(
     dispatched: boolean;
     status?: number;
     fallback: "read" | "write";
-    /** Remote MCP raw hints require local write finalization despite an effective read. */
-    sourceWrite?: true;
     repeatable?: boolean;
     finalize?: boolean;
     /** The handler ran and may have sent requests the ledger never saw. */
@@ -170,23 +168,15 @@ export function providerCallFailure(
   },
 ): unknown {
   const served = callClassification(ctx);
-  const sourceWrite = facts.sourceWrite === true && served === "read";
-  if (!sourceWrite && (served ?? facts.fallback) !== "write") return error;
-  // This remote call owns its wire entry. Its effective-read invocation will
-  // not finalize a write's timeouts or settle its 401, so do both here without
-  // changing the served verdict or borrowing an enclosing provider's ledger.
-  const requests = sourceWrite ? undefined : providerRequests(ctx);
+  if ((served ?? facts.fallback) !== "write" && facts.request?.sourceWrite !== true) return error;
+  const requests = providerRequests(ctx);
   // Guarded transports collect facts; only api() knows when the logical call
   // has ended. Google may add phases or recovery words in the meantime.
   if (requests && !facts.finalize) return error;
-  const failure = writeFailure(ctx, vendor, error, facts, sourceWrite ? undefined : served, requests);
-  const decided =
-    sourceWrite && failure instanceof ConnectorCallError && failure.writeOutcome === "unknown"
-      ? withoutRetry(failure)
-      : failure;
+  const decided = writeFailure(ctx, vendor, error, facts, served, requests);
   // The invocation settles Q8 over its logical call; without one, the
   // outermost boundary does, over every ledger beneath it.
-  if (!sourceWrite && (inLogicalCall(ctx) || nestedProviderCall(ctx))) return decided;
+  if (inLogicalCall(ctx) || nestedProviderCall(ctx)) return decided;
   return settleWrite(
     requests ? [...requests, ...nestedProviderRequests(ctx)] : facts.request ? [facts.request] : [],
     decided,

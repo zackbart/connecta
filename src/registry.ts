@@ -417,6 +417,7 @@ export class Registry implements RegistryView {
   private readonly catalogAccess = new Map<string, CatalogAccessObservation>();
   /** Bounded tokens isolating count-only observations by catalog identity. */
   private readonly catalogObservationPartitions = new Map<string, object>();
+  private readonly overrideWarningCatalogs = new WeakMap<object, string>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
@@ -1124,7 +1125,7 @@ export class Registry implements RegistryView {
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
     const overrides = this.classification[id];
-    this.validateClassification(id, accepted, overrides);
+    this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
     const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
     const review = catalogReviewOf(connector);
     const verdicts =
@@ -1135,16 +1136,12 @@ export class Registry implements RegistryView {
     const served = review
       ? await classifyCatalog(review, id, visible, this.opts.logger, verdicts, verification)
       : visible.map((tool) => this.publishUnreviewedTool(id, tool));
-    const facts = new Map(visible.map((tool) => [tool.name, tool]));
-    return carryCatalogFreshness(
-      tools,
-      served.map((tool) => carryToolClassification(facts.get(tool.name)!, tool)),
-    );
+    return carryCatalogFreshness(tools, served);
   }
 
   private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
-    return {
+    return carryToolClassification(tool, {
       ...structuredClone(tool),
       classification: classifyTool(tool, override === "hidden" ? undefined : override),
       ...(override !== undefined
@@ -1156,7 +1153,7 @@ export class Registry implements RegistryView {
             },
           }
         : {}),
-    };
+    });
   }
 
   /** Construction-only view for the secret-free static config description. */
@@ -1171,7 +1168,14 @@ export class Registry implements RegistryView {
     id: string,
     tools: readonly ToolDef[],
     overrides?: Readonly<Record<string, "read" | "write" | "hidden">>,
+    partition?: object,
   ): void {
+    if (!overrides) return;
+    if (partition) {
+      const catalog = JSON.stringify(tools);
+      if (this.overrideWarningCatalogs.get(partition) === catalog) return;
+      this.overrideWarningCatalogs.set(partition, catalog);
+    }
     const known = new Set(tools.map((tool) => tool.name));
     for (const name of Object.keys(overrides ?? {})) {
       if (known.has(name)) continue;

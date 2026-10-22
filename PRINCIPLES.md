@@ -42,7 +42,9 @@ The full Node run checks the executed test tree, including runtime skips.
   `readOnlyHint === true` and `destructiveHint !== true`; otherwise it is a write.
   Deployment code may override a tool to read, write, or hidden. Hidden tools
   cannot be discovered or called. An override never relaxes the server's
-  hint-derived replay safety. Current provider reviews remain supported until
+  source replay safety: the verified provider review, otherwise the server
+  hints. The effective or source write class forbids replay and makes an
+  ambiguous dispatched failure non-retryable. Current provider reviews remain supported until
   their migration; stale reviewed schemas fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
   pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
