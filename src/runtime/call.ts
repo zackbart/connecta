@@ -299,6 +299,7 @@ interface RequestState {
   readonly finalizers: Array<() => void>;
   readonly entries: Set<Entry>;
   readonly calls: Set<CallLease>;
+  readonly signals: WeakMap<AbortSignal, { readonly signal: AbortSignal; readonly refresh: () => void }>;
 }
 const requests = new WeakMap<object, RequestState>();
 function requestOf(scope: object): RequestState {
@@ -311,6 +312,7 @@ function requestOf(scope: object): RequestState {
       finalizers: [],
       entries: new Set(),
       calls: new Set(),
+      signals: new WeakMap(),
     };
     requests.set(scope, state);
   }
@@ -564,11 +566,61 @@ export function callFromContext(
 
 /** Cancellation is request-owned for operations and auxiliaries, call-owned otherwise. */
 export function viewSignal(ctx: ConnectorContext, requestOwned = false): AbortSignal {
-  const request = openRequest(views.get(ctx)?.request ?? ctx.requestScope ?? ctx).signal;
+  const state = requestOf(views.get(ctx)?.request ?? ctx.requestScope ?? ctx);
+  const request = state.controller.signal;
   // The original caller signal is distinct from the revocable call signal:
   // ending a call must not stop its request's session or auxiliary work.
   const source = requestOwned ? callerSignal(ctx) : ctx.signal;
-  return source && source !== request ? AbortSignal.any([source, request]) : request;
+  if (!source || source === request) return request;
+  let binding = state.signals.get(source);
+  if (!binding) {
+    const controller = new AbortController();
+    const failures: unknown[] = [];
+    let attached = false;
+    const detach = () => {
+      if (!attached) return;
+      attached = false;
+      for (const remove of [
+        () => source.removeEventListener("abort", fromSource),
+        () => request.removeEventListener("abort", fromRequest),
+      ]) {
+        try {
+          remove();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    };
+    const revoke = (reason: unknown) => {
+      controller.abort(reason);
+      detach();
+    };
+    const fromSource = () => revoke(source.reason);
+    const fromRequest = () => revoke(request.reason);
+    // Read structurally, as openCall does: a request-owned facade need not
+    // pass AbortSignal.any's native brand check. Never share it across scopes.
+    const refresh = () => {
+      if (controller.signal.aborted) return;
+      if (request.aborted) fromRequest();
+      else if (source.aborted) fromSource();
+    };
+    refresh();
+    if (!controller.signal.aborted) {
+      attached = true;
+      source.addEventListener("abort", fromSource, { once: true });
+      if (!controller.signal.aborted) request.addEventListener("abort", fromRequest, { once: true });
+      state.finalizers.push(() => {
+        detach();
+        if (failures.length) throw new AggregateError(failures.splice(0), "Closing the operation signal failed.");
+      });
+    }
+    binding = { signal: controller.signal, refresh };
+    state.signals.set(source, binding);
+  }
+  // Some adapters expose cancellation through a live getter without an abort
+  // event. Poll it at each boundary, including after an awaited operation.
+  binding.refresh();
+  return binding.signal;
 }
 
 /** Interrupt the wait and abort owned preparation when its call/request ends. */
@@ -580,7 +632,8 @@ export async function duringViewCall<A>(
   const signal = viewSignal(ctx, requestOwned);
   if (signal.aborted) throw signal.reason;
   const value = await runEdge(Effect.tryPromise({ try: () => work(signal), catch: (error) => error }), { signal });
-  if (signal.aborted) throw signal.reason;
+  const current = viewSignal(ctx, requestOwned);
+  if (current.aborted) throw current.reason;
   return value;
 }
 

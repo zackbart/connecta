@@ -701,6 +701,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         if (answered) dispatch = answered;
         else recordProviderResponse(dispatch, response.status);
       } catch (cause) {
+        // A cancelled wait is the caller's own reason, not a network failure.
+        if (signal.aborted && cause === signal.reason) throw cause;
         if (cause instanceof ConnectorCallError) throw cause;
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, signal);
       }

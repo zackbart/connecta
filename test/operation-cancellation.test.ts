@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
-import { callFromContext, callerSignal, contextView, openRequest } from "../src/runtime/call.js";
+import {
+  callFromContext,
+  callerSignal,
+  contextView,
+  duringViewCall,
+  openRequest,
+  viewSignal,
+} from "../src/runtime/call.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
 import { deferred, waitFor } from "./fixtures/misc.js";
@@ -370,6 +377,118 @@ describe("production operation cancellation", () => {
     } finally {
       release.resolve();
       lease.close();
+      request.close();
+      await pending;
+    }
+  });
+
+  it.each(["source", "request"] as const)(
+    "INV-7: operation signal %s revocation aborts before throwing facade cleanup and detaches both parents",
+    (boundary) => {
+      const { ctx, request } = operation();
+      const controller = new AbortController();
+      const listeners = new Set<EventListenerOrEventListenerObject>();
+      const failure = new Error("The facade could not detach.");
+      const removedRequest = vi.spyOn(request.signal, "removeEventListener");
+      let signal: AbortSignal;
+      ctx.signal = {
+        get aborted() {
+          return controller.signal.aborted;
+        },
+        get reason() {
+          return controller.signal.reason;
+        },
+        addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: { once?: boolean }) {
+          listeners.add(listener);
+          controller.signal.addEventListener(type, listener, options);
+        },
+        removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+          expect(signal.aborted).toBe(true);
+          listeners.delete(listener);
+          controller.signal.removeEventListener(type, listener);
+          throw failure;
+        },
+      } as AbortSignal;
+      let finalized = false;
+      try {
+        signal = viewSignal(ctx);
+        expect(viewSignal(ctx)).toBe(signal);
+        expect(listeners.size).toBe(1);
+        request.own(() => {
+          finalized = true;
+        });
+        const reason = new Error("The source ended.");
+        if (boundary === "source") {
+          expect(() => controller.abort(reason)).not.toThrow();
+          expect(signal.reason).toBe(reason);
+          expect(listeners.size).toBe(0);
+          expect(removedRequest).toHaveBeenCalledOnce();
+          expect(request.signal.aborted).toBe(false);
+        }
+        let closed: unknown;
+        try {
+          request.close();
+        } catch (error) {
+          closed = error;
+        }
+        expect(closed).toBeInstanceOf(AggregateError);
+        const errors = (closed as AggregateError).errors;
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toBeInstanceOf(AggregateError);
+        expect((errors[0] as AggregateError).errors).toEqual([failure]);
+        expect(signal.aborted).toBe(true);
+        expect(request.signal.aborted).toBe(true);
+        expect(finalized).toBe(true);
+        expect(listeners.size).toBe(0);
+        expect(removedRequest).toHaveBeenCalledOnce();
+        expect(request.close).not.toThrow();
+      } finally {
+        try {
+          request.close();
+        } finally {
+          removedRequest.mockRestore();
+        }
+      }
+    },
+  );
+
+  it("INV-7: an operation polls a signal facade after awaited work without consuming its late success", async () => {
+    const { ctx, request } = operation();
+    const controller = new AbortController();
+    const reason = new Error("The adapter observed cancellation.");
+    let aborted = false;
+    ctx.signal = {
+      get aborted() {
+        return aborted;
+      },
+      get reason() {
+        return reason;
+      },
+      addEventListener: controller.signal.addEventListener.bind(controller.signal),
+      removeEventListener: controller.signal.removeEventListener.bind(controller.signal),
+    } as AbortSignal;
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let signal: AbortSignal | undefined;
+    let started = false;
+    const pending = duringViewCall(ctx, async (resolved) => {
+      signal = resolved;
+      started = true;
+      entered.resolve();
+      await release.promise;
+      aborted = true;
+      return "late success";
+    }).catch((error: unknown) => error);
+    try {
+      await Promise.race([entered.promise, pending]);
+      expect(started).toBe(true);
+      release.resolve();
+      expect(await pending).toBe(reason);
+      expect(signal?.aborted).toBe(true);
+      expect(signal?.reason).toBe(reason);
+      expect(callerSignal(ctx)).toBe(ctx.signal);
+    } finally {
+      release.resolve();
       request.close();
       await pending;
     }
