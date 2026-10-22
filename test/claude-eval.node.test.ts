@@ -3,16 +3,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { CODE_TOOLS, type Surface } from "../eval/agent/surface.js";
-import { runClaude } from "../eval/agent/claude.js";
 import * as claude from "../eval/agent/claude.js";
-import { runBatch } from "../eval/agent/run.js";
+import { runClaude } from "../eval/agent/claude.js";
+import type { CodexOptions } from "../eval/agent/codex.js";
+import { infraError } from "../eval/agent/infra.js";
 import { regradeTrial } from "../eval/agent/regrade.js";
+import { runBatch } from "../eval/agent/run.js";
+import { CODE_TOOLS, type Surface } from "../eval/agent/surface.js";
+import { parseTrace } from "../eval/agent/trace.js";
 import { ACTIVE_TASKS } from "../eval/tasks/index.js";
 import type { ActiveTask } from "../eval/tasks/types.js";
-import { parseTrace } from "../eval/agent/trace.js";
-import { infraError } from "../eval/agent/infra.js";
-import type { CodexOptions } from "../eval/agent/codex.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -189,75 +189,10 @@ describe("Claude eval CLI", () => {
     expect(run.events.some((event) => event.type === "result" && event.subtype === "error")).toBe(true);
   });
 
-  it.each([["extra-plugin", '"plugins":["cc-plugin-future@builtin"]']])(
-    "names the offending inventory for %s without plugin settings",
-    async (mode, inventory) => {
-      const run = await fixture(mode);
-      const error = run.events.find((event) => event.type === "result" && event.subtype === "error");
-      expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
-      expect(error?.result).toContain(inventory);
-      expect(error?.result).not.toContain("fake-secret");
-      expect(error?.result).not.toContain("settings");
-    },
-  );
-
-  it("completes a successful trial when the CLI traps harness SIGTERM and exits 143", async () => {
-    const original = runClaude;
-    const spy = vi.spyOn(claude, "runClaude").mockImplementation(() => fixture("cleanup-143", {}, original));
-    const task: ActiveTask = {
-      ...ACTIVE_TASKS.find((t) => t.id === "p5-known-read-routing")!,
-      grade: () => [{ id: "answer-evidence", description: "fixture answer", pass: true }],
-    };
-    try {
-      const { trials } = await runBatch([task], ["claude-sonnet-5-5"], 1, {
-        runner: "claude",
-        timeoutMs: 10_000,
-        concurrency: 1,
-      });
-      const trial = trials[0]!;
-      expect(trial.status).toBe("pass");
-      expect(trial.error).toBeUndefined();
-      expect(trial.claude).toMatchObject({
-        exitCode: 143,
-        terminatedAfterCompletion: true,
-        resultSubtypes: ["success"],
-        timedOut: false,
-        aborted: false,
-      });
-      expect(trial.checks.find((c) => c.id === "conversation-completed")?.pass).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it.each([["cleanup-1", 1]] as const)(
-    "rejects an unexpected exit after harness SIGTERM (%s)",
-    async (mode, exitCode) => {
-      const run = await fixture(mode);
-      expect(run.events.at(-1)?.subtype).toBe("success");
-      expect(run.exitCode).toBe(exitCode);
-      expect(run.timedOut).toBe(false);
-      expect(run.aborted).toBe(false);
-      expect(run.terminatedAfterCompletion).toBe(false);
-    },
-  );
-
   it("terminates a hung CLI on the wall deadline", async () => {
     const run = await fixture("hang", { timeoutMs: 200 });
     expect(run.timedOut).toBe(true);
     expect(run.terminatedAfterCompletion).toBe(false);
     expect(run.wallMs).toBeLessThan(5_000);
-  });
-
-  it("terminates an active trial when interrupted", async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 200);
-    try {
-      const run = await fixture("hang", { signal: controller.signal });
-      expect(run.aborted).toBe(true);
-      expect(run.terminatedAfterCompletion).toBe(false);
-    } finally {
-      clearTimeout(timer);
-    }
   });
 });

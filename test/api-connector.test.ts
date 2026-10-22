@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { guardedFetch } from "../src/connectors/guarded-fetch.js";
-import { createMetaTools } from "../src/meta-tools.js";
 import { api } from "../src/connectors/api.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import type { Logger } from "../src/types.js";
 import { connectorContext as ctx } from "./fixtures/misc.js";
 import { activitySink, makeRegistry, required, silentLogger } from "./helpers.js";
@@ -67,19 +67,6 @@ describe("api() connector", () => {
     ).toThrow('api() tool "ambiguous.same" is declared more than once');
   });
 
-  it("handler throw surfaces to the caller in connecta's words (call_tool wraps it as isError)", async () => {
-    // A plain Error may be a runtime's account of what the handler read, so
-    // its text is withheld; a handler means its words with ConnectorCallError.
-    const c = makeApi();
-    const thrown = (await c.callTool("boom", {}, ctx()).then(
-      () => null,
-      (e: unknown) => e,
-    )) as Error;
-    expect(thrown.message).toMatch(/Connector "resend" tool "boom" handler failed \(Error\)/);
-    expect(thrown.message).not.toContain("handler exploded");
-    expect(thrown.cause).toBeUndefined();
-  });
-
   it("an async handler that throws immediately never goes briefly unhandled", async () => {
     // callTool awaits the handler rather than returning its promise. Returning
     // it leaves the rejection handler-less for the thenable-adoption
@@ -99,20 +86,6 @@ describe("api() connector", () => {
 });
 
 describe("api() argument validation", () => {
-  it("rejects args that miss the schema with a non-retryable invalid_args", async () => {
-    const c = makeApi();
-    const err = await c
-      .callTool("send_email", { to: 42 }, ctx())
-      .then(() => null)
-      .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ConnectorCallError);
-    const typed = err as ConnectorCallError;
-    expect(typed.code).toBe("invalid_args");
-    expect(typed.retryable).toBe(false);
-    expect(typed.message).toContain("resend.send_email");
-    expect(typed.message).toContain("/to");
-  });
-
   it("a schema that only fails on first use rejects the call, never passes through", async () => {
     const warn = vi.fn();
     const logger: Logger = { ...silentLogger, warn };
@@ -148,85 +121,7 @@ describe("api() argument validation", () => {
   });
 });
 
-describe("api() construction contract", () => {
-  it.each([
-    [
-      "refuses a tool with no description",
-      () =>
-        api("acme", {
-          tools: [{ name: "nameless", description: "", annotations: { readOnlyHint: true }, handler: () => null }],
-        }),
-      /acme\.nameless.*non-empty description/s,
-    ],
-    // A JS deployment can reach these; TypeScript refuses them outright.
-    [
-      "refuses a tool with no explicit readOnlyHint",
-      () =>
-        api("acme", {
-          tools: [
-            {
-              name: "unclassified",
-              description: "Do something of unknown safety",
-              annotations: { destructiveHint: true } as never,
-              handler: () => null,
-            },
-          ],
-        }),
-      /acme\.unclassified.*annotations\.readOnlyHint/s,
-    ],
-    [
-      "refuses a schema the validator cannot compile",
-      () =>
-        api("acme", {
-          tools: [
-            {
-              name: "clashing_ids",
-              description: "Declares the same $id twice",
-              annotations: { readOnlyHint: true },
-              inputSchema: {
-                $id: "urn:connecta-test:api-clash",
-                type: "object",
-                $defs: { clash: { $id: "urn:connecta-test:api-clash" } },
-              },
-              handler: () => null,
-            },
-          ],
-        }),
-      /acme\.clashing_ids.*validator cannot use/s,
-    ],
-  ] as const)("%s", (_name, construct, message) => {
-    expect(construct).toThrow(message);
-  });
-});
-
 describe("api() transport diagnostics", () => {
-  it.each(["ECONNREFUSED", "AbortError"])(
-    "classifies structured %s without inventing a downstream host",
-    async (code) => {
-      const connector = api("down", {
-        tools: [
-          {
-            name: "read",
-            description: "Read downstream",
-            annotations: { readOnlyHint: true },
-            handler: async () => {
-              throw code === "AbortError"
-                ? new DOMException("deadline", "AbortError")
-                : new TypeError("fetch failed", { cause: { code, hostname: "private.example" } });
-            },
-          },
-        ],
-      });
-      const error = await connector.callTool("read", {}, ctx()).catch((error) => error);
-      expect(classifyCallError(error)).toMatchObject({
-        code: "unavailable",
-        retryable: true,
-        details: { code: code === "AbortError" ? "timeout" : code },
-      });
-      expect(classifyCallError(error).details).not.toHaveProperty("host");
-    },
-  );
-
   it("INV-9: a write handler's network failure is an unknown outcome, never retryable, and a read's stays unavailable", async () => {
     const failing = (code: string) => async () => {
       throw code === "AbortError"

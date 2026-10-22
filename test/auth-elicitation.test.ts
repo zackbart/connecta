@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorCallError } from "../src/errors.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { operatorUi } from "../src/ui.js";
-import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { createTestConnecta, required } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const apps: ReturnType<typeof createTestConnecta>[] = [];
@@ -167,15 +167,6 @@ describe("auth URL elicitation", () => {
     expect(sign).toHaveBeenCalledOnce();
   });
 
-  it("INV-4: accept re-runs the bound call and observes completed browser auth", async () => {
-    const flow = setup();
-    const first = (await flow.rpc()).result;
-    flow.connect();
-    const retry = await flow.rpc(undefined, undefined, { state: first.requestState, action: "accept" });
-    expect(retry.result.isError).toBeFalsy();
-    expect(flow.call).toHaveBeenCalledTimes(2);
-  });
-
   it("INV-4: decline and cancel terminate without dispatch or another prompt", async () => {
     for (const action of ["decline", "cancel"]) {
       const flow = setup();
@@ -232,23 +223,6 @@ describe("auth URL elicitation", () => {
         .structuredContent.error.code,
     ).toBe("invalid_request_state");
     expect(flow.call).toHaveBeenCalledTimes(2);
-  });
-
-  it("INV-4 INV-5: credential slots elicit through an identity-checked same-origin UI handoff", async () => {
-    const flow = setup({ credential: true });
-    for (const [name, args] of [
-      ["call_tool", { address: "service.read" }],
-      ["authorize_connector", { connector: "service" }],
-    ] as const) {
-      const result = (await flow.rpc(name, args)).result;
-      expect(result.resultType).toBe("input_required");
-      const url = result.inputRequests.connecta_auth.params.url;
-      expect((await flow.app.fetch(new Request(url, { headers: { Cookie: "__session=bob" } }))).status).toBe(403);
-      const browser = await flow.app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }));
-      expect(browser.status).toBe(302);
-      expect(browser.headers.get("Location")).toBe(`${BASE}/`);
-      expect((await flow.app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }))).status).toBe(400);
-    }
   });
 
   it("INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes", async () => {

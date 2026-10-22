@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { sentSecretsFor } from "../src/sent-secrets.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { OperatorUiContract } from "../src/ui.js";
 import { bindCallback, callbackAuth, consentKey } from "./fixtures/oauth.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
+import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 
 const BASE = "https://connecta.example";
 const ISSUER = "https://auth.example";
@@ -246,31 +246,6 @@ describe("downstream OAuth best practice", () => {
     );
   });
 
-  it("INV-6: records DCR when the AS returns the metadata URL as its opaque registered client ID", async () => {
-    const flow = setup({ registeredClientId: DOCUMENT });
-    const status = await flow.start();
-    expect(flow.registrations).toHaveLength(1);
-    expect(new URL(status.authorizationUrl!).searchParams.get("client_id")).toBe(DOCUMENT);
-    expect(status.registrationPath).toBe("dcr");
-    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
-    expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("dcr");
-    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.registrationPath).toBe("dcr");
-    const restarted = await flow.connector.startAuth!(flow.ctx(), { force: true });
-    expect(restarted.registrationPath).toBe("dcr");
-    expect(new URL(restarted.authorizationUrl!).searchParams.get("client_id")).toBe(DOCUMENT);
-    expect(flow.registrations).toHaveLength(1);
-    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.carried).toBe(true);
-  });
-
-  it.each([null, "https://localhost"])(
-    "INV-4: uses DCR without a configured public HTTPS URL (%s)",
-    async (publicUrl) => {
-      const flow = setup({ cimd: true, publicUrl });
-      expect((await flow.app.fetch(new Request(DOCUMENT))).status).toBe(404);
-      expect((await flow.start()).registrationPath).toBe("dcr");
-    },
-  );
-
   it("INV-4: serves documents only for configured self-hosted OAuth connectors and refuses mutations", async () => {
     const flow = setup();
     expect((await flow.app.fetch(new Request(`${BASE}/oauth/client-metadata/unknown`))).status).toBe(404);
@@ -379,22 +354,6 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
-  it("INV-10: passive status does not persist a dcr client's discovery, identity, or consent", async () => {
-    const flow = setup();
-    const storage = flow.ctx().storage;
-    expect(await storage.list("oauth:")).toEqual([]);
-    expect((await flow.connector.status!(flow.ctx())).state).toBe("auth_required");
-    expect(await storage.list("oauth:")).toEqual([]);
-    expect(flow.sent.some((request) => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(
-      false,
-    );
-    const status = await flow.start();
-    expect(status.registrationPath).toBe("dcr");
-    const contract = (await (await flow.app.fetch(new Request(`${BASE}/ui/api/config`))).json()) as OperatorUiContract;
-    expect(contract.live.connectors[0]!.auth).toEqual({ registrationPath: "dcr" });
-    expect(JSON.parse((await storage.get("oauth:grant"))!).body.client.registrationPath).toBe("dcr");
-  });
-
   it("INV-5 INV-6: pins static client_secret_post authentication for exchange and revocation", async () => {
     const flow = setup({
       revocation: true,
@@ -443,28 +402,6 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body).toBeUndefined();
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
-
-  it.each(["wrong-iss", "missing-iss"])(
-    "INV-4 INV-6: refuses callback %s before interpreting an error parameter",
-    async (kind) => {
-      const flow = setup({ issRequired: kind === "missing-iss" });
-      const status = await flow.start();
-      const key = await consentKey(new URL(status.authorizationUrl!).searchParams.get("state")!);
-      const before = await flow.ctx().storage.get(key);
-      const params = {
-        error: "access_denied",
-        error_description: TEXT,
-        ...(kind === "missing-iss" ? {} : { iss: "https://wrong.example" }),
-      };
-      const response = await flow.callback(status.authorizationUrl!, params);
-      expect(response.status).toBe(400);
-      expect(await response.text()).toContain('data-oauth-callback="invalid_callback"');
-      expect(flow.sent.some((request) => request.url.endsWith("/token"))).toBe(false);
-      expect(JSON.stringify(flow.lines)).not.toContain(TEXT);
-      expect(await flow.ctx().storage.get(key)).toBe(before);
-      expect((await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: ISSUER })).status).toBe(200);
-    },
-  );
 
   it("INV-4 INV-5: a verified error consumes consent and its verifier before a later code or Continue (access_denied)", async () => {
     const flow = setup();

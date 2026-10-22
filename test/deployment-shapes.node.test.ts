@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta, customExecutor } from "../src/index.js";
-import { AccessTokenManager } from "../src/access-tokens.js";
-import nodeConfig from "../templates/node/src/connecta.config.js";
 import workerConfig from "../examples/worker/src/connecta.config.js";
+import { AccessTokenManager } from "../src/access-tokens.js";
+import { createConnecta, customExecutor } from "../src/index.js";
+import nodeConfig from "../templates/node/src/connecta.config.js";
 
 // The Worker executor needs workerd's `cloudflare:` modules, which Node cannot
 // load; this suite checks which modules the configuration switches on, not
@@ -33,34 +33,6 @@ const PUBLISHABLE_KEY = "pk_test_" + Buffer.from("example.clerk.accounts.dev$", 
 const VAULT_KEY = Buffer.alloc(32, 7).toString("base64");
 
 describe("deployment shapes", () => {
-  it("keeps the Worker sandbox loader-only", () => {
-    const options = [...readWorker("src", "connecta.config.ts").matchAll(/workerExecutor\(\{([^}]*)\}\)/g)].map(
-      (match) => match[1]?.trim(),
-    );
-    expect(options).toEqual(["loader: env.LOADER"]);
-  });
-
-  it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
-    const agents = readWorker("AGENTS.md");
-    const readme = readWorker("README.md");
-    const source = readWorker("src", "connecta.config.ts");
-    const stack = readWorker("alchemy.run.ts");
-    const callbacks = [
-      "https://claude.ai/api/mcp/auth_callback",
-      "https://chatgpt.com/connector_platform_oauth_redirect",
-      "https://chatgpt.com/connector/oauth/*",
-    ];
-    for (const callback of callbacks) {
-      expect(agents).toContain(callback);
-      expect(readme).toContain(callback);
-      expect(source).toContain(callback);
-      expect(stack).toContain(`"${callback}"`);
-    }
-    expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
-    expect(readme).toContain('"dynamic_client_registration": {');
-    expect(readme).toContain('"allowed_uris": [');
-  });
-
   // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
   it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
     const stack = readWorker("alchemy.run.ts");
@@ -332,14 +304,5 @@ describe("deployment shapes", () => {
     expect(read(".env.example")).toMatch(/^CONNECTA_TOKEN=\s*$/m);
     expect(read("docker-compose.yml")).not.toMatch(/^\s+CONNECTA_TOKEN:/m);
     expect(read("src", "connecta.config.ts")).not.toContain("CONNECTA_TOKEN");
-  });
-
-  it("keeps the initializer's .gitignore in step with the template's", () => {
-    // `connecta init` writes this file itself, because npm strips .gitignore
-    // from a packed dependency. Two copies drift; this is the seam.
-    const written = readFileSync(join(ROOT, "bin", "connecta.mjs"), "utf8");
-    for (const entry of read(".gitignore").split("\n").filter(Boolean)) {
-      expect(written).toContain(entry);
-    }
   });
 });

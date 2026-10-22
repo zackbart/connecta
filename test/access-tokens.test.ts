@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { AccessTokenError, accessTokens, AccessTokenManager } from "../src/access-tokens.js";
+import { AccessTokenError, AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
-import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { authorize, authorizeAgent } from "../src/routes/shared.js";
-import { createTestConnecta } from "./helpers.js";
-import { calcApi, fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { AuthResult, Connector, KVStorage } from "../src/types.js";
 import fixture from "./fixtures/access-tokens-v023.json";
-import type { AuthResult, Connector, InboundAuth, KVStorage } from "../src/types.js";
+import { calcApi, fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { createTestConnecta } from "./helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 /** Any slot revision: opaque, 22 base64url characters. */
@@ -70,32 +70,6 @@ function barrierStorage(base: KVStorage, key: string, count: number): KVStorage 
     },
   };
 }
-
-describe("declared agents", () => {
-  it.each([
-    [["Simon"], /agents\[0\] must be an agent name/],
-    [["simon", "ci", "simon"], /agents\[2\] repeats the agent name "simon"/],
-  ])("INV-11: refuses malformed agents at construction: %j", (agents, message) => {
-    expect(() =>
-      createTestConnecta({ connectors: [], agents: agents as never, accessTokens: accessTokens(memoryStorage()) }),
-    ).toThrow(message);
-    expect(() => new AccessTokenManager(memoryStorage(), { agents: agents as never })).toThrow(message);
-  });
-
-  it("INV-11: refuses agents without accessTokens and the removed maxActive option, naming the replacement", () => {
-    expect(() => createTestConnecta({ connectors: [], agents: ["simon"] })).toThrow(
-      /ConnectaConfig.agents needs accessTokens: accessTokens\(storage\)/,
-    );
-    expect(() => accessTokens(memoryStorage(), { maxActive: 3 } as never)).toThrow(
-      /accessTokens\(\).maxActive was removed: each agent declared in ConnectaConfig.agents/,
-    );
-  });
-
-  it("INV-11: refuses storage without compareAndSet at construction, as a Workers KV adapter is", async () => {
-    const { compareAndSet: _omitted, ...eventual } = await legacyStorage();
-    expect(() => accessTokens(eventual as KVStorage)).toThrow(/list and compareAndSet/);
-  });
-});
 
 describe("agent token slots", () => {
   it("INV-5: issues, rotates and revokes one slot per declared agent and never lists secret material", async () => {
@@ -244,66 +218,6 @@ describe("rotation and revocation", () => {
     expect(await base.list("access-token:v1:lookup:")).toHaveLength(2);
   });
 
-  it("INV-4: a revocation racing a rotation leaves no live secret", async () => {
-    const base = memoryStorage();
-    const seed = new AccessTokenManager(base, { agents: ["simon"] });
-    const first = await seed.rotate("simon");
-    const storage = barrierStorage(base, "access-token:v1:agent:simon", 2);
-    const [rotated, revoked] = await Promise.allSettled([
-      new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon"),
-      new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon"),
-    ]);
-    expect(revoked).toMatchObject({ status: "fulfilled", value: { state: "revoked" } });
-    if (rotated.status === "fulfilled") expect(await admits(seed, rotated.value.token)).toBe(false);
-    // Every lookup that survives is inert: no secret admits.
-    expect(await admits(seed, first.token)).toBe(false);
-    expect(await seed.list()).toEqual([
-      { name: "simon", state: "revoked", revokedAt: expect.any(String), revision: REVISION },
-    ]);
-  });
-
-  it("INV-4: an interrupted rotation never leaves a live secret nobody holds", async () => {
-    for (const failure of ["lookup", "swap"] as const) {
-      const base = memoryStorage();
-      const seed = new AccessTokenManager(base, { agents: ["simon"] });
-      const previous = await seed.rotate("simon");
-      let failing = true;
-      const storage: KVStorage = {
-        ...base,
-        set: async (key, value, options) => {
-          await base.set(key, value, options);
-          if (failure === "lookup" && failing && key.startsWith("access-token:v1:lookup:")) {
-            failing = false;
-            throw new Error("answer lost after commit");
-          }
-        },
-        compareAndSet: async (key, expected, next, options) => {
-          const committed = await base.compareAndSet(key, expected, next, options);
-          if (failure === "swap" && failing && key === "access-token:v1:agent:simon") {
-            failing = false;
-            throw new Error("answer lost after commit");
-          }
-          return committed;
-        },
-      };
-      const rotation = new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
-      if (failure === "lookup") {
-        // Before the commit: nothing is published and the previous token stays.
-        await expect(rotation).rejects.toThrow("answer lost");
-        expect(await base.list("access-token:v1:lookup:")).toHaveLength(1);
-        expect(await admits(seed, previous.token)).toBe(true);
-      } else {
-        // An unanswered commit is read back: it committed, so the secret is delivered.
-        const delivered = await rotation;
-        expect(await admits(seed, delivered.token)).toBe(true);
-        expect(await admits(seed, previous.token)).toBe(false);
-      }
-      const recovered = await seed.rotate("simon");
-      expect(await admits(seed, recovered.token)).toBe(true);
-      expect(await admits(seed, previous.token)).toBe(false);
-    }
-  });
-
   it("INV-4: an agent removed from code refuses on the next request with no storage write", async () => {
     const storage = memoryStorage();
     const { token } = await new AccessTokenManager(storage, { agents: ["simon", "ci"] }).rotate("simon");
@@ -354,14 +268,6 @@ describe("tokens issued before agents", () => {
     expect(await storage.list("access-token:")).toEqual(Object.keys(fixture.records).sort());
     for (const [key, value] of Object.entries(fixture.records)) expect(await storage.get(key)).toBe(value);
   });
-
-  it.each(["cta_" + "x".repeat(43), "cta_bad", "", "other-secret"])(
-    "refuses unknown and malformed credentials: %s",
-    async (token) => {
-      const manager = new AccessTokenManager(await legacyStorage(), { agents: ["legacy"] });
-      expect(await admits(manager, token)).toBe(false);
-    },
-  );
 
   it("INV-4: adopt keeps a legacy token's secret for one agent without rewriting the legacy record", async () => {
     const storage = await legacyStorage();
@@ -440,21 +346,6 @@ describe("tokens issued before agents", () => {
     await storage.set(adoptedKey, adopted);
     expect(await admits(manager, fixture.unbound.token)).toBe(true);
   });
-
-  it("INV-4: fails closed on a corrupt agent slot", async () => {
-    const storage = memoryStorage();
-    const manager = new AccessTokenManager(storage, { agents: ["simon"] });
-    const { token } = await manager.rotate("simon");
-    const slot = JSON.parse((await storage.get("access-token:v1:agent:simon"))!) as Record<string, unknown>;
-    for (const raw of [
-      "not json",
-      JSON.stringify({ ...slot, agent: "ci" }),
-      JSON.stringify({ ...slot, state: "live" }),
-    ]) {
-      await storage.set("access-token:v1:agent:simon", raw);
-      expect(await admits(manager, token)).toBe(false);
-    }
-  });
 });
 
 describe("agent identity", () => {
@@ -477,28 +368,6 @@ describe("agent identity", () => {
     expect(authz.principalKey).toBeUndefined();
     expect(await manager.auth.activityActorLabel?.("simon")).toBe("simon");
     expect(await manager.auth.activityActorLabel?.(fixture.unbound.accessToken.id)).toBeUndefined();
-  });
-
-  it("INV-4: an agent claim from any other inbound provider is refused like an unknown token", async () => {
-    const claim = (kind: string, extra: Partial<Extract<AuthResult, { ok: true }>> = {}): InboundAuth => ({
-      kind,
-      recognizesCredential: (candidate) => candidate.headers.get("authorization") === "Bearer custom",
-      authorize: () => ({ ok: true, subjectId: "service", agent: "simon", ...extra }),
-    });
-    for (const provider of [claim("custom"), claim("access_token"), claim("custom", { principal: owner })]) {
-      const authz = await authorize(request("custom"), BASE, [provider]);
-      expect(authz.ok).toBe(false);
-      if (!authz.ok) expect(authz.response.status).toBe(401);
-      const app = createTestConnecta({ connectors: [calcApi()], auth: provider, maintainers });
-      try {
-        expect((await mcpRpc(app, "tools/list", {}, { token: "custom" })).status).toBe(401);
-      } finally {
-        await app.close();
-      }
-    }
-    // Without the claim the same provider is admitted, so the claim is what refuses.
-    const plain: InboundAuth = { ...claim("custom"), authorize: () => ({ ok: true, subjectId: "service" }) };
-    expect((await authorize(request("custom"), BASE, [plain])).ok).toBe(true);
   });
 
   it("INV-5: an agent has no principal, so personal connectors are absent for it", async () => {

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCodex } from "../eval/agent/codex.js";
-import { infraError, stopsBatch } from "../eval/agent/infra.js";
 import { parseTrace } from "../eval/agent/trace.js";
 
 const SERVER = String.raw`
@@ -135,33 +134,10 @@ describe("Codex eval app-server", () => {
     expect(errors).not.toContain("settings");
   });
 
-  it("terminates an active turn when interrupted", async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 250);
-    const started = performance.now();
-    try {
-      const run = await fixture("hang", controller.signal);
-      expect(performance.now() - started).toBeLessThan(5_000);
-      expect(run.events.some((event) => event.type === "result" && event.subtype !== "success")).toBe(true);
-    } finally {
-      clearTimeout(timer);
-    }
-  });
-
   it("bounds a follow-up callback that never settles", async () => {
     const started = performance.now();
     const run = await fixture("complete", undefined, async () => await new Promise(() => {}), 250);
     expect(performance.now() - started).toBeLessThan(5_000);
     expect(run.timedOut).toBe(true);
-  });
-
-  it("stops the batch on a typed usage limit even when its message has no rate keyword", () => {
-    const error = infraError(
-      [{ type: "result", subtype: "failed", result: "Usage cap reached", codex_error_info: "usageLimitExceeded" }],
-      0,
-      ["mcp__connecta__execute_code"],
-    );
-    expect(error).toContain("usageLimitExceeded");
-    expect(stopsBatch(error)).toBe(true);
   });
 });

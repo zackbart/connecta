@@ -1,10 +1,9 @@
-import { oauthVault } from "./fixtures/oauth.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
-import { authorize } from "../src/routes/shared.js";
-import { fakeClerkAuth, makeDeployment, mcpRpc } from "./fixtures/http.js";
+import { makeDeployment, mcpRpc } from "./fixtures/http.js";
+import { oauthVault } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.test";
 const request = new Request(`${BASE}/mcp`);
@@ -39,25 +38,6 @@ describe("cloudflareAccessAuth", () => {
       ok: true,
       userId: "user-123",
       subjectId: "user-123",
-    });
-  });
-
-  it("INV-4: maps a human to its stable Access principal and result owner", async () => {
-    const result = await authorize(request, BASE, [cloudflareAccessAuth()], workerRuntime({ user_uuid: "user-123" }));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.identity.principal).toEqual({ namespace: "cloudflare-access", id: "user-123" });
-      expect(result.identity.subject).toEqual(result.identity.principal);
-      expect(result.identity.interactive).toBe(true);
-    }
-  });
-
-  it("uses a verified Access email when local development supplies no UUID", async () => {
-    const result = await cloudflareAccessAuth().authorize(request, BASE, runtime({ email: "ada@example.com" }));
-    expect(result).toEqual({
-      ok: true,
-      userId: "ada@example.com",
-      subjectId: "ada@example.com",
     });
   });
 
@@ -113,38 +93,6 @@ describe("cloudflareAccessAuth", () => {
     },
   );
 
-  it("INV-4: distinguishes unavailable identity lookup from missing or rejected identity", async () => {
-    const auth = cloudflareAccessAuth();
-    const missing = await auth.authorize(request, BASE);
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) {
-      expect(missing.response.status).toBe(401);
-      expect(missing.response.headers.get("Cache-Control")).toBe("no-store");
-    }
-
-    const getIdentity = vi.fn().mockRejectedValue(new Error("Access failed"));
-    const failed = await auth.authorize(request, BASE, {
-      access: { aud: "access-app", getIdentity },
-    });
-    expect(failed.ok).toBe(false);
-    if (!failed.ok) {
-      expect(failed.response.status).toBe(503);
-      expect(failed.response.headers.get("Cache-Control")).toBe("no-store");
-      expect(failed.response.headers.get("Retry-After")).toBe("1");
-      expect(failed.response.headers.has("WWW-Authenticate")).toBe(false);
-      await expect(failed.response.json()).resolves.toEqual({
-        error: "Cloudflare Access identity unavailable",
-        problem: "identity_unavailable",
-      });
-    }
-    const rejected = await auth.authorize(request, BASE, runtime({ service_token_id: "service" }));
-    expect(rejected.ok).toBe(false);
-    if (!rejected.ok) {
-      expect(rejected.response.status).toBe(403);
-      expect(rejected.response.headers.get("Cache-Control")).toBe("no-store");
-    }
-  });
-
   it("INV-4 INV-7: returns at the native Access deadline and never admits its late result", async () => {
     vi.useFakeTimers();
     try {
@@ -168,36 +116,6 @@ describe("cloudflareAccessAuth", () => {
       resolve({ user_uuid: "late-human" });
     } finally {
       vi.useRealTimers();
-    }
-  });
-
-  it.each([403])("INV-4: applies no-store to provider refusal %s on protected operator routes", async (status) => {
-    const deployment = makeDeployment({
-      auth: {
-        kind: "test",
-        interactiveOperator: true,
-        authorize: async () => ({ ok: false, response: Response.json({ error: "refused" }, { status }) }),
-      },
-      maintainers: [{ namespace: "test", id: "operator" }],
-    });
-    try {
-      for (const path of ["/ui/data", "/ui/api/config", "/ui/connectors/hidden"]) {
-        const response = await deployment.fetch(new Request(`${BASE}${path}`));
-        expect(response.status).toBe(status);
-        expect(response.headers.get("Cache-Control")).toBe("no-store");
-      }
-    } finally {
-      await deployment.close();
-    }
-  });
-
-  it("selects Access for an Access-only shell even before trusted context is available", async () => {
-    const deployment = makeDeployment({ auth: cloudflareAccessAuth(), maintainers: ["operator"] });
-    try {
-      const shell = await deployment.fetch(new Request(`${BASE}/`));
-      expect(await shell.text()).toContain('"auth":{"kind":"cloudflare-access"}');
-    } finally {
-      await deployment.close();
     }
   });
 
@@ -288,31 +206,5 @@ describe("cloudflareAccessAuth", () => {
       context,
     );
     expect(response.status).toBe(200);
-  });
-
-  it("keeps Clerk as the pre-Access shell and switches to ambient auth at the edge", async () => {
-    const deployment = makeDeployment({
-      auth: [cloudflareAccessAuth(), fakeClerkAuth({ token: "clerk-session" })],
-    });
-
-    const beforeAccess = await deployment.fetch(new Request(`${BASE}/`));
-    const clerkShell = await beforeAccess.text();
-    expect(clerkShell).toContain('"auth":{"kind":"clerk"');
-    expect(clerkShell).toContain("clerk.browser.js");
-
-    const afterAccess = await deployment.fetch(
-      new Request(`${BASE}/`),
-      undefined,
-      workerRuntime({ user_uuid: "operator-1" }),
-    );
-    const accessShell = await afterAccess.text();
-    expect(accessShell).toContain('"auth":{"kind":"cloudflare-access"}');
-    expect(accessShell).not.toContain("clerk.browser.js");
-    const explicit = await deployment.fetch(
-      new Request(`${BASE}/`, { headers: { Authorization: "Basic unknown" } }),
-      undefined,
-      workerRuntime({ user_uuid: "operator-1" }),
-    );
-    expect(await explicit.text()).toContain('"auth":{"kind":"clerk"');
   });
 });

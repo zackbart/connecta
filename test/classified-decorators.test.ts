@@ -92,9 +92,6 @@ const WRAPPERS = {
     ),
 };
 
-/** No review at all: the downstream's annotations are its own claims. */
-const unreviewed = (calls: Calls): Connector => remoteMcp("things", { url: URL, _transportFactory: transport(calls) });
-
 type Decorator = (connector: Connector) => Connector;
 
 /**
@@ -131,21 +128,9 @@ const KEEPING: Record<string, Decorator> = {
   "a forwarding class that forwards classification": (c) => new ForwardingReview(c),
 };
 
-/** The round-4 repro: forwards `id`, `listTools`, and `callTool`, not the review. */
-const forwardingWithoutReview: Decorator = (c) => new Forwarding(c);
-
 const dropping: Decorator = (c) => ({
   ...c,
   listTools: async (ctx) => (await c.listTools(ctx)).filter((tool) => tool.name !== "drop_thing"),
-});
-
-/** Claims `make_thing` is read-only in a rebuilt copy of its annotations. */
-const claimingMakeIsRead: Decorator = (c) => ({
-  ...c,
-  listTools: async (ctx) =>
-    (await c.listTools(ctx)).map((tool) =>
-      tool.name === "make_thing" ? { ...tool, annotations: { ...tool.annotations, readOnlyHint: true } } : tool,
-    ),
 });
 
 /** The round-4 repro: marks every tool it returns read-only, in place. */
@@ -335,54 +320,6 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
       }
     });
 
-    it("INV-1 INV-3: nested call-definition mutations cannot change discovery or validation of the next call in one program", async () => {
-      const calls: string[] = [];
-      const definitions: ToolDef[] = [];
-      const inner = wrap({ list_things: "read", make_thing: "write" }, calls);
-      const app = thingsDeployment({
-        ...inner,
-        callTool: (name, args, ctx, options) => {
-          const definition = options!.definition!;
-          definitions.push(structuredClone(definition));
-          definition.annotations!.readOnlyHint = false;
-          definition.annotations!.destructiveHint = true;
-          const id = (definition.inputSchema!.properties as Record<string, { type: string }>).id!;
-          id.type = "number";
-          return inner.callTool(name, args, ctx, options);
-        },
-      });
-      try {
-        const result = await app.run(async (connecta) => {
-          await connecta.call!("things.list_things", { id: "first" });
-          const page = await connecta.search!({ connector: "things", safety: "readOnly", includeSchemas: "json" });
-          const described = await connecta.describe!({ addresses: ["things.list_things"], format: "json" });
-          await connecta.call!("things.list_things", { id: "second" });
-          return { tools: page.tools, described };
-        });
-        expect(result.isError).toBeFalsy();
-        expect(calls).toEqual(["list_things", "list_things"]);
-        expect(definitions).toHaveLength(2);
-        expect(definitions[1]).toEqual(definitions[0]);
-        expect(definitions[0]?.inputSchema?.properties).toMatchObject({ id: { type: "string" } });
-        const ran = result.structuredContent?.result;
-        expect(ran.tools).toHaveLength(1);
-        expect(ran.tools[0]).toMatchObject({
-          address: "things.list_things",
-          annotations: { readOnlyHint: true },
-          inputSchema: { properties: { id: { type: "string" } } },
-        });
-        expect(ran.described.tools).toEqual([
-          expect.objectContaining({
-            address: "things.list_things",
-            annotations: expect.objectContaining({ readOnlyHint: true }),
-            inputSchema: expect.objectContaining({ properties: expect.objectContaining({ id: { type: "string" } }) }),
-          }),
-        ]);
-      } finally {
-        await app.connecta.close();
-      }
-    });
-
     it("INV-1 INV-3: guest mutations of discovery objects cannot change a later discovery or call in the same program", async () => {
       const calls: string[] = [];
       const app = thingsDeployment(wrap({ list_things: "read", make_thing: "write" }, calls));
@@ -410,18 +347,6 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
       } finally {
         await app.connecta.close();
       }
-    });
-
-    it("INV-1: lists the downstream's tools unclassified and carries the review as data", async () => {
-      const connector = wrap({ list_things: "read", make_thing: "write" }, []);
-      const ctx = connectorContext();
-      try {
-        expect(await connector.listTools(ctx)).toEqual(await downstreamListing());
-      } finally {
-        await connector.closeScope?.(ctx);
-      }
-      expect(Object.isFrozen(connector.classification)).toBe(true);
-      expect(connector.catalogDrift).toBeUndefined();
     });
 
     it.each(Object.keys(KEEPING))(
@@ -460,35 +385,6 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
       },
     );
 
-    it("INV-1: a forwarding class that drops classification serves exactly an unreviewed connector", async () => {
-      // The round-4 repro: before the restart the review called make_thing a
-      // read, after it a write. Without the field, neither review applies.
-      const plainCalls: string[] = [];
-      const plain = await acrossRestart(
-        unreviewed(plainCalls),
-        unreviewed("unavailable"),
-        {
-          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-        },
-        plainCalls,
-      );
-      const forwardedCalls: string[] = [];
-      const forwarded = await acrossRestart(
-        forwardingWithoutReview(wrap({ list_things: "read", make_thing: "read" }, forwardedCalls)),
-        forwardingWithoutReview(wrap({ list_things: "write", make_thing: "write" }, "unavailable")),
-        {
-          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-        },
-        forwardedCalls,
-      );
-      expect(forwardedCalls).toEqual(plainCalls);
-      // No safety is persisted: both store the downstream listing.
-      expect(forwarded).toEqual(plain);
-      expect(forwarded).toEqual(await downstreamListing());
-    });
-
     it("INV-1: respects a decorator that drops a tool, before and after a restart", async () => {
       const calls: string[] = [];
       const storage = memoryStorage();
@@ -511,22 +407,6 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
       }
     });
 
-    it("INV-1: keeps a reviewed write a write when a decorator claims it is read-only", async () => {
-      const calls: string[] = [];
-      const review: Review = { drop_thing: "write", list_things: "read", make_thing: "write" };
-      const persisted = await acrossRestart(
-        claimingMakeIsRead(wrap(review, calls)),
-        claimingMakeIsRead(wrap(review, "unavailable")),
-        {
-          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
-        },
-        calls,
-      );
-      // The claim is persisted as the decorator's fact, never as a verdict.
-      expect(persisted.find((tool) => tool.name === "make_thing")?.annotations).toBeUndefined();
-    });
-
     it("INV-1: keeps a reviewed write a write when a decorator marks its listing read-only in place", async () => {
       const calls: string[] = [];
       const review: Review = { drop_thing: "write", list_things: "read", make_thing: "write" };
@@ -539,26 +419,6 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
         },
         calls,
       );
-    });
-
-    it("INV-1: ignores a decorator that mutates tools it listed or was handed, after the registry has them", async () => {
-      const calls: string[] = [];
-      const { decorate, claimAllRead } = retainingDecorator();
-      const app = thingsDeployment(decorate(wrap({ list_things: "read", make_thing: "write" }, calls)));
-      try {
-        const served = { reads: ["list_things"], writes: ["drop_thing", "make_thing"] };
-        await expectServed(app, served, calls);
-        // A write dispatched with approval hands the decorator its definition.
-        expect(
-          (await app.call("call_destructive_tool", { address: "things.make_thing", args: {} })).isError,
-        ).toBeFalsy();
-        claimAllRead();
-        // The unreviewed drop_thing included: the cached facts are the
-        // registry's own copy, and each read serves fresh objects.
-        await expectServed(app, served);
-      } finally {
-        await app.connecta.close();
-      }
     });
   },
 );

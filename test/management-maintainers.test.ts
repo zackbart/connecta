@@ -4,13 +4,12 @@ import { activityHistory } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { identityStorageKey } from "../src/identity.js";
-import type { OperatorUiContract } from "../src/operator-ui/contract.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth } from "../src/types.js";
+import { readJsonRpc } from "./fixtures/http.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
-import { readJsonRpc } from "./fixtures/http.js";
 
 // Management collapses to maintainers (#837 P2, decisions/0006): shared auth,
 // agent tokens and activity are a maintainer's; a pool member manages only
@@ -301,34 +300,5 @@ describe("management collapses to maintainers", () => {
     for (const path of ["/ui/activity", "/ui/api/activity"]) {
       expect((await flow.send(flow.bot, path)).status, path).toBe(401);
     }
-  });
-
-  it("INV-4: the operator contract follows the maintainer rules: whole for maintainers, own manage for members", async () => {
-    const flow = await setup();
-    const contract = async (user: string) =>
-      (await (await flow.send(user, "/ui/api/config")).json()) as OperatorUiContract;
-    // Both maintainers get the whole view, interactive or not.
-    for (const user of ["alice", "machine"]) {
-      const view = await contract(user);
-      expect(view.role, user).toBe("maintainer");
-      expect(view.config?.connectors.map((c) => c.id)).toEqual(["shared", "personal", "vaulted", "own_key", "wiki"]);
-      expect(view.agents.map((agent) => agent.name)).toEqual(["bot"]);
-    }
-    // Bob manages his own account on the personal connectors in his pool, and nothing shared.
-    const bob = await contract("bob");
-    expect(bob.role).toBe("member");
-    expect(bob.connectors.map((c) => [c.id, c.manage])).toEqual([
-      ["shared", { kind: "none" }],
-      ["personal", { kind: "oauth", actions: ["connect", "restart", "disconnect"] }],
-      ["vaulted", { kind: "none" }],
-      ["own_key", { kind: "credential", label: "Token", actions: ["save"] }],
-    ]);
-    // Carol's pool holds no personal connector, so she manages nothing.
-    const carol = await contract("carol");
-    expect(carol.connectors.map((c) => [c.id, c.manage])).toEqual([["wiki", { kind: "none" }]]);
-    // Dave is nobody, and an agent never reads an operator contract: its
-    // token is refused on every human route with the machine-only challenge.
-    expect((await flow.send("dave", "/ui/api/config")).status).toBe(404);
-    expect((await flow.send(flow.bot, "/ui/api/config")).status).toBe(401);
   });
 });

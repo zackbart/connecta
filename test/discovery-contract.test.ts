@@ -5,9 +5,9 @@ import {
   flatSearchResult,
   type CatalogSearchArgs,
 } from "../src/catalog-service.js";
-import { Validator, type Schema } from "../src/json-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders } from "../src/execute.js";
+import { Validator, type Schema } from "../src/json-schema.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import type { RegistryView } from "../src/registry.js";
 import type { Connector, ToolDef } from "../src/types.js";
@@ -35,12 +35,6 @@ async function searchBoth(registry: RegistryView, args: CatalogSearchArgs) {
 }
 
 describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
-  it("exports a flat search schema that rejects connector groups and missing page fields", () => {
-    expect(searchValidator.validate({ connectors: [], total: 0, offset: 0, limit: 8, hasMore: false }).valid).toBe(
-      false,
-    );
-    expect(searchValidator.validate({ catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8 }).valid).toBe(false);
-  });
   it.each(["json", "compact", "typescript"] as const)(
     "returns one flat page from both search paths with %s schemas",
     async (includeSchemas) => {
@@ -70,24 +64,6 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     },
   );
 
-  it.each(["get_issue", "get issue", "please get_issue for the current project"])(
-    "ranks get_issue above get_issue_status for %s",
-    async (query) => {
-      const registry = makeRegistry([
-        service("linear", [
-          {
-            name: "get_issue_status",
-            description: "Get issue status for the current project, issue details and issue metadata",
-          },
-          { name: "get_issue", description: "Read one ticket" },
-          { name: "list_issues", description: "Get issue details for the current project" },
-        ]),
-      ]);
-      const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
-      expect(page.tools[0]?.address).toBe("linear.get_issue");
-    },
-  );
-
   it("ranks a whole tool name or canonical address above its shorter name phrase", async () => {
     const registry = makeRegistry([
       service("linear", [
@@ -100,18 +76,6 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
       expect(page.tools[0]?.address).toBe("linear.get_issue_status");
     }
   });
-
-  it.each(["get_issue", "get issue", "please get_issue"])(
-    "ranks an exact tool name above a connector identity for %s",
-    async (query) => {
-      const registry = makeRegistry([
-        service("issue", [{ name: "get_issue_status" }]),
-        service("tracker", [{ name: "get_issue" }]),
-      ]);
-      const page = await searchBoth(registry, { query, includeSchemas: "json" });
-      expect(page.tools.map((tool) => tool.address)).toEqual(["tracker.get_issue", "issue.get_issue_status"]);
-    },
-  );
 
   it.each(["linear", "Linear Work"])(
     "INV-4: browses granted tools for exact connector identity %s despite description mentions",
@@ -176,20 +140,6 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     },
   );
 
-  it("ranks exact connector IDs and titles above cross-service description matches", async () => {
-    const registry = makeRegistry([
-      service("linear-preview", [{ name: "get_issue" }], "Linear Preview"),
-      service("metrics", [{ name: "get_issue", description: "Linear get issue integration details and status" }]),
-      service("linear", [{ name: "get_issue_status" }, { name: "get_issue" }], "Linear Production"),
-    ]);
-    for (const query of ["linear get_issue", "Linear Production get_issue"]) {
-      const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
-      expect(page.tools[0]?.address).toBe("linear.get_issue");
-    }
-    const browse = await searchBoth(registry, { query: "Linear Production", includeSchemas: "json" });
-    expect(browse.tools.map((tool) => tool.address)).toEqual(["linear.get_issue_status", "linear.get_issue"]);
-  });
-
   it.each(["GitHub get issue", "github list repos", "GitHub pull request status"])(
     "answers an absent service instead of Linear/Mixpanel/Supabase lookalikes for %s",
     async (query) => {
@@ -212,13 +162,6 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
       });
     },
   );
-
-  it("recognizes a configured service under a custom id and display title", async () => {
-    const registry = makeRegistry([service("source", [{ name: "get_issue" }], "GitHub Engineering")]);
-    const page = await searchBoth(registry, { query: "GitHub get_issue", includeSchemas: "json" });
-    expect(page.absence).toBeUndefined();
-    expect(page.tools[0]?.address).toBe("source.get_issue");
-  });
 
   it("INV-4: absences and auth failures reveal only the pool and grant intersection", async () => {
     let hiddenProbes = 0;

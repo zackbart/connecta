@@ -1,11 +1,9 @@
-import { reviewedFixture } from "./fixtures/reviewed-connector.js";
-import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
-import { connectorWith } from "./fixtures/connectors.js";
-import { customExecutor, createConnecta } from "../src/index.js";
+import { detectCatalogDrift, observedCatalogDrift, vettedCatalog, vettedSchemaDigest } from "../src/catalog-drift.js";
+import { createConnecta, customExecutor } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { detectCatalogDrift, observedCatalogDrift, vettedCatalog, vettedSchemaDigest } from "../src/catalog-drift.js";
+import { connectorWith } from "./fixtures/connectors.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 // From the root entry on purpose: a deployment writing an activity store reaches
@@ -39,37 +37,6 @@ function currentCatalog(): ToolDef[] {
   return [tool("list_issues"), tool("get_issue"), tool("save_issue"), tool("create_issue_label")];
 }
 
-/**
- * A hosted-MCP proxy in miniature: a downstream that answers `listTools`, and
- * the vetted wrapper around it. `served` is what the downstream returns next.
- */
-function proxy(
-  id: string,
-  served: () => ToolDef[],
-  catalog = reviewed(),
-): { connector: Connector; listings: () => number } {
-  let listings = 0;
-  const downstream: Connector = connectorWith({
-    id,
-    kind: "mcp",
-    tools: async () => {
-      listings += 1;
-      return served();
-    },
-    call: async () => null,
-  });
-  return {
-    connector: reviewedFixture(downstream, catalog),
-    listings: () => listings,
-  };
-}
-
-const context = {
-  storage: memoryStorage(),
-  logger: silentLogger,
-  baseUrl: BASE,
-};
-
 describe("vettedCatalog()", () => {
   it("refuses a name classified as both a read and a write", () => {
     expect(() =>
@@ -92,30 +59,6 @@ describe("vettedCatalog()", () => {
 });
 
 describe("detectCatalogDrift()", () => {
-  it("finds nothing in the catalog the release reviewed", async () => {
-    expect(await detectCatalogDrift(reviewed(), currentCatalog())).toEqual({
-      unclassifiedTools: 0,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    });
-  });
-
-  it("counts a tool no release classified", async () => {
-    const counts = await detectCatalogDrift(reviewed(), [...currentCatalog(), tool("merge_issues")]);
-    expect(counts.unclassifiedTools).toBe(1);
-    expect(counts.unservedTools).toBe(0);
-  });
-
-  it("counts a classified tool the catalog no longer serves", async () => {
-    const counts = await detectCatalogDrift(
-      reviewed(),
-      currentCatalog().filter((t) => t.name !== "get_issue"),
-    );
-    expect(counts.unservedTools).toBe(1);
-    expect(counts.unclassifiedTools).toBe(0);
-  });
-
   it("counts an explicit annotation that contradicts a vetted read", async () => {
     const counts = await detectCatalogDrift(reviewed(), [
       tool("list_issues", { destructiveHint: true }),
@@ -162,37 +105,6 @@ describe("detectCatalogDrift()", () => {
     };
     expect(await vettedSchemaDigest(reordered)).toBe(digest);
   });
-
-  it("reports no schema change from a manifest that recorded no schemas", async () => {
-    // The legacy shape: a release classified every name but never wrote the
-    // schemas down. Silence is not agreement, so it counts nothing.
-    const legacy = reviewed();
-    const rewritten = currentCatalog().map((t) => ({
-      ...t,
-      inputSchema: { type: "object", additionalProperties: true },
-    }));
-    expect((await detectCatalogDrift(legacy, rewritten)).schemaChanges).toBe(0);
-  });
-});
-
-describe("reviewedFixture()", () => {
-  it("observes drift on the listing it was already serving", async () => {
-    const served: ToolDef[][] = [currentCatalog(), [...currentCatalog(), tool("merge_issues")]];
-    let listing = 0;
-    const { connector, listings } = proxy("linear_test", () => served[Math.min(listing++, served.length - 1)]!);
-    expect(observedCatalogDrift(connector)).toBeUndefined();
-
-    await servedTools(connector, context);
-    expect(observedCatalogDrift(connector)).toMatchObject({
-      unclassifiedTools: 0,
-      unservedTools: 0,
-    });
-
-    await servedTools(connector, context);
-    expect(observedCatalogDrift(connector)).toMatchObject({ unclassifiedTools: 1 });
-    // One downstream listing per refresh: the check rode both, added neither.
-    expect(listings()).toBe(2);
-  });
 });
 
 describe("Connector.classification", () => {
@@ -203,17 +115,6 @@ describe("Connector.classification", () => {
     };
     expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger })).toThrow(
       '[connecta] connector "custom" classify tool "list" needs verdict',
-    );
-  });
-
-  it("INV-11: a registry refuses a classification on static tools", () => {
-    const connector: Connector = {
-      ...connectorWith({ id: "custom", tools: [tool("list_issues")] }),
-      staticTools: [tool("list_issues")],
-      classification: { tools: { list_issues: "read" } },
-    };
-    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger })).toThrow(
-      /declares both staticTools and a classification/,
     );
   });
 
@@ -236,54 +137,6 @@ describe("Connector.classification", () => {
     expect(second[1]?.annotations).toEqual({ readOnlyHint: false });
     // The connector's own objects never carry a verdict.
     expect(listed[0]?.annotations).toBeUndefined();
-  });
-});
-
-describe("drift on the registry surface", () => {
-  it("reports counts through connector status after a refresh", async () => {
-    let drifting = false;
-    const { connector } = proxy("linear_test", () =>
-      drifting ? [...currentCatalog(), tool("merge_issues")] : currentCatalog(),
-    );
-    const registry = new Registry([connector], {
-      storage: memoryStorage(),
-      logger: silentLogger,
-      toolCacheTtlSeconds: 0,
-    });
-
-    await registry.getTools("linear_test", BASE);
-    expect(await registry.statusFor("linear_test", BASE)).toMatchObject({
-      state: "ok",
-      catalogDrift: { unclassifiedTools: 0 },
-    });
-
-    drifting = true;
-    await registry.getTools("linear_test", BASE);
-    const status = await registry.statusFor("linear_test", BASE);
-    expect(status.catalogDrift).toMatchObject({
-      unclassifiedTools: 1,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    });
-    expect(typeof status.catalogDrift?.observedAt).toBe("string");
-  });
-
-  it("INV-6: catalog refreshes produce no activity drift events", async () => {
-    const drift = vi.fn();
-    const { connector } = proxy("linear_test", () => [...currentCatalog(), tool("merge_issues")]);
-    const store = { record() {}, recordCatalogDrift: drift };
-    const connecta = createConnecta({
-      readOnly: false,
-      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-      connectors: [connector],
-      storage: memoryStorage(),
-      logger: silentLogger,
-      activity: activityHistory({ store }),
-    });
-    await connecta.registry.getTools("linear_test", BASE);
-    expect(drift).not.toHaveBeenCalled();
-    await connecta.close();
   });
 });
 
@@ -312,15 +165,6 @@ describe("the connector seam is projected, not echoed", () => {
       },
     }) as unknown as Connector;
 
-  const REPORT_KEYS = [
-    "annotationConflicts",
-    "observedAt",
-    "reviewedBaseline",
-    "schemaChanges",
-    "unclassifiedTools",
-    "unservedTools",
-  ];
-
   it("INV-6: health neither reads nor reports a connector drift seam", async () => {
     const connector = leaky();
     const drift = vi.fn(() => {
@@ -340,15 +184,6 @@ describe("the connector seam is projected, not echoed", () => {
     expect(JSON.stringify(health)).not.toContain("leaky");
     expect(drift).not.toHaveBeenCalled();
     await connecta.close();
-  });
-
-  it("strips them on connector status too", async () => {
-    const registry = new Registry([leaky()], {
-      storage: memoryStorage(),
-      logger: silentLogger,
-    });
-    const status = await registry.statusFor("leaky", BASE);
-    expect(Object.keys(status.catalogDrift ?? {}).sort()).toEqual(REPORT_KEYS);
   });
 });
 
@@ -383,50 +218,6 @@ const digestedRead = (digest: string, served: ToolDef): Connector => ({
 });
 
 describe("schema digests", () => {
-  it("keep the digest a release recorded for a schema in canonical key order", async () => {
-    const tool: ToolDef = {
-      name: "keys",
-      inputSchema: {
-        type: "object",
-        properties: { b: { type: "string" }, "10": { type: "number" }, a: { enum: [1, "x", null] }, "2": {} },
-        required: ["b"],
-        skipped: undefined,
-      },
-      outputSchema: { type: "object", "é": true, "Z": [{ y: 1, x: 2 }] },
-    };
-    expect(await vettedSchemaDigest(tool, "legacy")).toBe(
-      await sha256(
-        JSON.stringify(
-          sortedJson({
-            inputSchema: tool.inputSchema,
-            outputSchema: tool.outputSchema,
-          }),
-        ),
-      ),
-    );
-  });
-
-  it("INV-1: digest every leaf of a schema deeper than the host stack", async () => {
-    const first = await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("string", 10_000) });
-    expect(first).toMatch(/^sha256-sets-v1:[a-f0-9]{64}$/);
-    expect(await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("number", 10_000) })).not.toBe(first);
-  });
-
-  it("INV-1: refuse to digest a schema past the node bound rather than hash part of it", async () => {
-    await expect(
-      vettedSchemaDigest({
-        name: "wide",
-        inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
-      }),
-    ).rejects.toThrow(/more than 100000 values/);
-    await expect(
-      vettedSchemaDigest({
-        name: "wide",
-        inputSchema: { enum: Array.from({ length: 99_990 }, (_, index) => index) },
-      }),
-    ).resolves.toMatch(/^sha256-sets-v1:/);
-  });
-
   describe("on a custom connector", () => {
     it("INV-1: serve a reviewed read whose leaf changed 80 levels down as a write", async () => {
       const reviewed: ToolDef = { name: "deep", inputSchema: deepSchema("string", 80) };

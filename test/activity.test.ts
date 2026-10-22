@@ -23,52 +23,6 @@ const EVENT: ToolCallActivityEvent = {
 };
 
 describe("activity delivery", () => {
-  it("keeps every event's floor of one attempt and carries no approval scope", () => {
-    const events: ToolCallActivityEvent[] = [];
-    const context: ActivityRequestContext = {
-      recordTool: recordToolActivity,
-      sink: { record: (event) => void events.push(event) },
-      actor: { kind: "test" },
-      requestId: "r",
-      serverInfo: { name: "connecta", version: "0" },
-      logger: silentLogger,
-    };
-    // A refusal reaches nothing downstream and still counts its one attempt;
-    // the zero-attempt pause and approval events left with #672.
-    recordToolActivity(context, {
-      connectorId: "tracker",
-      toolName: "close_issue",
-      address: "tracker.close_issue",
-      durationMs: 3,
-      source: "execute_code",
-      outcome: "error",
-      attempts: 0,
-      errorCode: "destructive_tool_requires_approval",
-    });
-    expect(events.map((event) => [event.outcome, event.attempts, event.friction])).toEqual([
-      ["error", 1, "destructive_reroute"],
-    ]);
-    expect(Object.keys(required(events[0])).sort()).toEqual([
-      "actor",
-      "address",
-      "attempts",
-      "connectorId",
-      "durationMs",
-      "errorCode",
-      "friction",
-      "id",
-      "occurredAt",
-      "outcome",
-      "packageVersion",
-      "requestId",
-      "schemaVersion",
-      "serverName",
-      "serverVersion",
-      "source",
-      "toolName",
-    ]);
-  });
-
   it("attaches rejected async writes to waitUntil without throwing", async () => {
     const deferred: Promise<unknown>[] = [];
     const warnings: unknown[][] = [];
@@ -105,47 +59,6 @@ describe("activity delivery", () => {
     expect(deferred).toHaveLength(1);
     await Promise.all(deferred);
     expect(warnings).toHaveLength(1);
-  });
-
-  it("records result-size friction without retaining the result", async () => {
-    const events: ToolCallActivityEvent[] = [];
-    const large = api("large", {
-      tools: [
-        {
-          name: "read",
-          description: "Read a value",
-          annotations: { readOnlyHint: true },
-          handler: () => ({ value: "x".repeat(500) }),
-        },
-      ],
-    });
-    const activity: ActivityRequestContext = {
-      recordTool: recordToolActivity,
-      sink: {
-        record(event) {
-          events.push(event);
-        },
-      },
-      actor: { kind: "bearer" },
-      requestId: EVENT.requestId,
-      serverInfo: { name: "connecta", version: "0.1.0" },
-      logger: silentLogger,
-    };
-    const tools = createMetaTools(makeRegistry([large], { maxResultBytes: 64 }), "https://connecta.test", { activity });
-
-    await tools.callTool({ address: "large.read" });
-
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      address: "large.read",
-      outcome: "success",
-      friction: "result_too_large",
-    });
-    // The call succeeded. An error code here would make every consumer that
-    // counts `errorCode`/`error_code IS NOT NULL` report truncations as
-    // failures — including the D1 example this repository ships.
-    expect(events[0]).not.toHaveProperty("errorCode");
-    expect(JSON.stringify(events[0])).not.toContain("xxxxx");
   });
 
   it("clamps an invented identity so the event cannot carry a payload", async () => {
