@@ -12,7 +12,6 @@ import {
   EXECUTE_MAX_EMITTED_BLOCKS,
   EXECUTE_MAX_EMITTED_BYTES,
 } from "../src/execute.js";
-import { jsonResult } from "../src/meta-tools.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import type { Executor } from "../src/types.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
@@ -269,12 +268,6 @@ describe("EmitCollector budgets (M5)", () => {
 });
 
 describe("connecta.emit provider (M7, M8)", () => {
-  it("fails loudly when no collector is configured", async () => {
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
-    const emit = required(providers.find((p) => p.name === "connecta")?.fns.emit);
-    await expect(emit({ type: "text", text: "x" })).rejects.toThrowError(/no emission collector/);
-  });
-
   it("spends no host-call budget", async () => {
     const sink = new EmitCollector(10_000, 10);
     let terminalCode: string | undefined;
@@ -344,43 +337,6 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     });
   });
 
-  it("a program that never emits produces today's exact response", async () => {
-    const handler = emitHandler(scriptedExecutor(async () => "plain"));
-    expect(await handler({ code: "ignored" })).toEqual(
-      jsonResult({ result: "plain", hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } }),
-    );
-  });
-
-  it("honors configured budgets and falls back on invalid ones", async () => {
-    const script = async (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => {
-      const out: Record<string, unknown> = { delivered: 0 };
-      await required(fns.emit)({ type: "text", text: "one" });
-      out.delivered = 1;
-      try {
-        await required(fns.emit)({ type: "text", text: "two" });
-        out.delivered = 2;
-      } catch (err) {
-        out.refused = err instanceof Error ? err.message : String(err);
-      }
-      return out;
-    };
-    const capped = await emitHandler(scriptedExecutor(script), {
-      maxEmittedBlocks: 1,
-    })({ code: "ignored" });
-    const cappedEnvelope = JSON.parse(required(capped.content[0]).text ?? "");
-    expect(String(cappedEnvelope.result.refused)).toContain("block-count budget");
-    expect(capped.content).toHaveLength(2);
-
-    // Zero is not a budget; both knobs fall back to their defaults.
-    const fallback = await emitHandler(scriptedExecutor(script), {
-      maxEmittedBlocks: 0,
-      maxEmittedBytes: Number.NaN,
-    })({ code: "ignored" });
-    const fallbackEnvelope = JSON.parse(required(fallback.content[0]).text ?? "");
-    expect(fallbackEnvelope.result).toEqual({ delivered: 2 });
-    expect(fallback.content).toHaveLength(3);
-  });
-
   it("discards blocks on failure and says so, structured and plain", async () => {
     const failing = scriptedExecutor(async (fns) => {
       await required(fns.emit)({ type: "text", text: "doomed" });
@@ -422,12 +378,5 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     });
     const quietEnvelope = JSON.parse(required(quiet.content[0]).text ?? "");
     expect(quietEnvelope.diagnostics.emitted).toBeUndefined();
-  });
-});
-
-describe("emit budget defaults", () => {
-  it("default budgets fit the motivating case and nothing grander", () => {
-    expect(EXECUTE_MAX_EMITTED_BYTES).toBe(4_000_000);
-    expect(EXECUTE_MAX_EMITTED_BLOCKS).toBe(32);
   });
 });

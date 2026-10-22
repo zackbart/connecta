@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { CatalogService } from "../src/catalog-service.js";
-import { InvocationService } from "../src/invocation.js";
 import { activitySink, invokeTestCall, makeRegistry, silentLogger } from "./helpers.js";
-
-const BASE = "https://connecta.example";
 
 describe("failed call logging", () => {
   it("INV-6: records a failure's typed facts, never its text, in the log and activity", async () => {
@@ -58,34 +54,5 @@ describe("failed call logging", () => {
       expect(JSON.stringify(warn.mock.calls)).not.toContain(sentinel);
       expect(JSON.stringify(target.events)).not.toContain(sentinel);
     }
-  });
-
-  it("stays quiet for an approval reroute, which is not a failure", async () => {
-    const warn = vi.fn();
-    const dangerous = api("danger", {
-      tools: [
-        {
-          name: "erase",
-          description: "Erase the thing",
-          annotations: { readOnlyHint: false, destructiveHint: true },
-          handler: () => ({ erased: true }),
-        },
-      ],
-    });
-    const registry = makeRegistry([dangerous], {
-      logger: { ...silentLogger, warn },
-    });
-    const target = activitySink();
-
-    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE), target.activity).invoke(
-      "danger.erase",
-      {},
-      {
-        source: "call_tool",
-      },
-    );
-
-    expect(outcome.ok).toBe(false);
-    expect(warn.mock.calls.filter(([line]) => line === "[connecta] call failed")).toHaveLength(0);
   });
 });

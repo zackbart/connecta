@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import { compileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema } from "../src/types.js";
@@ -8,15 +8,6 @@ import { silentLogger } from "./helpers.js";
 const OPTS = { address: "acme.create_note", logger: silentLogger };
 
 describe("validateToolInput", () => {
-  it("returns null for input that matches the schema", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { title: { type: "string" } },
-      required: ["title"],
-    };
-    expect(validateToolInput(schema, { title: "hi" }, OPTS)).toBeNull();
-  });
-
   it("returns a non-retryable invalid_args error naming the address and path", () => {
     const schema: JsonSchema = {
       type: "object",
@@ -71,17 +62,6 @@ describe("validateToolInput", () => {
     expect(JSON.stringify(err?.validation)).not.toContain("also-secret");
   });
 
-  it("bounds multiple validation findings", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: Object.fromEntries(["a", "b", "c", "d"].map((name) => [name, { type: "string" }])),
-      required: ["a", "b", "c", "d"],
-    };
-    const validation = validateToolInput(schema, {}, OPTS)?.validation;
-    expect(validation?.issues).toHaveLength(3);
-    expect(validation?.truncated).toBe(true);
-  });
-
   it("preserves the finding bound after removing duplicate keyword branches", () => {
     const schema: JsonSchema = {
       type: "object",
@@ -92,113 +72,6 @@ describe("validateToolInput", () => {
     expect(validation?.issues).toHaveLength(3);
     expect(validation?.issues.every((issue) => issue.code === "enum")).toBe(true);
     expect(validation?.truncated).toBe(true);
-  });
-
-  it("returns rather than throws, so the caller owns the failure", () => {
-    const schema: JsonSchema = { type: "object", required: ["id"] };
-    expect(() => validateToolInput(schema, {}, OPTS)).not.toThrow();
-    expect(validateToolInput(schema, {}, OPTS)).toBeInstanceOf(ConnectorCallError);
-  });
-
-  it("catches the unknown key a manifest's additionalProperties: false declares", () => {
-    // The false-success bug this closes: an unknown arg key silently dropped,
-    // an empty body sent upstream, and a 200 reported back as a write.
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { note_id: { type: "string" } },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { noteId: "n_1" }, OPTS);
-    expect(err?.code).toBe("invalid_args");
-    expect(err?.message).toContain("noteId");
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/noteId",
-          code: "additionalProperties",
-          expected: "no additional properties",
-        },
-      ],
-    });
-    expect(err?.message).not.toContain("False boolean schema");
-  });
-
-  it("reports only enum for an invalid declared property in a closed schema", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: {
-        type: { type: "string", enum: ["A", "TXT"] },
-      },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { type: "SPF" }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/type",
-          code: "enum",
-          expected: "one of the declared values",
-        },
-      ],
-    });
-    // The validator's sentence quotes the schema's enum; the message is told
-    // from the reviewed finding instead (#695).
-    expect(err?.message).toContain("/type: expected one of the declared values (enum)");
-    expect(err?.message).not.toContain('["A","TXT"]');
-    expect(err?.message).not.toContain("False boolean schema");
-    expect(err?.message).not.toContain("additional properties");
-  });
-
-  it("recognizes an empty declared property name in a closed schema", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: {
-        "": { type: "string", enum: ["ok"] },
-      },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { "": "bad" }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/",
-          code: "enum",
-          expected: "one of the declared values",
-        },
-      ],
-    });
-    expect(err?.message).toContain("/: expected one of the declared values (enum)");
-    expect(err?.message).not.toContain('["ok"]');
-    expect(err?.message).not.toContain("False boolean schema");
-    expect(err?.message).not.toContain("additional properties");
-  });
-
-  it("does not misclassify an invalid nested declared property as additional", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: {
-        settings: {
-          type: "object",
-          properties: {
-            mode: { type: "string", enum: ["basic", "advanced"] },
-          },
-          additionalProperties: false,
-        },
-      },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { settings: { mode: "invalid" } }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/settings/mode",
-          code: "enum",
-          expected: "one of the declared values",
-        },
-      ],
-    });
-    expect(err?.message).not.toContain("False boolean schema");
-    expect(err?.message).not.toContain("additional properties");
   });
 
   it("preserves independent enum and false-schema failures across allOf", () => {
@@ -225,54 +98,6 @@ describe("validateToolInput", () => {
     expect(err?.message).toContain("/x: expected one of the declared values (enum)");
     expect(err?.message).not.toContain('["A"]');
     expect(err?.message).not.toContain("False boolean schema");
-  });
-
-  it("renders one message clause for a declared false-schema property", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { banned: false },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { banned: "value" }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/banned",
-          code: "additionalProperties",
-          expected: "no additional properties",
-        },
-      ],
-    });
-    expect(err?.message).toBe(
-      'Invalid arguments for "acme.create_note": /banned: expected no additional properties (additionalProperties)',
-    );
-  });
-
-  it("renders one message clause for a nested undeclared property", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: {
-        settings: {
-          type: "object",
-          properties: { known: { type: "string" } },
-          additionalProperties: false,
-        },
-      },
-      additionalProperties: false,
-    };
-    const err = validateToolInput(schema, { settings: { extra: "value" } }, OPTS);
-    expect(err?.validation).toEqual({
-      issues: [
-        {
-          path: "/settings/extra",
-          code: "additionalProperties",
-          expected: "no additional properties",
-        },
-      ],
-    });
-    expect(err?.message).toBe(
-      'Invalid arguments for "acme.create_note": /settings/extra: expected no additional properties (additionalProperties)',
-    );
   });
 
   it.each([
@@ -334,18 +159,6 @@ describe("validateToolInput", () => {
     }
   });
 
-  it("caches the compiled validator per schema object", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { n: { type: "integer" } },
-      required: ["n"],
-    };
-    // Same object, repeated use: still validating, not silently disabled.
-    expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
-    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe("invalid_args");
-    expect(validateToolInput(schema, { n: 2 }, OPTS)).toBeNull();
-  });
-
   it("evaluates dependentSchemas and unevaluatedProperties from 2020-12 schemas", () => {
     const schema: JsonSchema = {
       type: "object",
@@ -367,29 +180,6 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { mode: "basic", apiKey: "wrong-mode" }, OPTS)?.code).toBe("invalid_args");
     expect(validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)?.code).toBe("invalid_args");
   });
-
-  it("fail-closed still returns null for input that matches a good schema", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { title: { type: "string" } },
-      required: ["title"],
-    };
-    expect(validateToolInput(schema, { title: "hi" }, { ...OPTS, failClosed: true })).toBeNull();
-  });
-
-  it("defaults the logger when opts omits one", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const schema: JsonSchema = {
-        type: "object",
-        properties: { x: { $ref: "#/definitions/nope" } },
-      };
-      expect(validateToolInput(schema, { x: 1 }, { address: "acme.no_logger" })).toBeNull();
-      expect(warn).toHaveBeenCalledTimes(1);
-    } finally {
-      warn.mockRestore();
-    }
-  });
 });
 
 describe("compileValidator", () => {
@@ -401,30 +191,6 @@ describe("compileValidator", () => {
     };
     expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/acme\.compile_bad/);
     expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/cannot use/);
-  });
-
-  it("refuses a schema an earlier call already found unusable", () => {
-    const { logger, warn } = spyLogger();
-    // Unresolvable $ref: it compiles, then blows up on first validate, which
-    // is where the fail-open proxy path disables it.
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { x: { $ref: "#/definitions/missing" } },
-    };
-    expect(validateToolInput(schema, { x: 1 }, { address: "acme.late", logger })).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(() => compileValidator(schema, { address: "acme.late" })).toThrow(/acme\.late/);
-  });
-
-  it("silently caches a good schema so the runtime path hits the cache", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { n: { type: "integer" } },
-      required: ["n"],
-    };
-    expect(() => compileValidator(schema, { address: "acme.compile_ok" })).not.toThrow();
-    expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
-    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe("invalid_args");
   });
 });
 

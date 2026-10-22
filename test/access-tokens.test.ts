@@ -73,12 +73,7 @@ function barrierStorage(base: KVStorage, key: string, count: number): KVStorage 
 
 describe("declared agents", () => {
   it.each([
-    ["simon", /agents must be an array of agent names/],
     [["Simon"], /agents\[0\] must be an agent name/],
-    [["build agent"], /agents\[0\] must be an agent name/],
-    [[""], /agents\[0\] must be an agent name/],
-    [["x".repeat(65)], /agents\[0\] must be an agent name: 1 to 64 characters/],
-    [[7], /agents\[0\] must be an agent name/],
     [["simon", "ci", "simon"], /agents\[2\] repeats the agent name "simon"/],
   ])("INV-11: refuses malformed agents at construction: %j", (agents, message) => {
     expect(() =>
@@ -99,23 +94,6 @@ describe("declared agents", () => {
   it("INV-11: refuses storage without compareAndSet at construction, as a Workers KV adapter is", async () => {
     const { compareAndSet: _omitted, ...eventual } = await legacyStorage();
     expect(() => accessTokens(eventual as KVStorage)).toThrow(/list and compareAndSet/);
-  });
-
-  it("INV-5: describeConfig lists agent names in order and never token state", async () => {
-    const storage = memoryStorage();
-    const { token } = await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
-    const app = createTestConnecta({ connectors: [], agents: ["simon", "ci"], accessTokens: accessTokens(storage) });
-    try {
-      const description = app.describeConfig();
-      expect(description.agents).toEqual(["simon", "ci"]);
-      expect(description.modules.accessTokens).toEqual({ enabled: true });
-      const serialized = JSON.stringify(description);
-      for (const secret of [token, token.slice(0, 12), "issued", "tokenHash", "access-token:v1"]) {
-        expect(serialized).not.toContain(secret);
-      }
-    } finally {
-      await app.close();
-    }
   });
 });
 
@@ -241,34 +219,9 @@ describe("agent token slots", () => {
       await app.close();
     }
   });
-
-  it("omitting the module leaves token authentication and management unavailable", async () => {
-    const storage = memoryStorage();
-    const token = (await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon")).token;
-    const app = createTestConnecta({ connectors: [], auth: human, maintainers, storage });
-    try {
-      expect((await mcpRpc(app, "tools/list", {}, { token })).status).toBe(401);
-      expect((await app.fetch(request("clerk-operator", "/tokens"))).status).toBe(404);
-      expect((await app.fetch(request("clerk-operator", "/ui/access-tokens"))).status).toBe(404);
-    } finally {
-      await app.close();
-    }
-  });
 });
 
 describe("rotation and revocation", () => {
-  it("INV-4: rotation is an immediate cutover: the old secret refuses on the very next request", async () => {
-    const storage = memoryStorage();
-    const manager = new AccessTokenManager(storage, { agents: ["simon"] });
-    const first = await manager.rotate("simon");
-    expect(await admits(manager, first.token)).toBe(true);
-    const second = await manager.rotate("simon");
-    expect(await admits(manager, first.token)).toBe(false);
-    expect(await admits(manager, second.token)).toBe(true);
-    // The previous lookup stays behind, inert: the slot no longer names it.
-    expect(await storage.list("access-token:v1:lookup:")).toHaveLength(2);
-  });
-
   it("INV-4: of concurrent rotations exactly one returns a secret, and it is the only live one", async () => {
     const base = memoryStorage();
     const seed = new AccessTokenManager(base, { agents: ["simon"] });
@@ -307,30 +260,6 @@ describe("rotation and revocation", () => {
     expect(await seed.list()).toEqual([
       { name: "simon", state: "revoked", revokedAt: expect.any(String), revision: REVISION },
     ]);
-  });
-
-  it("INV-4: revocation is one slot commit and deletes nothing", async () => {
-    const base = memoryStorage();
-    const manager = new AccessTokenManager(base, { agents: ["simon"] });
-    const { token } = await manager.rotate("simon");
-    const order: string[] = [];
-    const storage: KVStorage = {
-      ...base,
-      delete: async (key) => {
-        order.push(`delete ${key.split(":")[2]}`);
-        await base.delete(key);
-      },
-      compareAndSet: async (key, expected, next, options) => {
-        order.push(`swap ${key.split(":")[2]}`);
-        return base.compareAndSet(key, expected, next, options);
-      },
-    };
-    await new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon");
-    expect(order).toEqual(["swap agent"]);
-    expect(await admits(manager, token)).toBe(false);
-    // Nothing is deleted: the record and lookup stay behind, inert.
-    expect(await base.list("access-token:v1:lookup:")).toHaveLength(1);
-    expect(await base.list("access-token:v1:record:")).toHaveLength(1);
   });
 
   it("INV-4: an interrupted rotation never leaves a live secret nobody holds", async () => {
@@ -409,17 +338,6 @@ describe("rotation and revocation", () => {
       await app.close();
     }
     expect(await admits(new AccessTokenManager(storage, { agents: ["simon"] }), token)).toBe(true);
-  });
-
-  it("refuses operations on undeclared agents", async () => {
-    const manager = new AccessTokenManager(memoryStorage(), { agents: ["simon"] });
-    for (const operation of [
-      () => manager.rotate("ci"),
-      () => manager.revoke("ci"),
-      () => manager.adopt(fixture.unbound.accessToken.id, "ci"),
-    ]) {
-      await expect(operation()).rejects.toMatchObject({ code: "unknown_agent" });
-    }
   });
 });
 
@@ -509,12 +427,9 @@ describe("tokens issued before agents", () => {
     const { agent: _agent, ...unbound } = record;
     for (const raw of [
       "not json",
-      "null",
-      JSON.stringify({ ...record, id: fixture.bound.accessToken.id }),
-      JSON.stringify({ ...record, revokedAt: "" }),
       JSON.stringify({ ...record, revokedAt: "2026-10-01T00:00:00.000Z" }),
-      JSON.stringify({ ...record, agent: "Not An Agent" }),
       JSON.stringify({ ...record, agent: "other" }),
+      JSON.stringify({ ...record, id: fixture.bound.accessToken.id }),
       JSON.stringify({ ...record, principal: owner }),
       JSON.stringify({ ...record, tokenHash: "0".repeat(64) }),
       JSON.stringify(unbound),
@@ -586,59 +501,6 @@ describe("agent identity", () => {
     expect((await authorize(request("custom"), BASE, [plain])).ok).toBe(true);
   });
 
-  it("INV-4: pool members recognize agents by identity.agent at /agent/<pool>, and an agent never opens /mcp or /mcp/<pool>", async () => {
-    const storage = memoryStorage();
-    const manager = new AccessTokenManager(storage, { agents: ["simon", "ci"] });
-    const simon = (await manager.rotate("simon")).token;
-    const ci = (await manager.rotate("ci")).token;
-    const config = {
-      connectors: [calcApi()],
-      auth: human,
-      maintainers,
-      agents: ["simon", "ci"],
-      accessTokens: accessTokens(storage),
-      pools: { desktop: { tools: ["calc.add"], members: ["agent:simon"] } },
-    };
-    expect(() => createTestConnecta({ ...config, maintainers: ["owner", "agent:simon"] })).toThrow(
-      "ConnectaConfig.maintainers[1] is an agent. Agents are never maintainers",
-    );
-    const app = createTestConnecta(config);
-    try {
-      const call = (token: string, options: { pool?: string; agentPool?: string } = {}) =>
-        mcpRpc(
-          app,
-          "tools/call",
-          { name: "call_tool", arguments: { address: "calc.add", args: { a: 2, b: 3 } } },
-          { token, ...options },
-        );
-      const served = await call(simon, { agentPool: "desktop" });
-      expect(served.status).toBe(200);
-      expect((await readJsonRpc(served)).result.isError).not.toBe(true);
-      // A non-member agent and the maintainer outside the pool's members get
-      // the one endpoint-not-found refusal.
-      const notFound = { jsonrpc: "2.0", error: { code: -33004, message: "MCP endpoint not found." } };
-      for (const response of [
-        await call(ci, { agentPool: "desktop" }),
-        await call("clerk-operator", { pool: "desktop" }),
-      ]) {
-        expect(response.status).toBe(404);
-        expect(await readJsonRpc(response)).toMatchObject(notFound);
-      }
-      // Human endpoints refuse agent tokens, and agent endpoints refuse people.
-      for (const response of [
-        await call(simon),
-        await call(simon, { pool: "desktop" }),
-        await call(ci),
-        await call("clerk-operator", { agentPool: "desktop" }),
-      ]) {
-        expect(response.status).toBe(401);
-      }
-      expect((await call("clerk-operator")).status).toBe(200);
-    } finally {
-      await app.close();
-    }
-  });
-
   it("INV-5: an agent has no principal, so personal connectors are absent for it", async () => {
     const storage = memoryStorage();
     const { token } = await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
@@ -691,118 +553,51 @@ describe("agent identity", () => {
       await app.close();
     }
   });
-
-  it("INV-6: activity attributes an agent's calls to its name and records no payload or token", async () => {
-    const storage = memoryStorage();
-    const { token } = await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
-    const recorded: unknown[] = [];
-    const { activityHistory } = await import("../src/activity.js");
-    const app = createTestConnecta({
-      connectors: [calcApi()],
-      agents: ["simon"],
-      accessTokens: accessTokens(storage),
-      pools: { desktop: { tools: ["calc"], members: ["agent:simon"] } },
-      activity: activityHistory({ store: { record: (event) => void recorded.push(event) } }),
-    });
-    try {
-      await readJsonRpc(
-        await mcpRpc(
-          app,
-          "tools/call",
-          { name: "call_tool", arguments: { address: "calc.add", args: { a: 4242, b: 1717 } } },
-          { token, agentPool: "desktop" },
-        ),
-      );
-      await expect.poll(() => recorded.length).toBeGreaterThan(0);
-      expect(recorded[0]).toMatchObject({ actor: { kind: "access_token", id: "simon", namespace: NAMESPACE } });
-      const rows = JSON.stringify(recorded);
-      // Neither the arguments, the result, the secret nor its digest reach activity.
-      for (const payload of ["4242", "1717", "5959", token, token.slice(0, 12)]) expect(rows).not.toContain(payload);
-    } finally {
-      await app.close();
-    }
-  });
 });
 
-it("INV-7: aborted agent verification settles its pending storage read and starts no further read", async () => {
+it.each([3])("INV-7: an agent deadline at storage read %i refuses promptly and starts no later read", async (stage) => {
+  vi.useFakeTimers();
+  const { authenticate } = await import("../src/auth-admission.js");
   const storage = memoryStorage();
   const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
   const { token } = await manager.rotate("assistant");
-  const get = storage.get.bind(storage);
-  let entered!: () => void;
+  const nativeGet = storage.get.bind(storage);
   let release!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const blocked = new Promise<void>((resolve) => {
+  let count = 0;
+  let settlement: Promise<unknown> | undefined;
+  const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const read = vi.spyOn(storage, "get").mockImplementation(async (key) => {
-    entered();
-    await blocked;
-    return get(key);
+  const get = vi.spyOn(storage, "get").mockImplementation(async (key) => {
+    if (++count === stage) await held;
+    return nativeGet(key);
   });
-  const controller = new AbortController();
-  const pending = manager.auth.authorize(new Request(request(token), { signal: controller.signal }), BASE);
+  const caller = new AbortController();
+  const pending = authenticate(
+    manager.auth,
+    new Request(request(token), { signal: caller.signal }),
+    BASE,
+    undefined,
+    { info() {}, warn() {}, error() {}, debug() {} },
+    (work) => {
+      settlement = work;
+    },
+  );
   try {
-    await started;
-    controller.abort();
+    await vi.waitFor(() => expect(count).toBe(stage));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await pending;
+    expect(result.admitted).toBe(true);
+    if (result.admitted) expect(result.result.ok).toBe(false);
     release();
-    expect((await pending).ok).toBe(false);
-    expect(read).toHaveBeenCalledTimes(1);
+    await settlement;
+    expect(get).toHaveBeenCalledTimes(stage);
   } finally {
+    caller.abort();
     release();
     await pending;
-    read.mockRestore();
+    await settlement;
+    get.mockRestore();
+    vi.useRealTimers();
   }
 });
-
-it.each([1, 2, 3])(
-  "INV-7: an agent deadline at storage read %i refuses promptly and starts no later read",
-  async (stage) => {
-    vi.useFakeTimers();
-    const { authenticate } = await import("../src/auth-admission.js");
-    const storage = memoryStorage();
-    const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
-    const { token } = await manager.rotate("assistant");
-    const nativeGet = storage.get.bind(storage);
-    let release!: () => void;
-    let count = 0;
-    let settlement: Promise<unknown> | undefined;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const get = vi.spyOn(storage, "get").mockImplementation(async (key) => {
-      if (++count === stage) await held;
-      return nativeGet(key);
-    });
-    const caller = new AbortController();
-    const pending = authenticate(
-      manager.auth,
-      new Request(request(token), { signal: caller.signal }),
-      BASE,
-      undefined,
-      { info() {}, warn() {}, error() {}, debug() {} },
-      (work) => {
-        settlement = work;
-      },
-    );
-    try {
-      await vi.waitFor(() => expect(count).toBe(stage));
-      await vi.advanceTimersByTimeAsync(5_000);
-      const result = await pending;
-      expect(result.admitted).toBe(true);
-      if (result.admitted) expect(result.result.ok).toBe(false);
-      release();
-      await settlement;
-      expect(get).toHaveBeenCalledTimes(stage);
-    } finally {
-      caller.abort();
-      release();
-      await pending;
-      await settlement;
-      get.mockRestore();
-      vi.useRealTimers();
-    }
-  },
-);

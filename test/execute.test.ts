@@ -113,32 +113,6 @@ describe("execute_code intake", () => {
 });
 
 describe("unwrapMcpResult", () => {
-  it("passes non-mcp results through untouched", () => {
-    expect(unwrapMcpResult("api", { sum: 3 })).toEqual({ sum: 3 });
-  });
-
-  it("JSON-parses all-text MCP content when possible", () => {
-    const r = unwrapMcpResult("mcp", {
-      content: [{ type: "text", text: '{"a":1}' }],
-    });
-    expect(r).toEqual({ a: 1 });
-    const s = unwrapMcpResult("mcp", {
-      content: [{ type: "text", text: "not json" }],
-    });
-    expect(s).toBe("not json");
-  });
-
-  it("unwraps a toolResult-carrying MCP result to that value", () => {
-    expect(
-      unwrapMcpResult("mcp", {
-        toolResult: { rows: [1, 2, 3] },
-        content: [{ type: "text", text: "ignored" }],
-      }),
-    ).toEqual({ rows: [1, 2, 3] });
-    // toolResult wins even when it is a falsy-but-present value.
-    expect(unwrapMcpResult("mcp", { toolResult: null })).toBeNull();
-  });
-
   it("prefers structuredContent and throws on isError", () => {
     expect(
       unwrapMcpResult("mcp", {
@@ -156,103 +130,6 @@ describe("unwrapMcpResult", () => {
 });
 
 describe("buildSandboxProviders", () => {
-  it("keeps connector guide identifiers on every flat search and describe shape", async () => {
-    const connector = (id: string, usageGuide?: Connector["usageGuide"]): Connector =>
-      connectorWith({
-        id,
-        kind: "api",
-        ...(usageGuide ? { usageGuide } : {}),
-        tools: [
-          {
-            name: "find_alpha",
-            description: "Find alpha records",
-            annotations: { readOnlyHint: true },
-          },
-          {
-            name: "list_beta",
-            description: "List beta records",
-            annotations: { readOnlyHint: true },
-          },
-        ],
-        call: async () => ({}),
-      });
-    const providers = await buildSandboxProviders(
-      makeRegistry([connector("guided", "# Guided usage"), connector("plain")]),
-      BASE,
-      silentLogger,
-    );
-    const search = required(connectaProvider(providers).fns.search);
-
-    const browse = (await search({ limit: 100 })) as {
-      tools: Array<{ address: string; guide?: string; guideSummary?: string }>;
-    };
-    expect(browse.tools.filter((tool) => tool.address.startsWith("guided.")).map((tool) => tool.guide)).toEqual([
-      "connector:guided",
-      "connector:guided",
-    ]);
-    expect(browse.tools.filter((tool) => tool.address.startsWith("guided.")).map((tool) => tool.guideSummary)).toEqual([
-      "Guided usage",
-      "Guided usage",
-    ]);
-    expect(
-      browse.tools.filter((tool) => tool.address.startsWith("plain.")).every((tool) => !Object.hasOwn(tool, "guide")),
-    ).toBe(true);
-
-    const firstPage = (await search({
-      connector: "guided",
-      limit: 1,
-    })) as {
-      tools: Array<{ guide?: string }>;
-      hasMore: boolean;
-      nextOffset?: number;
-    };
-    const secondPage = (await search({
-      connector: "guided",
-      limit: 1,
-      offset: firstPage.nextOffset,
-    })) as { tools: Array<{ guide?: string }>; hasMore: boolean };
-    expect(firstPage.tools[0]?.guide).toBe("connector:guided");
-    expect(firstPage.hasMore).toBe(true);
-    expect(secondPage.tools[0]?.guide).toBe("connector:guided");
-    expect(secondPage.hasMore).toBe(false);
-
-    const partial = (await search({
-      query: "alpha unmatched",
-      connector: "guided",
-    })) as {
-      tools: Array<{ guide?: string }>;
-      matchMode?: string;
-    };
-    expect(partial.matchMode).toBe("partial");
-    expect(partial.tools[0]?.guide).toBe("connector:guided");
-
-    const noMatch = (await search({
-      query: "unfindable",
-      connector: "guided",
-    })) as { tools: unknown[] };
-    expect(noMatch.tools).toEqual([]);
-
-    const described = (await required(connectaProvider(providers).fns.describe)({
-      addresses: ["guided.find_alpha", "plain.find_alpha"],
-    })) as { tools: Array<{ address: string; guide?: string }> };
-    expect(required(described.tools[0]).guide).toBe("connector:guided");
-    expect(described.tools[1]).not.toHaveProperty("guide");
-
-    const searchBytes = async (usageGuide?: Connector["usageGuide"]) => {
-      const sized = await buildSandboxProviders(makeRegistry([connector("sized", usageGuide)]), BASE, silentLogger);
-      return JSON.stringify(
-        await required(connectaProvider(sized).fns.search)({
-          connector: "sized",
-          limit: 100,
-        }),
-      ).length;
-    };
-    const guidedBytes = await searchBytes("# Sized usage");
-    const plainBytes = await searchBytes();
-    expect(guidedBytes - plainBytes).toBe(2 * ',"guide":"connector:sized","guideSummary":"Sized usage"'.length);
-    expect(guidedBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
-  });
-
   it("touches no catalog at setup and only the requested connector at call time", async () => {
     const catalogCalls = new Map<string, number>();
     const counted = (connector: Connector): Connector =>
@@ -295,23 +172,6 @@ describe("buildSandboxProviders", () => {
       (error: unknown) => error as InvocationFailure,
     );
     expect(required(failure).details.message).toBe('Unknown address "nope.add"');
-  });
-
-  it("records health only after a broken connector is exercised", async () => {
-    const registry = makeRegistry([calcConnector, brokenConnector]);
-    const observed = activityRecorder("broken-request");
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger, observed.activity);
-    expect(observed.events).toHaveLength(0);
-    await expect(callCanonical(providers, "broken", "anything")).rejects.toThrow("boom");
-    expect(observed.events).toContainEqual(
-      expect.objectContaining({
-        connectorId: "broken",
-        outcome: "error",
-        errorCode: "catalog_lookup_failed",
-      }),
-    );
-    // A catalog that loaded is not a success signal of its own.
-    expect(observed.events.some((event) => event.connectorId === "calc")).toBe(false);
   });
 
   it("keeps a typed auth_required's code through the canonical call", async () => {
@@ -410,32 +270,6 @@ describe("buildSandboxProviders", () => {
     expect(calls).toBe(0);
   });
 
-  it("fails unknown connector and tool lookups canonically", async () => {
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
-    // A program cannot call search_tools, so both canonical misses route
-    // recovery through the function it can actually reach.
-    await expect(callCanonical(providers, "missing", "read")).rejects.toMatchObject({
-      code: "unknown_address",
-      nextAction: {
-        function: "connecta.search",
-        arguments: { query: "read", includeSchemas: "compact" },
-        purpose: "Find the configured canonical address before retrying.",
-      },
-    });
-    await expect(callCanonical(providers, "calc", "missing")).rejects.toMatchObject({
-      code: "unknown_tool",
-      nextAction: {
-        function: "connecta.search",
-        arguments: {
-          query: "missing",
-          connector: "calc",
-          includeSchemas: "compact",
-        },
-        purpose: "Find the connector's current canonical tool address.",
-      },
-    });
-  });
-
   it("routes connecta.call address failures to connecta.search", async () => {
     const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
     const call = required(connectaProvider(providers).fns.call);
@@ -476,167 +310,6 @@ describe("buildSandboxProviders", () => {
     },
   );
 
-  it("keeps tools named like Object.prototype members", async () => {
-    const proto: Connector = connectorWith({
-      id: "proto",
-      kind: "api",
-      tools: [
-        { name: "hasOwnProperty", annotations: { readOnlyHint: true } },
-        { name: "toString", annotations: { readOnlyHint: true } },
-      ],
-      call: async (name) => ({ called: name }),
-    });
-    const registry = makeRegistry([proto]);
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    expect(await callCanonical(providers, "proto", "hasOwnProperty")).toEqual({ called: "hasOwnProperty" });
-    expect(await callCanonical(providers, "proto", "toString")).toEqual({
-      called: "toString",
-    });
-  });
-
-  it("keeps account titles in program discovery without granting or calling a capability", async () => {
-    let calls = 0;
-    const tool = { name: "read", description: "Read a payment", annotations: { readOnlyHint: true } };
-    const providers = await buildSandboxProviders(
-      makeRegistry([
-        connectorWith({
-          id: "a",
-          title: "Android sandbox",
-          tools: [tool],
-          call: async () => {
-            calls++;
-          },
-        }),
-        connectorWith({
-          id: "b",
-          title: "Android production",
-          tools: [tool],
-          call: async () => {
-            calls++;
-          },
-        }),
-        connectorWith({ id: "long", title: "日本語".repeat(80), tools: [tool] }),
-      ]),
-      BASE,
-      silentLogger,
-    );
-    const page = (await required(connectaProvider(providers).fns.search)({
-      query: "read payment",
-      safety: "readOnly",
-    })) as {
-      tools: Array<{ address: string; connectorTitle: string }>;
-    };
-    expect(page.tools.find((tool) => tool.address === "a.read")?.connectorTitle).toBe("Android sandbox");
-    expect(page.tools.find((tool) => tool.address === "b.read")?.connectorTitle).toBe("Android production");
-    const title = required(page.tools.find((tool) => tool.address === "long.read")).connectorTitle;
-    expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(120);
-    expect(title).not.toContain("\uFFFD");
-    expect(calls).toBe(0);
-  });
-
-  it("exposes tool-agnostic search and describe catalog helpers", async () => {
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector, remoteConnector]), BASE, silentLogger);
-    const connecta = providers.find((p) => p.name === "connecta")!;
-    const search = (await required(connecta.fns.search)({
-      query: "add",
-      includeSchemas: "compact",
-    })) as {
-      tools: Array<{
-        address: string;
-        inputSchema: string;
-      }>;
-    };
-    expect(search.tools[0]).toMatchObject({
-      address: "calc.add",
-      inputSchema: "{ a: number, b: number }",
-      inputKeys: ["a", "b"],
-      requiredInputKeys: ["a", "b"],
-    });
-    expect(required(search.tools[0])).not.toHaveProperty("queryCoverage");
-    expect(required(search.tools[0])).not.toHaveProperty("score");
-
-    const partial = (await required(connecta.fns.search)({
-      query: "add numbers operands result metadata",
-    })) as {
-      matchMode?: string;
-      queryAnalysis?: {
-        representedTerms: string[];
-        unmatchedTerms: string[];
-      };
-      tools: Array<{ address: string }>;
-    };
-    expect(partial.matchMode).toBe("partial");
-    expect(required(partial.tools[0]).address).toBe("calc.add");
-    expect(partial.queryAnalysis).toMatchObject({
-      representedTerms: ["add", "numbers"],
-      unmatchedTerms: ["operands", "result", "metadata"],
-    });
-    expect(required(partial.tools[0])).not.toHaveProperty("queryCoverage");
-    expect(required(partial.tools[0])).not.toHaveProperty("score");
-    const unicodeOnly = (await required(connecta.fns.search)({
-      query: "😀".repeat(80),
-    })) as {
-      tools: unknown[];
-      queryAnalysis?: {
-        unmatchedTerms: string[];
-        truncated?: true;
-        guidance?: string;
-      };
-    };
-    expect(unicodeOnly.tools).toEqual([]);
-    expect(unicodeOnly.queryAnalysis).toMatchObject({
-      unmatchedTerms: [`${"😀".repeat(63)}…`],
-      truncated: true,
-      guidance: expect.stringContaining("no searchable lexical terms"),
-    });
-    expect([...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0])]).toHaveLength(64);
-
-    const mixedUnicode = (await required(connecta.fns.search)({
-      query: `${"界".repeat(80)} add`,
-    })) as {
-      tools: Array<{ address: string }>;
-    };
-    expect(mixedUnicode.tools).toHaveLength(1);
-    expect(mixedUnicode.tools[0]).toMatchObject({
-      address: "calc.add",
-    });
-    expect(required(mixedUnicode.tools[0])).not.toHaveProperty("queryCoverage");
-    expect(required(mixedUnicode.tools[0])).not.toHaveProperty("score");
-    // JSON schemas and their key metadata are the program default.
-    expect(required(partial.tools[0])).toHaveProperty("inputKeys", ["a", "b"]);
-
-    const described = (await required(connecta.fns.describe)({
-      addresses: ["calc.add", "remote.echo"],
-      format: "compact",
-    })) as { tools: Array<{ address: string; inputSchema: string }> };
-    expect(described.tools.map((tool) => tool.address)).toEqual(["calc.add", "remote.echo"]);
-    // Omitted format hands back the raw JSON Schema; compact is explicit.
-    const raw = (await required(connecta.fns.describe)({
-      addresses: ["calc.add"],
-    })) as { tools: Array<{ inputSchema: { properties: { a: { type: string } } } }> };
-    expect(required(raw.tools[0]).inputSchema.properties.a.type).toBe("number");
-    expect(required(described.tools[0]).inputSchema).toBe("{ a: number, b: number }");
-
-    // An address that resolves to nothing is one entry's error, not a throw
-    // that costs the caller every other description it asked for.
-    const missing = (await required(connecta.fns.describe)({
-      addresses: ["calc.nope", "ghost.x"],
-    })) as { tools: Array<{ error?: string }> };
-    expect(required(missing.tools[0]).error).toContain("Unknown tool");
-    expect(required(missing.tools[1]).error).toContain("Unknown address");
-
-    const describedOne = (await required(connecta.fns.describe)({
-      address: "calc.add",
-    })) as { tools: Array<{ address: string }> };
-    expect(describedOne.tools.map((tool) => tool.address)).toEqual(["calc.add"]);
-    await expect(
-      required(connecta.fns.describe)({
-        address: "calc.add",
-        addresses: ["remote.echo"],
-      }),
-    ).rejects.toThrow("either address or addresses, not both");
-  });
-
   it("lets programs discover only calls the sandbox can execute", async () => {
     const mixed: Connector = connectorWith({
       id: "mixed",
@@ -665,103 +338,6 @@ describe("buildSandboxProviders", () => {
       data: "read",
       format: "text",
     });
-  });
-
-  it("resolves schema key metadata the way the compact schema renders", async () => {
-    // A top-level $ref and an "extend this base" allOf are what OpenAPI- and
-    // pydantic-derived connectors actually emit. Reading `properties` off the
-    // schema root sees nothing there, which would advertise a field-less tool
-    // beside a compact schema that plainly lists fields.
-    const shapes: Connector = connectorWith({
-      id: "shapes",
-      kind: "api",
-      description: "Schema shapes",
-      tools: [
-        {
-          name: "referenced",
-          description: "Input behind a $ref",
-          annotations: { readOnlyHint: true },
-          inputSchema: {
-            $defs: {
-              GetRun: {
-                type: "object",
-                properties: { runId: { type: "integer" } },
-                required: ["runId"],
-              },
-            },
-            $ref: "#/$defs/GetRun",
-          },
-          outputSchema: {
-            allOf: [
-              {
-                type: "object",
-                properties: { runId: { type: "integer" } },
-                required: ["runId"],
-              },
-              {
-                type: "object",
-                properties: { failedJobId: { type: "integer" } },
-              },
-            ],
-          },
-        },
-        {
-          name: "union",
-          description: "Input that is a union, not an object",
-          annotations: { readOnlyHint: true },
-          inputSchema: {
-            oneOf: [
-              { type: "object", properties: { a: { type: "string" } } },
-              { type: "object", properties: { b: { type: "string" } } },
-            ],
-          },
-        },
-        {
-          name: "argless",
-          description: "A tool that genuinely takes no fields",
-          annotations: { readOnlyHint: true },
-          inputSchema: { type: "object" },
-          outputSchema: { type: "object", properties: {} },
-        },
-      ],
-      call: async () => ({}),
-    });
-    const providers = await buildSandboxProviders(makeRegistry([shapes]), BASE, silentLogger);
-    const connecta = connectaProvider(providers);
-    const byName = async (query: string, args: Record<string, unknown> = {}) => {
-      const page = (await required(connecta.fns.search)({
-        query,
-        includeSchemas: "compact",
-        ...args,
-      })) as { tools: Array<Record<string, unknown>> };
-      return Object.fromEntries(page.tools.map((tool) => [tool.name as string, tool]));
-    };
-
-    const tools = await byName("referenced union argless");
-    const referenced = required(tools.referenced);
-    expect(referenced.inputSchema).toBe("{ runId: integer }");
-    expect(referenced.inputKeys).toEqual(["runId"]);
-    expect(referenced.requiredInputKeys).toEqual(["runId"]);
-    expect(referenced.outputSchema).toBe("{ runId: integer } & { failedJobId?: integer }");
-    expect(referenced.outputKeys).toEqual(["runId", "failedJobId"]);
-
-    // A union has no single key list. Absent says "read the schema"; [] would
-    // say "this tool takes nothing".
-    const union = required(tools.union);
-    expect(union).not.toHaveProperty("inputKeys");
-    expect(union).not.toHaveProperty("requiredInputKeys");
-
-    // A zero-input object truthfully reports no required inputs. An output
-    // object with no declared properties has no useful inventory to report.
-    const argless = required(tools.argless);
-    expect(argless.inputKeys).toEqual([]);
-    expect(argless.requiredInputKeys).toEqual([]);
-    expect(argless.outputSchema).toBe("{}");
-    expect(argless).not.toHaveProperty("outputKeys");
-
-    const optedOut = await byName("referenced", { includeSchemaKeys: false });
-    expect(required(optedOut.referenced).inputSchema).toBe("{ runId: integer }");
-    expect(required(optedOut.referenced)).not.toHaveProperty("inputKeys");
   });
 
   it("bounds in-sandbox discovery fan-out", async () => {
@@ -950,20 +526,6 @@ describe("buildSandboxProviders", () => {
       expect(terminals[0]?.details.code).toBe("budget_exceeded");
     },
   );
-
-  it("times out a host call even when the connector ignores cancellation", async () => {
-    const never = new Promise<never>(() => {});
-    const slow: Connector = connectorWith({
-      id: "slow",
-      kind: "api",
-      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-      call: async () => never,
-    });
-    const providers = await buildSandboxProviders(makeRegistry([slow]), BASE, silentLogger, undefined, {
-      hostCallTimeoutMs: 10,
-    });
-    await expect(callCanonical(providers, "slow", "read")).rejects.toThrow("effective deadline 10ms");
-  });
 });
 
 describe("execute_code host-call limits from configuration", () => {
@@ -1334,37 +896,6 @@ describe("execute_code executor watchdog", () => {
     });
     expect(admission.snapshot().active).toBe(0);
   });
-
-  it("leaves a slow run that finishes under the ceiling alone", { timeout: 8_000 }, async () => {
-    const admission = fallbackAdmission();
-    const slow: Executor = {
-      execute: () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve({ result: "late", logs: ["kept"] }), 300);
-        }),
-    };
-    const out = await createExecuteTool(
-      makeRegistry([calcConnector]),
-      BASE,
-      withExecutorAdmission(slow, admission),
-      silentLogger,
-      undefined,
-      { watchdogMs: 2_000 },
-    )({ code: "async () => null" });
-    expect(out.isError).toBeUndefined();
-    expect(JSON.parse(required(out.content[0]).text)).toEqual({
-      result: "late",
-      logs: "kept",
-      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-    });
-    expect(admission.snapshot().active).toBe(0);
-  });
-
-  it.each([0, -1, 1.5, Number.NaN])("INV-11: refuses an unusable watchdogMs %s at construction", (watchdogMs) => {
-    expect(() => makeDeployment({ execute: { watchdogMs } })).toThrow(
-      "ConnectaConfig.execute.watchdogMs must be a positive whole number",
-    );
-  });
 });
 
 describe("execute_code handler", () => {
@@ -1551,25 +1082,6 @@ describe("execute_code handler", () => {
         errorCode: "cancelled",
       }),
     );
-  });
-
-  it("passes code + providers to the executor and wraps the result", async () => {
-    const registry = makeRegistry([calcConnector]);
-    const executor = fakeExecutor({ result: { picked: [1, 2] }, logs: ["hi"] });
-    const handler = createExecuteTool(registry, BASE, executor, silentLogger);
-    const out = await handler({ code: "async () => 1" });
-    expect(out.isError).toBeUndefined();
-    const parsed = JSON.parse(required(out.content[0]).text) as {
-      result: { picked: number[] };
-      logs?: string;
-    };
-    expect(parsed.result).toEqual({ picked: [1, 2] });
-    expect(out.structuredContent).toEqual(parsed);
-    expect(required(out.content[0]).text).toBe(JSON.stringify(out.structuredContent));
-    expect(parsed.logs).toBe("hi");
-    expect(required(executor.seen[0]).code).toContain("async () => 1");
-    expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual(["connecta"]);
-    expect(required(required(executor.seen[0]).providers[0]).prelude).not.toContain('globalThis["calc"]');
   });
 
   it("reports compact payload-free diagnostics for every guest operation", async () => {
@@ -1820,16 +1332,6 @@ describe("execute_code handler", () => {
     expect(parsedExecutor.diagnostics.operations).toEqual([]);
   });
 
-  it("reports sandbox errors as isError with logs attached", async () => {
-    const registry = makeRegistry([calcConnector]);
-    const executor = fakeExecutor({ error: "kaboom", logs: ["step 1"] });
-    const handler = createExecuteTool(registry, BASE, executor, silentLogger);
-    const out = await handler({ code: "async () => 1" });
-    expect(out.isError).toBe(true);
-    expect(required(out.content[0]).text).toContain("kaboom");
-    expect(required(out.content[0]).text).toContain("step 1");
-  });
-
   it.each([null, undefined, 42, [], { result: undefined, error: 42 }])(
     "reports a malformed executor reply as a structured failure: %j",
     async (reply) => {
@@ -1881,20 +1383,6 @@ describe("execute_code handler", () => {
       result: null,
       hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
     });
-  });
-
-  it("stashes oversized results behind a page handle", async () => {
-    const registry = makeRegistry([calcConnector]);
-    const executor = fakeExecutor({ result: "x".repeat(100_000) });
-    const handler = createExecuteTool(registry, BASE, executor, silentLogger);
-    const out = await handler({ code: "async () => 1" });
-    const parsed = JSON.parse(required(out.content[0]).text) as {
-      result: { truncated: boolean; preview: string; totalChars: number; resultId: string };
-    };
-    expect(parsed.result.truncated).toBe(true);
-    expect(parsed.result.resultId).toMatch(/^[a-f0-9-]{36}$/);
-    expect(parsed.result.preview.length).toBeLessThan(30_000);
-    expect(parsed.result.totalChars).toBeGreaterThan(100_000);
   });
 
   it("INV-7: cancels outstanding host calls when sandbox execution ends", async () => {

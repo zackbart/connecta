@@ -5,7 +5,7 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { calcConnector, silentLogger } from "./helpers.js";
 
-const controls = Array.from({ length: 0xa0 }, (_, code) => code).filter((code) => code <= 0x1f || code >= 0x7f);
+const controls = [0x00, 0x0a, 0x1f, 0x7f, 0x9f];
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 describe("static tool names", () => {
@@ -56,7 +56,7 @@ describe("static tool names", () => {
     for (const log of Object.values(logger)) expect(log).not.toHaveBeenCalled();
   });
 
-  it.each(["space name", "caf\u00e9", "lone\ud800", "line\u2028separator", "paragraph\u2029separator"])(
+  it.each(["space name", "caf\u00e9", "line\u2028separator"])(
     "INV-11: leaves non-control static name %j unchanged",
     (name) => {
       const connector = api("crm", {

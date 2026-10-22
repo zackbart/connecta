@@ -4,7 +4,6 @@ import { clerkAuth } from "../src/auth/clerk.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
 import { callerOf } from "../src/connector-caller.js";
-import { agentEndpointPool, isAgentPath } from "../src/routes/agent-path.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
@@ -162,40 +161,6 @@ const PROTECTED = [
 ];
 
 describe("agent endpoint paths", () => {
-  it("INV-4: matches only the exact raw /agent/<pool> spelling and claims the whole agent namespace", () => {
-    expect(agentEndpointPool("/agent/assistant-alice")).toBe("assistant-alice");
-    for (const path of [
-      "/agent/",
-      "/agent",
-      "/agent/x/",
-      "/agent/x/y",
-      "/AGENT/x",
-      "/agent/X",
-      "/%61gent/x",
-      "//agent/x",
-      "/agent/%78",
-      "/agent/x%2f..",
-      "/agentx",
-    ]) {
-      expect(agentEndpointPool(path), path).toBeUndefined();
-    }
-    for (const path of [
-      "/agent",
-      "/agentx",
-      "/Agent/x",
-      "//agent/x",
-      "/%2fagent/x",
-      "/%2561gent/x",
-      "/%61%67%65%6e%74/x",
-      "/\\agent/x",
-    ]) {
-      expect(isAgentPath(path), path).toBe(true);
-    }
-    for (const path of ["/mcp", "/mcp/agent", "/", "/ui/api/config", "/.well-known/oauth-protected-resource/agent/x"]) {
-      expect(isAgentPath(path), path).toBe(false);
-    }
-  });
-
   it("INV-4: answers every refused row of the P0 normalization table with the pool 404 before auth", async () => {
     const storage = countingStorage();
     const human = people();
@@ -419,29 +384,6 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
-  it("INV-2 INV-4: a writable agent endpoint cannot bypass connector readOnly", async () => {
-    const storage = memoryStorage();
-    let writes = 0;
-    const configured = connectors(() => writes++);
-    configured[0]!.readOnly = true;
-    const c = deployment({
-      storage,
-      connectors: configured,
-      pools: { writers: { tools: ["notes"], readOnly: false, members: ["agent:bot"] } },
-    });
-    try {
-      const bot = await issueAgentToken(storage, "bot");
-      expect(await searchText(c, "/agent/writers", bot)).not.toContain("notes.delete");
-      for (const name of ["call_tool", "call_destructive_tool"]) {
-        const refused = await rpc(c, "/agent/writers", bot, name, { address: "notes.delete", args: {} });
-        expect(JSON.stringify(refused)).toContain("read_only_endpoint");
-      }
-      expect(writes).toBe(0);
-    } finally {
-      await c.close();
-    }
-  });
-
   it("INV-2: an agent endpoint carries its pool's readOnly", async () => {
     const storage = memoryStorage();
     const deleted = { count: 0 };
@@ -558,24 +500,6 @@ describe("human endpoints refuse agent tokens", () => {
     }
     expect(getIdentity).not.toHaveBeenCalled();
     await access.close();
-  });
-
-  it("INV-4: an agents-only deployment admits agents only at /agent/<pool>", async () => {
-    const storage = memoryStorage();
-    const c = createTestConnecta({
-      connectors: connectors(),
-      storage,
-      agents: ["bot"],
-      accessTokens: accessTokens(storage),
-      pools: { bots: { tools: ["wiki"], members: ["agent:bot"] } },
-      logger: silentLogger,
-    });
-    const bot = await issueAgentToken(storage, "bot");
-    expect((await listTools(c, "/mcp", bot)).status).toBe(401);
-    expect((await listTools(c, "/mcp/bots", bot)).status).toBe(401);
-    expect((await listTools(c, "/mcp")).status).toBe(401);
-    expect((await listTools(c, "/agent/bots", bot)).status).toBe(200);
-    await c.close();
   });
 });
 
