@@ -1,4 +1,4 @@
-// Internal provider kit (decision 0010, B.4). Not published until B.5.
+// Internal provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
 import type { ApiHandlerContext, ApiOAuthConfig, ApiTool } from "../connectors/api-connector.js";
@@ -13,7 +13,12 @@ import {
 import { tracksEveryRequest } from "../provider-call.js";
 import { Operation } from "../runtime/call.js";
 import { runEdge } from "../runtime/run.js";
-import type { ConnectorContext, ConnectorCredentialConfig, CredentialTestResult } from "../types.js";
+import type {
+  ConnectorContext,
+  ConnectorCredentialConfig,
+  ConnectorUsageGuide,
+  CredentialTestResult,
+} from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
@@ -42,7 +47,18 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     readonly request: unknown;
     readonly describe: (reply: unknown) => string;
   };
-  readonly guide: (options: Readonly<O>) => ProviderGuideInput;
+  /**
+   * The connector's default title (the deployment's `title` still wins) and
+   * its description, for these options.
+   */
+  readonly connector?: (options: Readonly<O>) => { readonly title?: string; readonly description?: string };
+  /**
+   * The guide's connection context, which `ProviderContext.usageGuide`
+   * renders around the skill. Transitional (decision 0011): a provider whose
+   * guide is still in `PENDING.step2` may return `{ legacy }`, its fragment
+   * guide rendered byte for byte; its step 2 replaces that with this input.
+   */
+  readonly guide: (options: Readonly<O>) => ProviderGuideInput | { readonly legacy: ConnectorUsageGuide };
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
 }
@@ -81,6 +97,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     safety,
     result,
     probe,
+    connector,
     guide,
     hatch: declaredHatch,
     tools,
@@ -180,11 +197,14 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           return typeof override === "number" ? override : pageSize.default;
         },
       });
+      const described = connector?.(options);
+      const rendered = guide(options);
       return tracksEveryRequest(
         api(id, {
           ...provider.connectorOptions,
-          title: options.title ?? metadata.title,
-          usageGuide: provider.usageGuide(guide(options)),
+          title: options.title ?? described?.title ?? metadata.title,
+          ...(described?.description === undefined ? {} : { description: described.description }),
+          usageGuide: "legacy" in rendered ? rendered.legacy : provider.usageGuide(rendered),
           ...(credential
             ? {
                 credential,

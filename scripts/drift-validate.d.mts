@@ -1,4 +1,4 @@
-// Types for the part of drift-validate.mjs the provider-standard suite imports.
+// Types for the part of drift-validate.mjs the provider-standard and drift-check suites import.
 
 /**
  * Every structural problem `providers:check` would report for a record
@@ -12,3 +12,6 @@ export function driftRecordProblems(
 ): string[];
 
 export function generatedProblems(record: unknown, options?: { kind?: string; files?: readonly string[] }): string[];
+
+/** A check as the version-1 checkers read it: version 2 endpoint rows become method and path, and pages join. */
+export function checkView(record: unknown, check: unknown, options?: { catalog?: unknown; today?: string }): any;

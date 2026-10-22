@@ -2083,8 +2083,12 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 `src/http/tools.ts` for list, get, read, write and action builders.
 `src/http/provider.ts` composes them with `defineProvider`; it returns the
 ordinary Promise-based Connector factory. The kit stays outside the root
-graph and its Effect types are internal. No live provider migrates in B.4;
-the complete Tithe.ly reference remains separate until B.5 proves its goldens.
+graph and its Effect types are internal. Tithe.ly is the first provider on
+it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
+are unchanged. A provider still in `PENDING.step2` may keep its legacy
+fragment guide by returning `{ legacy }` from `guide`. On Node, kit writes go
+through the owned transport `listen` installs, so suites that call one
+without `listen` configure it themselves, as the goldens harness does.
 
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection

@@ -80,8 +80,6 @@ import {
   manifest,
   type Connection,
 } from "../src/http/vendor.js";
-import { kitTools } from "../src/providers/tithely/kit-prototype.js";
-import { TITHELY_API_BASE_URLS } from "../src/providers/tithely/index.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import {
@@ -100,7 +98,6 @@ import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
 import { silentLogger } from "./helpers.js";
-import { kitInputDisagreements as disagreements } from "./helpers/kit-schema.js";
 
 let sent: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
 let answers: Array<() => Response> = [];
@@ -729,22 +726,6 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
     // Exact checks stay allowed: a one-character minimum, an array's maxItems.
     expect(approximate(Schema.String.check(Schema.isMinLength(1)))).not.toThrow();
     expect(approximate(Schema.Array(Schema.String).check(Schema.isMaxLength(2)))).not.toThrow();
-  });
-
-  it("INV-1: every kit tool's catalog and decoder accept the same boundary values", () => {
-    const bases: Record<string, Record<string, unknown>> = {
-      list_charges: {},
-      get_charge: { chargeId: "ch_1" },
-      tithely_api_mutate: { method: "POST", path: "/charges" },
-      tithely_api_get: { path: "/charges" },
-      get_organization: { organizationId: "org_1" },
-      get_account: { accountId: "user_1" },
-      get_recurring_charge: { recurringId: "rc_1" },
-      list_payment_methods: { accountId: "user_1" },
-    };
-    for (const tool of kitTools(TITHELY_API_BASE_URLS.live, 25)) {
-      expect(disagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
-    }
   });
 
   it("INV-1 INV-11: traverses suspended input checks and refuses every unsupported AST form", () => {

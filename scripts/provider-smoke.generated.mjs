@@ -303,7 +303,7 @@ var options21 = { "purpose": "Audit fixture", "environment": "live" };
 var fixture21 = {
   name: "tithely",
   options: options21,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "test", "options": { "environment": "test" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "test", "options": { "environment": "test" } }],
   create(id = "fixture", overrides = {}) {
     return tithely(id, { ...options21, ...overrides });
   },

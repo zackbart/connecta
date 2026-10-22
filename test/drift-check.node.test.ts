@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { checkView } from "../scripts/drift-validate.mjs";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
 const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.url));
 async function driftRecord(provider: string, directory = providerDirectory): Promise<any> {
@@ -58,11 +59,14 @@ async function committed(provider: string): Promise<Manifest> {
   return JSON.parse(await readManifestFile(join(manifestDirectory, provider, "drift.json")));
 }
 
-/** Fixture helpers read/write the endpoint check, preserving its versioned record wrapper. */
+/**
+ * Fixture helpers read/write the endpoint check, preserving its versioned record wrapper. A version 2
+ * record is read as the checker reads it: rows keyed by operation become method and path, pages join.
+ */
 async function readManifestFile(path: string): Promise<string> {
   const record = JSON.parse(await readFile(path, "utf8"));
   const check = record.checks.find((item: any) => item.type === "endpoints" || item.type === "versioned-endpoints");
-  return JSON.stringify({ provider: record.provider, ...check });
+  return JSON.stringify({ provider: record.provider, ...checkView(record, check) });
 }
 async function writeManifestFile(path: string, text: string): Promise<void> {
   const { provider, ...check } = JSON.parse(text);
@@ -931,7 +935,8 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
     expect(discovered).toEqual(published);
     for (const provider of discovered) {
       const record = await driftRecord(provider);
-      expect(record).toMatchObject({ version: 1, provider });
+      expect(record.provider).toBe(provider);
+      expect([1, 2]).toContain(record.version);
       expect(record.checks.length).toBeGreaterThan(0);
       for (const check of record.checks) {
         expect([
