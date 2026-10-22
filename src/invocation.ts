@@ -42,9 +42,10 @@ import {
   keyProtectsLogicalCall,
   knownForLogicalCall,
   knownProviderFailure,
+  logicalCallRequests,
   openLogicalCall,
 } from "./provider-call.js";
-import { classifyWriteOutcome, departedWriteVerdict } from "./write-outcome.js";
+import { classifyWriteOutcome, settleWrite } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -572,19 +573,19 @@ export class InvocationService {
       };
       let stage = "catalog";
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
-        // Q8: this invocation's deadline or its caller cut off a write the
-        // downstream had answered 401. No connector failure arrives, so the
-        // logical call's recorded 401 gives the verdict: unknown, its auth
-        // code and handoff, and no wait, resend or key-reuse advice.
-        const departed =
+        // Q8 (settleWrite): this invocation's deadline or its caller cut off
+        // a write. No connector failure arrives, so the logical call's
+        // recorded requests alone decide whether a 401 left it unknown.
+        if (
           dispatchedToConnector &&
           resolved?.definition.classification !== "read" &&
           (error.code === "cancelled" || isTimeoutFailure(error))
-            ? departedWriteVerdict(dispatchContext)
-            : undefined;
-        if (departed) {
-          failureAdvice = failureKeyAdvice = undefined;
-          error = carryFailureFacts(departed, classifyWithoutAdvice(sentSecrets.redact(departed)));
+        ) {
+          const departed = settleWrite(logicalCallRequests(dispatchContext) ?? [], undefined, true);
+          if (departed !== undefined) {
+            failureAdvice = failureKeyAdvice = undefined;
+            error = carryFailureFacts(departed, classifyWithoutAdvice(sentSecrets.redact(departed)));
+          }
         }
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
@@ -886,9 +887,15 @@ export class InvocationService {
           if (Exit.isFailure(attempt)) {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
-            const attemptError = Cause.squash(attempt.cause);
-            answered = answeredFailure(attemptError, write, dispatchContext);
-            if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
+            const thrown = Cause.squash(attempt.cause);
+            if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
+            answered = answeredFailure(thrown, write, dispatchContext);
+            // Q8 is decided here for every served write, whatever its
+            // connector made of the 401: over the logical call's whole ledger.
+            const attemptError = write
+              ? settleWrite(logicalCallRequests(dispatchContext) ?? [], thrown, answered)
+              : thrown;
+            if (attemptError !== thrown) answered = false;
             failureAdvice = resendAdviceOf(attemptError);
             failureKeyAdvice = keyResendAdviceOf(attemptError);
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));

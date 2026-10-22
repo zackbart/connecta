@@ -1052,11 +1052,14 @@ re-read the target before any fresh call. That holds whatever renewal meets: a
 refused or unreachable token endpoint, a disconnect, or the caller leaving. It
 also holds whatever the call met after the 401: a body past the response
 ceiling, a later failure in the same call, a 401 on a later request of a
-composite write, or a 401 answered inside another `api()` connector the
-handler called. It holds when the call's deadline or the caller's
-cancellation cuts the write off after the 401: the result is that verdict,
-not `write_outcome_unknown`. An idempotency key never makes such a write
-repeatable, so it gets no key-reuse advice.
+composite write, a 401 answered inside another connector the call reached
+(an `api()` or `remoteMcp()` connector, through a custom connector or a
+program), or the call's deadline or the caller's cancellation cutting the
+write off after the 401: the result is that verdict, not
+`write_outcome_unknown`. An idempotency key never makes such a write
+repeatable, so it gets no key-reuse advice. Once every such 401 is renewed
+the handoff goes, but a call that also sent another write stays unknown,
+never retryable and without a wait.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after

@@ -73,9 +73,10 @@ left to drift. The kit now decides no write's outcome:
   whole logical call, exactly as it does for today's providers. A kit
   connector therefore declares `tracksEveryRequest` (B.4).
 
-The kit composes only two things over that decision: Q8's 401 handoff (B.3),
-which the 401 back-port (#917) made the core's rule too, so both reach one
-verdict, and the words of a blocked resend. `classifyWriteOutcome` and the module-private `servedRefusal` stay
+The kit composes only the words of a blocked resend over that decision.
+Q8's 401 handoff (B.3) was a second composition until the 401 back-port
+(#917) made it the core's: the kit now only records each 401's facts on its
+ledger entry (`recordUnauthorized`), and the core's `settleWrite` decides. `classifyWriteOutcome` and the module-private `servedRefusal` stay
 in the core and reach the kit only through the boundary; the kit evaluates
 no provenance of its own.
 
@@ -690,11 +691,13 @@ class Grant extends Context.Service<Grant, {
    fails DNS, goes down) is not this write's verdict. The ledger keeps one
    fact from it, `renewed` when the renewal succeeded, because that alone
    decides whether the agent still needs the `authorize_connector` handoff.
-   Refresh-once then hands the write's own 401 back to the pipeline, and B.3's
-   Q8 handoff reports it from the ledger. A caller who leaves during the renewal gets the
-   same verdict: the builder's edge reads the ledger when the call's signal
-   aborted (`departedVerdict`). A refresh-once that did resend would still be
-   stopped by the one-dispatch guard.
+   Refresh-once then hands the write's own 401 back to the pipeline, and the
+   core's Q8 decision (`settleWrite`, #917) reports it from the ledger. A
+   caller who leaves during the renewal gets the same verdict: the builder's
+   edge records the 401's facts when the call's signal aborted
+   (`recordUnauthorized`; until #917 the kit's own `departedVerdict` decided
+   here), and the core decides. A refresh-once that did resend would still
+   be stopped by the one-dispatch guard.
 4. Refresh-once decides no verdict. The tests prove the rule both ways (a
    read built tool served as a write is not resent; a write built tool served
    as a read is replayed), for a renewal that succeeds, for each renewal
@@ -950,7 +953,7 @@ which answers are refusals. The kit keeps no verdict table:
    `write_outcome_unknown`. Advice composes only after this decision, so an
    unknown write never carries it.
 
-3. **Q8 is the one composition, and the core's rule too.** Say a write request
+3. **Q8 is the core's rule; the kit records its facts.** Say a write request
    was answered 401, preferring an unrenewed one. The call's failure is then
    that 401's vendor verdict, with `writeOutcome: "unknown"`, non-retryable,
    and the words "The write was sent before <vendor> rejected its credential,
@@ -962,12 +965,13 @@ which answers are refusals. The kit keeps no verdict table:
    core's `unsentAfterUnauthorized`. With the vendor's `authBeforeExecution`
    evidence, the 401 is its own served refusal and step 2 weighs it like any
    other: known only if it was the one request the call sent. Since the 401
-   back-port (#917) the core reaches the same verdict from its ledger,
-   whatever failure surfaces, and `authBeforeExecution` is the core's
-   declaration too: the kit forwards its matched proof
-   (`ProviderRequest.authBeforeExecution`) and a renewal that succeeded
-   (`ProviderRequest.renewed`) to its ledger entry, so both decide from the
-   same facts.
+   back-port (#917) this is decided once, by the core's `settleWrite` over
+   the whole logical call, and the kit no longer composes it: it records on
+   each write request's ledger entry the 401's own vendor verdict and its
+   matched proof (`recordUnauthorized`, `ProviderRequest.authBeforeExecution`),
+   and a renewal that produced a different token (`ProviderRequest.renewed`).
+   The words above are the core's, so the kit's results are unchanged except
+   that a blocked resend's words now precede the 401 sentence.
 4. **A blocked resend reports the first attempt.** `ResendRefused` maps to
    the first attempt's own answer, with that attempt's provenance, plus "A
    second attempt to send it was stopped before it left". The second attempt

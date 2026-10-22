@@ -579,6 +579,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         fallback: request.classification ?? (readMethod(request.method) ? "read" : "write"),
         repeatable: request.idempotencyKey !== undefined,
         authBeforeExecution: dispatch.authBeforeExecution === true,
+        ...(auxiliary ? {} : { request: dispatch }),
       });
     }
 

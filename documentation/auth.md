@@ -2396,7 +2396,8 @@ owner's access token as `Authorization: Bearer` with these rules:
   `downstream_oauth_required`, which the invocation marks
   `reconciliationRequired`, with the `authorize_connector` handoff, whether
   the refresh was [dead](#refresh-failures), lost after it was sent, raced
-  by a disconnect or reset, or failed in storage or contention.
+  by a disconnect or reset, failed in storage or contention, or handed back
+  the token the API just rejected, which renews nothing.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
   `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
   return retryable `unavailable` for a read. Latch second 401s for the request scope,

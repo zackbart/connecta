@@ -864,6 +864,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       dispatched: facts.dispatched,
       ...(facts.status === undefined ? {} : { status: facts.status }),
       fallback: method === "GET" ? "read" : "write",
+      request: facts.request,
     });
     if (decision instanceof ConnectorCallError && mapped instanceof ConnectorCallError && decision !== mapped) {
       googleReasons.set(decision, googleReasonsOf(mapped));

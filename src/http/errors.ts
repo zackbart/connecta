@@ -32,8 +32,8 @@
 import { Data } from "effect";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
-import { vendorRefusal, type ProviderRequest } from "../provider-call.js";
-import { providerFailureMessage, unsentAfterUnauthorized } from "../write-outcome.js";
+import { vendorRefusal } from "../provider-call.js";
+import { providerFailureMessage } from "../write-outcome.js";
 import type { Dispatch } from "./services.js";
 
 /** A request the kit refused before sending: confinement, a shadowed credential header. */
@@ -291,11 +291,12 @@ export interface MapOptions {
 
 /**
  * The single mapping from a kit failure to what an agent reads. It decides
- * no write: the `api()` boundary does, from the core ledger, with
- * `providerCallFailure`. A failure that is its own request's served answer
- * carries that request as its provenance (`vendorRefusal`, which holds only
- * for a refusing status: a 4xx other than 408). A write call adds Q8's 401
- * handoff and a blocked resend's account of the first attempt.
+ * no write: the core does, from its ledger (`providerCallFailure` at the
+ * `api()` boundary, and Q8's `settleWrite` once per logical call). A failure
+ * that is its own request's served answer carries that request as its
+ * provenance (`vendorRefusal`, which holds only for a refusing status: a 4xx
+ * other than 408). A write call records each 401 its requests met
+ * ({@link recordUnauthorized}) and words a blocked resend.
  */
 export function toConnectorCallError(
   failure: HttpFailure,
@@ -304,10 +305,8 @@ export function toConnectorCallError(
 ): ConnectorCallError {
   const error = answered(failure, verdict(failure, vendor, options), options.dispatches);
   if (options.classification === "read") return error;
-  return (
-    unauthorized(vendor, options, failure) ??
-    (failure._tag === "ResendRefused" ? resent(failure.first, vendor, options) : error)
-  );
+  recordUnauthorized(vendor, options);
+  return failure._tag === "ResendRefused" ? resent(failure.first, vendor, options) : error;
 }
 
 /**
@@ -345,71 +344,29 @@ function resent(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
 }
 
 /**
- * Q8: a write the resource server answered 401. A server may act before it
- * rejects a credential, so unless the vendor documents that it authenticates
- * first, the outcome is unknown and never retryable. The code is the vendor's
- * 401 verdict, kept so invocation still hands the agent
- * `authorize_connector`, whatever the call met afterwards (a renewal's
- * failure, an auxiliary request's, a cancellation); the core keeps an
- * explicit unknown outcome as it is. Only a renewal that succeeded drops the
- * handoff: the credential needs no recovery, and the write is still unknown
- * (`unsentAfterUnauthorized`). An unrenewed 401 outranks a renewed one. With
- * the vendor's evidence, the 401 is its own served refusal and the core
- * weighs it over the call like any other. Undefined when no write was
- * answered 401.
+ * Record, on the core ledger entry of each write request answered 401, the
+ * facts Q8 is decided from (`settleWrite`): that answer's own vendor verdict
+ * (`vendorRefusal`, from its recorded answer even when no body was read), and
+ * whether the vendor's reviewed `authBeforeExecution` evidence covers it
+ * (`ProviderRequest.authBeforeExecution`). It decides nothing: a write's
+ * outcome, its code and its handoff are the core's.
  */
-function unauthorized(
+export function recordUnauthorized(
   vendor: VendorErrors<any>,
   options: Pick<MapOptions, "dispatches" | "withholds" | "signal">,
-  failure?: HttpFailure,
-): ConnectorCallError | undefined {
-  const answers = options.dispatches.filter(
-    (dispatch) => dispatch.write && dispatch.state === "answered" && dispatch.status === 401,
-  );
-  const answer = answers.find((dispatch) => !dispatch.renewed) ?? answers[0];
-  if (!answer) return undefined;
-  const recorded = recordedAnswer(answer);
-  const error = verdict(recorded, vendor, options);
+): void {
   const proof = vendor.authBeforeExecution;
-  const decided =
-    proof !== undefined &&
-    proof.evidence.trim().length > 0 &&
-    proof.matches(classificationInput(recorded, vendor, options.withholds?.(recorded.operation) === true))
-      ? answer.request
-        ? vendorRefusal(error, provenAuthenticatedFirst(answer.request))
-        : error
-      : answer.renewed
-        ? unsentAfterUnauthorized(vendor.provider)
-        : new ConnectorCallError(
-            error.code,
-            `${error.message} The write was sent before ${vendor.provider} rejected its credential, so whether ` +
-              "it took effect is unknown: check the target before repeating it.",
-            { retryable: false, writeOutcome: "unknown" },
-          );
-  return failure?._tag === "ResendRefused" ? providerFailureMessage(decided, `${decided.message} ${RESEND}`) : decided;
-}
-
-/**
- * The core counts a write's 401 a refusal only when its ledger entry carries
- * the vendor's matched proof (`ProviderRequest.authBeforeExecution`); the
- * kit's own match is that proof.
- */
-function provenAuthenticatedFirst(request: ProviderRequest): ProviderRequest {
-  request.authBeforeExecution = true;
-  return request;
-}
-
-/**
- * The verdict a write's recorded 401 still fixes when the caller left before
- * the call could settle (during the renewal, or while its body was read);
- * undefined otherwise, and invocation reports the cancellation as it does
- * today, an unknown outcome.
- */
-export function departedVerdict(
-  vendor: VendorErrors<any>,
-  options: Pick<MapOptions, "classification" | "dispatches" | "withholds" | "signal">,
-): ConnectorCallError | undefined {
-  return options.classification === "write" ? unauthorized(vendor, options) : undefined;
+  for (const dispatch of options.dispatches) {
+    if (!dispatch.write || dispatch.state !== "answered" || dispatch.status !== 401 || !dispatch.request) continue;
+    const recorded = recordedAnswer(dispatch);
+    if (
+      proof !== undefined &&
+      proof.evidence.trim().length > 0 &&
+      proof.matches(classificationInput(recorded, vendor, options.withholds?.(recorded.operation) === true))
+    )
+      dispatch.request.authBeforeExecution = true;
+    vendorRefusal(verdict(recorded, vendor, options), dispatch.request);
+  }
 }
 
 /** Use a parsed body only when it belongs to this recorded status; ceilings and later failures cannot supply its code. */

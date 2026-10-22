@@ -431,7 +431,8 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
   fresh)`: the one request that 401 answered (`answeredRequest(response)` in
   a guarded mapper), the credential it sent, and the renewed one. Never mark
   any other request, and a renewal that hands back the sent credential
-  renewed nothing.
+  renewed nothing. A provider only records these facts; it never decides a
+  write's 401 itself. `settleWrite` does, once per call.
 
 ## Definition and behavior
 

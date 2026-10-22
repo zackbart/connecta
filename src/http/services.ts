@@ -106,8 +106,6 @@ export interface Dispatch {
   headers?: Headers;
   /** The failure this request's own answer settled into, so the mapping can tell it from a later one. */
   failure?: HttpFailure;
-  /** Its 401 earned a renewal that succeeded: the next call has a fresh credential. */
-  renewed?: true;
   /** Its entry in the core ledger, recorded synchronously before `fetch`. */
   request?: ProviderRequest;
 }

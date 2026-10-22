@@ -12,6 +12,7 @@ import { classifyTool } from "../tool-safety.js";
 import {
   closeProviderCall,
   enterProviderBoundary,
+  inLogicalCall,
   knownProviderFailure,
   nestedProviderRequests,
   providerBoundary,
@@ -431,10 +432,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
               untracked: !tracksRequests(connector),
             }),
           );
-        // The request's own abort reason, by identity, is the caller's. A
-        // direct write's is settled like any other failure: it may have left.
+        // The request's own abort reason, by identity, is the caller's. The
+        // invocation reports it for its logical call; any other write's is
+        // settled like any other failure: it may have left.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
-          if (!write || callClassification(ctx) !== undefined) throw error;
+          if (!write || inLogicalCall(ctx)) throw error;
           throw settle(error);
         }
         if (error instanceof ConnectorCallError) throw settle(error);

@@ -2182,35 +2182,45 @@ compiling and configuring the real thing.
   request. Only Stripe declares it (`src/providers/stripe/rest.ts`, reviewed
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
   `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
-  sources. A write answered 401 without it keeps an authorization
-  code, never retryable, with no wait, `writeOutcome: "unknown"`, and a
-  sentence saying the write was sent before the vendor rejected its
-  credential (`unauthorizedWrite`); invocation keeps the
-  `authorize_connector` handoff and picks its reconcile-first words. The
-  ledger's recorded status decides it, not the final error's shape, and it
-  is decided before the untracked-handler, idempotency-key, and timeout
-  exceptions, so no key makes such a write repeatable. It holds whatever
-  surfaced after the 401: a body past the ceiling, a later request in a
-  composite, a handler's own failure, a timeout, or the caller's abort. The
-  code is the final failure's when that is an authorization verdict, else
-  the one the 401's own answer was mapped to (`vendorRefusal` records it on
-  the request), else `auth_required`. A 401 whose credential a renewal then
-  replaced is marked `renewed` on its own request and no longer decides the
-  call. `renewedAfterUnauthorized(request, sent, fresh)` names that one
-  request and marks it only when the renewal yielded a credential other
-  than the one it sent; its callers are static OAuth's refresh, Infisical's
-  login (through `answeredRequest`, the guarded transport's response-to-entry
-  lookup), Google's fresh token for a read's replay, and the kit's
-  refresh-once. A declared 401 stands as a refusal only as the call's one
-  request and its own failure; otherwise it too is decided this way. Each
-  `api()` call's ledger records the ledgers of `api()` boundaries entered
-  beneath its handler (`nestedProviderRequests`), so an inner request's 401
-  decides the outer write, and an outer ledger with nested requests is never
-  empty proof. When the invocation's deadline or the caller's cancellation
-  cuts off a served write, no connector failure arrives: the invocation
-  takes the verdict from the logical call's recorded requests
-  (`departedWriteVerdict`, the core's counterpart of the kit's
-  `departedVerdict`), unless the only request sent is a declared refusal. A 408 is a
+  sources. Q8 is decided in one place, `settleWrite` in
+  `src/write-outcome.ts`, once per logical call and over every request it
+  recorded. The invocation calls it for every failure of a served write: a
+  thrown or mapped error, a custom connector's, a program's call, and its
+  own deadline or the caller's cancellation, when no connector failure
+  arrives at all. It reads the logical call's requests
+  (`logicalCallRequests`), which hold every resource request dispatched
+  under the call from any ledger: nested `api()` calls, remote MCP, guarded
+  transports, `ctx.fetch` and the kit. Without an invocation (a direct call,
+  or a context no invocation opened), only the outermost boundary calls it,
+  at the end of `providerCallFailure`, over its own ledger and every ledger
+  of an `api()` call entered beneath its handler (`nestedProviderCall`,
+  `nestedProviderRequests`), or over the one request a transport outside a
+  ledger sent. Boundaries only record what they observed: the dispatch and
+  status, a reviewed `authBeforeExecution` match, the 401's own mapped verdict
+  (`vendorRefusal`), and a renewal of that one request's own credential
+  (`renewedAfterUnauthorized(request, sent, fresh)`, only for a credential
+  other than the one it sent). The rule: a write request answered 401 that
+  is not a declared refusal standing for the whole call makes the call
+  unknown, never retryable, with no wait and no resend or key-reuse advice;
+  while any such 401 is unrenewed the verdict keeps an authorization code,
+  so invocation keeps the `authorize_connector` handoff and picks its
+  reconcile-first words. Its code and words are the failure's when that is an
+  authorization verdict, else the 401's own recorded verdict, else
+  `auth_required`, with a sentence saying the write was sent before the
+  vendor rejected its credential unless the verdict already accounts for the
+  401 (a renewal's words). When every such 401 was renewed, the handoff goes
+  and the failure keeps its words, unknown and without a wait. A declared 401
+  stands only as the call's one request, sent by the boundary that decides,
+  whose own refusal is the failure (and, served, known for the logical call).
+  The recorders are the guarded transport (dispatch, status, declaration
+  match, mapped verdict), `ctx.fetch` (dispatch, status), static OAuth
+  (status, verdict, renewal), Google (per-attempt entry, renewal of a read's
+  replay), Infisical (renewal, through `answeredRequest`), the kit (core
+  ledger entry, status, `recordUnauthorized`, refresh-once renewal),
+  `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
+  logical call, status, the verdict, and renewal by comparing the
+  `Authorization` of the resend the SDK attempts), and `api()` itself (one
+  ledger per call, linked to the one whose handler entered it). A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the

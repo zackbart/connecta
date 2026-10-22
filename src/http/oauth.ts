@@ -73,12 +73,9 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
         // write's. The ledger keeps only whether it succeeded, which decides
         // whether the agent still needs the handoff, never the outcome.
         const renewal = yield* Effect.exit(grant.refresh(stale));
-        // Only a different token renews: one handed back as it was sent did not.
-        if (renewal._tag === "Success" && renewal.value !== stale && facts.sent?.dispatch) {
-          facts.sent.dispatch.renewed = true;
-          // The core reads the same fact from this request's own ledger entry (Q8).
-          renewedAfterUnauthorized(facts.sent.dispatch.request, stale, renewal.value);
-        }
+        // Recorded on this request's own ledger entry, and only for a token
+        // other than the one it sent; the core decides from it (Q8).
+        if (renewal._tag === "Success") renewedAfterUnauthorized(facts.sent?.dispatch?.request, stale, renewal.value);
         return HttpClientResponse.fromWeb(
           request,
           new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),

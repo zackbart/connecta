@@ -15,9 +15,12 @@ import {
 } from "./errors.js";
 import {
   authorizationFailure,
+  explainedUnauthorizedVerdict,
+  explainsUnauthorized,
+  inLogicalCall,
   isKnownProviderFailure,
   knownProviderFailure,
-  logicalCallRequests,
+  nestedProviderCall,
   nestedProviderRequests,
   providerRequests,
   refusalRequest,
@@ -97,7 +100,7 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
 }
 
 /**
- * The one failure decision for a write, and the one place a direct write's
+ * #902's failure decision for a write, and the one place a direct write's
  * failure is finalized (INV-9). Every connector surface hands a write's
  * failure here before it leaves: the `api()` handler boundary, a guarded
  * transport outside a call ledger (inside one, beneath `ctx.fetch`, the
@@ -112,15 +115,16 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
  * ledger shows the request never left connecta, or (b) the downstream served
  * an HTTP refusal, a 4xx other than 408 (`refusedStatus`, `vendorRefusal`),
  * where a 401 also needs the vendor's reviewed `authBeforeExecution`
- * evidence. An error code is never that evidence. Any other write answered
- * 401 is decided next, from the status recorded where it was observed and
- * before every exception below: it keeps an authorization code, never
- * retryable and with an unknown outcome ({@link unauthorizedWrite}). A write
- * that may have left and then timed out, was aborted, or failed any other
- * way is an unknown outcome, never retryable, unless a direct caller sent an
- * idempotency key the vendor honors (`repeatable`, or the request's recorded
- * `key`; no operation hint counts). A served call's invocation reports its
- * own timeouts and aborts.
+ * evidence. An error code is never that evidence. A write that may have left
+ * and then timed out, was aborted, or failed any other way is an unknown
+ * outcome, never retryable, unless a direct caller sent an idempotency key
+ * the vendor honors (`repeatable`, or the request's recorded `key`, when it
+ * is the only request the call sent; no operation hint counts). A served
+ * call's invocation reports its own timeouts and aborts.
+ *
+ * Q8 is not decided here but once per call, over its whole ledger
+ * ({@link settleWrite}): by the invocation that opened a logical call, and
+ * otherwise only here, at the outermost boundary, after this decision.
  */
 export function providerCallFailure(
   ctx: ConnectorContext,
@@ -136,6 +140,8 @@ export function providerCallFailure(
     untracked?: boolean;
     /** `status` is a 401 the vendor's reviewed `authBeforeExecution` evidence covers. */
     authBeforeExecution?: boolean;
+    /** Outside a call ledger: the one request the failure is about, as its transport recorded it. */
+    request?: ProviderRequest | undefined;
   },
 ): unknown {
   const served = callClassification(ctx);
@@ -144,6 +150,25 @@ export function providerCallFailure(
   // Guarded transports collect facts; only api() knows when the logical call
   // has ended. Google may add phases or recovery words in the meantime.
   if (requests && !facts.finalize) return error;
+  const decided = writeFailure(ctx, vendor, error, facts, served, requests);
+  // The invocation settles Q8 over its logical call; without one, the
+  // outermost boundary does, over every ledger beneath it.
+  if (inLogicalCall(ctx) || nestedProviderCall(ctx)) return decided;
+  return settleWrite(
+    requests ? [...requests, ...nestedProviderRequests(ctx)] : facts.request ? [facts.request] : [],
+    decided,
+    isKnownProviderFailure(decided),
+  );
+}
+
+function writeFailure(
+  ctx: ConnectorContext,
+  vendor: { title: string },
+  error: unknown,
+  facts: Parameters<typeof providerCallFailure>[3],
+  served: "read" | "write" | undefined,
+  requests: readonly ProviderRequest[] | undefined,
+): unknown {
   if (requests) {
     // In flight counts as sent. The call is closed, so nothing else leaves.
     const sent = (request: ProviderRequest) => request.dispatched && !request.auxiliary;
@@ -153,25 +178,19 @@ export function providerCallFailure(
     // An empty or partial ledger is no proof for a handler that can send
     // around it: nothing it saw rules out a request it did not see.
     if (dispatched.length === 0 && nested.length === 0 && !facts.untracked) return knownProviderFailure(error);
+    // A refusal or a key speaks for the call only as its one request, sent
+    // by this boundary: an inner call's verdict is never this one's.
+    const sole = !facts.untracked && dispatched.length === 1 && nested.length === 0 ? dispatched[0] : undefined;
     const refusal = refusalRequest(error);
     // An explicit unknown marker (a renewal after a 401, say) wins.
     const own =
-      !facts.untracked &&
       !(error instanceof ConnectorCallError && error.writeOutcome === "unknown") &&
-      dispatched.length === 1 &&
-      nested.length === 0 &&
       refusal !== undefined &&
-      dispatched[0] === refusal;
+      sole === refusal;
     if (own && servedRefusal(error, refusal.status, refusal.authBeforeExecution === true))
       return knownProviderFailure(error);
-    // Q8 comes from the ledgers, before the untracked and key exceptions: a
-    // request answered 401 that is not that one declared refusal decides the
-    // call, whatever failure surfaced after it. One whose credential a
-    // renewal replaced needs no recovery, so the call's own failure decides.
-    const answer = unauthorizedRequest([...dispatched, ...nested]);
-    if (answer) return unauthorizedWrite(answer.provider, error, answer);
     if (facts.untracked) return uncertainProviderFailure(vendor, error, ctx);
-    if (served === undefined && dispatched.length === 1 && dispatched[0]?.key !== undefined) return error;
+    if (served === undefined && sole?.key !== undefined) return error;
     return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error, ctx);
   }
   // Provenance (a): the ledger shows the request never left connecta, unless
@@ -180,11 +199,8 @@ export function providerCallFailure(
     return error instanceof ConnectorCallError && error.writeOutcome === "unknown"
       ? error
       : knownProviderFailure(error);
-  // Q8 comes before the key, idempotency and timeout exceptions: no key
-  // makes a write answered 401 repeatable. Only a declared refusal that
-  // stands goes on, to be marked known below.
-  if (facts.status === 401 && !declaredRefusal(error, ctx, facts.authBeforeExecution === true))
-    return unauthorizedWrite(vendor.title, error);
+  const status = facts.status ?? facts.request?.status;
+  const declared = facts.authBeforeExecution === true || facts.request?.authBeforeExecution === true;
   if (served === undefined) {
     // A direct transport user may prove idempotency with a key the vendor
     // honors. A deployment's served write verdict still requires
@@ -207,8 +223,8 @@ export function providerCallFailure(
   // Provenance (b). An error code alone (a mapper's `rate_limited` after a
   // 2xx, a JSON-RPC `-32602`, an output validator's `invalid_args`) is never
   // this evidence.
-  if (servedRefusal(error, facts.status, facts.authBeforeExecution === true)) return knownProviderFailure(error);
-  const serverError = facts.status !== undefined && facts.status >= 500;
+  if (servedRefusal(error, status, declared)) return knownProviderFailure(error);
+  const serverError = status !== undefined && status >= 500;
   if (facts.repeatable === true && error.retryable) {
     return carryFailureFacts(
       error,
@@ -249,87 +265,112 @@ function servedRefusal(error: unknown, status: number | undefined, authBeforeExe
 }
 
 /**
- * A 401 the vendor's reviewed evidence covers, standing as its write's
- * refusal outside a call ledger: the error is that answer's own typed
- * verdict, not a timeout, an abort, or an explicit unknown marker.
+ * Q8, the one decision for a write answered 401, made once per logical call
+ * over every request it recorded: nested `api()` calls, remote MCP, guarded
+ * transports and the kit alike. The invocation makes it for a served call,
+ * whatever failed (a thrown or mapped error, a custom wrapper's, a
+ * program's call, its own deadline or the caller's cancellation, as
+ * `error` undefined), and `providerCallFailure` for a direct one at its
+ * outermost boundary. Boundaries only record what they observed: dispatch,
+ * status, a reviewed `authBeforeExecution` match, the 401's mapped verdict
+ * (`vendorRefusal`) and a renewal of that request's own credential
+ * (`renewedAfterUnauthorized`).
+ *
+ * A write request answered 401 means a server may have acted before it
+ * rejected the credential, so the call's outcome is unknown, never
+ * retryable, with no wait and no resend or key-reuse advice (INV-9). While
+ * any such 401 is unrenewed, authorization is still needed: the verdict
+ * keeps an authorization code, and so the `authorize_connector` handoff,
+ * whose words reconcile before any fresh call ({@link unauthorizedVerdict}).
+ * Only a renewal of every one drops the handoff ({@link renewedVerdict}).
+ * The one exception is reviewed vendor evidence: a 401 matching the
+ * vendor's `authBeforeExecution` declaration that is the only request the
+ * call sent, whose own refusal is the failure and is known for the whole
+ * call (`knownRefusal`: the boundary that sent it proved it, and, served,
+ * `knownForLogicalCall`), stays that refusal. Returns `error` itself when no
+ * write request was answered 401.
  */
-function declaredRefusal(error: unknown, ctx: ConnectorContext, declared: boolean): boolean {
+export function settleWrite(requests: readonly ProviderRequest[], error: unknown, knownRefusal: boolean): unknown {
+  const sent = requests.filter((request) => request.dispatched && !request.auxiliary);
+  const answers = sent.filter((request) => request.status === 401);
+  const [only] = answers;
+  if (only === undefined) return error;
+  if (knownRefusal && sent.length === 1 && only.authBeforeExecution === true && standingRefusal(error, only))
+    return error;
+  const unrenewed = answers.find((request) => request.renewed !== true);
+  return unrenewed ? unauthorizedVerdict(unrenewed, error) : renewedVerdict(answers, error);
+}
+
+/**
+ * The declared 401's own refusal is the failure, typed and not made unknown;
+ * or no failure arrived at all (the invocation's deadline), so nothing after
+ * the refusal can have run.
+ */
+function standingRefusal(error: unknown, request: ProviderRequest): boolean {
+  if (error === undefined) return true;
   return (
-    declared &&
     error instanceof ConnectorCallError &&
     error.writeOutcome !== "unknown" &&
-    !timedOutOrAborted(error, ctx) &&
+    refusalRequest(error) === request &&
     servedRefusal(error, 401, true)
   );
 }
 
 /**
- * Q8: a write whose request the downstream answered HTTP 401, other than a
- * refusal the vendor's reviewed `authBeforeExecution` evidence makes stand
- * (`servedRefusal`). A server may act on a request before it rejects the
- * credential, so the outcome is unknown (`writeOutcome`), never retryable,
- * with no wait and no resend or key-reuse advice (INV-9). Authorization is
- * still needed, so the verdict keeps an authorization code, and with it the
- * `authorize_connector` handoff, whose words then reconcile before any fresh
- * call. That holds whatever failure surfaced after the 401: its body's read
- * or ceiling, a later request, a mapper, a timeout, or the caller's abort.
- * The verdict is the failure itself when that is an authorization verdict,
- * else the 401's own mapped one (`answer`'s, in a call ledger), else
- * `auth_required`. A 401 whose credential a renewal replaced (`renewed`)
- * never reaches here: the call's own failure decides, and a write it
- * answered already carries renewal's words ({@link unsentAfterUnauthorized}).
- * Outside a ledger nothing records a renewal, so a connector's explicit
- * unknown marker stands.
+ * The verdict of a call with an unrenewed write 401: `error` when it is an
+ * authorization verdict, else the one that 401's own answer was mapped to,
+ * else `auth_required`; never retryable, unknown, without a wait or advice.
+ * A verdict that already accounts for the 401 keeps its words; any other
+ * gains the sentence that the write was sent before the vendor rejected its
+ * credential.
  */
-function unauthorizedWrite(subject: string, error: unknown, answer?: ProviderRequest): ConnectorCallError {
-  if (authorizationFailure(error)) return unauthorizedVerdict(subject, error);
-  if (answer === undefined && error instanceof ConnectorCallError && error.writeOutcome === "unknown")
-    return withoutRetry(error);
-  const verdict =
-    (answer && unauthorizedAnswer(answer)) ??
-    new ConnectorCallError("auth_required", `${subject} answered this write with HTTP 401.`);
-  return carryFailureFacts(error, unauthorizedVerdict(subject, verdict));
-}
-
-/** The first request answered 401 whose credential no renewal replaced. */
-function unauthorizedRequest(requests: readonly ProviderRequest[]): ProviderRequest | undefined {
-  return requests.find((request) => request.status === 401 && request.renewed !== true);
+function unauthorizedVerdict(answer: ProviderRequest, error: unknown): ConnectorCallError {
+  const base = authorizationFailure(error)
+    ? error
+    : (unauthorizedAnswer(answer) ??
+      new ConnectorCallError("auth_required", `${answer.provider} answered this write with HTTP 401.`));
+  if (explainsUnauthorized(base)) return carryFailureFacts(error, withoutRetry(base));
+  return explainedUnauthorizedVerdict(
+    carryFailureFacts(
+      error,
+      carryFailureFacts(
+        base,
+        new ConnectorCallError(
+          base.code,
+          `${base.message} The write was sent before ${answer.provider} rejected its credential, so whether it ` +
+            "took effect is unknown: check the target before repeating it.",
+          { retryable: false, writeOutcome: "unknown" },
+        ),
+      ),
+    ),
+  );
 }
 
 /**
- * Q8 for a served write this invocation cut off, by its deadline or its
- * caller's cancellation, after the downstream answered one of its requests
- * 401: no failure of the connector's arrives to carry the verdict, so it
- * comes from the logical call's recorded requests, nested boundaries
- * included, as the kit's `departedVerdict` does. Undefined when no such
- * request exists, or when the only request sent is a 401 the vendor's
- * reviewed evidence makes a refusal; the invocation then reports its own
- * deadline or cancellation.
+ * Every write 401 the call recorded was renewed: nothing is left to
+ * authorize, and the outcome stays unknown. The renewed 401's own verdict,
+ * or no failure at all (the invocation's deadline), reads as the renewal
+ * did ({@link unsentAfterUnauthorized}); any other failure keeps its words,
+ * unknown, without a retry flag or a wait.
  */
-export function departedWriteVerdict(ctx: object | undefined): ConnectorCallError | undefined {
-  const sent = logicalCallRequests(ctx) ?? [];
-  const answer = unauthorizedRequest(sent);
-  if (!answer || (sent.length === 1 && answer.authBeforeExecution === true)) return undefined;
-  return unauthorizedWrite(answer.provider, undefined, answer);
-}
-
-/** An authorization verdict on a write answered 401, its outcome unknown. */
-function unauthorizedVerdict(subject: string, error: ConnectorCallError): ConnectorCallError {
-  if (error.writeOutcome === "unknown") return withoutRetry(error);
-  return carryFailureFacts(
-    error,
-    new ConnectorCallError(
-      error.code,
-      `${error.message} The write was sent before ${subject} rejected its credential, so whether it took effect ` +
-        "is unknown: check the target before repeating it.",
-      { retryable: false, writeOutcome: "unknown" },
-    ),
+function renewedVerdict(answers: readonly ProviderRequest[], error: unknown): unknown {
+  const own = refusalRequest(error);
+  if (error === undefined || (authorizationFailure(error) && own !== undefined && answers.includes(own)))
+    return carryFailureFacts(error, unsentAfterUnauthorized((own ?? answers[0]!).provider));
+  if (!(error instanceof ConnectorCallError)) return error;
+  return withoutRetry(
+    error.writeOutcome === "unknown"
+      ? error
+      : carryFailureFacts(
+          error,
+          new ConnectorCallError(error.code, error.message, { retryable: false, writeOutcome: "unknown" }),
+        ),
   );
 }
 
 /** An unknown outcome as it stands, without a retry flag or a wait. */
 function withoutRetry(error: ConnectorCallError): ConnectorCallError {
-  if (!error.retryable && error.retryAfterMs === undefined) return error;
+  if (!error.retryable && error.retryAfterMs === undefined && error.writeOutcome === "unknown") return error;
   return carryFailureFacts(
     error,
     new ConnectorCallError(error.code, error.message, {
@@ -490,9 +531,11 @@ export function unsentAfterUnauthorized(
     renewal instanceof ConnectorCallError &&
     (renewal.code === "auth_required" || renewal.code === "downstream_oauth_required")
   ) {
-    return carryFailureFacts(
-      renewal,
-      new ConnectorCallError(renewal.code, renewal.message, { retryable: false, writeOutcome: "unknown" }),
+    return explainedUnauthorizedVerdict(
+      carryFailureFacts(
+        renewal,
+        new ConnectorCallError(renewal.code, renewal.message, { retryable: false, writeOutcome: "unknown" }),
+      ),
     );
   }
   // Only the class of what renewal met: its own text may say to try again,
@@ -507,5 +550,5 @@ export function unsentAfterUnauthorized(
       "unknown: check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },
   );
-  return renewal === undefined ? unsent : carryFailureFacts(renewal, unsent);
+  return explainedUnauthorizedVerdict(renewal === undefined ? unsent : carryFailureFacts(renewal, unsent));
 }

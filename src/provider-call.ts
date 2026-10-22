@@ -36,12 +36,17 @@ interface ProviderCall {
   closed: boolean;
   /** The calls of api() boundaries entered beneath this one's handler. */
   nested: ProviderCall[];
+  /** The call whose handler entered this one; undefined for the outermost. */
+  parent?: ProviderCall;
 }
 const CALL = Symbol("provider call");
 type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
 // A redacted copy of a failure is the same failure: its verdict follows it.
 const refusals = followRedactedCopies(new WeakMap<object, ProviderRequest>());
 const knownFailures = followRedactedCopies(new WeakSet<object>());
+// Verdicts that already account for a write's 401 in words of their own: a
+// renewal's (`unsentAfterUnauthorized`) or Q8's own. Q8 adds no sentence to them.
+const explainedUnauthorized = followRedactedCopies(new WeakSet<object>());
 // The authorization verdict a request's own 401 was mapped to, kept for the
 // call's verdict whatever failure surfaces after it (Q8).
 const unauthorizedAnswers = new WeakMap<ProviderRequest, ConnectorCallError>();
@@ -75,9 +80,15 @@ interface LogicalCall {
 const logicalCalls = new WeakMap<object, LogicalCall>();
 
 export function providerCallContext(ctx: ConnectorContext): ConnectorContext {
-  const call: ProviderCall = { requests: [], closed: false, nested: [] };
-  (ctx as CallContext)[CALL]?.nested.push(call);
+  const parent = (ctx as CallContext)[CALL];
+  const call: ProviderCall = { requests: [], closed: false, nested: [], ...(parent ? { parent } : {}) };
+  parent?.nested.push(call);
   return deriveContext<CallContext>(ctx, { [CALL]: call });
+}
+
+/** Whether `ctx`'s call was entered by another api() boundary's handler. */
+export function nestedProviderCall(ctx: ConnectorContext): boolean {
+  return (ctx as CallContext)[CALL]?.parent !== undefined;
 }
 
 export function providerRequests(ctx: ConnectorContext): readonly ProviderRequest[] | undefined {
@@ -342,6 +353,11 @@ export function renewedAfterUnauthorized(request: ProviderRequest | undefined, s
   if (request?.status === 401 && fresh !== sent) request.renewed = true;
 }
 
+/** Whether an invocation opened the logical call `ctx` belongs to; it then settles Q8 itself. */
+export function inLogicalCall(ctx: object): boolean {
+  return logicalCalls.has(contextKey(ctx));
+}
+
 /**
  * Every resource request dispatched under `ctx`'s logical call, from any
  * ledger, nested ones included; undefined outside one.
@@ -375,7 +391,18 @@ export function carryProviderFailure<T>(from: unknown, to: T): T {
     const refusal = refusalRequest(from);
     if (refusal) refusals.set(to, refusal);
     if (isKnownProviderFailure(from)) knownFailures.add(to);
+    if (explainsUnauthorized(from)) explainedUnauthorized.add(to);
     carryResendAdvice(from, to);
   }
   return to;
+}
+
+/** Mark a verdict that already accounts for a write's 401 in its own words. */
+export function explainedUnauthorizedVerdict<T>(error: T): T {
+  if (error !== null && typeof error === "object") explainedUnauthorized.add(error);
+  return error;
+}
+
+export function explainsUnauthorized(error: unknown): boolean {
+  return error !== null && typeof error === "object" && explainedUnauthorized.has(error);
 }

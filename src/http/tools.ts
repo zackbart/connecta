@@ -17,7 +17,7 @@
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
-import { departedVerdict, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
+import { recordUnauthorized, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
 import {
   Classification,
@@ -205,11 +205,10 @@ function build<I extends Input, O extends Schema.Top>(
         ),
         { signal: ctx.signal },
       ).catch((error: unknown) => {
-        // Cancelled after the vendor answered the write 401: that answer fixed
-        // the outcome and its handoff, and the caller's departure does not unsay it.
-        if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
-          throw departedVerdict(connection.errors, map) ?? error;
-        }
+        // The caller left before any failure was mapped: a write's 401 still
+        // records its vendor verdict, from which the core decides (Q8).
+        if (ctx.signal?.aborted === true && error === ctx.signal.reason && map.classification === "write")
+          recordUnauthorized(connection.errors, map);
         throw error;
       });
     },

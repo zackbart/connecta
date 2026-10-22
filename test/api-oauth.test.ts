@@ -1016,6 +1016,74 @@ describe("api() oauth replay is for reads only", () => {
     },
   );
 
+  it("INV-9: static OAuth records its 401 verdict, so a handler that swallows it still gets that verdict", async () => {
+    const provider = fakeProvider();
+    const swallowing = ccb({
+      tools: [
+        {
+          name: "post_note",
+          description: "Write a note, then fail on its own",
+          annotations: { readOnlyHint: false },
+          async handler(_args, ctx) {
+            await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" }).catch(() => undefined);
+            throw new ConnectorCallError("unavailable", "A later step failed.", { retryAfterMs: 30_000 });
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([swallowing]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    install(provider);
+    await authorize(swallowing, ctx, provider);
+    provider.expireAccess();
+    provider.control.refresh = "dead";
+    const { error } = JSON.parse(
+      (await createMetaTools(registry, BASE).callDestructiveTool({ address: "ccb.post_note" })).content[0]!.text,
+    ) as { error: Record<string, unknown> & { message: string } };
+    // The grant's own verdict, recorded on the request: not one made up from its status.
+    expect(error).toMatchObject({
+      code: "downstream_oauth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message: expect.stringContaining('Connector "ccb" requires authorization'),
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+  });
+
+  it("INV-9: ctx.fetch records each request's status, so a custom handler's 401 decides its write", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const custom = api("custom", {
+      tools: [
+        {
+          name: "post",
+          description: "Write through ctx.fetch",
+          annotations: { readOnlyHint: false },
+          async handler(_args, ctx) {
+            await ctx.fetch(`${API}/notes`, { method: "POST", body: "{}" });
+            throw new ConnectorCallError("unavailable", "The handler gave up.", { retryAfterMs: 30_000 });
+          },
+        },
+      ],
+    });
+    const { error } = (
+      await createMetaTools(makeRegistry([custom]), BASE).callDestructiveTool({ address: "custom.post" })
+    ).structuredContent as { error: Record<string, unknown> };
+    expect(error).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+      nextAction: { tool: "authorize_connector" },
+      message:
+        "custom answered this write with HTTP 401. The write was sent before custom rejected its credential, so " +
+        "whether it took effect is unknown: check the target before repeating it.",
+    });
+    expect(error).not.toHaveProperty("retryAfterMs");
+  });
+
   it.each([true, false])(
     "INV-9: a program whose write met a 401 and a dead grant reports it unknown, keeping its recovery facts and handoff (caught: %s)",
     async (caught) => {
