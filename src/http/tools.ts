@@ -227,7 +227,7 @@ function build<I extends Input, O extends Schema.Top>(
       }),
     );
   };
-  const decode = Schema.decodeUnknownEffect(spec.input);
+  const decode = Schema.decodeUnknownEffect(spec.input, { onExcessProperty: "error" });
   const tool: ApiTool = {
     name: spec.name,
     description: spec.description,
