@@ -1,4 +1,4 @@
-import { duringViewCall } from "../runtime/call.js";
+import { duringViewCall, viewSignal } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
  * (#341): path confinement, encoded query and framed bodies, per-request
@@ -358,13 +358,36 @@ function readableBody(response: Response): ReadableStream<Uint8Array> | null {
 }
 
 /** Read a stream to the ceiling and stop there — never past it. */
-async function drain(provider: string, stream: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
+function ownedReader(stream: ReadableStream<Uint8Array>, signal: AbortSignal) {
   const reader = stream.getReader();
+  void reader.closed.catch(() => {});
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return {
+    reader,
+    close: () => {
+      signal.removeEventListener("abort", abort);
+      reader.releaseLock();
+    },
+  };
+}
+
+async function drain(
+  provider: string,
+  stream: ReadableStream<Uint8Array>,
+  limit: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const { reader, close } = ownedReader(stream, signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
@@ -375,7 +398,7 @@ async function drain(provider: string, stream: ReadableStream<Uint8Array>, limit
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock();
+    close();
   }
   const body = new Uint8Array(total);
   let offset = 0;
@@ -398,7 +421,7 @@ async function drain(provider: string, stream: ReadableStream<Uint8Array>, limit
  * with a parse error and turns a response nobody was allowed to read into an
  * empty success.
  */
-function boundedResponse(provider: string, response: Response, limit: number): GuardedResponse {
+function boundedResponse(provider: string, response: Response, limit: number, signal: AbortSignal): GuardedResponse {
   if (BODILESS_STATUSES.has(response.status)) {
     const emptyJson = async (): Promise<unknown> => undefined;
     return {
@@ -418,7 +441,7 @@ function boundedResponse(provider: string, response: Response, limit: number): G
   const stream = readableBody(response);
   const prefix = async (maxBytes: number) => {
     const keep = Math.min(Math.max(0, Math.trunc(maxBytes)), limit);
-    if (stream) return await readPrefix(stream, keep);
+    if (stream) return await readPrefix(stream, keep, signal);
     // A runtime with no body stream buffers the body regardless; the
     // ceiling still bounds what is accepted.
     const buffer = new Uint8Array(await response.arrayBuffer());
@@ -430,7 +453,7 @@ function boundedResponse(provider: string, response: Response, limit: number): G
   let read: Promise<Uint8Array> | undefined;
   const bytes = (): Promise<Uint8Array> => {
     read ??= stream
-      ? drain(provider, stream, limit)
+      ? drain(provider, stream, limit, signal)
       : response.arrayBuffer().then((buffer) => {
           if (buffer.byteLength > limit) {
             throw oversized(provider, limit, `${buffer.byteLength} bytes`);
@@ -455,7 +478,7 @@ function boundedResponse(provider: string, response: Response, limit: number): G
     ok: response.ok,
     headers: response.headers,
     cancel: async () => {
-      await response.body?.cancel();
+      await (stream ?? response.body)?.cancel();
     },
     bytes,
     text,
@@ -475,14 +498,16 @@ function boundedResponse(provider: string, response: Response, limit: number): G
 async function readPrefix(
   stream: ReadableStream<Uint8Array>,
   keep: number,
+  signal: AbortSignal,
 ): Promise<{ bytes: Uint8Array; truncated: boolean }> {
-  const reader = stream.getReader();
+  const { reader, close } = ownedReader(stream, signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
   let truncated = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
       if (done) break;
       if (!value) continue;
       if (total + value.byteLength > keep) {
@@ -496,7 +521,7 @@ async function readPrefix(
     }
     if (truncated) await reader.cancel().catch(() => {});
   } finally {
-    reader.releaseLock();
+    close();
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -567,6 +592,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
     // A call that already ended sends nothing more, not even a credential read.
     assertProviderCallOpen(ctx, provider, auxiliary);
+    const signal = viewSignal(ctx, auxiliary);
     let dispatch = providerRequest(ctx, auxiliary, provider, {
       method: request.method,
       ...(request.classification ? { classification: request.classification } : {}),
@@ -616,7 +642,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       // worth failing on, not a precedence question worth resolving quietly.
       let authentication: Record<string, string>;
       try {
-        authentication = await duringViewCall(ctx, () => Promise.resolve(options.authenticate(ctx)));
+        authentication = await duringViewCall(ctx, () => Promise.resolve(options.authenticate(ctx)), auxiliary);
       } catch (error) {
         assertProviderCallOpen(ctx, provider, auxiliary);
         throw error;
@@ -643,7 +669,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           // origin `Location` names, and a confinement a redirect can undo was
           // never one. Refused below rather than followed.
           redirect: "manual",
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
+          signal,
         };
         sentSecretsFor(ctx).request(url, init);
         for (const [name, value] of Object.entries(request.visibleHeaders ?? {})) {
@@ -657,13 +683,26 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         if (oauthSenders.has(send) && isRecordingFetch((ctx as ApiHandlerContext).oauth?.fetch))
           handoffProviderRequest(init, dispatch);
         else dispatchProviderRequest(ctx, dispatch, headers, init.method);
-        response = await send(url.toString(), init, ctx);
+        response = await duringViewCall(
+          ctx,
+          async () => {
+            const answer = await send(url.toString(), init, ctx);
+            // A custom transport may ignore cancellation. Its late response
+            // owns no live mapper or body after revocation.
+            if (signal.aborted) {
+              void answer.body?.cancel().catch(() => {});
+              throw signal.reason;
+            }
+            return answer;
+          },
+          auxiliary,
+        );
         const answered = responseProviderRequest(response, dispatch);
         if (answered) dispatch = answered;
         else recordProviderResponse(dispatch, response.status);
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
-        throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
+        throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, signal);
       }
       if (response.status === 401 && authenticatedFirst(response, request)) dispatch.authBeforeExecution = true;
       if (REDIRECT_STATUSES.has(response.status)) {
@@ -688,9 +727,17 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         await response.body?.cancel().catch(() => {});
         throw oversized(provider, limit, `a declared ${declared} bytes`);
       }
-      const answer = boundedResponse(provider, response, limit);
+      const answer = boundedResponse(provider, response, limit, signal);
       answeredRequests.set(answer, dispatch);
-      return await map(answer, ctx);
+      const abort = () => {
+        void response?.body?.cancel().catch(() => {});
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        return await duringViewCall(ctx, () => Promise.resolve(map(answer, ctx)), auxiliary);
+      } finally {
+        signal.removeEventListener("abort", abort);
+      }
     }
   };
 }

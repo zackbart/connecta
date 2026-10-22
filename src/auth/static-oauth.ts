@@ -31,13 +31,14 @@ import type { ConnectorContext, ConnectorStatus } from "../types.js";
 import {
   assertOAuthScope,
   authorizingContext,
+  codeExchangeResponse,
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
-import { duringViewCall, openRequest } from "../runtime/call.js";
+import { duringViewCall, viewSignal } from "../runtime/call.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -262,7 +263,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       coordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
-      ctx.signal,
+      viewSignal(ctx),
       // No client binding: the client is configuration, so there is no
       // registration for a restart to carry forward or discard.
       undefined,
@@ -437,15 +438,33 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         (input, init) => {
           if (exchange) {
             // A code exchange has no submitted refresh claim transferring
-            // ownership. Its callback operation can have no external signal;
-            // request revocation must still refuse its auxiliary token POST.
-            assertProviderCallOpen(ctx, id, true);
-            const request = ctx.requestScope ? openRequest(ctx.requestScope) : undefined;
-            if (request?.signal.aborted) throw request.signal.reason;
+            // ownership. Only explicit scope revocation stops a callback:
+            // the production callback route remains uninterruptible and
+            // does not revoke its own scope while exchanging a code.
+            return duringViewCall(
+              ctx,
+              async (signal) => {
+                assertProviderCallOpen(ctx, id, true);
+                const response = await tokenEndpointFetch(secrets, input, {
+                  ...init,
+                  signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+                });
+                // An override can ignore abort. Never hand its late tokens
+                // to the SDK, which would otherwise persist both credentials.
+                if (signal.aborted) {
+                  void response.body?.cancel().catch(() => {});
+                  throw signal.reason;
+                }
+                // The SDK clones and reads this body after fetch resolves.
+                // Revocation must cancel that read even for a custom fetch.
+                return codeExchangeResponse(response, signal);
+              },
+              true,
+            );
           }
           return tokenEndpointFetch(secrets, input, init);
         },
-        ctx.signal,
+        viewSignal(ctx, exchange !== undefined),
         ctx.defer,
       ),
     });
@@ -706,31 +725,36 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return provider.verifyState(state);
   };
 
-  const finishAuth = async (code: string, ctx: ConnectorContext, callbackParams?: URLSearchParams): Promise<void> => {
-    const provider = callbackProviders.get(scopeOf(ctx)) ?? providerFor(ctx);
-    callbackProviders.delete(scopeOf(ctx));
-    const authorizationCode = callbackParams?.get("code") ?? code;
-    const iss = callbackParams?.get("iss") ?? undefined;
-    // Every exchange names and claims its own consent, including without PKCE.
-    const consent = callbackParams?.get("state") ?? null;
-    if (!consent || !(await provider.verifyCallbackState(consent))) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
-      );
-    }
-    provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
-    provider.exchanging(authorizationCode);
-    await provider.bindFlow();
-    const result = await runAuth(provider, ctx, {
-      authorizationCode,
-      ...(iss !== undefined ? { iss } : {}),
-    });
-    if (result !== "AUTHORIZED") {
-      throw new UnauthorizedError("Failed to authorize");
-    }
-    rejectedScopes.delete(scopeOf(ctx));
-  };
+  const finishAuth = (code: string, ctx: ConnectorContext, callbackParams?: URLSearchParams): Promise<void> =>
+    duringViewCall(
+      ctx,
+      async () => {
+        const provider = callbackProviders.get(scopeOf(ctx)) ?? providerFor(ctx);
+        callbackProviders.delete(scopeOf(ctx));
+        const authorizationCode = callbackParams?.get("code") ?? code;
+        const iss = callbackParams?.get("iss") ?? undefined;
+        // Every exchange names and claims its own consent, including without PKCE.
+        const consent = callbackParams?.get("state") ?? null;
+        if (!consent || !(await provider.verifyCallbackState(consent))) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+          );
+        }
+        provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
+        provider.exchanging(authorizationCode);
+        await provider.bindFlow();
+        const result = await runAuth(provider, ctx, {
+          authorizationCode,
+          ...(iss !== undefined ? { iss } : {}),
+        });
+        if (result !== "AUTHORIZED") {
+          throw new UnauthorizedError("Failed to authorize");
+        }
+        rejectedScopes.delete(scopeOf(ctx));
+      },
+      true,
+    );
 
   return {
     status: retainingOAuthPartition(status, 0),

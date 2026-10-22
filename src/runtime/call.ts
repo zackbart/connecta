@@ -562,11 +562,26 @@ export function callFromContext(
   return lease;
 }
 
+/** Cancellation is request-owned for operations and auxiliaries, call-owned otherwise. */
+export function viewSignal(ctx: ConnectorContext, requestOwned = false): AbortSignal {
+  const request = openRequest(views.get(ctx)?.request ?? ctx.requestScope ?? ctx).signal;
+  // The original caller signal is distinct from the revocable call signal:
+  // ending a call must not stop its request's session or auxiliary work.
+  const source = requestOwned ? callerSignal(ctx) : ctx.signal;
+  return source && source !== request ? AbortSignal.any([source, request]) : request;
+}
+
 /** Interrupt the wait and abort owned preparation when its call/request ends. */
-export function duringViewCall<A>(ctx: ConnectorContext, work: () => Promise<A>): Promise<A> {
-  if (!ctx.signal) return work();
-  const signal = ctx.signal;
-  return runEdge(Effect.tryPromise({ try: work, catch: (error) => error }), { signal });
+export async function duringViewCall<A>(
+  ctx: ConnectorContext,
+  work: (signal: AbortSignal) => Promise<A>,
+  requestOwned = false,
+): Promise<A> {
+  const signal = viewSignal(ctx, requestOwned);
+  if (signal.aborted) throw signal.reason;
+  const value = await runEdge(Effect.tryPromise({ try: () => work(signal), catch: (error) => error }), { signal });
+  if (signal.aborted) throw signal.reason;
+  return value;
 }
 
 export function callerSignal(view: ConnectorContext): AbortSignal | undefined {
