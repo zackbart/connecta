@@ -417,13 +417,6 @@ export class InvocationService {
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
-        // Remote source-write provenance removes wait advice. Other providers
-        // keep their diagnostic retryAfterMs even when the outcome is unknown.
-        const withoutRemoteWait = (failure: CallErrorDetails): CallErrorDetails => {
-          if (!sentSourceWrite()) return failure;
-          const { retryAfterMs: _wait, ...facts } = failure;
-          return facts;
-        };
         const recovery = recoveryState.facts;
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
@@ -439,7 +432,7 @@ export class InvocationService {
         ) {
           const echoed = argumentEcho;
           return {
-            ...withoutRemoteWait(error),
+            ...error,
             code: "write_outcome_unknown",
             message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
@@ -470,9 +463,7 @@ export class InvocationService {
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
           enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
-        if (unknownWrite) {
-          error = { ...withoutRemoteWait(error), retryable: false, writeOutcome: "unknown" };
-        }
+        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
@@ -780,7 +771,8 @@ export class InvocationService {
             if (invalid) return classifyCallError(invalid);
           }
 
-          if (write && context.beforeWrite) {
+          // Source writes keep program write accounting; only effective writes spend W10 budget.
+          if (writeLike && context.beforeWrite) {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;

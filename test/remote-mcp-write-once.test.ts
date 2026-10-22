@@ -248,15 +248,17 @@ function setup(
     };
   };
   /** Run a program that sends one write, catching its failure or not. */
-  const program = async (caught: boolean) => {
+  const program = async (caught: boolean, count = 1) => {
     const execute = createExecuteTool(
       registry,
       BASE,
       scriptedExecutor(async (fns) => {
-        try {
-          await required(fns.call)("svc.create_item", { id: 1 });
-        } catch (error) {
-          if (!caught) throw error;
+        for (let id = 1; id <= count; id++) {
+          try {
+            await required(fns.call)("svc.create_item", { id });
+          } catch (error) {
+            if (!caught) throw error;
+          }
         }
         return "done";
       }),
@@ -358,9 +360,46 @@ describe("remote MCP OAuth writes after a 401", () => {
       ["program", false, "legacy", false, false],
       ["call_tool", false, "legacy", false, false],
       ["reviewed-read", true, "legacy", false, false],
+      ["caught-reset", false, "legacy", false, false],
+      ["caught-503", false, "legacy", false, false],
+      ["caught-timeout", false, "legacy", false, false],
+      ["thirteen-reads", false, "legacy", false, false],
     ] as const) {
       if (answer === "program" || answer === "call_tool") {
         await authRecoveryRow(answer);
+        vi.unstubAllGlobals();
+        continue;
+      }
+      if (
+        answer === "caught-reset" ||
+        answer === "caught-503" ||
+        answer === "caught-timeout" ||
+        answer === "thirteen-reads"
+      ) {
+        const flow = setup({ overrideRead: true });
+        if (answer !== "thirteen-reads")
+          flow.answers.set(
+            "create_item",
+            answer === "caught-reset" ? "reset" : answer === "caught-503" ? 503 : "timeout",
+          );
+        const count = answer === "thirteen-reads" ? 13 : 1;
+        const result = await flow.program(true, count);
+        if (answer === "thirteen-reads") {
+          expect
+            .soft(result, answer)
+            .toMatchObject({ result: "done", hostCalls: { admitted: 13, succeeded: 13, failed: 0 } });
+          expect.soft(result, answer).not.toHaveProperty("error");
+        } else {
+          expect.soft(result, answer).toMatchObject({
+            error: {
+              code: "write_outcome_unknown",
+              retryable: false,
+              writes: { succeeded: 0, failed: 0, unknown: 1 },
+            },
+          });
+        }
+        expect.soft(flow.sent("create_item"), answer).toHaveLength(count);
+        expect.soft(flow.applied, answer).toHaveLength(count);
         vi.unstubAllGlobals();
         continue;
       }
