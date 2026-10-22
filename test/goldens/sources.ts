@@ -15,15 +15,19 @@ export interface SourceState {
   now: number;
   loading: boolean;
   inFlight: number;
+  controlledReads: number;
   microtasks: number;
   events: number;
   violation?: Error;
+  aborted?: Error;
+  bodyReads: Set<(error: Error) => void>;
   timers: Map<number, Timer>;
   /** Resolves on counted I/O completion or runnable controlled timers/microtasks. */
   waitForWork(): Promise<void>;
   wake(): void;
-  completeIO(): void;
-  tick(ms: number): void;
+  completeIO(controlled: boolean): void;
+  abort(error: Error): void;
+  tick(ms: number, checkBudget: () => void): void;
   next(): number | undefined;
   stop(): void;
 }
@@ -65,12 +69,95 @@ export function installSources(): Sources {
       return (active ? during : (native as Method)).apply(this, args);
     });
   };
+  // Attribute stream reads to the capture that supplied their JS producer.
+  // Native string/Blob/fetch bodies have no such producer. Preserve attribution
+  // through readers, clones, tees and synchronous transform pipelines.
+  const producers = new WeakMap<object, SourceState>();
+  const inheritProducer = (from: object | null, to: object | null) => {
+    const producer = from && producers.get(from);
+    if (to) {
+      if (producer) producers.set(to, producer);
+      else producers.delete(to);
+    }
+  };
+  const NativeReadableStream = ReadableStream;
+  const ControlledReadableStream = new Proxy(NativeReadableStream, {
+    construct(target, args, newTarget) {
+      const stream = Reflect.construct(target, args, newTarget) as ReadableStream;
+      if (active) producers.set(stream, active);
+      return stream;
+    },
+  });
+  replace(globalThis, "ReadableStream", ControlledReadableStream);
+  replace(NativeReadableStream.prototype, "constructor", ControlledReadableStream);
+  // Node's Response.clone transfers a tee branch through structuredClone.
+  const nativeClone = structuredClone;
+  dispatch(globalThis, "structuredClone", function (this: unknown, ...args) {
+    const result = nativeClone.apply(this, args as [unknown, StructuredSerializeOptions?]);
+    if (args[0] instanceof ReadableStream && result instanceof ReadableStream) inheritProducer(args[0], result);
+    return result;
+  });
+  // Native body constructors can themselves call the global stream constructor
+  // (notably Node's FormData encoder). Their strings, blobs and multipart
+  // encoders remain native; only an explicitly supplied stream inherits a
+  // controlled producer. Do not mistake implementation-created JS streams for
+  // provider-controlled producers.
+  for (const name of ["Request", "Response"] as const) {
+    const Native = globalThis[name];
+    const Controlled = new Proxy(Native, {
+      construct(target, args, newTarget) {
+        const input = args[0] as Request | BodyInit | undefined;
+        const init = args[1] as RequestInit | undefined;
+        const source = name === "Response" ? input : (init?.body ?? (input instanceof Request ? input.body : null));
+        const producer = source && typeof source === "object" ? producers.get(source) : undefined;
+        const result = Reflect.construct(target, args, newTarget) as Request | Response;
+        if (result.body) {
+          if (producer) producers.set(result.body, producer);
+          else producers.delete(result.body);
+        }
+        return result;
+      },
+    });
+    replace(globalThis, name, Controlled);
+    replace(Native.prototype, "constructor", Controlled);
+  }
+  const blobStream = Blob.prototype.stream;
+  dispatch(Blob.prototype, "stream", function (this: unknown) {
+    const stream = blobStream.call(this as Blob);
+    producers.delete(stream);
+    return stream;
+  });
+  const responseJson = Response.json;
+  dispatch(Response, "json", function (this: unknown, ...args) {
+    const result = responseJson.apply(this, args as [unknown, ResponseInit?]);
+    if (result.body) producers.delete(result.body);
+    return result;
+  });
+  for (const name of ["getReader", "pipeThrough", "tee"] as const) {
+    const native = ReadableStream.prototype[name] as Method;
+    dispatch(ReadableStream.prototype, name, function (this: unknown, ...args) {
+      const result = native.apply(this, args) as object | object[];
+      for (const derived of name === "tee" ? (result as object[]) : [result]) inheritProducer(this as object, derived);
+      return result;
+    });
+  }
+  for (const owner of [Request.prototype, Response.prototype]) {
+    const native = owner.clone as Method;
+    dispatch(owner, "clone", function (this: unknown, ...args) {
+      const source = (this as Request | Response).body;
+      const result = native.apply(this, args) as Request | Response;
+      inheritProducer(source, (this as Request | Response).body);
+      inheritProducer(source, result.body);
+      return result;
+    });
+  }
   const schedule = (callback: unknown, ms: unknown, args: unknown[], interval?: number) => {
     if (typeof callback !== "function") return unsupported("string timer callback");
     const delay = ms === undefined ? 0 : Number(ms);
     if (!Number.isSafeInteger(delay) || delay < 0 || delay > 2_147_483_647)
       return unsupported("timer delay outside finite nonnegative integer milliseconds");
     const state = active!;
+    if (state.aborted) throw state.aborted;
     const key = ++id;
     state.timers.set(key, {
       at: state.now + delay,
@@ -78,7 +165,7 @@ export function installSources(): Sources {
       ...(interval === undefined ? {} : { interval }),
     });
     state.events++;
-    if (delay === 0) state.wake();
+    state.wake();
     // Node timer consumers (Effect included) may unref a timer.
     return {
       [Symbol.toPrimitive]: () => key,
@@ -104,12 +191,13 @@ export function installSources(): Sources {
   const nativeMicrotask = queueMicrotask.bind(globalThis);
   dispatch(globalThis, "queueMicrotask", (callback) => {
     const state = active!;
+    if (state.aborted) return;
     state.microtasks++;
     state.events++;
     state.wake();
     nativeMicrotask(() => {
       try {
-        (callback as () => void)();
+        if (!state.aborted) (callback as () => void)();
       } catch (error) {
         state.violation = error instanceof Error ? error : new Error(String(error));
       } finally {
@@ -218,39 +306,68 @@ export function installSources(): Sources {
     return array;
   });
   dispatch(Math, "random", () => (seed = (seed * 9301 + 49297) % 233280) / 233280);
-  const counted = (owner: object, names: string[]) => {
+  const counted = (owner: object, names: string[], interruptible = true) => {
     for (const name of names) {
       const native = (owner as Record<string, Method>)[name];
       if (typeof native !== "function") continue;
       dispatch(owner, name, function (this: unknown, ...args) {
         const state = active!;
+        if (state.aborted) return Promise.reject(state.aborted);
+        const source =
+          owner === Request.prototype || owner === Response.prototype
+            ? (this as Request | Response).body
+            : (this as object);
+        const controlled = !!source && producers.get(source) === state;
         state.inFlight++;
+        if (controlled) state.controlledReads++;
         state.events++;
         try {
-          return Promise.resolve(native.apply(this, args)).finally(() => {
-            state.completeIO();
+          const pending = Promise.resolve(native.apply(this, args));
+          if (!interruptible || !controlled) return pending.finally(() => state.completeIO(controlled));
+          // A failed controlled producer may never close its stream. Interrupt
+          // the counted read under this capture's fakes, and consume any later
+          // native settlement without resuming its caller a second time.
+          return new Promise((resolve, reject) => {
+            let finished = false;
+            const finish = (settle: () => void) => {
+              if (finished) return;
+              finished = true;
+              state.bodyReads.delete(cancel);
+              state.completeIO(controlled);
+              settle();
+            };
+            const cancel = (error: Error) => finish(() => reject(error));
+            state.bodyReads.add(cancel);
+            void pending.then(
+              (value) => finish(() => resolve(value)),
+              (error: unknown) => finish(() => reject(error)),
+            );
           });
         } catch (error) {
-          state.completeIO();
+          state.completeIO(controlled);
           throw error;
         }
       });
     }
   };
-  counted(crypto.subtle, [
-    "decrypt",
-    "deriveBits",
-    "deriveKey",
-    "digest",
-    "encrypt",
-    "exportKey",
-    "generateKey",
-    "importKey",
-    "sign",
-    "unwrapKey",
-    "verify",
-    "wrapKey",
-  ]);
+  counted(
+    crypto.subtle,
+    [
+      "decrypt",
+      "deriveBits",
+      "deriveKey",
+      "digest",
+      "encrypt",
+      "exportKey",
+      "generateKey",
+      "importKey",
+      "sign",
+      "unwrapKey",
+      "verify",
+      "wrapKey",
+    ],
+    false,
+  );
   const body = ["arrayBuffer", "blob", "bytes", "formData", "json", "text"];
   for (const owner of [Request.prototype, Response.prototype, Blob.prototype]) counted(owner, body);
   counted(ReadableStreamDefaultReader.prototype, ["read", "cancel"]);
@@ -323,13 +440,19 @@ export function installSources(): Sources {
         now: GOLDEN_NOW,
         loading: true,
         inFlight: 0,
+        controlledReads: 0,
         microtasks: 0,
         events: 0,
+        bodyReads: new Set(),
         timers: new Map(),
         waitForWork() {
           // Check and subscribe synchronously: work queued before subscription
           // is already runnable; work queued afterwards wakes the same wait.
-          return state.inFlight === 0 || state.microtasks > 0 || state.next() === 0
+          const next = state.next();
+          return state.inFlight === 0 ||
+            state.microtasks > 0 ||
+            next === 0 ||
+            (state.inFlight === state.controlledReads && next !== undefined)
             ? Promise.resolve()
             : new Promise((resolve) => waiters.add(resolve));
         },
@@ -337,25 +460,38 @@ export function installSources(): Sources {
           for (const resolve of waiters) resolve();
           waiters.clear();
         },
-        completeIO() {
+        completeIO(controlled) {
           state.inFlight--;
+          if (controlled) state.controlledReads--;
           state.events++;
           state.wake();
         },
-        tick(ms) {
+        abort(error) {
+          state.aborted ??= error;
+          state.timers.clear();
+          for (const cancel of state.bodyReads) cancel(state.aborted);
+          state.wake();
+        },
+        tick(ms, checkBudget) {
           state.now += ms;
-          let iterations = 0;
+          if (ms) state.events++;
+          checkBudget();
           for (;;) {
             const next = [...state.timers]
               .filter(([, timer]) => timer.at <= state.now)
               .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
             if (!next) return;
-            if (++iterations > 10_000) return unsupported("unbounded due-timer loop");
             const [key, timer] = next;
             if (timer.interval) timer.at += timer.interval;
             else state.timers.delete(key);
             state.events++;
-            timer.callback();
+            checkBudget();
+            try {
+              timer.callback();
+            } catch (error) {
+              state.violation = error instanceof Error ? error : new Error(String(error));
+              throw error;
+            }
           }
         },
         next() {
@@ -364,8 +500,8 @@ export function installSources(): Sources {
             : undefined;
         },
         stop() {
-          state.timers.clear();
-          active = undefined;
+          state.abort(new Error("Golden capture stopped"));
+          if (active === state) active = undefined;
         },
       };
       active = state;

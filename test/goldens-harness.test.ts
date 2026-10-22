@@ -112,6 +112,66 @@ function queuedTimerRead(turns = 0, callbacks = 1): Promise<string> {
     }),
   ).text();
 }
+function producedStream(produce: (close: () => void) => void | Promise<void>): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      return produce(() => {
+        controller.enqueue(new TextEncoder().encode("body"));
+        controller.close();
+      });
+    },
+  });
+}
+function producedRead(produce: (close: () => void) => void | Promise<void>): Promise<string> {
+  return new Response(producedStream(produce)).text();
+}
+const controlledIOCases = [
+  {
+    name: "a positive timer behind a microtask",
+    produce: (close: () => void) => {
+      queueMicrotask(() => setTimeout(close, 1));
+    },
+    waitedMs: 1,
+  },
+  {
+    name: "a zero-delay interval needing three callbacks",
+    produce: (close: () => void) => {
+      let callbacks = 0;
+      const interval = setInterval(() => {
+        if (++callbacks === 3) {
+          clearInterval(interval);
+          close();
+        }
+      }, 0);
+    },
+    waitedMs: 2,
+  },
+  {
+    name: "a longer-delay chain",
+    produce: (close: () => void) => {
+      queueMicrotask(() => setTimeout(() => setTimeout(() => setTimeout(close, 5_000), 50), 2));
+    },
+    waitedMs: 5_052,
+  },
+  {
+    name: "a native producer's direct zero timer then future close",
+    produce: async (close: () => void) => {
+      for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+      setTimeout(() => setTimeout(close, 1), 0);
+    },
+    waitedMs: 1,
+  },
+];
+const CONTROLLED_IO = { ...WORKERS, timeout: 8_000 };
+async function expectCleanCapture(): Promise<void> {
+  const clean = JSON.parse(
+    await captureCall(
+      probeSpec(async () => "clean"),
+      "probe",
+    ),
+  ) as Row;
+  expect(clean.result).toMatchObject({ ok: true, value: "clean" });
+}
 const countedReadCases = [
   { name: "delayed counted I/O", read: delayedRead },
   { name: "counted I/O with a queued zero timer", read: queuedTimerRead },
@@ -702,6 +762,152 @@ describe(suiteName, { timeout: 120_000 }, () => {
       ).toBe(baseline);
     },
   );
+
+  it.each(controlledIOCases)(
+    "drives controlled I/O produced by $name",
+    CONTROLLED_IO,
+    async ({ produce, waitedMs }) => {
+      const row = JSON.parse(
+        await captureCall(
+          probeSpec(async () => producedRead(produce)),
+          "probe",
+        ),
+      ) as Row;
+      expect(row.result).toMatchObject({ ok: true, value: "body" });
+      expect(row.waitedMs).toBe(waitedMs);
+      await expectCleanCapture();
+    },
+  );
+
+  it.each([
+    {
+      name: "a reader",
+      read: async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader();
+        const { value } = await reader.read();
+        await reader.read();
+        return new TextDecoder().decode(value);
+      },
+    },
+    { name: "a response clone", read: (stream: ReadableStream<Uint8Array>) => new Response(stream).clone().text() },
+    { name: "a tee", read: (stream: ReadableStream<Uint8Array>) => new Response(stream.tee()[0]).text() },
+    {
+      name: "a synchronous transform",
+      read: async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+        const { value } = await reader.read();
+        await reader.read();
+        return value;
+      },
+    },
+  ])("attributes controlled I/O through $name", CONTROLLED_IO, async ({ read }) => {
+    const captured = JSON.parse(
+      await captureCall(
+        probeSpec(async () =>
+          read(
+            producedStream((close) => {
+              queueMicrotask(() => setTimeout(close, 1));
+            }),
+          ),
+        ),
+        "probe",
+      ),
+    ) as Row;
+    expect(captured.result).toMatchObject({ ok: true, value: "body" });
+    expect(captured.waitedMs).toBe(1);
+    await expectCleanCapture();
+  });
+
+  it("rejects an endless controlled I/O producer at its budget and recovers", CONTROLLED_IO, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () =>
+          producedRead(() => {
+            setInterval(() => {}, 1);
+          }),
+        ),
+        "probe",
+      ),
+    ).rejects.toThrow(/controlled operation budget exceeded/);
+    await expectCleanCapture();
+  });
+
+  it(
+    "preserves controlled I/O ownership across overlapping capture rejection and recovers",
+    CONTROLLED_IO,
+    async () => {
+      let overlaps = 0;
+      const result = JSON.parse(
+        await captureCall(
+          probeSpec(async () => {
+            await expect(
+              captureCall(
+                probeSpec(async () => "overlap"),
+                "probe",
+              ),
+            ).rejects.toThrow("Overlapping golden captures are unsupported");
+            overlaps++;
+            return producedRead((close) => {
+              queueMicrotask(() => setTimeout(close, 1));
+            });
+          }),
+          "probe",
+        ),
+      ) as Row;
+      expect(overlaps).toBe(1); // The rejected nested start must not stop its owner.
+      expect(result.result).toMatchObject({ ok: true, value: "body" });
+      await expectCleanCapture();
+    },
+  );
+
+  it("drains controlled I/O future timers after construction rejects", CONTROLLED_IO, async () => {
+    let drained = false;
+    const spec = probeSpec(async () => "unused");
+    spec.create = () => {
+      void producedRead((close) => {
+        queueMicrotask(() => setTimeout(close, 1));
+      }).then(() => {
+        drained = true;
+      });
+      throw new Error("construction rejected");
+    };
+    await expect(captureCall(spec, "probe")).rejects.toThrow("construction rejected");
+    expect(drained).toBe(true);
+    await expectCleanCapture();
+  });
+
+  it("tears down controlled I/O after its timer callback fails", CONTROLLED_IO, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () =>
+          producedRead(() => {
+            setTimeout(() => {
+              throw new Error("timer producer failed");
+            }, 1);
+          }),
+        ),
+        "probe",
+      ),
+    ).rejects.toThrow("timer producer failed");
+    await expectCleanCapture();
+  });
+
+  it("wakes controlled I/O when a native producer's microtask fails and recovers", CONTROLLED_IO, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () =>
+          producedRead(async () => {
+            for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+            queueMicrotask(() => {
+              throw new Error("microtask producer failed");
+            });
+          }),
+        ),
+        "probe",
+      ),
+    ).rejects.toThrow("microtask producer failed");
+    await expectCleanCapture();
+  });
 
   it("awaits counted I/O beyond 10,000 host turns without changing capture bytes", WORKERS, async () => {
     const baseline = await captureCall(

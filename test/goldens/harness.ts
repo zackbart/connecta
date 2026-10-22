@@ -240,6 +240,9 @@ function deterministic(): { real: RealWork; restart(): void; restore(): Promise<
         while (state.inFlight || state.microtasks) {
           await countedTurn(state, checkBudget);
         }
+      } catch (error) {
+        await abortAndDrain(state, error);
+        throw error;
       } finally {
         state.stop();
       }
@@ -390,31 +393,51 @@ const CLOCK_QUIET_TURNS = 8;
 /** Bound actual controlled operations, never the host turns a native operation needs. */
 const MAX_CONTROLLED_EVENTS = 20_000;
 const MAX_CLOCK_ADVANCES = 1_000;
+class ControlledBudgetExceeded extends Error {}
 
 function controlledBudget(real: RealWork, where: string): () => void {
   const began = real.events;
   return () => {
     if (real.events - began > MAX_CONTROLLED_EVENTS || real.inFlight > MAX_CONTROLLED_EVENTS)
-      throw new Error(
+      throw new ControlledBudgetExceeded(
         `${where}: controlled operation budget exceeded (${real.inFlight} counted I/O operations outstanding, ${real.microtasks} queued microtasks, ${real.timers.size} timers)`,
       );
   };
 }
 
 async function countedTurn(real: RealWork, checkBudget: () => void): Promise<void> {
+  const assertSupported = () => {
+    if (real.violation && !real.aborted) throw real.violation;
+  };
   checkBudget();
+  assertSupported();
   // Synchronous: 0 ms timers created by microtasks stay due now.
-  real.tick(0);
+  real.tick(0, checkBudget);
   await realTurn();
   checkBudget();
-  // Native crypto/body reads may need arbitrarily many host turns under load.
-  // Their completion OR newly runnable controlled work wakes the driver: a
-  // body read may itself depend on a timer queued after tick(0). Never advance
-  // future deadlines while waiting for native I/O. Only actual operations spend
-  // the budget, including timer/microtask chains that do not complete the I/O.
-  // Vitest's native runner timeout remains the backstop for a never-resolving I/O.
-  if (real.inFlight) await real.waitForWork();
+  assertSupported();
+  // Only reads attributed to controlled producers can depend on our timers.
+  // Drain genuinely native operations first, preserving request cohorts and
+  // deadlines while crypto or native bodies are pending. Once every remaining
+  // operation is a controlled read, run its next timer (intervals included).
+  if (real.inFlight && !real.microtasks) {
+    const next = real.next();
+    if (next !== undefined && real.inFlight === real.controlledReads) real.tick(next, checkBudget);
+    else await real.waitForWork();
+  }
   checkBudget();
+  assertSupported();
+}
+
+async function abortAndDrain(real: RealWork, error: unknown): Promise<void> {
+  real.abort(error instanceof Error ? error : new Error(String(error)));
+  const checkBudget = controlledBudget(real, "Golden aborted capture");
+  let last = -1;
+  for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || real.inFlight || real.microtasks;) {
+    await countedTurn(real, checkBudget);
+    quiet = real.events === last && !real.inFlight && !real.microtasks ? quiet + 1 : 0;
+    last = real.events;
+  }
 }
 
 interface Waiting {
@@ -603,7 +626,7 @@ function installNetwork(capture: Capture): Network {
           );
         }
         if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
-        real.tick(real.next()!);
+        real.tick(real.next()!, controlledBudget(real, spec.provider));
       }
       const outcome = state.outcome!;
       if (!outcome.ok) throw outcome.error;
@@ -617,7 +640,7 @@ function installNetwork(capture: Capture): Network {
       for (let cleanup = 0; real.timers.size; cleanup++) {
         if (cleanup > MAX_CLOCK_ADVANCES || [...real.timers.values()].some((timer) => !timer.deadline))
           throw new Error(`${spec.provider}: outstanding controlled timer after call completion`);
-        real.tick(real.next()!);
+        real.tick(real.next()!, controlledBudget(real, spec.provider));
         await settle(STEP_QUIET_TURNS);
         if (issued !== finishedIssued || JSON.stringify(outcome.value) !== finished)
           throw new Error(`${spec.provider}: controlled work outlived call completion`);
@@ -626,17 +649,27 @@ function installNetwork(capture: Capture): Network {
         throw new Error(`${spec.provider}: outstanding controlled work after call completion`);
       return { value: outcome.value, steps, waitedMs };
     } catch (error) {
+      if (error instanceof ControlledBudgetExceeded || real.violation) {
+        for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
+        await abortAndDrain(real, error);
+        throw error;
+      }
       // An invalid capture can still have concurrent fake requests in flight.
       // Drain/cancel them under this capture's fakes, never the next one's.
       const checkBudget = controlledBudget(real, `${spec.provider} rejected capture`);
       let last = "";
-      for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight || real.microtasks;) {
-        for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
-        waiting = [];
-        await countedTurn(real, checkBudget);
-        const now = progress();
-        quiet = now === last ? quiet + 1 : 0;
-        last = now;
+      try {
+        for (let quiet = 0; quiet < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight || real.microtasks;) {
+          for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
+          waiting = [];
+          await countedTurn(real, checkBudget);
+          const now = progress();
+          quiet = now === last ? quiet + 1 : 0;
+          last = now;
+        }
+      } catch (cleanupError) {
+        await abortAndDrain(real, cleanupError);
+        throw cleanupError;
       }
       throw error;
     }

@@ -1658,16 +1658,29 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   Invalid captures cancel and drain their concurrent fake requests.
 - Settle, rejected-capture cleanup, and final teardown await counted native
   I/O completion or runnable controlled timer/microtask notifications while
-  operations remain outstanding. A counted stream read can depend on a
-  zero-delay timer queued after a tick; the driver keeps ticking due timers
-  without advancing future deadlines while native I/O remains pending. Host turns
+  operations remain outstanding. Each read retains its producer's attribution,
+  including through readers, clones, tees and synchronous stream transforms.
+  Explicit JS stream producers are controlled; crypto and native string, Blob,
+  fetch and FormData bodies remain native. Constructor-created implementation
+  streams do not turn those native bodies into controlled producers.
+  The driver advances to the next controlled timer only when every outstanding
+  operation is a controlled-producer read and no controlled microtask or due
+  timer remains runnable. This supports positive delays and repeating intervals
+  without advancing deadlines or merging request cohorts during native I/O. Host turns
   spent waiting for crypto or body reads do not consume a scheduling budget.
   Each settle/drain allows 20,000 controlled source events or outstanding
-  counted operations, and clock advancement remains limited to 1,000 ticks.
+  counted operations, including timer callbacks and virtual clock advances.
+  Clock advancement outside a counted read remains limited to 1,000 ticks.
   Exceeding the operation budget reports outstanding I/O, microtasks, and
   timers. The native Vitest timeout guards an operation that never completes.
   The source probes delay a counted read past 10,000 host turns and require
   identical capture bytes and fully drained cleanup paths.
+  On a controlled producer failure or exhausted budget, cleanup clears its
+  timers, suppresses its queued microtasks and interrupts its counted reads.
+  Later native read settlements are consumed without resuming their callers
+  again. Genuine native operations still drain before teardown. Teardown always
+  releases the owning capture, so rejection cannot poison the next capture;
+  rejecting an overlapping start cannot release the existing owner's state.
 - The network answers in zero virtual time. Before advancing to the next
   timer, the loop requires eight quiet real event-loop turns and an audit.
   A row records nonzero `waitedMs`, the virtual time spent on provider
