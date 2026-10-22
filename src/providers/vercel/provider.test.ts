@@ -348,4 +348,28 @@ describe("vercel() over an access token", () => {
     expect(classifyCallError(failure).message).toContain("wait for the reported reset");
     expect(failure.retryAfterMs).toBeGreaterThan(0);
   });
+
+  it("refuses a domain move-out, whose answer is a transfer token, before dispatch", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const refused = await refusal(
+      call(connector, "vercel_api_write", {
+        method: "PATCH",
+        path: "/v3/domains/example.com",
+        body: { op: "move-out", destination: "team_other" },
+      }),
+    );
+    expect(refused.message).toContain("transfer token");
+    expect(sent).toEqual([]);
+    respond = () => Response.json({ moved: true, token: "move-token" });
+    // Another op is an ordinary write, and a token in any answer is still removed.
+    expect(
+      (
+        await call(connector, "vercel_api_write", {
+          method: "PATCH",
+          path: "/v3/domains/example.com",
+          body: { op: "update", zone: true },
+        })
+      ).data,
+    ).toEqual({ moved: true, token: "[redacted]" });
+  });
 });

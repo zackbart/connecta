@@ -151,4 +151,27 @@ describe("Mixpanel service-account REST", () => {
     await call("query_retention", { ...range, retention_type: "compounded" });
     expect(calls).toHaveLength(1);
   });
+
+  it("INV-5: redacts credentials in account, profile and event properties and withholds vendor error text", async () => {
+    reply = () =>
+      Response.json({
+        projects: [{ token: "project-secret", api_secret: "api-secret" }],
+        secret: "service-secret",
+        url: "https://example.com/file?token=bearer",
+      });
+    const result = await call("list_projects");
+    expect(JSON.stringify(result)).not.toMatch(/project-secret|api-secret|service-secret|bearer/);
+    reply = () =>
+      Response.json({
+        ...responses.profiles,
+        results: [{ $distinct_id: "13793", $properties: { password: "private-password" } }],
+      });
+    expect(JSON.stringify(await call("query_profiles"))).not.toContain("private-password");
+    reply = () => new Response('{"event":"Signup","properties":{"time":1602611311,"password":"private-password"}}\n');
+    expect(JSON.stringify(await call("export_events", range))).not.toContain("private-password");
+    reply = () => Response.json({ error: "pQ6?eT8+dW3=G5/f private vendor message" }, { status: 400 });
+    await expect(call("list_projects")).rejects.toMatchObject({
+      message: expect.not.stringContaining("pQ6?eT8+dW3=G5/f"),
+    });
+  });
 });

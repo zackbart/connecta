@@ -20,7 +20,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { cloudflare } from "./index.js";
+import { CLOUDFLARE_API_BASE, cloudflare } from "./index.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const OTHER_ACCOUNT = "ffffffffffffffffffffffffffffffff";
@@ -1223,5 +1223,40 @@ describe("cloudflare() over a key", () => {
         { name: "feature-flags" },
       ]);
     });
+  });
+
+  it("runs read-only GraphQL and refuses mutations however they are hidden", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    for (const query of [
+      "mutation { deleteZone(id: 1) }",
+      "query A { viewer { x } }\nmutation B { y }",
+      "{ viewer { x } } subscription S { y }",
+      "# comment\n  mutation{y}",
+      "﻿mutation { y }",
+      "schema { query: Q }",
+      '{ viewer { x(s: "unterminated) } }',
+      "{ viewer { x }",
+    ]) {
+      const error = await refusal(connector.callTool("graphql_query", { query }, token()));
+      expect(error.code, query).toBe("invalid_args");
+    }
+    expect(sent).toEqual([]);
+    respond = () =>
+      Response.json({
+        data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
+      });
+    const query = `# mutation in a comment\nquery Daily { viewer { zones(filter: { zoneTag: "${ZONE}", note: "mutation { x }" }) { dimensions { date } } } }`;
+    expect(await connector.callTool("graphql_query", { query, operationName: "Daily" }, token())).toEqual({
+      data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
+    });
+    expect(sent[0]!.url.href).toBe(`${CLOUDFLARE_API_BASE}/graphql`);
+    expect(JSON.parse(String(sent[0]!.body))).toEqual({
+      query,
+      operationName: "Daily",
+    });
+    respond = () => Response.json({ data: null, errors: [{ message: "unknown field 'x'" }] });
+    expect(
+      (await refusal(connector.callTool("graphql_query", { query: "{ viewer { x } }" }, token()))).message,
+    ).toContain("unknown field");
   });
 });

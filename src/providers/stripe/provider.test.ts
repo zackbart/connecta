@@ -15,7 +15,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { stripe } from "./index.js";
+import { STRIPE_API_BASE_URL, stripe } from "./index.js";
 import { catalogReviewOf, detectCatalogDrift, observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import { hostedTools } from "./fixtures.js";
 
@@ -284,5 +284,87 @@ describe("stripe() over an API key", () => {
     );
     expect(stream.message).toContain("Send single events with POST /v2/billing/meter_events");
     expect(sent).toHaveLength(1);
+  });
+
+  it("form-encodes v1 bodies and query lists, pins Stripe-Version, and acts as the connected account", async () => {
+    const connector = stripe("platform", { ...LIVE, connectedAccount: "acct_123" });
+    respond = () => Response.json({ id: "cus_1", object: "customer" });
+    const result = (await connector.callTool(
+      "stripe_api_write",
+      {
+        method: "POST",
+        path: "/v1/customers/cus_1",
+        body: {
+          email: "a@example.com",
+          metadata: { tier: "gold", stale: "" },
+          invoice_settings: { custom_fields: [{ name: "PO", value: "42" }], default_payment_method: null },
+          tax_exempt: "none",
+          preferred_locales: [],
+        },
+      },
+      keyed("rk_live_51abc"),
+    )) as any;
+    expect(result).toMatchObject({ status: 200, data: { id: "cus_1" }, idempotencyKey: expect.any(String) });
+    const [request] = sent;
+    expect(request!.url.href).toBe(`${STRIPE_API_BASE_URL}/v1/customers/cus_1`);
+    expect(decodeURIComponent(request!.body!).split("&")).toEqual([
+      "email=a@example.com",
+      "metadata[tier]=gold",
+      "metadata[stale]=",
+      "invoice_settings[custom_fields][0][name]=PO",
+      "invoice_settings[custom_fields][0][value]=42",
+      "invoice_settings[default_payment_method]=",
+      "tax_exempt=none",
+      "preferred_locales=",
+    ]);
+    expect(request!.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+    expect(request!.headers.get("authorization")).toBe("Bearer rk_live_51abc");
+    expect(request!.headers.get("stripe-account")).toBe("acct_123");
+    expect(request!.headers.get("stripe-version")).toBe("2026-09-30.endive");
+    expect(request!.headers.get("idempotency-key")).toBe(result.idempotencyKey);
+
+    respond = () => Response.json({ object: "list", data: [], has_more: false });
+    await connector.callTool(
+      "stripe_api_read",
+      {
+        path: "/v1/charges",
+        query: { customer: "cus_1", expand: ["data.customer", "data.invoice"], created: { gte: 10 }, limit: 3 },
+      },
+      keyed("rk_live_51abc"),
+    );
+    expect(decodeURIComponent(sent[1]!.url.search)).toBe(
+      "?customer=cus_1&expand[0]=data.customer&expand[1]=data.invoice&created[gte]=10&limit=3",
+    );
+    expect(sent[1]!.headers.get("idempotency-key")).toBeNull();
+  });
+
+  it("sends v2 bodies as JSON, repeats v2 query lists, and names the connected account with Stripe-Context", async () => {
+    const connector = stripe("platform", { ...SANDBOX, connectedAccount: "acct_123" });
+    respond = () => Response.json({ id: "mtr_1", object: "v2.billing.meter_event" });
+    await connector.callTool(
+      "stripe_api_write",
+      {
+        method: "POST",
+        path: "/v2/billing/meter_events",
+        body: { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: "1" } },
+        idempotencyKey: "caller-key-1",
+      },
+      keyed(),
+    );
+    expect(sent[0]!.headers.get("content-type")).toBe("application/json");
+    expect(JSON.parse(sent[0]!.body!)).toEqual({
+      event_name: "api_call",
+      payload: { stripe_customer_id: "cus_1", value: "1" },
+    });
+    expect(sent[0]!.headers.get("stripe-context")).toBe("acct_123");
+    expect(sent[0]!.headers.get("stripe-account")).toBeNull();
+    expect(sent[0]!.headers.get("idempotency-key")).toBe("caller-key-1");
+    respond = () => Response.json({ data: [], next_page_url: null });
+    await connector.callTool(
+      "stripe_api_read",
+      { path: "/v2/core/accounts", query: { applied_configurations: ["customer", "merchant"], limit: 2 } },
+      keyed(),
+    );
+    expect(sent[1]!.url.search).toBe("?applied_configurations=customer&applied_configurations=merchant&limit=2");
   });
 });
