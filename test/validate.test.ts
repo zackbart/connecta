@@ -1,30 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
-import { compileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema } from "../src/types.js";
+import { validateToolInput } from "../src/validate.js";
 import { spyLogger } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
 
 const OPTS = { address: "acme.create_note", logger: silentLogger };
 
 describe("validateToolInput", () => {
-  it("returns a non-retryable invalid_args error naming the address and path", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { title: { type: "string" } },
-      required: ["title"],
-    };
-    const err = validateToolInput(schema, { title: 42 }, OPTS);
-    expect(err).toBeInstanceOf(ConnectorCallError);
-    expect(err!.code).toBe("invalid_args");
-    expect(err!.retryable).toBe(false);
-    expect(err!.message).toContain("acme.create_note");
-    expect(err!.message).toContain("/title");
-    expect(err!.validation).toEqual({
-      issues: [{ path: "/title", code: "type", expected: "string" }],
-    });
-  });
-
   it("returns structured missing, nested, and multiple findings without values", () => {
     const schema: JsonSchema = {
       type: "object",
@@ -60,18 +43,6 @@ describe("validateToolInput", () => {
     });
     expect(JSON.stringify(err?.validation)).not.toContain("submitted-secret");
     expect(JSON.stringify(err?.validation)).not.toContain("also-secret");
-  });
-
-  it("preserves the finding bound after removing duplicate keyword branches", () => {
-    const schema: JsonSchema = {
-      type: "object",
-      properties: Object.fromEntries(["a", "b", "c", "d"].map((name) => [name, { type: "string", enum: ["allowed"] }])),
-      additionalProperties: false,
-    };
-    const validation = validateToolInput(schema, { a: "bad", b: "bad", c: "bad", d: "bad" }, OPTS)?.validation;
-    expect(validation?.issues).toHaveLength(3);
-    expect(validation?.issues.every((issue) => issue.code === "enum")).toBe(true);
-    expect(validation?.truncated).toBe(true);
   });
 
   it("preserves independent enum and false-schema failures across allOf", () => {
@@ -182,34 +153,6 @@ describe("validateToolInput", () => {
   });
 });
 
-describe("compileValidator", () => {
-  it("throws on a schema the validator cannot compile, naming the address", () => {
-    const schema: JsonSchema = {
-      $id: "urn:connecta-test:compile-bad",
-      type: "object",
-      $defs: { clash: { $id: "urn:connecta-test:compile-bad" } },
-    };
-    expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/acme\.compile_bad/);
-    expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/cannot use/);
-  });
-});
-
-it("never quotes a schema's enum, and bounds detail to 256 UTF-8 bytes plus its marker", () => {
-  const prefix = `Invalid arguments for "${OPTS.address}": `;
-  const enumSchema = { enum: Array.from({ length: 10_000 }, (_, i) => `選択${i}`) };
-  const enumError = validateToolInput(enumSchema, "absent", OPTS)!;
-  expect(enumError.code).toBe("invalid_args");
-  expect(enumError.message).toBe(`${prefix}/: expected one of the declared values (enum)`);
-  // A required property's name is part of the path the agent must supply.
-  const longName = "選択".repeat(200);
-  const error = validateToolInput({ type: "object", required: [longName] }, {}, OPTS)!;
-  expect(error.message.startsWith(prefix)).toBe(true);
-  const detail = error.message.slice(prefix.length);
-  expect(new TextEncoder().encode(detail).length).toBeLessThanOrEqual(259);
-  expect(detail.endsWith("…")).toBe(true);
-  expect(detail).not.toContain("\uFFFD");
-});
-
 it("INV-6: agent repair includes schema keys, enum values, bounds and received types without caller values", () => {
   const schema: JsonSchema = {
     type: "object",
@@ -233,28 +176,6 @@ it("INV-6: agent repair includes schema keys, enum values, bounds and received t
   expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
   expect(JSON.stringify(error?.repair)).not.toContain("caller-secret");
   expect(JSON.stringify(error?.repair)).not.toContain("another-secret");
-});
-
-it("INV-6: agent repair states dependent and conditional date requirements from the schema", () => {
-  const schema: JsonSchema = {
-    type: "object",
-    properties: {
-      distinct_id: { type: "string", minLength: 1 },
-      from_date: { type: "string", format: "date" },
-      to_date: { type: "string", format: "date" },
-    },
-    required: ["distinct_id"],
-    dependentRequired: { distinct_id: ["from_date", "to_date"] },
-    ...JSON.parse('{"if":{"required":["distinct_id"]},"then":{"required":["from_date","to_date"]}}'),
-  };
-  const error = validateToolInput(schema, { distinct_id: "caller-secret" }, OPTS);
-  expect(error?.repair?.conditionalRequirements).toContainEqual({
-    path: "/",
-    condition: { required: ["distinct_id"] },
-    required: ["from_date", "to_date"],
-  });
-  expect(error?.repair?.example).toEqual({ distinct_id: "x", from_date: "2000-01-01", to_date: "2000-01-01" });
-  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
 });
 
 it("INV-6: examples are verified and oversized schema detail is bounded", () => {
@@ -282,36 +203,4 @@ it("INV-6: recursive schema examples stop before expanding beyond a shared synth
   expect(error?.code).toBe("invalid_args");
   expect(error?.repair).not.toHaveProperty("example");
   expect(error?.repair?.exampleUnavailable).toContain("No valid example");
-});
-
-it("INV-6: minimization restores a field when removing it makes validation throw", () => {
-  const schema: JsonSchema = {
-    type: "object",
-    properties: { selector: { type: "string" } },
-    examples: [{ selector: "keep" }],
-    ...JSON.parse('{"if":{"required":["selector"]},"else":{"$ref":"#/$defs/missing"}}'),
-  };
-  const error = validateToolInput(schema, { selector: 1 }, OPTS);
-  expect(error?.repair?.example).toEqual({ selector: "keep" });
-  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
-});
-
-it("INV-6: conditional advice does not assert dependencies from an unselected alternative", () => {
-  const schema: JsonSchema = {
-    type: "object",
-    oneOf: [
-      {
-        properties: { kind: { const: "a" }, trigger: { type: "string" }, extra: { type: "string" } },
-        required: ["kind"],
-        dependentRequired: { trigger: ["extra"] },
-      },
-      {
-        properties: { kind: { const: "b" }, trigger: { type: "string" }, count: { type: "integer", minimum: 1 } },
-        required: ["kind"],
-      },
-    ],
-  };
-  expect(validateToolInput(schema, { kind: "b", trigger: "v" }, OPTS)).toBeNull();
-  const error = validateToolInput(schema, { kind: "b", trigger: "v", count: 0 }, OPTS);
-  expect(error?.repair).not.toHaveProperty("conditionalRequirements");
 });

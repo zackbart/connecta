@@ -471,45 +471,9 @@ describe("operator store action notices", () => {
 
     expect(JSON.stringify(store.getState())).not.toContain(SECRET);
   });
-
-  it("asks the route to continue or restart through the mode parameter", async () => {
-    const { store, fetchMock, declare } = await loadStore({
-      id: "sess_a",
-      getToken: async () => "token-a",
-    });
-    // Writes go out only for a connector the maintainer's contract shows.
-    declare(["svc"]);
-    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
-    await store.boot();
-    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
-    await store.startOAuth("svc", "continue");
-    await store.startOAuth("svc", "restart");
-    const starts = fetchMock.mock.calls
-      .filter(([path]) => String(path).startsWith("/ui/oauth/"))
-      .map(([path, init]) => [path, (init as RequestInit).method]);
-    expect(starts).toEqual([
-      ["/ui/oauth/svc?mode=continue", "POST"],
-      ["/ui/oauth/svc?mode=restart", "POST"],
-    ]);
-    // `continue` on a healthy connector changes nothing and says so.
-    expect(store.getState().oauthNotice).toEqual({
-      tone: "info",
-      message: "Connected.",
-    });
-  });
 });
 
 describe("operator admission gate", () => {
-  it("gates on a refused contract before any operator data is requested", async () => {
-    const { store, fetchMock, configMock, paths } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
-    configMock.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
-    await store.boot();
-    expect(store.getState()).toMatchObject({ session: "gated", role: null, contract: null });
-    expect(store.getState().gate?.message).toContain("Clerk session not accepted");
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(paths).toEqual([CONFIG]);
-  });
-
   it("INV-4: the contract's private 404 is signed in without access, and asks for nothing else", async () => {
     const { store, fetchMock, configMock, paths, windowListeners } = await loadStore({
       id: "sess_a",

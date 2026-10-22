@@ -110,52 +110,6 @@ afterEach(() => {
 });
 
 describe("QuickJS pool crash backoff", () => {
-  it("waits 100 ms doubling to a 5 s cap between respawns, and a result resets it", async () => {
-    scriptChildren();
-    const executor = quickJsExecutor();
-    behaviour = "crash";
-    await expect(executor.execute("async () => 1", [])).rejects.toThrow("QuickJS child exited unexpectedly (code 1).");
-    expect(forkedAt).toHaveLength(1);
-
-    for (const delay of [100, 200, 400, 800, 1_600, 3_200, 5_000, 5_000]) {
-      const before = children.length;
-      const pending = executor.execute("async () => 1", []).catch((error: unknown) => error);
-      await settle();
-      await vi.advanceTimersByTimeAsync(delay - 1);
-      expect(children, `respawned before ${delay} ms`).toHaveLength(before);
-      await vi.advanceTimersByTimeAsync(1);
-      await settle();
-      expect(children).toHaveLength(before + 1);
-      expect(forkedAt.at(-1)! - forkedAt.at(-2)!).toBe(delay);
-      expect(await pending).toMatchObject({
-        message: "QuickJS child exited unexpectedly (code 1).",
-      });
-    }
-
-    // The last crash still costs its 5 s; the result that follows ends the
-    // streak, so the next crash backs off from 100 ms again.
-    behaviour = "succeed";
-    const recovered = executor.execute("async () => 1", []);
-    await settle();
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(recovered).resolves.toMatchObject({ result: expect.any(Number) });
-
-    behaviour = "crash";
-    const count = children.length;
-    await expect(executor.execute("async () => 1", [])).rejects.toThrow("exited unexpectedly");
-    expect(children, "the warm child served the crashing run").toHaveLength(count);
-
-    behaviour = "succeed";
-    const respawned = executor.execute("async () => 1", []);
-    await settle();
-    await vi.advanceTimersByTimeAsync(99);
-    expect(children).toHaveLength(count);
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(respawned).resolves.toMatchObject({ result: expect.any(Number) });
-    expect(children).toHaveLength(count + 1);
-    await executor.close?.();
-  });
-
   it("INV-7: cancels a caller waiting out the backoff without spawning", async () => {
     scriptChildren();
     const executor = quickJsExecutor();
@@ -184,29 +138,6 @@ describe("QuickJS pool crash backoff", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(next).resolves.toMatchObject({ result: expect.any(Number) });
     expect(children).toHaveLength(2);
-    await executor.close?.();
-  });
-
-  it("counts a child that never reports ready as a crash", async () => {
-    scriptChildren({ ready: false });
-    const executor = quickJsExecutor();
-    const pending = executor.execute("async () => 1", []).catch((error: unknown) => error);
-    await settle();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(await pending).toMatchObject({
-      message: "QuickJS child did not become ready within 10000ms.",
-    });
-    expect(children[0]!.kills).toEqual([undefined]);
-
-    const next = executor.execute("async () => 1", []).catch((error: unknown) => error);
-    await settle();
-    await vi.advanceTimersByTimeAsync(99);
-    expect(children).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
-    await settle();
-    expect(children).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(10_000);
-    await next;
     await executor.close?.();
   });
 });

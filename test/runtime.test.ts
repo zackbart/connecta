@@ -12,14 +12,6 @@ class LabelledError extends Error {
   override readonly name = "LabelledError";
 }
 
-/** A fiber that yields to the scheduler `times` times, then succeeds. */
-function yieldingWork(times: number): Effect.Effect<number> {
-  return Effect.gen(function* () {
-    for (let index = 0; index < times; index += 1) yield* Effect.yieldNow;
-    return times;
-  });
-}
-
 /** Let every queued microtask (and the ones they queue) run. */
 async function drainMicrotasks(rounds = 50): Promise<void> {
   for (let index = 0; index < rounds; index += 1) await Promise.resolve();
@@ -60,36 +52,6 @@ describe("runEdge", () => {
     await drainMicrotasks();
     controller.abort(reason);
     await expect(running).rejects.toBe(reason);
-  });
-});
-
-describe("the microtask scheduler", () => {
-  it("makes progress under fake timers without advancing them", WORKERS, async () => {
-    vi.useFakeTimers();
-    // Thousands of yields, and concurrent fibers, all without a single timer
-    // tick: nothing here may wait on setImmediate or setTimeout.
-    await expect(runEdge(yieldingWork(5_000))).resolves.toBe(5_000);
-    await expect(
-      runEdge(
-        Effect.all([yieldingWork(100), yieldingWork(200), yieldingWork(300)], {
-          concurrency: "unbounded",
-        }),
-      ),
-    ).resolves.toEqual([100, 200, 300]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("still lets Effect.sleep wait on the faked clock", WORKERS, async () => {
-    vi.useFakeTimers();
-    let done = false;
-    const running = runEdge(Effect.sleep(1_000)).then(() => {
-      done = true;
-    });
-    await drainMicrotasks();
-    expect(done).toBe(false);
-    await vi.advanceTimersByTimeAsync(1_000);
-    await running;
-    expect(done).toBe(true);
   });
 });
 

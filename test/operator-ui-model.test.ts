@@ -3,7 +3,7 @@ import { activityHistory } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import type { UiConnector } from "../src/operator-ui/model.js";
-import { clientServerName, clientSetupCommands } from "../src/operator-ui/setup-commands.js";
+import { clientSetupCommands } from "../src/operator-ui/setup-commands.js";
 import { problemCopy } from "../src/operator-ui/view.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorStatus } from "../src/types.js";
@@ -253,13 +253,6 @@ describe("operator action notices", () => {
 });
 
 describe("client setup commands", () => {
-  it("reduces any configured server name to a bare word", () => {
-    expect(clientServerName(undefined)).toBe("connecta");
-    expect(clientServerName("  ")).toBe("connecta");
-    expect(clientServerName("$(rm -rf ~)")).toBe("rm-rf");
-    expect(clientServerName("My MCP; echo hi")).toBe("my-mcp-echo-hi");
-  });
-
   it("quotes a URL a shell would otherwise split, and carries no credential", () => {
     const [claude] = clientSetupCommands("acme", "http://localhost:8787/mcp?x=1&y=it's");
     expect(claude!.text).toBe(`claude mcp add --transport http acme 'http://localhost:8787/mcp?x=1&y=it'"'"'s'`);

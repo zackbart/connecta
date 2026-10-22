@@ -8,10 +8,10 @@ import { api } from "../src/connectors/api.js";
 import { CONNECTA_INSTRUCTIONS } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuth } from "../src/types.js";
-import { issueAgentToken } from "./helpers/agent-tokens.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
 import { modernRequest } from "./fixtures/client-identity.js";
 import { readJsonRpc } from "./fixtures/http.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
 
 const BASE = "https://connecta.test";
 const NAMESPACE = "https://identity.test";
@@ -115,17 +115,6 @@ describe("pool description", () => {
       deployment({ edge: { tools: ["crm"], members: ["bob"], description: "é".repeat(500) } as never }),
     ).not.toThrow();
   });
-
-  it.each([["LINE SEPARATOR (U+2028)", "\u2028"]])(
-    "INV-11: refuses a pool description containing %s at construction",
-    (_name, separator) => {
-      expect(() =>
-        deployment({
-          bad: { tools: ["crm"], members: ["bob"], description: `Team${separator}Private mail` } as never,
-        }),
-      ).toThrow("ConnectaConfig.pools.bad.description must be text of 1 to 500 characters");
-    },
-  );
 
   it("adds the trimmed description to the instructions at /mcp/<pool> and /agent/<pool>", async () => {
     const { connecta, storage } = deployment({

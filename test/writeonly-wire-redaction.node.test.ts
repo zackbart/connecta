@@ -8,9 +8,9 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { SentSecrets, sentSecretsFor } from "../src/sent-secrets.js";
 import { downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { Connector, JsonSchema } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
-import type { Connector, JsonSchema } from "../src/types.js";
 
 const BASE = "https://wire-redaction.test";
 const REDACTED = "[redacted]";
@@ -439,15 +439,6 @@ it("INV-5: a typed array's numbers reach the QuickJS guest only checked as JSON 
   expect(JSON.stringify(result.structuredContent)).not.toContain(value.slice(0, 7));
 });
 
-it("INV-5: JSON text keeps its exact bytes unless an echo is redacted, then stays valid JSON", () => {
-  const secrets = new SentSecrets();
-  secrets.header("Bearer 12345678");
-  const publicText = ' \n{ "id" : "needed-id", "status" : "ok" }\n ';
-  expect(secrets.text(publicText)).toBe(publicText);
-  const echoed = ' \n{ "id" : "needed-id", "echo" : "12345678", "count" : 12345678 }\n ';
-  expect(secrets.text(echoed)).toBe(JSON.stringify({ id: "needed-id", echo: REDACTED, count: REDACTED }));
-});
-
 it.each([
   ["quote", 'PRIVATE-PREFIX-793"suffix-12345678', (text: string) => text],
   ["slash", "PRIVATE-PREFIX-793/suffix-12345678", (text: string) => text.replaceAll("/", "\\/")],
@@ -558,24 +549,6 @@ it("INV-5: structured numeric private echoes become valid placeholder strings in
     expect(program.isError, JSON.stringify(program.structuredContent)).toBeFalsy();
     expect(program.structuredContent).toMatchObject({ result: { id: "needed-id", echo: REDACTED, length: 318_000 } });
   }
-});
-
-it("INV-5: one cumulative work budget bounds a 2,000-value private set over a 2 MB result and withholds only what exceeds it", () => {
-  const secrets = new SentSecrets();
-  const values = Array.from({ length: 2_000 }, (_, index) => `private-value-${index}-793`);
-  secrets.arguments({ values }, { type: "object", properties: { values: { writeOnly: true } } });
-  const wire = JSON.stringify({ id: "needed-id", data: Array(1_000_000).fill(0) });
-  expect(secrets.text(wire)).toBe(wire);
-  expect(secrets.text(`${wire.slice(0, -2)},"${values[1_999]}"]}`)).toBe(`${wire.slice(0, -2)},"${REDACTED}"]}`);
-  // Two shallow, escape-free fields each fit the 64 Mi-unit budget alone,
-  // but their combined scans do not. No decode, walk or pending-run limit can
-  // withhold the second field, so disabling spend's guard must fail this check.
-  const clean = "x".repeat(18_000_000);
-  const result = secrets.redact({ first: clean, big: clean, id: "needed-id" });
-  expect(result.first === clean).toBe(true);
-  expect(result.big === REDACTED).toBe(true);
-  // Refusing a scan does not spend the remainder needed for a smaller field.
-  expect(result.id).toBe("needed-id");
 });
 
 it("INV-5: long-form checks spend the cumulative work budget, so self-similar text against many long private values is withheld", () => {

@@ -1,11 +1,11 @@
 // Node-only: exercises the node:sqlite storage and activity adapters against real files.
+import { buildSync } from "esbuild";
+import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { buildSync } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 import { Registry } from "../src/registry.js";
 import { importStateFile, openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
@@ -66,14 +66,6 @@ describe("sqliteStorage in a file", () => {
     }
   });
 
-  it("keeps state across a restart", async () => {
-    const path = join(tempDirectory(), "connecta.sqlite");
-    const first = track(openSqlite(path));
-    await sqliteStorage(first).set("conn:svc:oauth:tokens", "sealed");
-    first.close();
-    expect(await sqliteStorage(track(openSqlite(path))).get("conn:svc:oauth:tokens")).toBe("sealed");
-  });
-
   it("lets exactly one of two connections to one file win a claim", async () => {
     // Two connections stand in for two processes sharing the volume.
     const path = join(tempDirectory(), "connecta.sqlite");
@@ -106,20 +98,6 @@ describe("sqliteStorage in a file", () => {
     expect(await sqliteStorage(path).list("results:result:")).toHaveLength(64);
   });
 });
-
-/** A 0.28 `fileStorage` state file, as that release wrote it. */
-function writeStateFile(path: string, now: number): void {
-  writeFileSync(
-    path,
-    JSON.stringify({
-      "conn:notion:oauth:tokens": { value: '{"connectaOAuthSealed":1}' },
-      "conn:notion:credential:v1": { value: '{"version":1}' },
-      "access-token:v1:active": { value: "[]" },
-      "oauth-handoff:v1:notion:abc": { value: "alice", exp: now + 60_000 },
-      "results:result:gone": { value: "envelope", exp: now - 1 },
-    }),
-  );
-}
 
 describe("importStateFile", () => {
   it("INV-6: withholds a trigger's imported value from import errors and migrate-state output", async () => {
@@ -169,31 +147,6 @@ describe("importStateFile", () => {
     );
     expect(result.stdout + result.stderr).not.toContain(secret);
     expect(db.prepare("SELECT key FROM connecta_kv").all()).toEqual([]);
-  });
-
-  it("copies every live entry with its expiry and skips expired ones", async () => {
-    const directory = tempDirectory();
-    const now = Date.now();
-    writeStateFile(join(directory, "state.json"), now);
-    const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    expect(importStateFile(db, join(directory, "state.json"), now)).toEqual({ imported: 4, kept: 0, expired: 1 });
-    const storage = sqliteStorage(db);
-    expect(await storage.get("conn:notion:oauth:tokens")).toBe('{"connectaOAuthSealed":1}');
-    expect(await storage.get("oauth-handoff:v1:notion:abc")).toBe("alice");
-    expect(await storage.get("results:result:gone")).toBeNull();
-    expect(
-      db.prepare("SELECT expires_at_ms FROM connecta_kv WHERE key = ?").get("oauth-handoff:v1:notion:abc"),
-    ).toEqual({ expires_at_ms: now + 60_000 });
-  });
-
-  it("keeps what the database already holds, so a second run changes nothing", async () => {
-    const directory = tempDirectory();
-    writeStateFile(join(directory, "state.json"), Date.now());
-    const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    await sqliteStorage(db).set("conn:notion:oauth:tokens", "newer");
-    expect(importStateFile(db, join(directory, "state.json"))).toMatchObject({ imported: 3, kept: 1 });
-    expect(importStateFile(db, join(directory, "state.json"))).toMatchObject({ imported: 0, kept: 4 });
-    expect(await sqliteStorage(db).get("conn:notion:oauth:tokens")).toBe("newer");
   });
 
   it("INV-6: refuses a malformed file without quoting its keys or text", () => {

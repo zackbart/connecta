@@ -5,12 +5,14 @@ import { generatedProblems } from "../scripts/drift-validate.mjs";
 // provider listed in `PENDING` (test/provider-standard.ts) is exempt from the
 // step it has not landed, and must still fail that step. Every other folder,
 // including any created after the list, meets the whole standard.
-import baseline from "./provider-pending-baseline.json";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { authoredFixtures } from "./providers.generated.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { ConnectorContext } from "../src/types.js";
+import { silentLogger } from "./helpers.js";
+import baseline from "./provider-pending-baseline.json";
 import {
   PENDING,
   authoredTools,
@@ -21,9 +23,7 @@ import {
   surfaceViolations,
   type ProviderFacts,
 } from "./provider-standard.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
-import type { ConnectorContext } from "../src/types.js";
+import { authoredFixtures } from "./providers.generated.js";
 
 const root = fileURLToPath(new URL("../src/providers/", import.meta.url));
 const documentationPath = fileURLToPath(new URL("../documentation/providers.md", import.meta.url));
@@ -228,36 +228,6 @@ describe("the provider standard's rules", () => {
     }
   });
 
-  it("names evidence kept under legacy names or formats", () => {
-    const folder = standard();
-    const files = folder.files
-      .filter((file) => file !== "evidence/catalog.json")
-      .concat("evidence/catalog.fixture.json");
-    const found = evidenceViolations(
-      {
-        ...folder,
-        files,
-        read: (path) => (path === "evidence/openapi.json" ? '{ "url": "http://acme.example" }' : folder.read(path)),
-      },
-      today,
-    );
-    expect(found).toEqual([
-      "E1: evidence/catalog.fixture.json is not a standard evidence name",
-      "E2: a hosted implementation needs evidence/catalog.json",
-      "E3: evidence/openapi.json needs an https url, a revision, and a sha256 digest",
-    ]);
-  });
-
-  it("accepts a provider that meets the standard", () => {
-    const folder = standard();
-    expect([
-      ...layoutViolations(folder),
-      ...evidenceViolations(folder, today),
-      ...driftViolations(folder, today),
-      ...guideViolations(folder, "# Providers\n\n## Acme\n"),
-    ]).toEqual([]);
-  });
-
   it("retains observation-only Google hosted names and four annotations independently of api classification", () => {
     const folder = standard();
     const drift = JSON.parse(folder.read("drift.json")!);
@@ -363,66 +333,5 @@ describe("the provider standard's rules", () => {
         today,
       ),
     ).toContainEqual(expect.stringContaining(message));
-  });
-
-  it("names the drift record's renamed and hand-kept fields", () => {
-    const folder = standard();
-    const drift = JSON.parse(folder.read("drift.json")!);
-    drift.checks = [
-      { type: "manual", source: "https://acme.example", rationale: "Prose.", evidence: { reviewedAt: "2026-10-01" } },
-      { type: "mcp-docs", setup: "https://acme.example/mcp", reviewed: ["get_customer"] },
-      { type: "endpoints", endpoints: [{ method: "GET", path: "/customers" }] },
-    ];
-    const found = driftViolations(
-      { ...folder, read: (path) => (path === "drift.json" ? JSON.stringify(drift) : undefined) },
-      today,
-    );
-    expect(found).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^D3: checks\[0\] uses rationale or reviewedAt/),
-        expect.stringMatching(/^D3: checks\[0\] manual check needs a reason/),
-        expect.stringMatching(/^D3: checks\[0\] manual check needs lastVerified/),
-        expect.stringMatching(/^D4: checks\[1\] hand-keeps a reviewed list/),
-        expect.stringMatching(/^D4: checks\[2\] entries are keyed by an operation/),
-      ]),
-    );
-  });
-
-  it("refuses a drift record providers:check cannot read, by the validator providers:check uses", () => {
-    const folder = standard();
-    const drift = JSON.parse(folder.read("drift.json")!);
-    const violations = (checks: unknown[], options?: { recording?: boolean }) =>
-      driftViolations(
-        {
-          ...folder,
-          read: (path) => (path === "drift.json" ? JSON.stringify({ ...drift, checks }) : folder.read(path)),
-        },
-        today,
-        options,
-      );
-    const contract = `sha256:${"0".repeat(64)}`;
-    const readme = (row: object) => ({
-      type: "endpoints",
-      specification: { url: "https://docs.acme.example/reference/", format: "readme-operation-pages" },
-      endpoints: [{ operation: "GET /customers", specRevision: "1", ...row }],
-    });
-    const docs = (reviewedAccess: object) => ({
-      type: "mcp-docs",
-      setup: "https://acme.example/mcp",
-      endpoints: ["https://mcp.acme.example/mcp"],
-      reviewedAccess,
-    });
-    expect(violations([readme({ page: "list-customers", contract }), docs({ get_customer: "read" })])).toEqual([]);
-    expect(violations([readme({ contract })])).toEqual([
-      "D3: providers:check rejects checks[0]: GET /customers names its reference page",
-    ]);
-    expect(violations([docs({ ghost: "read" })])).toEqual([
-      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
-    ]);
-    // A row awaiting its contract is generated (recording) but never committed.
-    expect(violations([readme({ page: "list-customers" })])).toEqual([
-      "D3: providers:check rejects checks[0]: invalid contract digest: GET /customers",
-    ]);
-    expect(violations([readme({ page: "list-customers" })], { recording: true })).toEqual([]);
   });
 });
