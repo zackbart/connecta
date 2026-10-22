@@ -1,5 +1,6 @@
 import { WORKERS } from "./fixtures/runtime-tags.js";
 import { afterEach, expect, it, vi } from "vitest";
+import { clerkAuth } from "../src/auth/clerk.js";
 import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
 
 const options = { publishableKey: `pk_test_${btoa("clerk.example.test$")}`, secretKey: "sk_test_fake" };
@@ -81,4 +82,43 @@ it("INV-7: the SDK transport deadline aborts and settles a fetch that never send
   await rejected;
   expect(outbound?.aborted).toBe(true);
   expect(pending.size).toBe(0);
+});
+
+it("INV-7: cancelling a display label aborts its real Clerk fetch without a late cache write", WORKERS, async () => {
+  let outbound: AbortSignal | null | undefined;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const cancel = vi.fn();
+  const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    outbound = init?.signal;
+    entered();
+    return new Response(new ReadableStream<Uint8Array>({ cancel }));
+  });
+  vi.stubGlobal("fetch", request);
+  const auth = clerkAuth(options);
+  const owner = new AbortController();
+  const label = auth.activityActorLabel!("user_alice", owner.signal);
+  await started;
+  owner.abort();
+  await expect(label).resolves.toBeUndefined();
+  expect(outbound?.aborted).toBe(true);
+  // Let the transport and SDK finish cancellation before another read.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(cancel).toHaveBeenCalledTimes(1);
+  request.mockResolvedValueOnce(
+    Response.json({
+      object: "user",
+      id: "user_alice",
+      first_name: "Alice",
+      last_name: "Example",
+      email_addresses: [],
+      external_accounts: [],
+      phone_numbers: [],
+      web3_wallets: [],
+    }),
+  );
+  await expect(auth.activityActorLabel!("user_alice")).resolves.toBe("Alice Example");
+  expect(request).toHaveBeenCalledTimes(2);
 });

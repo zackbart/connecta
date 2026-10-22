@@ -7,9 +7,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/auth/clerk-transport.js", () => ({
-  createByteReadingClerkClient: () => ({
+  createByteReadingClerkClient: (_options: unknown, signal?: AbortSignal) => ({
     authenticateRequest: mocks.authenticateRequest,
-    users: { getUser: mocks.getUser },
+    users: { getUser: (id: string) => mocks.getUser(id, signal) },
   }),
 }));
 
@@ -267,6 +267,28 @@ describe("clerkAuth inbound auth", () => {
     await expect(auth.activityActorLabel!("user_123")).resolves.toBe("friendly-handle");
   });
 
+  it("INV-7: aborts the Clerk label transport and refuses a late cache write", async () => {
+    let release!: (user: { fullName: string }) => void;
+    mocks.getUser.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake" });
+    const owner = new AbortController();
+    const lookup = auth.activityActorLabel!("alice", owner.signal);
+    await Promise.resolve();
+    const signal = mocks.getUser.mock.calls.at(-1)![1] as AbortSignal;
+    owner.abort();
+    await expect(lookup).resolves.toBeUndefined();
+    expect(signal.aborted).toBe(true);
+    release({ fullName: "Late name" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mocks.getUser.mockResolvedValueOnce({ fullName: "Current name" });
+    await expect(auth.activityActorLabel!("alice")).resolves.toBe("Current name");
+  });
+
   it("caps hung Clerk activity lookups across concurrent readers", async () => {
     vi.useFakeTimers();
     mocks.getUser.mockImplementation(() => new Promise(() => {}));
@@ -277,6 +299,7 @@ describe("clerkAuth inbound auth", () => {
     });
 
     const lookups = Array.from({ length: 12 }, (_, index) => auth.activityActorLabel!(`user_${index}`));
+    await Promise.resolve();
     expect(mocks.getUser).toHaveBeenCalledTimes(8);
     await vi.advanceTimersByTimeAsync(1_250);
     await expect(Promise.all(lookups)).resolves.toEqual(Array(12).fill(undefined));

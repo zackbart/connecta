@@ -7,9 +7,9 @@ import { build, buildSync, type Plugin } from "esbuild";
 
 const EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"];
 
-// workerd reruns only suites whose behaviour can differ from Node's. Pure
-// logic runs once, under Node. A listed suite that no longer exists matches
-// nothing. Never list a *.node.test.ts suite.
+// Enroll suites that need Workers bindings/the Worker executor or exercise
+// workerd-specific fetch, streams, rejections, Web Crypto, or provider bytes.
+// Pure logic runs only on Node; never list a *.node.test.ts suite.
 const WORKERS_SUITES = [
   // Workers bindings and isolates: D1, KV, the Worker Loader executor, and
   // service-bound Workers. These skip or fail outside workerd.
@@ -47,7 +47,7 @@ const WORKERS_SUITES = [
   // Every provider's characterized requests, built by workerd.
   "test/goldens.test.ts",
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
-  // A brace glob also tolerates a file disappearing in the pruning PRs.
+  // Brace globs tolerate deleted files without enrolling other suites.
   "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
 ];
 
@@ -85,7 +85,8 @@ function executorBundles() {
 // own Request validation and each request to it is a separate Worker request
 // (test/clerk-organization-workerd.test.ts). Every outbound fetch it makes
 // goes over TCP to the Clerk Backend API stand-in at `backend`. Built once
-// per run; restart a watch run after editing src/auth/clerk.ts.
+// per config load; restart watch mode after editing this fixture or any
+// bundled dependency (including src/auth/clerk.ts).
 let clerkOrganizationScript: Promise<string> | undefined;
 async function clerkOrganizationWorker(backend: string) {
   const transport: Plugin = {
@@ -119,6 +120,8 @@ async function clerkOrganizationWorker(backend: string) {
 // cloudflareTest resolves its options on every pool worker start, once per
 // test file. Bundle each fixture once per run, off the event loop: a
 // synchronous build there stalls the host serving running tests' imports.
+// This cache lasts until config reload: restart watch mode after changing a
+// fixture entry or any of its bundled dependencies.
 const fixtureBundles = new Map<string, Promise<string>>();
 function fixtureBundle(entry: string): Promise<string> {
   let text = fixtureBundles.get(entry);
