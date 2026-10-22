@@ -5,6 +5,97 @@ import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract } from "./storage-contract.js";
+import * as sqlStores from "../src/storage/sql.js";
+
+/** Failure injection shared by Node SQLite, proxied D1, and native Workers D1. */
+export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
+  async function setup() {
+    const db = await open();
+    // Capture the actual private driver passed by the public adapter, without
+    // exporting a production test hook or substituting a fake transaction.
+    const factory = vi.spyOn(sqlStores, "sqlStorage");
+    let storage: KVStorage;
+    let driver: sqlStores.SqlDriver;
+    try {
+      storage = db.storage();
+      const captured = factory.mock.calls[0]?.[0];
+      if (!captured) throw new Error("The SQL adapter did not construct sqlStorage");
+      driver = captured;
+    } finally {
+      factory.mockRestore();
+    }
+    await storage.set("existing", "original", { expiresAtMs: 4_000_000_000_000 });
+    await storage.set("remove", "keep");
+    const rows = () => db.rows("SELECT key, value, expires_at_ms FROM connecta_kv ORDER BY key");
+    return { db, storage, driver, rows, before: await rows() };
+  }
+
+  it.each([
+    ["first", 0],
+    ["middle", 2],
+    ["last", 4],
+  ] as const)("rolls back the entire SQL batch when the %s statement fails", async (_position, index) => {
+    const { driver, rows, before } = await setup();
+    const writes = [
+      { sql: "INSERT INTO connecta_kv (key, value) VALUES (?, ?)", params: ["new:first", "first"] },
+      { sql: "UPDATE connecta_kv SET value = ?, expires_at_ms = NULL WHERE key = ?", params: ["changed", "existing"] },
+      { sql: "INSERT INTO connecta_kv (key, value) VALUES (?, ?)", params: ["new:middle", "middle"] },
+      { sql: "DELETE FROM connecta_kv WHERE key = ?", params: ["remove"] },
+      { sql: "INSERT INTO connecta_kv (key, value) VALUES (?, ?)", params: ["new:last", "last"] },
+    ];
+    const failing: sqlStores.SqlStatement[] = [...writes];
+    // A valid, preparable statement that fails during execution, after any
+    // preceding inserts/updates/deletes have run. ABORT of one statement alone
+    // would leave those writes behind without the driver's full rollback.
+    failing[index] = { sql: "INSERT INTO connecta_kv (key, value) VALUES (?, ?)", params: ["invalid", null] };
+    await expect(driver.batch(failing)).rejects.toThrow(/NOT NULL constraint failed: connecta_kv.value/);
+    expect(await rows()).toEqual(before);
+
+    await expect(driver.batch(writes)).resolves.toEqual([1, 1, 1, 1, 1]);
+    expect(await rows()).toEqual([
+      { key: "existing", value: "changed", expires_at_ms: null },
+      { key: "new:first", value: "first", expires_at_ms: null },
+      { key: "new:last", value: "last", expires_at_ms: null },
+      { key: "new:middle", value: "middle", expires_at_ms: null },
+    ]);
+  });
+
+  it("rolls back earlier keys when a later key in copyIntoSql fails", async () => {
+    const { db, driver, storage, rows, before } = await setup();
+    await db.exec(`CREATE TRIGGER fail_copy BEFORE INSERT ON connecta_kv
+      WHEN NEW.key = 'copy:last' BEGIN SELECT RAISE(ABORT, 'injected copy failure'); END`);
+    const entries = [
+      { key: "copy:first", value: "first", expiresAtMs: null },
+      { key: "existing", value: "changed", expiresAtMs: null },
+      { key: "copy:last", value: "last", expiresAtMs: null },
+    ];
+    const options = { overwrite: true, now: Date.now() };
+    await expect(sqlStores.copyIntoSql(driver, entries, options)).rejects.toThrow(/injected copy failure/);
+    expect(await rows()).toEqual(before);
+
+    await db.exec("DROP TRIGGER fail_copy");
+    await expect(sqlStores.copyIntoSql(driver, entries, options)).resolves.toEqual(["copied", "overwritten", "copied"]);
+    for (const entry of entries) expect(await storage.get(entry.key)).toBe(entry.value);
+    expect(await storage.get("remove")).toBe("keep");
+  });
+
+  it("rolls back the expiry sweep when the later storage.set write fails", async () => {
+    const { db, storage, rows } = await setup();
+    await db.exec("INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)", "expired", "old", 1);
+    const before = await rows();
+    await db.exec(`CREATE TRIGGER fail_set BEFORE INSERT ON connecta_kv
+      WHEN NEW.key = 'existing' BEGIN SELECT RAISE(ABORT, 'injected set failure'); END`);
+    await expect(storage.set("existing", "changed")).rejects.toThrow(/injected set failure/);
+    expect(await rows()).toEqual(before);
+
+    await db.exec("DROP TRIGGER fail_set");
+    await storage.set("existing", "changed");
+    expect(await rows()).toEqual([
+      { key: "existing", value: "changed", expires_at_ms: null },
+      { key: "remove", value: "keep", expires_at_ms: null },
+    ]);
+  });
+}
 
 /**
  * One SQL database as a suite sees it: fresh stores over it, and raw SQL for
@@ -46,6 +137,7 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  * suite: each driver's suite calls it inside its `describe`.
  */
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
+  sqlBatchRollbackContract(open);
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
