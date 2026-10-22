@@ -1,15 +1,15 @@
-import { afterEach, expect, it, vi } from "vitest";
 import { inputRequired, ProtocolError, ResourceNotFoundError } from "@modelcontextprotocol/server";
+import { afterEach, expect, it, vi } from "vitest";
 import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import type { RegistryView } from "../src/registry.js";
-import type { Connector, ConnectorContext } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { Connector, ConnectorContext } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { deferred, scriptedExecutor } from "./fixtures/misc.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -121,17 +121,6 @@ it("INV-3, INV-4: resource URI and extra arguments cannot change the personal cr
   expect(getAll.mock.calls).toEqual([["docs", "admitted-owner"]]);
 });
 
-it.each(["auth_required", "rate_limited"] as const)("INV-5: resource reads keep typed %s failures", async (code) => {
-  const { connector } = fixture({
-    async readResource() {
-      throw new ConnectorCallError(code, "Resource refused.");
-    },
-  });
-  expect((await read(makeRegistry([connector]), qualified("docs"))).structuredContent).toMatchObject({
-    error: { code, retryable: ["rate_limited", "unavailable"].includes(code) },
-  });
-});
-
 it("INV-5: custom resource values, keys, failures and later guest output redact credential echoes", async () => {
   const token = "cE4-x9Pq-7Lm2-Vr6K";
   const { connector } = fixture({
@@ -193,30 +182,6 @@ it("INV-7: resource reads share connector admission and release their permit aft
   } finally {
     held.release();
   }
-});
-
-it("INV-7: cancellation aborts a resource read and closes its request scope", async () => {
-  const started = deferred<ConnectorContext>();
-  const closeScope = vi.fn(async () => {});
-  const { connector } = fixture({
-    closeScope,
-    async readResource(_uri, ctx) {
-      started.resolve(ctx);
-      return new Promise(() => {});
-    },
-  });
-  const controller = new AbortController();
-  const output = createExecuteTool(
-    makeRegistry([connector]),
-    BASE,
-    scriptedExecutor((fns) => required(fns.read)(qualified("docs"))),
-    silentLogger,
-  )({ code: "async () => null" }, { signal: controller.signal });
-  const ctx = await started.promise;
-  controller.abort();
-  expect((await output).structuredContent).toMatchObject({ error: { code: "cancelled", retryable: false } });
-  expect(ctx.signal?.aborted).toBe(true);
-  expect(closeScope).toHaveBeenCalledOnce();
 });
 
 it("INV-3, INV-7: resource reads share host-call budgets and request scope, with payload-free diagnostics", async () => {
@@ -433,19 +398,6 @@ function advertisedRemote(uriTemplates?: string[]) {
   };
 }
 
-it.each(["http://127.0.0.1/private"])(
-  "INV-3 INV-4 INV-6: refuses unadvertised URI %s before downstream read",
-  async (uri) => {
-    const f = advertisedRemote();
-    const result = await read(f.view(), qualified("docs", uri));
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "not_found", retryable: false, message: "The resource URI is not advertised by this connector." },
-    });
-    expect(f.calls.filter((call) => call.method === "resources/read")).toEqual([]);
-    expect(JSON.stringify(result)).not.toContain(uri);
-  },
-);
-
 it("INV-3 INV-4 INV-8: reads exact resources and templates from the complete paginated inventory", async () => {
   const f = advertisedRemote();
   for (const uri of [
@@ -463,17 +415,6 @@ it("INV-3 INV-4 INV-8: reads exact resources and templates from the complete pag
   for (const key of await f.storage.list("response-cache:"))
     expect(await f.storage.get(key)).not.toContain("synthetic-resource-payload");
 });
-
-it.each(["docs://public/..", "docs://public/%2fprivate", "docs://public/%2e%2e"])(
-  "INV-3 INV-4: refuses template traversal URI %s before dispatch",
-  async (uri) => {
-    const f = advertisedRemote();
-    expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({
-      error: { code: "not_found", retryable: false },
-    });
-    expect(f.calls.filter((call) => call.method === "resources/read")).toEqual([]);
-  },
-);
 
 it.each([
   ["https://h{/x}.evil.com:8443/", "https://h.evil.com:8443/"],

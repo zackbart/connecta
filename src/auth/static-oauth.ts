@@ -9,6 +9,7 @@ import {
   renewedAfterUnauthorized,
   takeProviderHandoff,
   vendorRefusal,
+  type ProviderRequest,
 } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
@@ -19,6 +20,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
 import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
+import type { SentSecrets } from "../sent-secrets.js";
 import type { ApiOAuthClientAuthentication, ApiOAuthConfig, ApiOAuthHooks } from "../connectors/api-connector.js";
 import { ConnectorCallError, msg, resendAdviceOf, withResendAdvice } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
@@ -29,12 +31,15 @@ import type { ConnectorContext, ConnectorStatus } from "../types.js";
 import {
   assertOAuthScope,
   authorizingContext,
+  codeExchangeResponse,
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+import { deriveContext } from "../derived-context.js";
+import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
 
 /**
  * Token-request header values Connecta itself sends, by lowercase name: JSON
@@ -251,6 +256,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     ctx: ConnectorContext,
     coordinator: OAuthRefreshCoordinator,
     private readonly settings: StaticOAuthSettings,
+    requestOwned = false,
   ) {
     super(
       connectorId,
@@ -259,7 +265,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
       coordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
-      ctx.signal,
+      viewSignal(ctx, requestOwned),
       // No client binding: the client is configuration, so there is no
       // registration for a restart to carry forward or discard.
       undefined,
@@ -376,9 +382,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
 
   const warnShortSecret = shortSecretWarning();
-  const providerFor = (ctx: ConnectorContext) => {
+  const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
     warnShortSecret(settings.clientSecret, ctx.logger);
-    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
+    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings, requestOwned);
   };
 
   /**
@@ -387,20 +393,29 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * from configuration the token endpoint is the only URL the SDK fetches here;
    * the check keeps the headers on it even if that ever changes.
    */
-  const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
+  const tokenEndpointFetch = async (secrets: SentSecrets, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
     const request: RequestInit = { ...init, redirect: "manual" };
     if (settings.tokenRequestHeaders.length && `${url.origin}${url.pathname}` === settings.identity) {
       const headers = new Headers(init.headers);
       for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
       for (const [name, value] of settings.tokenRequestHeaders)
-        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
+        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) secrets.header(value);
       request.headers = headers;
     }
-    trackRemoteClientRequest(sentSecretsFor(ctx), input, request);
-    const dispatch = providerRequest(ctx, true, id, { method: request.method ?? "GET" });
-    dispatchProviderRequest(ctx, dispatch, request.headers);
-    const response = await sentSecretsFetch(ctx)(input, request);
+    trackRemoteClientRequest(secrets, input, request);
+    // The coordinator or code-exchange wrapper authorizes this send. Refresh
+    // claim submission may outlive the caller; this transport uses no
+    // request-owned capability and changes no closed resource-call ledger.
+    const dispatch: ProviderRequest = {
+      dispatched: false,
+      auxiliary: true,
+      provider: id,
+      method: request.method ?? "GET",
+    };
+    dispatchProviderRequest(undefined, dispatch, request.headers);
+    secrets.request(input, request);
+    const response = await fetch(input, request);
     recordProviderResponse(dispatch, response.status);
     return byteReadResponse(response);
   };
@@ -415,17 +430,48 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     provider: StaticOAuthProvider,
     ctx: ConnectorContext,
     exchange?: { authorizationCode: string; iss?: string },
-  ) =>
-    auth(provider, {
+    requestOwned = false,
+  ) => {
+    const secrets = sentSecretsFor(ctx);
+    return auth(provider, {
       serverUrl: settings.serverUrl,
       ...exchange,
       fetchFn: coordinatorFor(ctx).coordinatedFetch(
         provider,
-        (input, init) => tokenEndpointFetch(ctx, input, init),
-        ctx.signal,
+        (input, init) => {
+          if (exchange) {
+            // A code exchange has no submitted refresh claim transferring
+            // ownership. Only explicit scope revocation stops a callback:
+            // the production callback route remains uninterruptible and
+            // does not revoke its own scope while exchanging a code.
+            return duringViewCall(
+              ctx,
+              async (signal) => {
+                assertProviderCallOpen(ctx, id, true);
+                const response = await tokenEndpointFetch(secrets, input, {
+                  ...init,
+                  signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+                });
+                // An override can ignore abort. Never hand its late tokens
+                // to the SDK, which would otherwise persist both credentials.
+                if (signal.aborted) {
+                  void response.body?.cancel().catch(() => {});
+                  throw signal.reason;
+                }
+                // The SDK clones and reads this body after fetch resolves.
+                // Revocation must cancel that read even for a custom fetch.
+                return codeExchangeResponse(response, signal);
+              },
+              true,
+            );
+          }
+          return tokenEndpointFetch(secrets, input, init);
+        },
+        viewSignal(ctx, requestOwned || exchange !== undefined),
         ctx.defer,
       ),
     });
+  };
 
   // No cause, as in remoteMcp(): the `UnauthorizedError` class is the whole
   // verdict, and a logger rendering the chain renders whatever it says.
@@ -440,11 +486,25 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * The token to send after `spent` drew a 401: one another request has
    * already rotated in, or else one coordinated refresh.
    */
-  const renewedToken = async (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string) => {
-    const current = await provider.tokens(issuerContext);
+  const renewedToken = async (
+    provider: StaticOAuthProvider,
+    ctx: ConnectorContext,
+    spent: string,
+    requestOwned = false,
+  ) => {
+    // Only renewal whose claim CAS was submitted may survive this call.
+    // Race each preparation read too, and never resume SDK work or consume a
+    // rotated token after closure, even if a storage promise completes late.
+    const live = async <A>(work: () => Promise<A>): Promise<A> => {
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      const value = await duringViewCall(ctx, work, requestOwned);
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      return value;
+    };
+    const current = await live(() => provider.tokens(issuerContext));
     if (current && current.access_token !== spent) return current.access_token;
-    if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
-    const refreshed = await provider.tokens(issuerContext);
+    if ((await live(() => runAuth(provider, ctx, undefined, requestOwned))) !== "AUTHORIZED") throw authRequiredError();
+    const refreshed = await live(() => provider.tokens(issuerContext));
     if (!refreshed) throw authRequiredError();
     return refreshed.access_token;
   };
@@ -465,114 +525,155 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
-    // A call that already ended reads no token and sends nothing more.
-    assertProviderCallOpen(ctx, id, false);
     let prepared = takeProviderHandoff(init);
-    const owner = prepared;
-    const url = new URL(input);
-    if (!settings.apiOrigins.has(url.origin)) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `Connector "${id}" sends its OAuth access token only to its declared ` +
-          `apiOrigins, and ${url.origin} is not one of them.`,
-        { retryable: false },
-      );
-    }
-    if (init.body instanceof ReadableStream) {
-      throw new TypeError(
-        `Connector "${id}": ctx.oauth.fetch may replay a request once after a ` +
-          "refresh, so it cannot send a stream body. Buffer the body first.",
-      );
-    }
-    const headers = new Headers(init.headers);
-    if (headers.has("authorization")) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `Connector "${id}": a request through ctx.oauth.fetch may not set ` +
-          "Authorization; the connector's grant owns it.",
-        { retryable: false },
-      );
-    }
-    const signal = init.signal && ctx.signal ? AbortSignal.any([init.signal, ctx.signal]) : (init.signal ?? ctx.signal);
-    const send = async (accessToken: string) => {
-      sentSecretsFor(ctx).add(accessToken);
-      const sent = new Headers(headers);
-      sent.set("Authorization", `Bearer ${accessToken}`);
-      // The token rides to a declared origin and no further: a redirect is
-      // handed back to the handler unfollowed rather than re-sent anywhere.
-      // The handler reads the answer with `.json()` or `.text()`, which read
-      // bytes here: workerd quotes a text read's non-text Content-Type in
-      // its own log, out of the handler's reach.
-      const request: RequestInit = {
-        ...init,
-        headers: sent,
-        redirect: "manual",
-        ...(signal ? { signal } : {}),
-      };
-      const dispatch = prepared ?? providerRequest(ctx, false, id);
-      prepared = undefined;
-      dispatchProviderRequest(ctx, dispatch, sent, request.method ?? "GET");
-      const response = await sentSecretsFetch(ctx)(url, request);
-      recordProviderResponse(dispatch, response.status);
-      const answer = byteReadResponse(response);
-      bindProviderResponse(answer, dispatch, owner);
-      return { response: answer, dispatch };
-    };
-
-    if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
-    const release = retainOAuthPartition(oauthPartitionFor(ctx));
-    try {
-      if (signal?.aborted) throw signal.reason;
-      const provider = providerFor(ctx);
-      // Bind this call's reads and writes to the live epoch: a reset landing
-      // meanwhile fails the call rather than handing it another flow's grant.
-      const epoch = await provider.beginFlow();
-      if (provider.isOperatorDisconnectedEpoch(epoch)) {
-        throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
-      }
-      const tokens = await provider.tokens(issuerContext);
-      if (!tokens) throw authRequiredError();
-      const { response: first, dispatch } = await send(tokens.access_token);
-      if (first.status !== 401) return first;
-      void first.body?.cancel().catch(() => {});
-      if (
-        write ||
-        hasMethodOverride(headers) ||
-        (dispatch.classification === "write" && ["GET", "HEAD"].includes((dispatch.method ?? "GET").toUpperCase()))
-      ) {
-        let renewal: unknown;
-        try {
-          const fresh = await renewedToken(provider, ctx, tokens.access_token);
-          // The call's ledger keeps this 401's verdict, or that renewal
-          // replaced the token this request sent (Q8). The same token back
-          // renewed nothing.
-          renewedAfterUnauthorized(dispatch, tokens.access_token, fresh);
-          if (fresh === tokens.access_token) renewal = authRequiredError();
-        } catch (error) {
-          if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
-          renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
+    const auxiliary = prepared?.auxiliary === true;
+    // Own the complete token preparation and fetch helper. The coordinator
+    // still owns a submitted refresh claim independently of this wait.
+    return settleOnClose(
+      ctx,
+      async (owned) => {
+        // A call that already ended reads no token and sends nothing more.
+        assertProviderCallOpen(ctx, id, auxiliary);
+        const owner = prepared;
+        const url = new URL(input);
+        if (!settings.apiOrigins.has(url.origin)) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Connector "${id}" sends its OAuth access token only to its declared ` +
+              `apiOrigins, and ${url.origin} is not one of them.`,
+            { retryable: false },
+          );
         }
-        throw vendorRefusal(
-          unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required"),
-          dispatch,
-        );
-      }
-      const accessToken = await renewedToken(provider, ctx, tokens.access_token);
-      renewedAfterUnauthorized(dispatch, tokens.access_token, accessToken);
-      const { response: second } = await send(accessToken);
-      if (second.status !== 401) return second;
-      void second.body?.cancel().catch(() => {});
-      rejectedScopes.add(scopeOf(ctx));
-      throw authRequiredError();
-    } catch (error) {
-      if (error instanceof UnauthorizedError) {
-        rejectedScopes.add(scopeOf(ctx));
-        throw authRequiredError();
-      }
-      throw error;
-    } finally {
-      release();
-    }
+        if (init.body instanceof ReadableStream) {
+          throw new TypeError(
+            `Connector "${id}": ctx.oauth.fetch may replay a request once after a ` +
+              "refresh, so it cannot send a stream body. Buffer the body first.",
+          );
+        }
+        const headers = new Headers(init.headers);
+        if (headers.has("authorization")) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Connector "${id}": a request through ctx.oauth.fetch may not set ` +
+              "Authorization; the connector's grant owns it.",
+            { retryable: false },
+          );
+        }
+        const signal = init.signal ? AbortSignal.any([init.signal, owned]) : owned;
+        ctx = deriveContext(ctx, { signal });
+        const detachAnswers: Array<() => void> = [];
+        const send = async (accessToken: string) => {
+          if (signal?.aborted) throw signal.reason;
+          sentSecretsFor(ctx).add(accessToken);
+          const sent = new Headers(headers);
+          sent.set("Authorization", `Bearer ${accessToken}`);
+          // The token rides to a declared origin and no further: a redirect is
+          // handed back to the handler unfollowed rather than re-sent anywhere.
+          // The handler reads the answer with `.json()` or `.text()`, which read
+          // bytes here: workerd quotes a text read's non-text Content-Type in
+          // its own log, out of the handler's reach.
+          const request: RequestInit = {
+            ...init,
+            headers: sent,
+            redirect: "manual",
+            ...(signal ? { signal } : {}),
+          };
+          const dispatch = prepared ?? providerRequest(ctx, auxiliary, id);
+          prepared = undefined;
+          dispatchProviderRequest(ctx, dispatch, sent, request.method ?? "GET");
+          const response = await sentSecretsFetch(ctx)(url, request);
+          recordProviderResponse(dispatch, response.status);
+          if (response.status === 401) {
+            // Closure can settle the handler before renewal's catch maps
+            // this answer. Preserve its OAuth verdict in the ledger first;
+            // only the final write decider reports it. A live renewal keeps
+            // its own precise verdict and never replays a write.
+            const abandoned = () => {
+              vendorRefusal(
+                unsentAfterUnauthorized(`Connector "${id}"'s API`, signal.reason, "downstream_oauth_required"),
+                dispatch,
+              );
+            };
+            signal.addEventListener("abort", abandoned, { once: true });
+            detachAnswers.push(() => signal.removeEventListener("abort", abandoned));
+            if (signal.aborted) abandoned();
+          }
+          // A custom fetch may answer after revocation. Its physical status
+          // remains a fact, but its body belongs to no live helper or handler.
+          if (signal.aborted) {
+            void response.body?.cancel().catch(() => {});
+            throw signal.reason;
+          }
+          const answer = byteReadResponse(response);
+          bindProviderResponse(answer, dispatch, owner);
+          return { response: answer, dispatch };
+        };
+
+        if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
+        const release = retainOAuthPartition(oauthPartitionFor(ctx));
+        try {
+          if (signal?.aborted) throw signal.reason;
+          const provider = providerFor(ctx, auxiliary);
+          // Bind this call's reads and writes to the live epoch: a reset landing
+          // meanwhile fails the call rather than handing it another flow's grant.
+          const epoch = await provider.beginFlow();
+          if (provider.isOperatorDisconnectedEpoch(epoch)) {
+            throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
+          }
+          const tokens = await provider.tokens(issuerContext);
+          if (!tokens) throw authRequiredError();
+          const { response: first, dispatch } = await send(tokens.access_token);
+          if (first.status !== 401) return first;
+          void first.body?.cancel().catch(() => {});
+          if (
+            write ||
+            hasMethodOverride(headers) ||
+            (dispatch.classification === "write" && ["GET", "HEAD"].includes((dispatch.method ?? "GET").toUpperCase()))
+          ) {
+            let renewal: unknown;
+            try {
+              const fresh = await renewedToken(provider, ctx, tokens.access_token, auxiliary);
+              if (signal?.aborted) throw signal.reason;
+              // The call's ledger keeps this 401's verdict, or that renewal
+              // replaced the token this request sent (Q8). The same token back
+              // renewed nothing.
+              renewedAfterUnauthorized(dispatch, tokens.access_token, fresh);
+              if (fresh === tokens.access_token) renewal = authRequiredError();
+            } catch (error) {
+              if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
+              renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
+            }
+            throw vendorRefusal(
+              unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required"),
+              dispatch,
+            );
+          }
+          const accessToken = await renewedToken(provider, ctx, tokens.access_token, auxiliary);
+          if (signal?.aborted) throw signal.reason;
+          renewedAfterUnauthorized(dispatch, tokens.access_token, accessToken);
+          const { response: second } = await send(accessToken);
+          if (second.status !== 401) return second;
+          void second.body?.cancel().catch(() => {});
+          rejectedScopes.add(scopeOf(ctx));
+          throw authRequiredError();
+        } catch (error) {
+          // The SDK can replace cancellation with its passive-consent refusal,
+          // and write recovery normally replaces errors with a 401 verdict. A
+          // closed capability must still fail promptly with its own close reason;
+          // the invocation's ledger retains the write's uncertainty and handoff.
+          if (signal?.aborted) throw signal.reason;
+          if (error instanceof UnauthorizedError) {
+            rejectedScopes.add(scopeOf(ctx));
+            throw authRequiredError();
+          }
+          throw error;
+        } finally {
+          for (const detach of detachAnswers) detach();
+          release();
+        }
+      },
+      auxiliary,
+    );
   };
 
   const status = async (ctx: ConnectorContext): Promise<ConnectorStatus> => {
@@ -665,31 +766,36 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return provider.verifyState(state);
   };
 
-  const finishAuth = async (code: string, ctx: ConnectorContext, callbackParams?: URLSearchParams): Promise<void> => {
-    const provider = callbackProviders.get(scopeOf(ctx)) ?? providerFor(ctx);
-    callbackProviders.delete(scopeOf(ctx));
-    const authorizationCode = callbackParams?.get("code") ?? code;
-    const iss = callbackParams?.get("iss") ?? undefined;
-    // Every exchange names and claims its own consent, including without PKCE.
-    const consent = callbackParams?.get("state") ?? null;
-    if (!consent || !(await provider.verifyCallbackState(consent))) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
-      );
-    }
-    provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
-    provider.exchanging(authorizationCode);
-    await provider.bindFlow();
-    const result = await runAuth(provider, ctx, {
-      authorizationCode,
-      ...(iss !== undefined ? { iss } : {}),
-    });
-    if (result !== "AUTHORIZED") {
-      throw new UnauthorizedError("Failed to authorize");
-    }
-    rejectedScopes.delete(scopeOf(ctx));
-  };
+  const finishAuth = (code: string, ctx: ConnectorContext, callbackParams?: URLSearchParams): Promise<void> =>
+    settleOnClose(
+      ctx,
+      async () => {
+        const provider = callbackProviders.get(scopeOf(ctx)) ?? providerFor(ctx);
+        callbackProviders.delete(scopeOf(ctx));
+        const authorizationCode = callbackParams?.get("code") ?? code;
+        const iss = callbackParams?.get("iss") ?? undefined;
+        // Every exchange names and claims its own consent, including without PKCE.
+        const consent = callbackParams?.get("state") ?? null;
+        if (!consent || !(await provider.verifyCallbackState(consent))) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+          );
+        }
+        provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
+        provider.exchanging(authorizationCode);
+        await provider.bindFlow();
+        const result = await runAuth(provider, ctx, {
+          authorizationCode,
+          ...(iss !== undefined ? { iss } : {}),
+        });
+        if (result !== "AUTHORIZED") {
+          throw new UnauthorizedError("Failed to authorize");
+        }
+        rejectedScopes.delete(scopeOf(ctx));
+      },
+      true,
+    );
 
   return {
     status: retainingOAuthPartition(status, 0),

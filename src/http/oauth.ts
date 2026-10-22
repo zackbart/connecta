@@ -44,7 +44,8 @@ export class Grant extends Context.Service<
      * Renew because `stale` was refused: the token another call already
      * rotated in, else one coordinated refresh.
      */
-    // Call-owned: use interruptible Effects and abort their I/O on interruption.
+    // Interruptible call use; after claim submission the storage coordinator commits
+    // rotation under its own deadline, without returning it to a closed call.
     readonly refresh: (stale: string) => Effect.Effect<string, HttpFailure>;
     /** The renewed token was refused too: latch the request scope and fail with the grant's own verdict. */
     readonly rejected: Effect.Effect<never, HttpFailure>;

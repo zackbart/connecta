@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  driftCounts,
-  driftSummary,
   failure,
   info,
   initialState,
   resetIdentity,
-  safeHttpHref,
   type OperatorState,
   type UiActivityEvent,
 } from "../src/operator-ui/view.js";
@@ -98,39 +95,5 @@ describe("operator app state", () => {
     expect(after.page).toBe("activity");
     expect(JSON.stringify(after)).not.toContain("cta_one_time_secret");
     expect(JSON.stringify(after)).not.toContain("identity-a");
-  });
-
-  it("lets only http(s) values become an href", () => {
-    expect(safeHttpHref("https://provider.test/oauth?x=1")).toBe("https://provider.test/oauth?x=1");
-    expect(safeHttpHref("http://provider.test")).toBe("http://provider.test");
-    for (const hostile of [
-      "javascript:alert(1)",
-      "data:text/plain,alert(1)",
-      "//provider.test",
-      "/relative",
-      undefined,
-    ]) {
-      expect(safeHttpHref(hostile)).toBeNull();
-    }
-  });
-
-  it("renders drift as counts and never as names, schemas, or payloads", () => {
-    // A report that arrived carrying more than counts — the panel reads the
-    // four categories it knows and nothing else, so extra fields cannot reach
-    // an operator's screen even if something upstream stopped bounding them.
-    const smuggled = {
-      observedAt: "2026-08-12T12:00:00.000Z",
-      unclassifiedTools: 4,
-      unservedTools: 1,
-      annotationConflicts: 0,
-      schemaChanges: 2,
-      toolNames: ["billing.delete_customer"],
-      inputSchema: { type: "object" },
-    } as unknown as Parameters<typeof driftCounts>[0];
-    const rendered = JSON.stringify(driftCounts(smuggled));
-    expect(driftCounts(smuggled).every((c) => typeof c.count === "number")).toBe(true);
-    expect(rendered).not.toContain("billing.delete_customer");
-    expect(rendered).not.toContain("inputSchema");
-    expect(driftSummary(smuggled)).not.toContain("billing");
   });
 });

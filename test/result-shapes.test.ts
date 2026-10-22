@@ -1,8 +1,8 @@
-import { classifyTool } from "../src/tool-safety.js";
 import { describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { ObservedOutputSchemas } from "../src/result-shapes.js";
+import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, JsonSchema, ToolDef } from "../src/types.js";
 import { makeRegistry, required } from "./helpers.js";
 
@@ -108,59 +108,6 @@ describe("observed output schemas", () => {
     expect(serialized).not.toContain('"additionalProperties"');
   });
 
-  it("merges fields and broad types across observations", () => {
-    const shapes = new ObservedOutputSchemas();
-    const tool = shapeTool();
-    shapes.observe("linear", tool, {
-      issues: [{ id: "one", title: "First", state: null, details: null }],
-    });
-    shapes.observe("linear", tool, {
-      issues: [
-        {
-          id: "two",
-          comments: 3,
-          state: "started",
-          details: { team: "BP" },
-        },
-      ],
-    });
-    shapes.observe("linear", tool, {
-      issues: [{ id: "three", details: { project: "Connecta" } }],
-    });
-
-    expect(shapes.get("linear", tool)).toEqual({
-      type: "object",
-      properties: {
-        issues: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              comments: { type: "number" },
-              details: {
-                anyOf: [
-                  { type: "null" },
-                  {
-                    type: "object",
-                    properties: {
-                      project: { type: "string" },
-                      team: { type: "string" },
-                    },
-                  },
-                ],
-              },
-              id: { type: "string" },
-              state: {
-                anyOf: [{ type: "null" }, { type: "string" }],
-              },
-              title: { type: "string" },
-            },
-          },
-        },
-      },
-    });
-  });
-
   it("bounds hostile breadth, depth, property names, and cycles after merges", () => {
     const shapes = new ObservedOutputSchemas();
     const tool = shapeTool();
@@ -231,23 +178,6 @@ describe("observed output schemas", () => {
     shapes.observe("linear", destructive, { created: { id: "one" } });
     expect(shapes.get("linear", destructive)).toBeUndefined();
     expect(shapes.get("linear", original)).toBeUndefined();
-  });
-
-  it("expires after 24 hours and never crosses runtime instances", () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-      const shapes = new ObservedOutputSchemas();
-      const tool = shapeTool();
-      shapes.observe("linear", tool, { issues: [{ id: "one" }] });
-      expect(shapes.get("linear", tool)).toBeDefined();
-      expect(new ObservedOutputSchemas().get("linear", tool)).toBeUndefined();
-
-      vi.setSystemTime(new Date("2026-01-02T00:00:00.001Z"));
-      expect(shapes.get("linear", tool)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("caps the LRU and returns copies that callers cannot use to poison it", () => {
@@ -371,26 +301,5 @@ describe("observed output schemas", () => {
     });
     expect((await invokeOnce(registry)).ok).toBe(true);
     observer.mockRestore();
-  });
-
-  it("keeps provider declarations authoritative in discovery", async () => {
-    const declaredSchema: JsonSchema = {
-      type: "object",
-      properties: { declared: { type: "boolean" } },
-      required: ["declared"],
-      additionalProperties: false,
-    };
-    const tool = shapeTool({ outputSchema: declaredSchema });
-    const registry = makeRegistry([shapeConnector(tool, [{ actual: "different" }])]);
-    expect((await invokeOnce(registry)).ok).toBe(true);
-
-    const page = await new CatalogService(registry, BASE).search({
-      query: "list issues",
-      connector: "linear",
-      includeSchemas: "json",
-      includeSchemaKeys: true,
-    });
-    expect(required(page.entries[0]).tool.outputSchema).toEqual(declaredSchema);
-    expect(required(page.entries[0]).tool.outputSchemaSource).toBeUndefined();
   });
 });

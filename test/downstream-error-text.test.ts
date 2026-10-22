@@ -591,9 +591,9 @@ describe("the MCP boundary is an allow-list", () => {
       (err: unknown) => err,
     );
     await connector.closeScope!(context);
-    // The SDK rejects a request it cancels with an SdkError of the reason's
-    // own text; that passes as the SDK wrote it, never rewritten.
-    expect((error as Error).message).toBe(String(reason));
+    // The Promise boundary preserves the caller's actual reason, including
+    // its class and identity, rather than the SDK's former string wrapper.
+    expect(error).toBe(reason);
   });
 });
 

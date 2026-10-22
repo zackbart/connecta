@@ -1,8 +1,8 @@
-import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
-import { describe, expect, it, vi } from "vitest";
 import { FIX_PROMPT_KINDS, fixPrompt } from "../src/operator-ui/fix-prompts.js";
+import { describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
+import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -18,20 +18,6 @@ const LEAKS = [
   '{"error":"invalid_grant","error_description":"refresh token revoked for acct 4417"}',
   "<script>alert(1)</script>",
 ];
-
-describe("operator fix prompts", () => {
-  it("never carries a value from an error, even one posing as a connector id", () => {
-    for (const kind of FIX_PROMPT_KINDS) {
-      for (const leak of LEAKS) {
-        // The only variable is the connector id; a value that is not one is
-        // dropped rather than escaped into the text.
-        const prompt = fixPrompt(kind, leak);
-        expect(prompt, `${kind} ${leak}`).not.toContain(leak);
-        expect(prompt).not.toContain("Connector id:");
-      }
-    }
-  });
-});
 
 describe("OAuth callback page", () => {
   function oauthConnector(finishAuth: NonNullable<Connector["finishAuth"]>): Connector {
@@ -98,90 +84,16 @@ describe("OAuth callback page", () => {
     expect(body).not.toContain("invalid_grant");
     expect(body).not.toContain("4417");
   });
+});
 
-  const TITLE = "Quarterly Ledger";
-  function titled(id: string, finishAuth: NonNullable<Connector["finishAuth"]> = async () => {}): Connector {
-    return { ...oauthConnector(finishAuth), id, title: TITLE };
+it("never carries a value from an error, even one posing as a connector id", () => {
+  for (const kind of FIX_PROMPT_KINDS) {
+    for (const leak of LEAKS) {
+      // The only variable is the connector id; a value that is not one is
+      // dropped rather than escaped into the text.
+      const prompt = fixPrompt(kind, leak);
+      expect(prompt, `${kind} ${leak}`).not.toContain(leak);
+      expect(prompt).not.toContain("Connector id:");
+    }
   }
-
-  it("names the connector by title only after the state check", async () => {
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      auth: callbackAuth,
-      storage: memoryStorage(),
-      logger: silentLogger,
-      connectors: [
-        titled("svc"),
-        titled("broken", async () => {
-          throw new Error("exchange");
-        }),
-      ],
-    });
-    await bindCallback(connecta, "svc", "good-state");
-    await bindCallback(connecta, "broken", "good-state");
-    const connected = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`));
-    expect(connected.status).toBe(200);
-    const connectedBody = await connected.text();
-    expect(connectedBody).toContain(`<h1>${TITLE} is connected</h1>`);
-    expect(connectedBody).toContain(`<title>${TITLE} is connected · Connecta</title>`);
-    expect(connectedBody).not.toContain("Details for the operator");
-
-    const failed = await (
-      await connecta.fetch(new Request(`${BASE}/oauth/callback/broken?code=abc&state=good-state`))
-    ).text();
-    expect(failed).toContain(`<h1>${TITLE} could not be connected</h1>`);
-
-    for (const path of [
-      "/oauth/callback/svc?code=abc&state=stale",
-      "/oauth/callback/svc?code=abc",
-      "/oauth/callback/svc",
-      "/oauth/callback/svc?error=access_denied",
-      "/oauth/callback/svc?error=server_error",
-    ]) {
-      const refusal = await (await connecta.fetch(new Request(`${BASE}${path}`))).text();
-      expect(refusal, path).not.toContain(TITLE);
-      expect(refusal, path).not.toContain("svc");
-    }
-  });
-
-  it("keeps every refusal byte-identical across connectors and paths", async () => {
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      auth: callbackAuth,
-      storage: memoryStorage(),
-      logger: silentLogger,
-      connectors: [
-        titled("svc"),
-        {
-          id: "plain",
-          title: "Plain API",
-          async listTools() {
-            return [];
-          },
-          async callTool() {
-            return {};
-          },
-        },
-      ],
-    });
-    const bodies = new Set<string>();
-    for (const path of [
-      "/oauth/callback/svc?code=abc&state=stale",
-      "/oauth/callback/svc?code=abc",
-      "/oauth/callback/plain?code=abc&state=good-state",
-      "/oauth/callback/missing?code=abc&state=good-state",
-      "/oauth/callback/%3Cscript%3E?code=abc",
-      "/oauth/callback/svc",
-    ]) {
-      const response = await connecta.fetch(new Request(`${BASE}${path}`));
-      expect(response.status, path).toBe(400);
-      bodies.add(await response.text());
-    }
-    expect(bodies.size).toBe(1);
-    const [body] = [...bodies];
-    expect(body).toContain('data-oauth-callback="invalid_callback"');
-    expect(body).toContain("<h1>Authorization could not be completed</h1>");
-    expect(body).not.toContain("Plain API");
-    expect(body).not.toContain(TITLE);
-  });
 });

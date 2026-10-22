@@ -50,12 +50,40 @@ deployment shapes construct it outside the request handler.
 An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
 runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
 Joined scopes share the outcome while keeping their own request I/O and
-cancellation. A shared-storage CAS lease prevents independent isolates from
-redeeming the same refresh token concurrently. The holder commits an accepted
-rotation to the grant by CAS before releasing waiters, even when the owner
-cancels after dispatch. The HTTP exchange uses its own 20-second deadline,
-detached from caller cancellation, and the runtime passes its completion and
-commit to Workers `waitUntil`. Contenders read the committed tokens or typed
+cancellation. Grant use and the caller's wait belong to the call. Renewal
+preparation is call-owned only until the first durable coordinator write
+(the claim CAS) is submitted. Closing the call or request before
+submission promptly refuses with "This call has ended…": no CAS, no token
+request and no state change. Late read results cannot restart preparation.
+Claim submission transfers renewal synchronously to the storage coordinator,
+before CAS completion or token dispatch. The coordinator retains its own
+35-second preparation deadline and then a 20-second deadline for the token
+request and response body, followed by the fenced rotation commit. Neither
+the call nor request signal controls this work after submission. A winning
+claim proceeds to token exchange and commit; a losing claim follows existing
+contention/adoption rules. The runtime passes completion to Workers
+`waitUntil`. Cancellation cannot abandon a fenced claim or strand a spent
+refresh token, and introduces no rollback or re-consent exception. A shared
+storage CAS lease prevents independent isolates from redeeming the same
+refresh token concurrently. The holder commits an accepted rotation by CAS
+before releasing waiters, even after caller closure. Closing a call or request
+still promptly ends that caller's wait.
+For a shared remote MCP connection, the challenged response identifies the
+call that owns renewal preparation. The connection and OAuth provider remain
+request-owned; their longer lifetime cannot keep pre-claim renewal alive
+after its initiating call closes.
+Authorization-code exchange transfers no refresh ownership: its auxiliary
+token POST and pending wait abort on explicit request revocation even when
+the operation has only a `requestScope` and no external signal. A response
+that arrives afterward cannot persist tokens. The callback route keeps its
+existing uninterruptible ownership and does not revoke its own scope during
+exchange; explicit operation revocation is a separate boundary. An aborted
+code exchange can be authorized again without stranding a durable refresh
+claim.
+The closed call consumes no renewal result, marks no ledger entry renewed,
+and sends or resends no resource request. This preserves a rotation after its
+refresh token has been spent while keeping call capabilities revoked.
+Contenders read the committed tokens or typed
 verdict. An unsent claim can be taken over after expiry. Dispatch uses a lease CAS
 transition and a CAS of the token fingerprint into permanent spent storage
 before sending. Fingerprint records have no TTL and carry outstanding,
@@ -79,7 +107,7 @@ request that created them. INV-7 requires this lifetime: a client retained
 across requests on Workers is a cross-request capability leak, and a promise awaited after the response is
 work the runtime may already have torn down. Deferred work has one sanctioned
 channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
-writes and dispatched OAuth grant commits use it. Catalog listing and SQL cache
+writes and OAuth renewals from claim submission use it. Catalog listing and SQL cache
 publication finish in the requesting scope. A fresh
 `McpServer` per request is what makes the deployment stateless: no sessions, no
 server push, no stream resumability, scope resolved rather than remembered.
@@ -1952,7 +1980,7 @@ storage is the root's namespaced to its principal.
 | Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
 | Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
 | Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
-| Downstream OAuth (`auth/downstream-oauth.ts`)                          | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Downstream OAuth (`auth/downstream-oauth.ts`, `auth/static-oauth.ts`)  | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -2135,19 +2163,56 @@ compiling and configuring the real thing.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
-- **Call state rides beside the context, keyed on the object.** The caller
-  (`src/connector-caller.ts`), admission permit (`src/call-admission-context.ts`),
-  recovery facts (`src/call-recovery.ts`), sent secrets (`src/sent-secrets.ts`),
-  the call's classification (`src/call-classification.ts`), the OAuth sealer and
-  owner partition, and catalog-cache policy live in side tables keyed on the
-  `ConnectorContext`. A `{ ...ctx }` copy is a new key and starts without any of
-  them. In-repo code copies a context only through `deriveContext`
-  (`src/derived-context.ts`): every table resolves the copy to its origin, so
-  state recorded through either object reaches the other, and the copy keeps the
-  request scope. `api()` hands handlers such a copy and never mutates the
-  registry's context (`test/derived-context.test.ts`). A deployment handler that
-  spreads its context still loses this state; decision 0009 (B.1) replaces the
-  tables with `Context` services.
+- **Operation and call state live in services.** `src/runtime/call.ts` owns
+  the admitted `Caller`, credentials, admission budget, recovery writer,
+  classification, signals, secrets and request ledgers. Registry operations
+  provision caller and operation policy; invocation adds a call lease and
+  finalizes it on every exit. `api()` has a private Effect entry and a shared
+  core with its Promise `callTool`. The public `ConnectorContext` is a view
+  of those services. `deriveContext` shares its entry in the single view
+  bridge; a spread has no caller or admission authority. Candidate credential
+  probes get anonymous read-call services instead of deriving authority.
+  Credentials and charges check closure before and after every await, pending
+  work is interrupted, and late recovery facts are dropped. Every published
+  Promise view and connector operation also races its complete caller-facing
+  Promise against its owner through `settleOnClose`: credential and fetch
+  views, guarded helpers, token minting, catalog loading, MCP operations and
+  applicable authorization operations. An opaque storage, crypto, resolver
+  or body-cleanup wait cannot keep that caller pending after closure.
+  Work starts synchronously after the owner guard so shared-session waiter
+  accounting and claim ownership keep their existing ordering. Late
+  rejections are observed; dispatch and lease guards still contain detached
+  work. Per-await I/O cancellation remains useful for releasing resources,
+  while prompt refusal is enforced at the boundary
+  (`test/promise-boundary-lifetime.test.ts`). Invocation owns
+  the recovery and logical-call records it reads after teardown. Closing an
+  outer call also revokes nested calls paused in preparation. Request-owned
+  MCP sessions and token flights outlive individual calls and close with the
+  request; their credential access comes from the operation. Operation views
+  resolve request cancellation even without an external signal; auxiliary
+  authentication, sends and response handling all use that signal. The
+  invocation deadline and original request cancellation remain separate,
+  so deadline cleanup cannot end request-owned auxiliary work.
+  Concurrent operator probes use separate row scopes, so finalizing a failed
+  row cannot revoke a sibling that is still running.
+  Shared MCP sessions bind renewal preparation to the challenged call's signal,
+  rather than the connection's longer lifetime. OAuth renewal
+  is call-owned until its first durable claim CAS is submitted. Submission
+  transfers preparation, token exchange and fenced rotation commit to the
+  storage coordinator under its own deadlines and deferred-work hook; only
+  the caller's wait still closes with the call. That completion
+  cannot resume a closed call or resend its resource request
+  (`test/call-renewal-lifetime.test.ts`,
+  `test/remote-mcp-renewal-lifetime.test.ts`). Explicit request revocation also
+  aborts pending authorization-code exchange and refuses late token writes
+  (`test/operation-cancellation.test.ts`). Request closure
+  revokes views and calls first, then runs every finalizer in reverse order,
+  collecting failures. The caller's original cancellation signal is retained
+  separately from the lease signal, so normal teardown never looks like caller
+  cancellation (`test/call-services.test.ts`, `test/derived-context.test.ts`).
+  Construction identities and immutable request/failure facts stay in the pure
+  `src/provider-call-facts.ts`, keeping provider stamping and operator sinks
+  free of the Effect call-service graph.
 - **A write leaves once (INV-9).** `src/write-outcome.ts` owns the shared rules
   every transport applies to a write: `unknownOutcome` turns a retryable
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to

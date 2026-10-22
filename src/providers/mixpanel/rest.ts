@@ -1,6 +1,6 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, ConnectorCallAdmissionPolicy, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
@@ -626,11 +626,7 @@ export function mixpanelRest(
     tools,
     async testCredential(value, ctx) {
       try {
-        await request(
-          deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
-          "GET",
-          "/api/app/me",
-        );
+        await request(credentialProbeContext(ctx, { value }), "GET", "/api/app/me");
         return {
           ok: true,
           message: "Authenticated Mixpanel service account; list_projects returns its reachable project metadata.",

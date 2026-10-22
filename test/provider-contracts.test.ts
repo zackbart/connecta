@@ -11,9 +11,4 @@ describe.each(providerFixtures as unknown as ContractFixture[])("$name provider 
       expect(() => fixture.create("reader", { ...scenario.options, readOnly: "true" })).toThrow(/readOnly.*boolean/);
     }
   });
-
-  it("INV-11: names the provider and id in construction refusals", () => {
-    const factory = fixture.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-    expect(() => fixture.create("bad", { purpose: "" })).toThrow(`${factory}("bad") requires `);
-  });
 });

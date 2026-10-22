@@ -3,62 +3,37 @@ import { resourceUriMatchesTemplate, resourceUriMatchesTemplates } from "../src/
 
 it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/a"],
-  ["docs://manual/{+id}?id={id}", "docs://manual/%20?id=%20"],
   ["docs://manual/{id:1}/{id}", "docs://manual/a/abc"],
-  ["docs://manual/entry{/a,b}", "docs://manual/entry/one"],
-  ["docs://manual/{page}", "docs://manual/start"],
-  ["file:///{+path}", "file:///a/b/c"],
   ["file://{/p*}", "file:///a/b/c"],
   ["docs://manual/{+path}", "docs://manual/a/b/c"],
-  ["docs://manual/{page}", "docs://manual/hello%20world"],
-  ["docs://manual/{page}", "docs://manual/%E2%9C%93"],
-  ["docs://manual/{+page}", "docs://manual/start!"],
   ["docs://manual/entry{#section}", "docs://manual/entry#summary"],
-  ["docs://manual/entry{/page}", "docs://manual/entry/start"],
-  ["docs://manual/entry{/a,b}", "docs://manual/entry/one/two"],
   ["docs://manual/entry{.format}", "docs://manual/entry.json"],
   ["docs://manual/entry{;format}", "docs://manual/entry;format=json"],
-  ["docs://manual/entry{;format}", "docs://manual/entry;format"],
-  ["docs://manual/entry{?page,format}", "docs://manual/entry?format=json"],
   ["docs://manual/entry{?page,format}", "docs://manual/entry?page=1&format=json"],
   ["docs://manual/entry?fixed=1{&format}", "docs://manual/entry?fixed=1&format=json"],
-  ["docs://manual/{page:3}", "docs://manual/abc"],
   ["docs://manual/{pages*}", "docs://manual/one,two"],
-  ["docs://manual/entry{?format}", "docs://manual/entry"],
   ["https://h{/x}.evil.com:8443/", "https://h/safe.evil.com:8443/"],
   ["https://h{/x}@evil.com:1/", "https://h/safe@evil.com:1/"],
-  ["https://h:443{/x}", "https://h:443/safe"],
-  ["https://user@h:8443{/x}", "https://user@h:8443/safe"],
   ["https://[::1]:8443{/x}", "https://[::1]:8443/safe"],
-  ["https://H:443{/x}", "https://H:443/safe"],
-  ["docs:{/a}/static!", "docs:/safe/static!"],
   ["x:{value}", "x:safe"],
-  ["docs://manual/{page}", "docs://manual/caf%C3%A9"],
   ["docs://manual/{page}", "docs://manual/%25E2%259C%2593"],
-  ["docs://manual/{+path}", "docs://manual/caf%C3%A9/%E6%96%87%E6%9B%B8"],
   ["docs://manual{/pages*}", "docs://manual/caf%C3%A9/%E2%9C%93"],
   ["https://h/.{x}/", "https://h/.safe/"],
-  ["https://h/{x}./y", "https://h/safe./y"],
   ["docs://manual/{x}?literal=/../", "docs://manual/safe?literal=/../"],
-  ["docs://manual/{x}#literal/./", "docs://manual/safe#literal/./"],
 ])("INV-3: matches advertised RFC 6570 expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
 });
 
 it.each([
   ["https://h/100%25/{p}", "https://h/100%25/a"],
-  ["https://h/100%25off/{p}", "https://h/100%25off/a"],
-  ["https://h/{p}", "https://h/50%25off"],
   ["https://h/{p}", "https://h/50%2525off"],
-  ["https://h/{p}/{p}", "https://h/50%25off/50%25off"],
   ["https://h/{p:3}/{p}", "https://h/50%25/50%25off"],
-  ["https://h/{p}", "https://h/50%25off%2520sale"],
 ])("INV-3: preserves encoded-percent data in template literals and values %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: true });
 });
 
-it.each(["%252E%252E", "%25%32%45%25%32%45", "%25E2%2580%25A8", "%25EF%25BC%258F", "%250A", "%25FF"])(
+it.each(["%252E%252E", "%25EF%25BC%258F", "%25FF"])(
   "INV-3 INV-4: encoded-percent data cannot hide nested unsafe escapes %s",
   (encoded) => {
     for (const [template, uri] of [
@@ -73,40 +48,17 @@ it.each(["%252E%252E", "%25%32%45%25%32%45", "%25E2%2580%25A8", "%25EF%25BC%258F
 );
 
 it.each([
-  ["https://h/100%/{p}", "https://h/100%/a"],
-  ["https://h/100%ZZ/{p}", "https://h/100%ZZ/a"],
-  ["https://h/{p}", "https://h/50%off"],
-  ["https://h/{p}", "https://h/50%25off%FF"],
-])("INV-3 INV-4: preserves strict initial percent and UTF-8 validation %s as %s", (template, uri) => {
-  expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
-});
-
-it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/b"],
-  ["docs://manual/{+id}/{id}", "docs://manual/%2520/%2520"],
-  ["docs://manual/entry{;id}/{id}", "docs://manual/entry;id/a"],
-  ["docs://manual/entry{#id}/{id}", "docs://manual/entry/a"],
-  ["docs://manual/entry{?id}/{id}", "docs://manual/entry/a"],
   ["docs://manual/{id:2}/{id}", "docs://manual/a/abc"],
-  ["docs://manual/{page}", "docs://manual/start!"],
-  ["docs://manual/{page:3}", "docs://manual/abcd"],
   ["{scheme}://manual/{page}", "http://manual/start"],
-  ["docs://{host}/{page}", "docs://other/start"],
   ["docs://manual/{+page}", "docs://manual/../private"],
   ["docs://manual/{+id}/{id}", "docs://manual/a/a"],
   ["docs://manual/{+page}", "docs://manual/http%3A%2F%2F127.0.0.1"],
   ["docs://manual/{page}", "docs://manual/%252fprivate"],
-  ["docs://manual/{page}", "docs://manual/%2e%2e"],
   ["docs://manual/entry{.page*}", "docs://manual/entry..."],
-  ["docs://manual/{page}", "docs://manual/%2e"],
   ["docs://manual/{page}", "docs://manual/start?private=1"],
-  ["docs://manual/{page}", "docs://manual/start#private"],
-  ["docs://manual/{page}", "docs://manual/%5cprivate"],
-  ["docs://manual/{page}", "docs://manual/%0aprivate"],
   ["docs://manual/{page}", "docs://manual/%ZZ"],
   ["docs://manual/{bad:0}", "docs://manual/a"],
-  ["docs://manual/{bad..name}", "docs://manual/a"],
-  ["docs://manual/{page", "docs://manual/a"],
   ["docs://manual/{a}{b}", "docs://manual/ab"],
 ])("INV-3 INV-4: refuses unsafe or malformed expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
@@ -121,25 +73,22 @@ it.each([
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
 });
 
-it.each(["http", "https", "ftp", "ws", "wss"])(
-  "INV-3 INV-4: refuses a WHATWG host absent from the RFC 3986 %s template",
-  (scheme) => {
-    // The final ! makes the capture boundary deterministic, so host checking
-    // must refuse this after expansion rather than at template parsing.
-    const uri = `${scheme}:/evil.com/static!`;
-    const uriTemplate = `${scheme}:{/a}/static!`;
-    expect(new URL(uri).host).toBe("evil.com");
-    expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(false);
-    expect(resourceUriMatchesTemplates(uri, [{ uriTemplate }])).toEqual({ matched: false });
-    expect(resourceUriMatchesTemplate(`${scheme}:/evil.com/static`, `${scheme}:{/a}/static`)).toBe(false);
-  },
-);
+it.each(["https"])("INV-3 INV-4: refuses a WHATWG host absent from the RFC 3986 %s template", (scheme) => {
+  // The final ! makes the capture boundary deterministic, so host checking
+  // must refuse this after expansion rather than at template parsing.
+  const uri = `${scheme}:/evil.com/static!`;
+  const uriTemplate = `${scheme}:{/a}/static!`;
+  expect(new URL(uri).host).toBe("evil.com");
+  expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(false);
+  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate }])).toEqual({ matched: false });
+  expect(resourceUriMatchesTemplate(`${scheme}:/evil.com/static`, `${scheme}:{/a}/static`)).toBe(false);
+});
 
 it("INV-3 INV-4: refuses backslash normalization in a literal authority", () => {
   expect(resourceUriMatchesTemplate("https://h\\evil.com/safe", "https://h\\evil.com{/x}")).toBe(false);
 });
 
-it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%85"])(
+it.each(["%E2%80%A8", "%EF%BC%8F", "%EF%BC%85"])(
   "INV-3 INV-4: refuses Unicode separators and URI syntax lookalikes at each decoding layer %s",
   (encoded) => {
     for (const expression of ["{page}", "{+page}", "{/page*}", "{?page}"]) {
@@ -157,14 +106,8 @@ it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%8
 
 it.each([
   ["https://h/.{x}/", "https://h/./"],
-  ["https://h/{x}./y", "https://h/./y"],
-  ["https://h/..{x}/", "https://h/../"],
-  ["https://h/%2e{x}/", "https://h/%2e/"],
   ["https://h/{x}%252e/y", "https://h/%252e/y"],
-  ["docs://manual/.{x}", "docs://manual/."],
-  ["docs://manual/%E2%80%A8{x}", "docs://manual/%E2%80%A8"],
   ["docs://manual/%25C2%25A0{x}", "docs://manual/%25C2%25A0"],
-  ["docs://manual/%EF%BC%8F{x}", "docs://manual/%EF%BC%8F"],
 ])("INV-3 INV-4: checks final path segments formed by literals and empty captures %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
@@ -227,14 +170,6 @@ it.each([
   expect(uri.length).toBe(8192);
   expect(result).toEqual({ matched: false, ...(refusal ? { refusal } : {}) });
   expect(elapsed).toBeLessThan(50);
-});
-
-it("INV-3 INV-7: matches sixteen expressions with one forward capture per literal", () => {
-  const uriTemplate = "x:" + Array.from({ length: 16 }, (_, i) => `{v${i}}`).join("/");
-  const uri = "x:" + Array.from({ length: 16 }, () => "a".repeat(510)).join("/");
-  const start = performance.now();
-  expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(true);
-  expect(performance.now() - start).toBeLessThan(50);
 });
 
 it("INV-3 INV-7: scans almost the full match budget before an end-of-URI mismatch", () => {

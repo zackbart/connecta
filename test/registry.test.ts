@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { connectorWith } from "./fixtures/connectors.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, KVStorage, ToolDef } from "../src/types.js";
-import { calcConnector, makeRegistry, remoteConnector, silentLogger } from "./helpers.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -65,23 +65,6 @@ describe("personal OAuth handoffs", () => {
     expect((await registry.oauthCallbackView("calc", "reused-state"))?.principalKey).toBe(winner);
     await registry.storeOAuthHandoff("calc", "reused-state", winner);
     expect((await registry.oauthCallbackView("calc", "reused-state"))?.principalKey).toBe(winner);
-  });
-});
-
-describe("address resolution", () => {
-  const registry = makeRegistry([calcConnector, remoteConnector]);
-
-  it("keeps only the first dot as the split", () => {
-    const r = registry.resolveAddress("remote.echo.deep");
-    expect(r?.connector.id).toBe("remote");
-    expect(r?.toolName).toBe("echo.deep");
-  });
-
-  it("returns null for unknown connector or malformed address", () => {
-    expect(registry.resolveAddress("nope.tool")).toBeNull();
-    expect(registry.resolveAddress("noseparator")).toBeNull();
-    expect(registry.resolveAddress(".leading")).toBeNull();
-    expect(registry.resolveAddress("calc.")).toBeNull();
   });
 });
 

@@ -1,3 +1,4 @@
+import { callMemo } from "../../runtime/call.js";
 // Cloudflare's configuration of the shared REST connector: API-token and
 // Global API Key authentication, the v4 envelope, account/zone defaults and
 // pins, reviewed read-only POSTs and refusals, two pagination shapes, and the
@@ -5,7 +6,7 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { chargeConnectorCall } from "../../call-admission-context.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError } from "../../errors.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
@@ -545,7 +546,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
   const owners = new Map<string, string>();
   /** Times of internal ownership reads, bounded per rolling window. */
   const lookups: number[] = [];
-  const lookupsPerCall = new WeakMap<ConnectorContext, number>();
+  const lookupKey = {};
   const pinRefusal = (what: string): never => {
     throw new ConnectorCallError(
       "provider_permission_denied",
@@ -567,7 +568,8 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
    * one call cannot spend the user's shared request limit on pin checks.
    */
   const chargeLookup = (ctx: ConnectorContext): void => {
-    const used = lookupsPerCall.get(ctx) ?? 0;
+    const state = callMemo(ctx, lookupKey, () => ({ used: 0 }));
+    const used = state.used;
     if (used >= MAX_LOOKUPS_PER_CALL) {
       throw new ConnectorCallError(
         "invalid_args",
@@ -584,7 +586,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
       );
     }
     lookups.push(now);
-    lookupsPerCall.set(ctx, used + 1);
+    state.used = used + 1;
   };
   const assertZone = async (zone: string, ctx: ConnectorContext): Promise<void> => {
     if (pinnedZones?.has(zone)) return;
@@ -879,12 +881,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
   };
 
   const withValues = (ctx: ConnectorContext, values: Record<string, string>): ConnectorContext =>
-    deriveContext(ctx, {
-      credential: {
-        get: async (field?: string) => (field ? (values[field] ?? null) : (values["value"] ?? null)),
-        getAll: async () => values,
-      },
-    });
+    credentialProbeContext(ctx, values);
 
   const credentialTest = async (ctx: ConnectorContext): Promise<CredentialTestResult> => {
     try {

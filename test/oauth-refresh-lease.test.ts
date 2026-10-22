@@ -298,7 +298,7 @@ describe("refresh dispatch leases on delayed storage", () => {
     ["liveness write", "timeout"],
     ["dispatch CAS", "cancel"],
   ] as const)(
-    "settles an unsent owner's flight when %s is blocked and the caller reaches %s (INV-5)",
+    "a blocked %s settles the caller at %s and keeps renewal owned by its coordinator (INV-5 INV-7)",
     async (phase, end) => {
       const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
@@ -345,17 +345,36 @@ describe("refresh dispatch leases on delayed storage", () => {
       const error = await owner;
       if (end === "cancel") expect(error).toBe(controller.signal.reason);
       else expect(error).toMatchObject({ code: "unavailable", retryable: true });
-      await vi.waitFor(() => expect(pins).toBe(0));
       expect(send).not.toHaveBeenCalled();
       expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
-      const b = await isolate(storage, () => Date.now() + 300_000, coordinator);
-      expect((await b.fetch(send)(`${ISSUER}/token`, init)).status).toBe(200);
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(pins).toBe(0);
-      gate.resolve();
-      cleanupGate.resolve();
-      await pause();
-      expect(send).toHaveBeenCalledTimes(1);
+      try {
+        if (end === "cancel") {
+          // The claim was submitted before this dispatch CAS. Cancellation
+          // ends only the caller's wait; its coordinator must finish renewal.
+          expect(pins).toBe(1);
+          gate.resolve();
+          await vi.waitFor(() => expect(pins).toBe(0));
+          expect(send).toHaveBeenCalledTimes(1);
+          expect((await storedGrant(storage))!.body!.tokens).toMatchObject(next);
+          expect(await a.provider.pendingAuthorizationUrl()).toBeUndefined();
+          const b = await isolate(storage, Date.now, coordinator);
+          expect((await b.fetch(send)(`${ISSUER}/token`, init)).status).toBe(200);
+          expect(send).toHaveBeenCalledTimes(1);
+        } else {
+          // An independent coordinator deadline still ends unsent work.
+          await vi.waitFor(() => expect(pins).toBe(0));
+          const b = await isolate(storage, () => Date.now() + 300_000, coordinator);
+          expect((await b.fetch(send)(`${ISSUER}/token`, init)).status).toBe(200);
+          expect(send).toHaveBeenCalledTimes(1);
+          expect(pins).toBe(0);
+          gate.resolve();
+          await pause();
+          expect(send).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        gate.resolve();
+        cleanupGate.resolve();
+      }
     },
   );
 });

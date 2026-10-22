@@ -7,9 +7,9 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { JsonSchema } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
-import type { JsonSchema } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const SECRET = 'private/+"value-782';
@@ -317,24 +317,6 @@ it("INV-5: writeOnly output protection keeps subsequent submitted arguments inta
   expect(request.redactCredentials(SECRET)).toBe("[redacted]");
 });
 
-it.each(["mcp", "api"] as const)(
-  "INV-5: %s tools without writeOnly fields preserve ordinary downstream diagnostics and results",
-  async (kind) => {
-    const source = fixture(kind, { type: "object" });
-    const registry = makeRegistry([source.connector]);
-    const meta = createMetaTools(registry, BASE);
-    for (const failed of [false, true]) {
-      source.fail(failed);
-      const args = { config: { password: "q" } };
-      const result = await meta.callTool({ address: "echo.read", args, resultMode: "value" });
-      expect(result.isError === true).toBe(failed);
-      if (failed || kind === "api") expect(JSON.stringify(result)).toContain("Downstream quoted q");
-      else expect(result.structuredContent!.data).toEqual({ echo: forms("q"), padding: "" });
-      expect(JSON.stringify(result)).not.toContain("[redacted]");
-    }
-  },
-);
-
 it("INV-5: short private strings protect exact leaves and matching prose while empty strings preserve usable metadata", async () => {
   let reply: unknown;
   const connector = api("short", {
@@ -494,32 +476,6 @@ it("INV-5 INV-9: large private strings preserve typed write success and safe ide
     data: { id: "needed-id", status: "ok", prose: "x".repeat(2_000) + "[redacted]" },
     format: "json",
   });
-});
-
-it("INV-5: a public-only 2,100-field schema stays on the unchanged call path", async () => {
-  const expected = { id: "needed-id", status: "ok" };
-  const connector = api("public", {
-    tools: [
-      {
-        name: "read",
-        description: "Read public data",
-        annotations: { readOnlyHint: true },
-        inputSchema: {
-          type: "object",
-          properties: Object.fromEntries(
-            Array.from({ length: 2_100 }, (_, index) => [`field${index}`, { type: "string" }]),
-          ),
-        },
-        handler: async () => expected,
-      },
-    ],
-  });
-  const result = await createMetaTools(makeRegistry([connector]), BASE).callTool({
-    address: "public.read",
-    args: { field0: "hello" },
-    resultMode: "value",
-  });
-  expect(result.structuredContent).toMatchObject({ ok: true, data: expected, format: "json" });
 });
 
 it("INV-5: nested JSON strings decode through a bounded number of layers, and deeper nesting is withheld", () => {

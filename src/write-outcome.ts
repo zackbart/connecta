@@ -1,3 +1,4 @@
+import { callerSignal } from "./runtime/call.js";
 // Whether a dispatched write landed, as far as anyone can know. Shared by the
 // invocation layer (which attaches recovery facts to every unknown outcome),
 // trusted-program write accounting, and every connector that must tell an
@@ -47,7 +48,7 @@ export type WriteState = "ok" | "failed" | "unknown";
  * does not read as `unavailable` or a timeout (`servedRefusal`; a 5xx never
  * proves a write unapplied, and a 401 does only with the vendor's reviewed
  * `authBeforeExecution` evidence). The evidence must
- * hold for the whole logical call (`knownForLogicalCall`, which `answered`
+ * hold for the whole logical call (`knownCallFailure`, which `answered`
  * reports for a served call): every request the call sent is proven not
  * applied, and the failing request carries the refusal. A downstream tool's
  * `isError` arrives over a 2xx after its handler ran, so it is no such
@@ -308,7 +309,7 @@ function servedRefusal(error: unknown, status: number | undefined, authBeforeExe
  * vendor's `authBeforeExecution` declaration that is the only request the
  * call sent, whose own refusal is the failure and is known for the whole
  * call (`knownRefusal`: the boundary that sent it proved it, and, served,
- * `knownForLogicalCall`), stays that refusal. Returns `error` itself when no
+ * `knownCallFailure`), stays that refusal. Returns `error` itself when no
  * write request was answered 401.
  */
 export function settleWrite(requests: readonly ProviderRequest[], error: unknown, knownRefusal: boolean): unknown {
@@ -429,7 +430,7 @@ function isTimeout(error: ConnectorCallError): boolean {
  * signal is its invocation's, which reports its own deadline and cancellation.
  */
 function callerAbort(ctx: ConnectorContext): { reason: unknown } | undefined {
-  const signal = ctx.signal;
+  const signal = callerSignal(ctx);
   return signal?.aborted === true && callClassification(ctx) === undefined ? { reason: signal.reason } : undefined;
 }
 

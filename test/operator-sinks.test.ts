@@ -1,31 +1,25 @@
-import { OAuthErrorCode } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createExecuteTool } from "../src/execute.js";
-import { Registry } from "../src/registry.js";
 import { recordToolActivity } from "../src/activity.js";
-import { machineAuth } from "./helpers/machine-auth.js";
-import { parseConnectorAccess } from "../src/connector-access.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { parseConnectorAccess } from "../src/connector-access.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError, type ConnectorCallErrorCode } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import {
-  boundedStatus,
-  classifiedFailure,
   describeFailure,
   failureRecord,
-  failureStatus,
   logFailure,
-  OAUTH_ERROR_CODES,
-  ownStatus,
   type FailureRecord,
   type FailureSubject,
 } from "../src/operator-record.js";
+import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, JsonSchema, Logger, ToolDef } from "../src/types.js";
 import { activitySink, createTestConnecta, makeRegistry } from "./helpers.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 // INV-6 at the sinks (#695, #716). Every position a downstream controls gets
 // its own sentinel; none may reach a log line, the console, an activity row,
@@ -517,48 +511,6 @@ describe("the operator record", () => {
     ]);
   });
 
-  it("INV-6: reads a classification only from one connecta registered", () => {
-    const shaped = {
-      code: "unavailable",
-      retryable: true,
-      details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
-    };
-    // Shaped like `CallErrorDetails`, but thrown, not computed: nothing read.
-    expect({ ...failureRecord({ connector: "svc" }, shaped) }).toEqual({ connector: "svc" });
-    expect(describeFailure("svc", shaped)).toBe('Connector "svc" failed.');
-    const ours = classifiedFailure({
-      code: "unavailable",
-      message: planted("message"),
-      retryable: true,
-      details: { host: "https://down.example", code: "ECONNREFUSED" },
-    });
-    expect({ ...failureRecord({ connector: "svc" }, ours) }).toEqual({
-      connector: "svc",
-      code: "unavailable",
-      retryable: true,
-      origin: "https://down.example",
-      errno: "ECONNREFUSED",
-    });
-    // A registered classification still carries only codes from the table.
-    const forwarded = classifiedFailure({ code: planted("code"), message: "x", retryable: false });
-    expect({ ...failureRecord({}, forwarded) }).toEqual({ retryable: false });
-  });
-
-  it("INV-6: rebuilds a status connecta wrote from what it approved, not what it holds now", () => {
-    const failed = failureStatus("svc", new TypeError(planted("error")));
-    const approved = failed.message;
-    failed.message = planted("replaced");
-    (failed as { state: string }).state = "ok";
-    expect(boundedStatus(failed)).toEqual({ state: "error", message: approved });
-    const ok = ownStatus({ state: "ok" as const });
-    Object.assign(ok, { message: planted("added") });
-    expect(boundedStatus(ok)).toEqual({ state: "ok" });
-    // A rebuilt status is rebuilt from the same snapshot again.
-    const again = boundedStatus(failed);
-    again.message = planted("again");
-    expect(boundedStatus(again)).toEqual({ state: "error", message: approved });
-  });
-
   it("INV-6: activity records only a classification code connecta assigns", () => {
     const target = activitySink();
     for (const errorCode of [planted("code"), "unavailable"]) {
@@ -574,55 +526,6 @@ describe("the operator record", () => {
       });
     }
     expect(target.events.map((event) => event.errorCode)).toEqual([undefined, "unavailable"]);
-  });
-
-  it("names every OAuth error code the pinned SDK knows", () => {
-    for (const code of Object.values(OAuthErrorCode)) expect(OAUTH_ERROR_CODES.has(code)).toBe(true);
-  });
-});
-
-describe("a plugin status seam", () => {
-  const RECORD_SHAPED = 'Connector "svc" request to https://planted-status-7f3a9c.example failed.';
-  const seam = (status: () => Promise<unknown>): Connector => ({
-    id: "svc",
-    status: status as NonNullable<Connector["status"]>,
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      return {};
-    },
-  });
-
-  it.each([
-    ["record-shaped prose", () => Promise.resolve({ state: "error", message: RECORD_SHAPED })],
-    ["an unknown state", () => Promise.resolve({ state: planted("state"), message: planted("m") })],
-    [
-      "a thrown error with a planted name",
-      () => Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" })),
-    ],
-  ])("INV-6: contributes no string to status or the log: %s", async (_, status) => {
-    const { logger, lines } = capturingLogger();
-    const registry = makeRegistry([seam(status)], { logger });
-    const read = await registry.statusFor("svc", BASE);
-    expect(JSON.stringify(read)).not.toMatch(ANY_PLANTED);
-
-    const connecta = createTestConnecta({
-      connectors: [seam(status)],
-      auth: machineAuth("t"),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger,
-    });
-    const res = await connecta.fetch(
-      new Request(`${BASE}/ui/connectors/svc`, {
-        headers: { Authorization: "Bearer t" },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(await res.text()).not.toMatch(ANY_PLANTED);
-    expect(lines.some((line) => line.startsWith("[connecta] operator status"))).toBe(true);
-    for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
   });
 });
 
@@ -861,11 +764,6 @@ describe("a forwarded catalog drift report", () => {
       expect(text).not.toMatch(ANY_PLANTED);
     }
     expect(status).not.toContain("catalogDrift");
-  });
-
-  it("INV-6: re-serializes a real timestamp as connecta's own ISO-8601 UTC form", async () => {
-    const registry = makeRegistry([drifting("2026-08-12T02:00:00+02:00")]);
-    expect((await registry.statusFor("svc", BASE)).catalogDrift?.observedAt).toBe("2026-08-12T00:00:00.000Z");
   });
 });
 

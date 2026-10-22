@@ -52,11 +52,21 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   `*-actual.png`, `*-expected.png` and `*-diff.png` files. Intentional changes
   need new baselines from the Operator snapshots workflow
   ([documentation/operator-tests.md](../../../documentation/operator-tests.md)).
-- **Chromium install.** The first install can time out; the retry runs
-  [scripts/ci-settle-apt.sh](../../../scripts/ci-settle-apt.sh), which waits up
-  to 180 s for a leftover apt/dpkg, finishes interrupted configuration, and
-  sets a dpkg lock timeout. If it still fails, the log names the process.
-  Rerun the job (`gh run rerun <run-id> --failed`); don't change code.
+- **Chromium install.** CI, publishing and operator snapshots share
+  [.github/actions/install-chromium/action.yml](../../../.github/actions/install-chromium/action.yml).
+  The browser cache uses the frozen lockfile's installed Playwright version;
+  cache hits skip the browser download, but always install OS dependencies.
+  Each dependency attempt first runs [scripts/ci-settle-apt.sh](../../../scripts/ci-settle-apt.sh)
+  with a 90 s process wait and a 120 s overall bound, then gives
+  `playwright install-deps chromium` 180 s. Both run under root-owned
+  `timeout` so privileged apt children cannot survive the timeout. Browser
+  downloads have a separate 120 s bound. Each install retries once; timeout
+  escalates to SIGKILL after 15 s. apt uses three acquisition retries, 30 s
+  network timeouts and a 60 s dpkg lock timeout. The helper switches the hosted
+  runner's Azure HTTP Ubuntu mirror to Ubuntu's HTTPS archive. Keep the index
+  refresh: observed failures spent minutes downloading font packages, while
+  `apt-get update` finished in seconds. Inspect the named sub-step before
+  rerunning the job (`gh run rerun <run-id> --failed`).
 - **Load-induced timeouts** ([#692](https://github.com/zackbart/connecta/issues/692)).
   Request-admission deadlines, QuickJS executor tests, `drift-check`, and
   some provider budget tests hit 5 s timeouts on a busy runner or a shared

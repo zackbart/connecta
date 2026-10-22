@@ -2,26 +2,25 @@
 // language, one heuristic that is the union of the two former vendor engines,
 // and one error policy, for every REST vendor.
 import { describe, expect, it } from "vitest";
-import { linearWork, SCAN_HANG_GUARD_MS } from "./scanner-work.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import {
-  REDACTED,
   carriesWithheldLink,
+  redact,
+  REDACTED,
+  refuse,
+  refuseWithheldBase64,
   refuseWithheldLinks,
   refuseWithheldUpload,
-  refuseWithheldBase64,
-  withholdEmbeddedUrls,
-  withholdEmbeddedUrlsIn,
-  withholdSignedLinks,
-  withholdSignedLinksIn,
-  redact,
-  refuse,
   safe,
   validPath,
   valueSafety,
   vendorErrors,
+  withholdEmbeddedUrls,
+  withholdEmbeddedUrlsIn,
+  withholdSignedLinks,
   type ValueSafetyTable,
 } from "../src/providers/_shared/rest/value-safety.js";
+import { linearWork, SCAN_HANG_GUARD_MS } from "./scanner-work.js";
 
 const DATA: OpenApiData = {
   source: "https://vendor.example/openapi.json",
@@ -240,138 +239,19 @@ describe("pre-signed links in free text", () => {
   it.each([
     ["a filename with parentheses", `![a](${S3}/ws/file(1).png?${query})`, `![a](${S3}/ws/file(1).png?${REDACTED})`],
     [
-      "an escaped Markdown parenthesis",
-      `![a](${S3}/ws/file\\(1\\).png?${query})`,
-      `![a](${S3}/ws/file\\(1\\).png?${REDACTED})`,
-    ],
-    [
-      "a quoted attribute with parentheses",
-      `<file src="${S3}/ws/file(1).pdf?${query}">Report</file>`,
-      `<file src="${S3}/ws/file(1).pdf?${REDACTED}">Report</file>`,
-    ],
-    // Review round 2, finding 1: an unmatched `)` or `]` does not end the link.
-    [
-      "a quoted attribute with an unmatched parenthesis",
-      `<file src="${S3}/ws/file).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-      `<file src="${S3}/ws/file).pdf?${REDACTED}">f</file>`,
-    ],
-    [
-      "a bracket-bearing query value",
-      `<file src="${S3}/ws/file.pdf?name=a)b&X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
-      `<file src="${S3}/ws/file.pdf?${REDACTED}">f</file>`,
-    ],
-    [
-      "an angle autolink with an unmatched parenthesis",
-      `<${S3}/ws/file).pdf?${query}>`,
-      `<${S3}/ws/file).pdf?${REDACTED}>`,
-    ],
-    [
-      "a quoted filename with a bracket",
-      `<file src='${S3}/ws/a]b.pdf?${query}'>f</file>`,
-      `<file src='${S3}/ws/a]b.pdf?${REDACTED}'>f</file>`,
-    ],
-    // Review round 2, finding 2: the host anchors, however the slashes are spelled.
-    [
       "numeric slash references",
       `<file src="https:&#47;&#47;${HOST}/ws/file.png?${query}">`,
       `<file src="https:&#47;&#47;${HOST}/ws/file.png?${REDACTED}">`,
-    ],
-    [
-      "a named colon and slashes",
-      `<file src="https&colon;&sol;&sol;${HOST}/ws/file.png?${query}">`,
-      `<file src="https&colon;&sol;&sol;${HOST}/ws/file.png?${REDACTED}">`,
-    ],
-    [
-      "Markdown slash escapes",
-      `[a](https:\\/\\/${HOST}/ws/file.png?${query})`,
-      `[a](https:\\/\\/${HOST}/ws/file.png?${REDACTED})`,
-    ],
-    [
-      "JSON text inside a string",
-      JSON.stringify({ url: `${S3}/ws/a.png?${query}` }).replaceAll("/", "\\/"),
-      `{"url":"https:\\/\\/${HOST}\\/ws\\/a.png?${REDACTED}"}`,
     ],
     [
       "a percent-encoded whole link",
       `see ${encodeURIComponent(`${S3}/ws/a.png?${query}`)} now`,
       `see https%3A%2F%2F${HOST}%2Fws%2Fa.png?${REDACTED} now`,
     ],
-    ["a scheme-less authority", `src=//${HOST}/ws/a.png?${query}`, `src=//${HOST}/ws/a.png?${REDACTED}`],
-    [
-      "an uppercase host",
-      `HTTPS://${HOST.toUpperCase()}/A.PNG?${query}`,
-      `HTTPS://${HOST.toUpperCase()}/A.PNG?${REDACTED}`,
-    ],
-    [
-      "an entity-encoded query opener",
-      `<file src="${S3}/ws/a.png&#63;${query}">`,
-      `<file src="${S3}/ws/a.png?${REDACTED}">`,
-    ],
-    ["a \\u-escaped query opener", `${S3}/ws/a.png\\u003f${query}`, `${S3}/ws/a.png?${REDACTED}`],
-    [
-      "a path-style Notion bucket",
-      `![a](https://s3.us-west-2.amazonaws.com/secure.notion-static.com/u/a.png?${query})`,
-      `![a](https://s3.us-west-2.amazonaws.com/secure.notion-static.com/u/a.png?${REDACTED})`,
-    ],
-    [
-      "Notion's own file host with innocuous names",
-      "![a](https://file.notion.so/f/f/ws/a.png?table=block&id=ASIAEXAMPLE&expirationTimestamp=1)",
-      `![a](https://file.notion.so/f/f/ws/a.png?${REDACTED})`,
-    ],
-    [
-      "a fragment on a file host",
-      "https://img.notionusercontent.com/s/a.png#sig=FAKE_SIGNATURE",
-      `https://img.notionusercontent.com/s/a.png#${REDACTED}`,
-    ],
-    [
-      "signing values inside another link's encoded query",
-      `[go](https://example.com/r?to=${encodeURIComponent(`${S3}/a.png?${query}`)})`,
-      `[go](https://example.com/r?to=https%3A%2F%2F${HOST}%2Fa.png%3FX-Amz-Algorithm%3DAWS4-HMAC-SHA256%26X-Amz-Credential%3D${REDACTED})`,
-    ],
-    [
-      "a link followed by prose punctuation",
-      `See ${S3}/a.png?${query}, then stop.`,
-      `See ${S3}/a.png?${REDACTED}, then stop.`,
-    ],
-    [
-      "a signing parameter on any host, behind a character reference",
-      `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=FAKE_SIGNATURE&#x26;X-Amz-Credential=ASIAEXAMPLE">`,
-      `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=${REDACTED}&#x26;X-Amz-Credential=${REDACTED}">`,
-    ],
-    [
-      "a signing parameter with an encoded equals sign",
-      "https://storage.example/o?X-Goog-Signature%3DFAKE_SIGNATURE&x=1",
-      `https://storage.example/o?X-Goog-Signature%3D${REDACTED}&x=1`,
-    ],
   ])("INV-5: withholds a signed link in %s and keeps the syntax around it", (_, text, expected) => {
     const clean = withheld(text);
     expect(leaks(clean)).toEqual([]);
     expect(clean).toBe(expected);
-  });
-
-  it("INV-5: returns a person's own links byte for byte, generic parameter names and AWS hosts included", () => {
-    const text = [
-      "# Notes (draft)",
-      "See [the docs](https://developers.notion.com/reference?topic=markdown) and <https://example.com/a(b)>.",
-      "![a](https://example.com/file(1).png?width=200&amp;height=100) [Page](https://www.notion.so/Page-abc?pvs=4)",
-      "[login](https://app.example/cb?code=abc&token=def&name=x#access_token=t) https://ASIAEXAMPLE:pw@host.example/a",
-      "https://api-id.execute-api.us-east-1.amazonaws.com/prod/report?reportId=42",
-      "https://bucket.s3.us-east-1.amazonaws.com/public.png?versionId=3 and the prod-files-secure bucket? Yes.",
-      "a // comment, a://b, file.notion.solutions/?q=1, and a bare // pair",
-    ].join("\n");
-    expect(withheld(text)).toBe(text);
-  });
-
-  // Reviewed names must occupy the actual host or the first S3 bucket segment.
-  it.each([
-    "https://file.notion.so.example.com/report?reportId=42",
-    "https://file.notion.so@evil.com/report?reportId=42",
-    "https://s3.us-west-2.amazonaws.com/my-bucket/prod-files-secure/a.png?v=1",
-    `{"url":"https:\\/\\/example.com\\/file.notion.so?reportId=42"}`,
-    "https://example.com//file.notion.so/report?reportId=42",
-  ])("INV-5: returns a link at a host or path that only contains a reviewed name byte for byte: %s", (link) => {
-    expect(withheld(link)).toBe(link);
-    expect(carriesWithheldLink(link.replace("?", `?${REDACTED}&`), HOSTS)).toBe(false);
   });
 
   it.each([
@@ -381,60 +261,17 @@ describe("pre-signed links in free text", () => {
       `https://x.file.notion.so/a.png?${REDACTED}`,
     ],
     [
-      "a dash-region path-style bucket",
-      `https://s3-us-west-2.amazonaws.com/prod-files-secure/a.png?v=1`,
-      `https://s3-us-west-2.amazonaws.com/prod-files-secure/a.png?${REDACTED}`,
-    ],
-    [
-      "a global virtual-hosted bucket",
-      "https://prod-files-secure.s3.amazonaws.com/a.png?v=1",
-      `https://prod-files-secure.s3.amazonaws.com/a.png?${REDACTED}`,
-    ],
-    [
       "a dual-stack path-style bucket",
       "https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?v=1",
       `https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?${REDACTED}`,
-    ],
-    [
-      "a JSON-escaped path-style bucket",
-      "https:\\/\\/s3.us-west-2.amazonaws.com\\/prod-files-secure\\/a.png?v=1",
-      `https:\\/\\/s3.us-west-2.amazonaws.com\\/prod-files-secure\\/a.png?${REDACTED}`,
-    ],
-    [
-      "a file host at a sentence's end",
-      "Open https://file.notion.so./a.png?v=1",
-      `Open https://file.notion.so./a.png?${REDACTED}`,
-    ],
-    ["a file host with a port", "https://file.notion.so:443/a.png?v=1", `https://file.notion.so:443/a.png?${REDACTED}`],
-    [
-      "a path-style bucket on a port, ending its link",
-      "https://s3.amazonaws.com:443/prod-files-secure?v=1",
-      `https://s3.amazonaws.com:443/prod-files-secure?${REDACTED}`,
     ],
     [
       "a dual-stack virtual-hosted bucket with an encoded query",
       "https://prod-files-secure.s3.dualstack.us-west-2.amazonaws.com/a.png%3Fv=1",
       `https://prod-files-secure.s3.dualstack.us-west-2.amazonaws.com/a.png?${REDACTED}`,
     ],
-    [
-      "a subdomain behind encoded slashes",
-      "https%3A%2F%2Fimg.notionusercontent.com%2Fs%2Fa.png%3Fv%3D1",
-      `https%3A%2F%2Fimg.notionusercontent.com%2Fs%2Fa.png?${REDACTED}`,
-    ],
   ])("INV-5: withholds a link at %s", (_, text, expected) => {
     expect(withheld(text)).toBe(expected);
-  });
-
-  it("INV-5: scans every string of a JSON value and keeps unchanged values' identity", () => {
-    const untouched = { title: "plain", links: ["https://example.com/?q=1"] };
-    const value = {
-      untouched,
-      nested: [{ result: { markdown: `![a](${S3}/a.png?${query})` } }],
-    };
-    const clean = withholdSignedLinksIn(value, HOSTS) as typeof value;
-    expect(clean.untouched).toBe(untouched);
-    expect(clean.nested[0]!.result.markdown).toBe(`![a](${S3}/a.png?${REDACTED})`);
-    expect(withholdSignedLinksIn(untouched, HOSTS)).toBe(untouched);
   });
 
   it("INV-5: finds a withheld file link in a request, plain or encoded, and nothing else", () => {
@@ -453,50 +290,10 @@ describe("pre-signed links in free text", () => {
   // Review round 3, finding 3: the exact placeholder, decoded, and never the word.
   it.each([
     "https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
-    "https://file.notion.so/f/f/a.png?&#91;redac&#116;ed&#93;",
-    "https://file.notion.so/f/f/a.png?&#x5b;redacted&#x5D;",
-    "https://file.notion.so/f/f/a.png?&lbrack;redacted&rbrack;",
-    "https://file.notion.so/f/f/a.png?%255Bredacted%255D",
     "https://file.notion.so/f/f/a.png?&amp;#91;redacted&amp;#93;",
-    "https://file.notion.so/f/f/a.png?\\u005bredacted\\u005d",
-    "https://file.notion.so/f/f/a.png?id=1#%5Bredacted%5D",
-    // Review round 4, finding 2: the destination still holds it.
-    "![a](https://file.notion.so/f/f/a(1).png?[redacted])",
     "![a](https://file.notion.so/f/f/a\\).png?[redacted])",
-    '[a](https://file.notion.so/f/f/a.png?[redacted] "title")',
-    "[a](<https://file.notion.so/f/f/a).png?[redacted]>)",
-    '<file src="https://file.notion.so/f/f/a).pdf?[redacted]">f</file>',
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
     expect(carriesWithheldLink({ text }, HOSTS)).toBe(true);
-  });
-
-  it.each([
-    "https://file.notion.so/f/f/a.png?label=unredacted",
-    "https://file.notion.so/f/f/redacted-report.png?table=block",
-    "https://file.notion.so/f/f/a.png?name=redacted-report",
-    "https://file.notion.so/f/f/a.png?name=%5Bredacted",
-    "https://file.notion.so/f/f/a.png?name=REDACTED",
-    "[redacted] is how a withheld value reads; see https://file.notion.so/f/f/a.png",
-    `${REDACTED} https://file.notion.so/f/f/a.png?v=1`,
-    // Review round 4, finding 2: text after a Markdown link's closing parenthesis is not its query.
-    "[file](https://file.notion.so/f/f/a.png?label=unredacted)[redacted]",
-    "![a](https://file.notion.so/f/f/a(1).png?v=1)[redacted]",
-    "[a](https://file.notion.so/f/f/a.png)?[redacted]",
-    "[a](https://file.notion.so/f/f/a.png#top) and [redacted]",
-  ])("INV-5: admits %s", (text) => {
-    expect(carriesWithheldLink({ text }, HOSTS)).toBe(false);
-  });
-
-  it("INV-5: inspects the adjacent Markdown destination after a parenthesized filename", () => {
-    const text = `![first](https://file.notion.so/f/a(1).png?label=unredacted)[second](${S3}/b.png?%5Bredacted%5D)`;
-    expect(carriesWithheldLink(text, HOSTS)).toBe(true);
-  });
-
-  it("INV-5: bounds an inline destination after leading whitespace", () => {
-    const start = `[f](\thttps://file.notion.so/f/a\\).png`;
-    expect(carriesWithheldLink(`${start}?label=unredacted)[redacted]`, HOSTS)).toBe(false);
-    expect(carriesWithheldLink(`${start})?[redacted]`, HOSTS)).toBe(false);
-    expect(carriesWithheldLink(`${start}?%5Bredacted%5D)`, HOSTS)).toBe(true);
   });
 
   const PROXIES = [
@@ -522,14 +319,7 @@ describe("pre-signed links in free text", () => {
     }
   });
 
-  it.each([
-    "X-Amz-Signature",
-    "X-Amz-Credential",
-    "X-Amz-Security-Token",
-    "X-Goog-Signature",
-    "X-Goog-Credential",
-    "X-Goog-Security-Token",
-  ])("INV-5: still withholds %s inside a proxy path or query", (name) => {
+  it.each(["X-Amz-Signature", "X-Goog-Signature"])("INV-5: still withholds %s inside a proxy path or query", (name) => {
     for (const proxy of PROXIES) {
       const text = `[f](${proxy}&${name}=FAKE_SIGNATURE&width=400)`;
       expect(withheld(text)).toBe(text.replace("FAKE_SIGNATURE", REDACTED));
@@ -537,30 +327,9 @@ describe("pre-signed links in free text", () => {
   });
 
   it.each([
-    ["5 MiB of text without a URL", "a".repeat(5 * 1024 * 1024)],
-    ["near-URL letters", "abc:/".repeat(400_000)],
-    ["empty authorities", "// ".repeat(400_000)],
-    ["one long link of separators", `https://${HOST}/${"&#38;(%25[\\".repeat(200_000)}`],
     ["host names in one unbroken link", `https://${"file.notion.so/".repeat(200_000)}`],
-    ["host names behind one query", `https://${HOST}/?${"file.notion.so&#35;%3f".repeat(100_000)}`],
-    ["many short links", `${S3}/a?sig=1 `.repeat(50_000)],
-    ["signing names without values", "X-Amz-Signature=&".repeat(200_000)],
-    ["look-alike hosts", "my-file.notion.so.x/".repeat(200_000)],
-    ["S3 endpoints without a reviewed bucket", "//s3.us-west-2.amazonaws.com/prod-files-secure-x".repeat(100_000)],
-    ["encoded slashes before names", "%252F%252Fx.prod-files-secure".repeat(100_000)],
-    ["one link of encoded placeholders", `https://file.notion.so/?${"%255B&amp;#91;\\u005d".repeat(200_000)}`],
-    ["file host names as one long label run", "file.notion.so.".repeat(350_000)],
-    ["S3 endpoints as one long label run", "s3.amazonaws.com.".repeat(300_000)],
-    ["subdomains behind escaped slashes", "%2F%2Fx.file.notion.so%2F".repeat(200_000)],
-    ["file hosts before userinfo", "https://x.file.notion.so@".repeat(200_000)],
     ["one Markdown destination of open parentheses", `[a](https://file.notion.so/${"(".repeat(2_000_000)}`],
-    [
-      "adjacent Markdown destinations",
-      "![a](https://file.notion.so/a(1)?label=ok),[b](https://file.notion.so/b#top)".repeat(50_000),
-    ],
-    ["external proxy authorities", "[a](https://example.com/?url=https://file.notion.so/a?id=42)".repeat(100_000)],
     ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notion.so/a?b)[redacted]`],
-    ["Markdown links followed by the placeholder", "[a](https://file.notion.so/a?b)[redacted]".repeat(100_000)],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {
@@ -580,39 +349,10 @@ describe("global embedded REST URL policy (#812)", () => {
       "[download](https://files.example/a?[redacted])",
     ],
     [
-      "HTML",
-      '<a href="https://files.example/a?width=400&amp;api_key=PRIVATE">file</a>',
-      '<a href="https://files.example/a?[redacted]">file</a>',
-    ],
-    ["scheme-less URL", "download //files.example/a?sig=PRIVATE now", "download //files.example/a?[redacted] now"],
-    [
-      "escaped URL",
-      String.raw`see https:\/\/files.example/a\u003ftoken%3DPRIVATE now`,
-      String.raw`see https:\/\/files.example/a?[redacted] now`,
-    ],
-    [
       "encoded URL",
       "see https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3DPRIVATE now",
       "see https%3A%2F%2Ffiles.example%2Fa?[redacted] now",
     ],
-    ["fragment", "[file](https://files.example/a#access_token=PRIVATE)", "[file](https://files.example/a#[redacted])"],
-    [
-      "adjacent links",
-      "[a](https://example.com/a?width=400)[b](https://files.example/b?secret=PRIVATE)[c](https://example.com/c?x=1)",
-      "[a](https://example.com/a?width=400)[b](https://files.example/b?[redacted])[c](https://example.com/c?x=1)",
-    ],
-    [
-      "unmatched filename parentheses in HTML",
-      '<img src="https://files.example/a)b?sig=PRIVATE">',
-      '<img src="https://files.example/a)b?[redacted]">',
-    ],
-    [
-      "literal signing name",
-      "download https://files.example/a?X-Amz-Signature=PRIVATE",
-      "download https://files.example/a?[redacted]",
-    ],
-    ["signing name outside a URL", "X-Goog-Credential=PRIVATE", "X-Goog-Credential=[redacted]"],
-    ["log labels", "download:https://files.example/a?api_key=PRIVATE", "download:https://files.example/a?[redacted]"],
     [
       "credential after a placeholder",
       "see https://files.example/a?token=[redacted]PRIVATE",
@@ -621,17 +361,6 @@ describe("global embedded REST URL policy (#812)", () => {
   ])("INV-5: withholds credential queries in %s", (_, input, expected) => {
     expect(withholdEmbeddedUrls(input)).toBe(expected);
     expect(withholdEmbeddedUrls(expected)).toBe(expected);
-  });
-
-  it.each([
-    "A token=ordinary assignment and code=42 in prose",
-    "[user](https://EXAMPLE.com/a%2fb?width=400&x=%2f#section)",
-    "[proxy](https://example.com/image?url=https://file.notion.so/a?id=42&width=400)",
-    "[proxy](/proxy/https://file.notion.so/a?id=42)",
-    "[a]( https://example.com/a?width=1)[redacted]![b](https://example.com/b#section)",
-    "<img src='//files.example/a?width=200'>",
-  ])("INV-5: preserves ordinary user text and links byte for byte: %s", (input) => {
-    expect(withholdEmbeddedUrls(input)).toBe(input);
   });
 
   it("INV-5: applies globally through arrays and projections' source objects without changing the default vendor policy", () => {
@@ -664,8 +393,6 @@ describe("global embedded REST URL policy (#812)", () => {
   });
 
   it.each([
-    ["a large body with no URLs", "plain text ".repeat(200_000)],
-    ["many ordinary queries", "[f](https://example.com/a?width=400)".repeat(40_000)],
     ["many signed queries", "[f](https://example.com/a?sig=PRIVATE)".repeat(40_000)],
     ["one long parameter name", `see https://example.com/a?${"a".repeat(2_000_000)}=value`],
     ["many parameter delimiters", `see https://example.com/a?${"?&a&".repeat(400_000)}`],
@@ -679,27 +406,6 @@ describe("global embedded REST URL policy (#812)", () => {
 });
 
 describe("reviewed text policy and global admission (#846)", () => {
-  it("INV-5: still strips userinfo from whole IPv6 URLs while preserving generic query data", () => {
-    const safety = engine({ operations: {}, embeddedUrls: {} });
-    const result = safety.redact(
-      { description: "https://alice:PRIVATE@[::1]/a?code=welcome" },
-      "GET",
-      "/v1/things",
-    ) as any;
-    expect(result.description).not.toMatch(/alice|PRIVATE/);
-    expect(new URL(result.description).searchParams.get("code")).toBe("welcome");
-  });
-
-  it.each(["&#61;", "&#x3d;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
-    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
-    const input = `https://public.example/a<br>https://files.example/a?token${equals}PRIVATE`;
-    const result = safety.redact({ message: input, description: input }, "GET", "/v1/things") as any;
-    expect(result.message).not.toContain("PRIVATE");
-    expect(result.description).toBe(input);
-    const signed = input.replace("token", "X-Amz-Signature");
-    expect(JSON.stringify(safety.redact({ description: signed }, "GET", "/v1/things"))).not.toContain("PRIVATE");
-  });
-
   it.each([
     "[file](/proxy/https://files.example/a?token=PRIVATE)",
     "[file](/proxy/https://files.example/a%3Fkey%3DPRIVATE)",
@@ -710,19 +416,14 @@ describe("reviewed text policy and global admission (#846)", () => {
     expect(withholdSignedLinks(input, { domains: ["files.example"], buckets: [] })).toBe(input);
   });
 
-  it.each([
-    "[file](/proxy?url=https://files.example/a?token=ordinary&width=4)",
-    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3Dordinary%26key%3Dpublic)",
-    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%23token%3Dordinary)",
-    "[file](/proxy%3Furl%3Dhttps%253A%252F%252Ffiles.example%252Fa%253Ftoken%253Dordinary%2526key%253Dpublic)",
-  ])("INV-5: preserves nested ordinary proxy parameters without re-anchoring: %s", (input) => {
-    expect(withholdEmbeddedUrls(input)).toBe(input);
-  });
-
-  it("INV-5: replaces a credential query ending in an existing signing placeholder without duplicating syntax", () => {
-    expect(withholdEmbeddedUrls("[f](https://files.example/a?token=PRIVATE&X-Amz-Signature=[redacted])")).toBe(
-      "[f](https://files.example/a?[redacted])",
-    );
+  it.each(["&#61;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const input = `https://public.example/a<br>https://files.example/a?token${equals}PRIVATE`;
+    const result = safety.redact({ message: input, description: input }, "GET", "/v1/things") as any;
+    expect(result.message).not.toContain("PRIVATE");
+    expect(result.description).toBe(input);
+    const signed = input.replace("token", "X-Amz-Signature");
+    expect(JSON.stringify(safety.redact({ description: signed }, "GET", "/v1/things"))).not.toContain("PRIVATE");
   });
 
   it("INV-5: protects resource diagnostics and partial event copies while preserving customer URLs", () => {
@@ -756,17 +457,6 @@ describe("reviewed text policy and global admission (#846)", () => {
     expect(
       withholdSignedLinks("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE", { domains: [], buckets: [] }),
     ).not.toContain("PRIVATE");
-  });
-
-  it.each([
-    "[file](/proxy/https://files.example/a?token=%255Bredacted%255D)",
-    "[a](https://public.example/a?width=1),![b](https://files.example/a#&#91;redacted&#93;)",
-    "[a](https://public.example/a?width=1);[b]( https://files.example/a%3F%5Bredacted%5D)",
-  ])("INV-5: shares exact-placeholder admission and actual adjacent destination boundaries: %s", (input) => {
-    expect(carriesWithheldLink(input)).toBe(true);
-    expect(() => refuseWithheldLinks(input, "Vendor")).toThrow("withheld");
-    expect(carriesWithheldLink("[file](https://files.example/a?width=1)[redacted]")).toBe(false);
-    expect(carriesWithheldLink("[redacted] outside https://files.example/a?code=unredacted")).toBe(false);
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {

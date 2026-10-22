@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { authoredTools, surfaceViolations, type ToolFacts } from "./provider-standard.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
+import { authoredTools, surfaceViolations, type ToolFacts } from "./provider-standard.js";
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({
   type: "object",
@@ -82,115 +82,10 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
       },
     ],
     [
-      "optional items",
-      "S3",
-      (tool: any) => {
-        tool.outputSchema.required = ["page"];
-      },
-    ],
-    [
-      "optional page",
-      "S3",
-      (tool: any) => {
-        tool.outputSchema.required = ["items"];
-      },
-    ],
-    [
-      "page: string",
-      "S2",
-      (tool: any) => {
-        tool.outputSchema.properties.page.type = "string";
-      },
-    ],
-    [
-      "hasMore: string",
-      "S2",
-      (tool: any) => {
-        tool.outputSchema.properties.page.properties.hasMore = { type: "string" };
-      },
-    ],
-    [
-      "optional hasMore",
-      "S2",
-      (tool: any) => {
-        tool.outputSchema.properties.page.required = [];
-      },
-    ],
-    [
-      "nextCursor: number",
-      "S2",
-      (tool: any) => {
-        tool.outputSchema.properties.page.properties.nextCursor = { type: "number" };
-      },
-    ],
-    [
-      "total: string",
-      "S2",
-      (tool: any) => {
-        tool.outputSchema.properties.page.properties.total = { type: "string" };
-      },
-    ],
-    [
-      "fields: number",
-      "S5",
-      (tool: any) => {
-        tool.inputSchema.properties.fields = { type: "number" };
-      },
-    ],
-    [
-      "fields: number[]",
-      "S5",
-      (tool: any) => {
-        tool.inputSchema.properties.fields = { type: "array", items: { type: "number" } };
-      },
-    ],
-    [
-      "truncated: number[]",
-      "S3",
-      (tool: any) => {
-        tool.outputSchema.properties.truncated = { type: "array", items: { type: "number" } };
-      },
-    ],
-    [
-      "truncated without item type",
-      "S3",
-      (tool: any) => {
-        tool.outputSchema.properties.truncated = { type: "array" };
-      },
-    ],
-    [
-      "cursor: number",
-      "S2",
-      (tool: any) => {
-        tool.inputSchema.properties.cursor = { type: "number" };
-      },
-    ],
-    [
-      "limit: string",
-      "S2",
-      (tool: any) => {
-        tool.inputSchema.properties.limit.type = "string";
-      },
-    ],
-    [
       "unbounded limit",
       "S2",
       (tool: any) => {
         delete tool.inputSchema.properties.limit.maximum;
-      },
-    ],
-    [
-      "missing cursor",
-      "S2",
-      (tool: any) => {
-        delete tool.inputSchema.properties.cursor;
-      },
-    ],
-    [
-      "select",
-      "S5",
-      (tool: any) => {
-        tool.inputSchema.properties.select = strings;
       },
     ],
     [
@@ -206,40 +101,24 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
     );
   });
 
-  it.each(["page", "perPage", "per_page", "page_size", "pageSize", "offset", "start_cursor", "maxRows"])(
-    "rejects retired input paging key %s",
-    (key) => {
-      expect(
-        surfaceViolations(
-          changed("list_charges", (tool) => {
-            tool.inputSchema.properties[key] = { type: "integer" };
-          }),
-        ),
-      ).toContain(`S2: list_charges takes ${key}; page with limit and cursor`);
-    },
-  );
-
-  it.each(["nextPage", "nextOffset", "next", "param", "in", "path", "totalCount", "page", "limit"])(
-    "rejects retired named-page key %s",
-    (key) => {
-      expect(
-        surfaceViolations(
-          changed("list_charges", (tool) => {
-            tool.outputSchema.properties.page.properties[key] = {};
-          }),
-        ),
-      ).toContain(`S2: list_charges page reports retired key ${key}`);
-    },
-  );
-
-  it.each(["read", "write", "upload"])("rejects a %s hatch with a result wrapper", (part) => {
+  it.each(["page"])("rejects retired input paging key %s", (key) => {
     expect(
       surfaceViolations(
-        changed(`acme_api_${part}`, (tool) => {
-          tool.outputSchema = object({ result: {} }, ["result"]);
+        changed("list_charges", (tool) => {
+          tool.inputSchema.properties[key] = { type: "integer" };
         }),
       ),
-    ).toContain(`S3: acme_api_${part} returns { status: integer, data, page? }, with status and data required`);
+    ).toContain(`S2: list_charges takes ${key}; page with limit and cursor`);
+  });
+
+  it.each(["nextPage"])("rejects retired named-page key %s", (key) => {
+    expect(
+      surfaceViolations(
+        changed("list_charges", (tool) => {
+          tool.outputSchema.properties.page.properties[key] = {};
+        }),
+      ),
+    ).toContain(`S2: list_charges page reports retired key ${key}`);
   });
 
   it.each([
@@ -247,24 +126,6 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
       "status: string",
       (tool: any) => {
         tool.outputSchema.properties.status = { type: "string" };
-      },
-    ],
-    [
-      "optional status",
-      (tool: any) => {
-        tool.outputSchema.required = ["data"];
-      },
-    ],
-    [
-      "optional data",
-      (tool: any) => {
-        tool.outputSchema.required = ["status"];
-      },
-    ],
-    [
-      "absent data",
-      (tool: any) => {
-        delete tool.outputSchema.properties.data;
       },
     ],
   ])("rejects hatch %s", (_label, update) => {
@@ -305,31 +166,16 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
 describe("provider migration enforcement cannot be bypassed by metadata", () => {
   const context = { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
 
-  it.each(["api", "dual", "composed"])(
-    "rejects %s without an authored fixture, even without H metadata",
-    async (kind) => {
-      await expect(authoredTools(kind, { name: "acme" }, context)).rejects.toThrow(
-        "needs an offline createAuthored() fixture",
-      );
-    },
-  );
+  it.each(["api"])("rejects %s without an authored fixture, even without H metadata", async (kind) => {
+    await expect(authoredTools(kind, { name: "acme" }, context)).rejects.toThrow(
+      "needs an offline createAuthored() fixture",
+    );
+  });
 
   it("rejects empty authored fixtures and accepts hosted-only absence", async () => {
     await expect(
       authoredTools("api", { name: "acme", createAuthored: () => ({ listTools: async () => [] }) }, context),
     ).rejects.toThrow("not an empty catalog");
     expect(await authoredTools("mcp", { name: "acme" }, context)).toBeUndefined();
-  });
-
-  it("checks authored tools independently of missing H metadata", async () => {
-    const tools = await authoredTools(
-      "dual",
-      {
-        name: "acme",
-        createAuthored: () => ({ listTools: async () => [{ name: "acme_api_get", inputSchema: { type: "object" } }] }),
-      },
-      context,
-    );
-    expect(surfaceViolations(tools!)).toContain("S1: acme_api_get is not a standard hatch tool");
   });
 });

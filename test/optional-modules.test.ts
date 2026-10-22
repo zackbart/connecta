@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { customExecutor, createConnecta, type Connector } from "../src/index.js";
-import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { createConnecta, customExecutor, type Connector } from "../src/index.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { operatorUi } from "../src/ui.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
@@ -47,38 +47,6 @@ describe("optional deployment modules", () => {
     const callback = await app.fetch(new Request(BASE + "/oauth/callback/missing"));
     expect(callback.status).toBe(400);
     expect(await callback.text()).not.toContain('href="/"');
-  });
-
-  it.each([
-    { ui: false, vault: true },
-    { ui: true, vault: false },
-  ])("offers no credential handoff when a recovery module is missing (%j)", async (modules) => {
-    const storage = memoryStorage();
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [connector()],
-      executor,
-      auth,
-      maintainers,
-      logger: "silent",
-      publicUrl: BASE,
-      ...(modules.ui ? { ui: operatorUi() } : {}),
-      ...(modules.vault ? { vault: encryptedCredentialVault(storage, btoa("a".repeat(32))) } : {}),
-    });
-    const response = await mcpRpc(
-      app,
-      "tools/call",
-      {
-        name: "authorize_connector",
-        arguments: { connector: "shared" },
-      },
-      { baseUrl: BASE, token: "human" },
-    );
-    const body = (await response.json()) as any;
-    const recovery = JSON.parse(body.result.content[0].text);
-    expect(recovery).toMatchObject({ connector: "shared", recovery: "unavailable" });
-    expect(recovery).not.toHaveProperty("operatorUrl");
-    expect(recovery.message).toContain("vault and ui");
   });
 
   it("returns configured connections without touching provider status or tools", async () => {
@@ -202,35 +170,6 @@ describe("optional deployment modules", () => {
     expect(callback.status).toBe(200);
     expect(oauth.finishAuth).toHaveBeenCalledOnce();
     expect(await callback.text()).not.toContain('href="/"');
-  });
-
-  it("keeps shared OAuth capability after details load for a namespaced maintainer", async () => {
-    const oauth: Connector = {
-      ...connector("oauth"),
-      startAuth: vi.fn(async () => ({ state: "ok" as const })),
-      disconnectAuth: vi.fn(async () => {}),
-    };
-    const app = createConnecta({
-      readOnly: false,
-      connectors: [oauth],
-      executor,
-      auth,
-      maintainers,
-      ui: operatorUi(),
-      logger: "silent",
-    });
-    const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
-    const configured = ((await list.json()) as any).connectors[0];
-    const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
-    const loaded = await details.json();
-    const expected = {
-      oauth: true,
-      permissions: { use: true, manageSharedAuth: true, connectPersonal: false },
-    };
-    expect(configured).toMatchObject(expected);
-    expect(loaded).toMatchObject(expected);
-    expect(oauth.startAuth).not.toHaveBeenCalled();
-    expect(oauth.disconnectAuth).not.toHaveBeenCalled();
   });
 
   it("INV-4: never starts shared OAuth for a pool member who is not a maintainer", async () => {

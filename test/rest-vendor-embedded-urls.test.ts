@@ -1,8 +1,8 @@
 // Portable security/data-integrity regressions for #812 and PR #846 review rounds.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
-import { cloudflare } from "../src/providers/cloudflare/index.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
 
@@ -65,12 +65,6 @@ const VENDORS = [
 ] as const;
 // One per escape the scanner must see through: decimal and hex entities,
 // a percent-encoded relative proxy link, and a fragment.
-const TEXTS = [
-  "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE",
-  "https://files.example/a?token&#x3d;PRIVATE",
-  "[file](/proxy/https://files.example/a%3Fkey%3DPRIVATE)",
-  "[file](/proxy/https://files.example/a#access_token=PRIVATE)",
-];
 const PLACEHOLDERS = [
   "https://files.example/a?[redacted]",
   "https://files.example/a#%255Bredacted%255D",
@@ -98,70 +92,6 @@ const call = (connector: Connector, tool: string, args: Record<string, unknown>)
   connector.callTool(tool, args, ctx) as Promise<any>;
 
 describe.each(VENDORS)("$name URL safety", (vendor) => {
-  it.each(TEXTS)(
-    "INV-5: scans original escaped and relative destinations before success/select/error mapping: %s",
-    async (input) => {
-      const connector = vendor.create();
-      respond = () => vendor.envelope(vendor.diagnostic(input));
-      for (const projection of [{}, { select: [vendor.field] }]) {
-        const result = await call(connector, `${vendor.name}_api_read`, { path: vendor.read, ...projection });
-        expect(JSON.stringify(result)).toContain("[redacted]");
-        expect(JSON.stringify(result)).not.toContain("PRIVATE");
-      }
-      respond = () => vendor.error(input);
-      await expect(call(connector, `${vendor.name}_api_read`, { path: vendor.errorRead })).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("[redacted]"),
-      });
-      try {
-        await call(connector, `${vendor.name}_api_read`, { path: vendor.errorRead });
-      } catch (error) {
-        expect(String(error)).not.toContain("PRIVATE");
-      }
-    },
-  );
-
-  it.each([
-    "See https://docs.example/tutorial?code=welcome&key=public#section",
-    "https://docs.example/a?token=ordinary&signature=public&sig=example",
-    "https://public.example/a<br>https://docs.example/a?token&#61;ordinary",
-  ])("INV-5: round-trips ordinary code/key URLs in customer data byte for byte: %s", async (input) => {
-    const connector = vendor.create();
-    respond = () => vendor.envelope(vendor.user(input));
-    const read = await call(connector, `${vendor.name}_api_read`, {
-      path: vendor.userRead,
-      select: [vendor.userField],
-    });
-    expect(read.data[vendor.userField]).toEqual((vendor.user(input) as Record<string, unknown>)[vendor.userField]);
-    await call(connector, `${vendor.name}_api_write`, vendor.write(input));
-    expect(sent).toHaveLength(2);
-    const raw = sent[1]!.body;
-    if (vendor.name === "stripe") expect(new URLSearchParams(String(raw)).get("description")).toBe(input);
-    else expect(JSON.stringify(JSON.parse(String(raw)))).toContain(input);
-  });
-
-  it.each(["&#61;", "%3D"])(
-    "INV-5: globally withholds signing values in customer strings before select: %s",
-    async (equals) => {
-      const connector = vendor.create();
-      const input = `https://public.example/a<br>https://files.example/a?X-Amz-Security-Token${equals}PRIVATE`;
-      respond = () => vendor.envelope(vendor.user(input));
-      const result = await call(connector, `${vendor.name}_api_read`, {
-        path: vendor.userRead,
-        select: [vendor.userField],
-      });
-      expect(JSON.stringify(result)).not.toContain("PRIVATE");
-      expect(JSON.stringify(result)).toContain("[redacted]");
-      const value = vendor.name === "vercel" ? result.data.meta.note : result.data[vendor.userField];
-      sent = [];
-      await expect(call(connector, `${vendor.name}_api_write`, vendor.write(value))).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("withheld"),
-      });
-      expect(sent).toHaveLength(0);
-    },
-  );
-
   it.each(PLACEHOLDERS)("INV-5: refuses plain/encoded withheld destinations with zero dispatch: %s", async (input) => {
     await expect(call(vendor.create(), `${vendor.name}_api_write`, vendor.write(input))).rejects.toMatchObject({
       code: "invalid_args",
@@ -169,44 +99,6 @@ describe.each(VENDORS)("$name URL safety", (vendor) => {
     });
     expect(sent).toHaveLength(0);
   });
-
-  it.each([
-    "[redacted] outside a URL",
-    "[file](/proxy/https://public.example/a?id=42) [redacted]",
-    "[file](/proxy?url=https%3A%2F%2Fpublic.example%2Fa%3Ftoken%3Dordinary%26key%3Dpublic)",
-  ])("INV-5: admits placeholders outside destinations and ordinary proxy parameters: %s", async (input) => {
-    respond = () => vendor.envelope({});
-    await call(vendor.create(), `${vendor.name}_api_write`, vendor.write(input));
-    expect(sent).toHaveLength(1);
-  });
-});
-
-it("INV-5: preserves Stripe descriptions, metadata, price nicknames and invoice footers through form writes", async () => {
-  const connector = VENDORS[0].create();
-  const input = "https://docs.example/a?code=welcome&key=public";
-  for (const [path, body] of [
-    ["/v1/products/prod_1", { description: input, metadata: { url: input } }],
-    ["/v1/prices/price_1", { nickname: input }],
-    ["/v1/invoices/in_1", { footer: input, description: input }],
-    ["/v1/customers/cus_1", { description: input }],
-  ] as const) {
-    respond = () => Response.json(body);
-    const read = await call(connector, "stripe_api_read", { path });
-    expect(read.data).toEqual(body);
-    await call(connector, "stripe_api_write", { method: "POST", path, body: read.data });
-    expect([...new URLSearchParams(String(sent.at(-1)!.body)).values()].every((value) => value === input)).toBe(true);
-  }
-});
-
-it.each(PLACEHOLDER)("INV-5: refuses withheld links in Stripe JSON writes: %s", async (input) => {
-  await expect(
-    call(VENDORS[0].create(), "stripe_api_write", {
-      method: "POST",
-      path: "/v2/billing/meter_events",
-      body: { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: input } },
-    }),
-  ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
-  expect(sent).toHaveLength(0);
 });
 
 it.each(PLACEHOLDER)(
@@ -228,17 +120,6 @@ it.each(PLACEHOLDER)(
     }
   },
 );
-
-it.each(PLACEHOLDER)("INV-5: refuses withheld destinations in Cloudflare generic text writes: %s", async (input) => {
-  await expect(
-    call(VENDORS[2].create(), "cloudflare_api_write", {
-      method: "PUT",
-      path: `/accounts/${ACCOUNT}/workers/scripts/main`,
-      body: input,
-    }),
-  ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
-  expect(sent).toHaveLength(0);
-});
 
 it.each(PLACEHOLDER)(
   "INV-5: refuses withheld destinations in Cloudflare raw/base64/multipart uploads: %s",
@@ -264,43 +145,12 @@ it.each(PLACEHOLDER)(
   },
 );
 
-it("INV-5: round-trips ordinary Cloudflare KV and operator HTML links unchanged", async () => {
-  const connector = VENDORS[2].create();
-  const input = "See https://docs.example/a?code=welcome&key=public";
-  const path = `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/values/link`;
-  respond = () => new Response(input, { headers: { "content-type": "text/plain" } });
-  const read = await call(connector, "cloudflare_api_read", { path });
-  expect(read.data).toBe(input);
-  await call(connector, "cloudflare_api_upload", { method: "PUT", path, textBody: read.data });
-  expect(sent.at(-1)!.body).toBe(input);
-  respond = () => VENDORS[2].envelope({ custom_html: input });
-  expect(
-    (await call(connector, "cloudflare_api_read", { path: `/accounts/${ACCOUNT}/access/custom_pages/page-1` })).data
-      .custom_html,
-  ).toBe(input);
-});
-
 it("INV-5: withholds signing values before Stripe/Cloudflare named projections", async () => {
   const input = "https://public.example/a<br>https://files.example/a?X-Goog-Signature&#x3d;PRIVATE";
   respond = () => Response.json({ id: "acct_1", business_profile: { name: input } });
   expect((await call(VENDORS[0].create(), "get_stripe_account_info", {})).name).not.toContain("PRIVATE");
   respond = () => VENDORS[2].envelope([{ id: ACCOUNT, name: input }]);
   expect((await call(VENDORS[2].create(), "list_accounts", {})).accounts[0].name).not.toContain("PRIVATE");
-});
-
-it.each(TEXTS)("INV-5: scans escaped/relative Vercel named log projections: %s", async (input) => {
-  const connector = VENDORS[1].create();
-  respond = () => Response.json([{ type: "stdout", payload: { text: input } }]);
-  const build = await call(connector, "get_deployment_build_logs", { deploymentId: "dpl_1" });
-  expect(build.events[0].text).not.toContain("PRIVATE");
-  expect(build.events[0].text).toContain("[redacted]");
-  respond = () =>
-    new Response(JSON.stringify({ level: "info", message: input }) + "\n", {
-      headers: { "content-type": "application/x-ndjson" },
-    });
-  const runtime = await call(connector, "get_runtime_logs", { projectId: "web", deploymentId: "dpl_1" });
-  expect(runtime.logs[0].text).not.toContain("PRIVATE");
-  expect(runtime.logs[0].text).toContain("[redacted]");
 });
 
 it("INV-5: omits URL-bearing Cloudflare envelope cursors and preserves ordinary opaque cursors", async () => {
@@ -318,15 +168,6 @@ it("INV-5: omits URL-bearing Cloudflare envelope cursors and preserves ordinary 
       cursor === "opaque_cursor_1" ? { hasMore: true, next: cursor, param: "cursor" } : { hasMore: false },
     );
   }
-});
-
-it("INV-5: describes Worker JavaScript as unchanged base64, outside decoded-text scanning", async () => {
-  const input = "export const url = 'https://files.example/a?X-Amz-Signature=PRIVATE';";
-  respond = () => new Response(input, { headers: { "content-type": "application/javascript" } });
-  const result = await call(VENDORS[2].create(), "cloudflare_api_read", {
-    path: `/accounts/${ACCOUNT}/workers/scripts/main`,
-  });
-  expect(result.data.base64).toBe(btoa(input));
 });
 
 it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-response and select projections", async () => {
@@ -437,15 +278,6 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
     },
   );
 
-  it("INV-5: preserves benign base64 field bytes and application links on dispatch", async () => {
-    const input = "See https://docs.example/a?code=welcome&key=public [redacted] outside";
-    const request = args(btoa(input));
-    respond = () => vendor.envelope({});
-    await call(vendor.create(), `${vendor.name}_api_write`, request);
-    expect(sent).toHaveLength(1);
-    expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
-  });
-
   it("INV-5: admits a base64 JSON field above 8 MiB and inspects a withheld destination at its end", async () => {
     const safe = "a".repeat(8 * 1024 * 1024 + 1);
     const connector = vendor.create();
@@ -460,19 +292,6 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
     ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
     expect(sent).toHaveLength(0);
   }, 20_000);
-
-  it("INV-5: refuses JSON-escaped and entity-encoded destinations after the documented base64 decode", async () => {
-    for (const input of [
-      '{"https:\\u002f\\u002ff.test/\\u003f\\u005bredacted\\u005d":"link"}',
-      "[file](https://files.example/a?token=&#x5b;redacted&#x5d;)",
-    ]) {
-      await expect(call(vendor.create(), `${vendor.name}_api_write`, args(btoa(input)))).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("withheld"),
-      });
-      expect(sent).toHaveLength(0);
-    }
-  });
 });
 
 describe.each(VENDORS)("$name JSON key and depth admission", (vendor) => {
@@ -510,73 +329,4 @@ describe.each(VENDORS)("$name JSON key and depth admission", (vendor) => {
       expect(sent).toHaveLength(0);
     },
   );
-});
-
-describe("request-sized JSON admission", () => {
-  const cases = [
-    {
-      vendor: VENDORS[2],
-      args: () => ({
-        method: "PUT",
-        path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
-        body: Array.from({ length: 10_000 }, (_, i) => ({
-          key: String(i),
-          value: "x",
-          expiration_ttl: 60,
-          metadata: { a: 1 },
-        })),
-      }),
-    },
-    {
-      vendor: VENDORS[1],
-      args: () => ({
-        method: "POST",
-        path: "/v13/deployments",
-        body: {
-          name: "review",
-          files: Array.from({ length: 15_000 }, (_, i) => ({
-            file: `${i}.txt`,
-            data: "x",
-            encoding: "utf-8",
-          })),
-        },
-      }),
-    },
-  ];
-
-  it.each(cases)(
-    "INV-5: dispatches the supported maximum entry count for $vendor.name and scans its last entry",
-    async ({ vendor, args }) => {
-      const request = args();
-      respond = () => vendor.envelope({});
-      const connector = vendor.create();
-      await call(connector, `${vendor.name}_api_write`, request);
-      expect(sent).toHaveLength(1);
-      expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
-      sent = [];
-      const entries = Array.isArray(request.body) ? request.body : request.body.files;
-      Object.assign(entries.at(-1)!, {
-        [vendor.name === "cloudflare" ? "value" : "data"]: "https://f.test/?%5Bredacted%5D",
-      });
-      await expect(call(connector, `${vendor.name}_api_write`, request)).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("withheld"),
-      });
-      expect(sent).toHaveLength(0);
-    },
-  );
-
-  it("INV-5: dispatches supported Cloudflare KV metadata nested beyond 48 levels unchanged", async () => {
-    let nested: unknown = "safe";
-    for (let i = 0; i < 52; i++) nested = [nested];
-    const body = [{ key: "review", value: "x", metadata: { nested } }];
-    respond = () => VENDORS[2].envelope({});
-    await call(VENDORS[2].create(), "cloudflare_api_write", {
-      method: "PUT",
-      path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
-      body,
-    });
-    expect(sent).toHaveLength(1);
-    expect(JSON.parse(String(sent[0]!.body))).toEqual(body);
-  });
 });

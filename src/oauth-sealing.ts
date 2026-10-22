@@ -1,5 +1,6 @@
 import type { CredentialVault } from "./credential-contract.js";
-import { contextKey } from "./derived-context.js";
+import { Context } from "effect";
+import { serviceFor, setViewService } from "./runtime/call.js";
 import type { ConnectorContext, Logger } from "./types.js";
 
 /**
@@ -18,7 +19,9 @@ export interface OAuthStateSealer {
  * public ConnectorContext type does not change, and a connector cannot hand
  * itself a sealer another connector's context carries.
  */
-const sealers = new WeakMap<object, OAuthStateSealer>();
+class OAuthSealer extends Context.Service<OAuthSealer, OAuthStateSealer | undefined>()(
+  "connecta/operation/OAuthSealer",
+) {}
 
 /** A sealer over the vault, or undefined when the vault cannot seal. */
 export function vaultOAuthSealer(
@@ -37,12 +40,12 @@ export function vaultOAuthSealer(
 }
 
 export function attachOAuthSealer(ctx: ConnectorContext, sealer: OAuthStateSealer | undefined): ConnectorContext {
-  if (sealer) sealers.set(contextKey(ctx), sealer);
+  if (sealer) setViewService(ctx, OAuthSealer, sealer);
   return ctx;
 }
 
 export function oauthSealerFor(ctx: ConnectorContext): OAuthStateSealer | undefined {
-  return sealers.get(contextKey(ctx));
+  return serviceFor(ctx, OAuthSealer);
 }
 
 /** A separate HMAC key for browser handoffs, derived from the credential key. */

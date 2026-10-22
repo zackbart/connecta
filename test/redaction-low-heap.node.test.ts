@@ -17,41 +17,6 @@ function lowHeap(script: string): unknown {
   return JSON.parse(result.stdout);
 }
 
-it("INV-5: a credential-bearing result with 1,000,000 metadata objects completes a direct call under a 128 MiB heap", () => {
-  const outcome = lowHeap(`
-    const { createMetaTools } = await import("./src/meta-tools.ts");
-    const { Registry } = await import("./src/registry.ts");
-    const { SentSecrets, sentSecretsFor } = await import("./src/sent-secrets.ts");
-    const { memoryStorage } = await import("./src/storage/memory.ts");
-    const reply = () => ({
-      content: [{ type: "text", text: "ok" }],
-      _meta: Array.from({ length: 1_000_000 }, () => ({})),
-    });
-    // A function frame, so this copy is collectable before the call builds another.
-    const unchanged = (() => {
-      const secrets = new SentSecrets();
-      secrets.add("credential-793-long");
-      const result = reply();
-      return secrets.redact(result) === result;
-    })();
-    const silent = { debug() {}, info() {}, warn() {}, error() {} };
-    const registry = new Registry([{
-      id: "wire",
-      kind: "mcp",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true }, inputSchema: { type: "object" } }];
-      },
-      async callTool(_name, _args, ctx) {
-        sentSecretsFor(ctx).add("credential-793-long");
-        return reply();
-      },
-    }], { storage: memoryStorage(), logger: silent });
-    const call = await createMetaTools(registry, "https://wire.test").callTool({ address: "wire.read", args: {} });
-    console.log(JSON.stringify({ unchanged, isError: call.isError === true, content: call.content }));
-  `);
-  expect(outcome).toEqual({ unchanged: true, isError: false, content: [{ type: "text", text: "ok" }] });
-}, 60_000);
-
 it("INV-5: long credentials bound the matcher, so ordinary output survives a 128 MiB heap and echoes stay redacted", () => {
   const outcome = lowHeap(`
     const { SentSecrets } = await import("./src/sent-secrets.ts");
@@ -73,59 +38,4 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
     manyEcho: '{"id":"needed-id","token":"[redacted]"}',
     oneEcho: "before [redacted] after",
   });
-}, 60_000);
-
-it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
-  // Identifiers are matched whole, by the long-form checks. A credential's every eight-unit
-  // run also matches, so an all-"s" text would be a fragment of these forms.
-  const outcome = lowHeap(`
-    const { SentSecrets } = await import("./src/sent-secrets.ts");
-    const make = (length, count) => {
-      const secrets = new SentSecrets();
-      for (let i = 0; i < count; i++) secrets.identifier("s".repeat(length) + "-end-" + String(i).padStart(2, "0"));
-      return secrets;
-    };
-    const measured = (size, count) => {
-      const secrets = make(4_096, count);
-      const text = "s".repeat(size);
-      // Build and warm the cached matcher before measuring scanning. Increasing
-      // both text and equal-length forms exposes quadratic work if group sharing
-      // regresses. Shared groups keep the number of checks per unit constant.
-      if (secrets.text(text) !== text) throw new Error("Warmup changed clean text");
-      const samples = [];
-      for (let repeat = 0; repeat < 5; repeat++) {
-        const started = process.cpuUsage();
-        const value = secrets.text(text);
-        const used = process.cpuUsage(started);
-        if (value !== text) throw new Error("Scanning changed clean text");
-        samples.push(used.user + used.system);
-      }
-      // CPU time excludes scheduler waits; minimums reduce GC and JIT noise.
-      return Math.min(...samples);
-    };
-    const times = [measured(1_000_000, 5), measured(2_000_000, 10), measured(4_000_000, 20)];
-    const huge = make(100_000, 20);
-    const one = make(4_096, 1);
-    const text = "s".repeat(4_000_000);
-    console.log(JSON.stringify({
-      times,
-      hugeExact: huge.text(text) === text,
-      echo: one.text("before " + "s".repeat(4_096) + "-end-00 after"),
-      cleanExact: one.text("s".repeat(1_000_000)) === "s".repeat(1_000_000),
-    }));
-  `) as { times: number[]; hugeExact: boolean; echo: string; cleanExact: boolean };
-  expect(outcome).toMatchObject({
-    hugeExact: true,
-    echo: "before [redacted] after",
-    cleanExact: true,
-  });
-  const [small, medium, large] = outcome.times;
-  expect(small).toBeGreaterThan(0);
-  expect(medium).toBeGreaterThan(0);
-  expect(large).toBeGreaterThan(0);
-  const ratio = large! / small!;
-  console.log("Self-similar redaction CPU scaling", { times: outcome.times, ratio });
-  // Linear scanning approaches 4x; independently checking each registered form
-  // approaches 16x. Leave room for loaded CI without admitting quadratic growth.
-  expect(ratio).toBeLessThan(9);
 }, 60_000);

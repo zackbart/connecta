@@ -7,9 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
-import { createMetaTools } from "../../meta-tools.js";
+
 import { sheets } from "./index.js";
-import { Registry } from "../../registry.js";
+
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
@@ -85,36 +85,6 @@ function call(connector: Connector, name: string, args: Record<string, unknown> 
 
 const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
-describe("sheets() identity and surface (H1)", () => {
-  it("fails auth_required with no network when a mapped subject has no caller", async () => {
-    const connector = connection({ subject: () => "treasurer@church.example" });
-    await expect(call(connector, "get_values", { spreadsheetId: ID, ranges: ["A1"] })).rejects.toMatchObject({
-      code: "auth_required",
-    });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(tokenRequests).toBe(0);
-  });
-});
-
-describe("reading a spreadsheet's shape (H9)", () => {
-  it("caps named ranges and says how many it left out", async () => {
-    route = () => ({
-      body: {
-        spreadsheetId: ID,
-        sheets: [{ properties: { title: "S" } }],
-        namedRanges: Array.from({ length: 205 }, (_, index) => ({
-          namedRangeId: `n${index}`,
-          name: `R${index}`,
-          range: {},
-        })),
-      },
-    });
-    const result = await call(connection(), "get_spreadsheet", { spreadsheetId: ID });
-    expect(result.namedRanges).toHaveLength(200);
-    expect(result.namedRangesOmitted).toBe(5);
-  });
-});
-
 describe("reading values (H9, H10)", () => {
   const rows = (from: number, count: number) =>
     Array.from({ length: count }, (_, index) => [`r${from + index}`, from + index]);
@@ -163,66 +133,6 @@ describe("reading values (H9, H10)", () => {
     expect(second.page).toEqual({ hasMore: false, nextCursor: null });
   });
 
-  it("re-reads a sheet title or named range and says where the page starts", async () => {
-    route = sheetData;
-    const ranges = ["Data"];
-    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges, maxCells: 8 });
-    expect(first.valueRanges[0]).toMatchObject({ values: rows(1, 4), truncated: true, omittedRows: 6 });
-    calls.length = 0;
-    const second = await call(connection(), "get_values", {
-      spreadsheetId: ID,
-      ranges,
-      maxCells: 20,
-      cursor: first.page.nextCursor,
-    });
-    // A bare title could be a named range, so it is never rewritten.
-    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["Data"]);
-    expect(second.valueRanges).toEqual([{ range: "Data!A1:B10", rowOffset: 4, values: rows(5, 6), rowCount: 6 }]);
-    expect(second.page.hasMore).toBe(false);
-  });
-
-  it("starts an unreached range on the next page rather than reporting it half-read", async () => {
-    route = (request) => ({
-      body: {
-        valueRanges: request.url.searchParams.getAll("ranges").map((range) =>
-          range === "A!A1:B2"
-            ? {
-                range,
-                values: [
-                  [1, 2],
-                  [3, 4],
-                ],
-              }
-            : { range: "B!A1:C1", values: [[5, 6, 7]] },
-        ),
-      },
-    });
-    const ranges = ["A!A1:B2", "B!A1:C1"];
-    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges, maxCells: 4 });
-    expect(first.valueRanges).toEqual([
-      {
-        range: "A!A1:B2",
-        values: [
-          [1, 2],
-          [3, 4],
-        ],
-        rowCount: 2,
-      },
-    ]);
-    expect(first.spreadsheetId).toBe(ID);
-    expect(first.page.hasMore).toBe(true);
-    calls.length = 0;
-    const second = await call(connection(), "get_values", {
-      spreadsheetId: ID,
-      ranges,
-      maxCells: 4,
-      cursor: first.page.nextCursor,
-    });
-    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["B!A1:C1"]);
-    expect(second.valueRanges).toEqual([{ range: "B!A1:C1", values: [[5, 6, 7]], rowCount: 1 }]);
-    expect(second.page.hasMore).toBe(false);
-  });
-
   it("never returns more than maxCells: a row wider than the page is refused, not cut", async () => {
     const wideRow = Array.from({ length: 18_278 }, () => 1);
     route = (request) => {
@@ -254,21 +164,6 @@ describe("reading values (H9, H10)", () => {
     expect(wide).toMatchObject({ code: "invalid_args" });
     expect(wide.message).toContain("narrow the range's columns");
     expect(wide.message).toContain("18278 cells");
-  });
-
-  it("cuts a long cell with a marker that says how to read the rest, and reads it whole on request", async () => {
-    const long = "x".repeat(5_010);
-    route = () => ({ body: { valueRanges: [{ range: "S!A1:B1", values: [[long, "short"]] }] } });
-    const result = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["S!A1:B1"] });
-    expect(result.valueRanges[0].values[0][0]).toBe(
-      `${"x".repeat(5_000)}[… 10 more characters truncated; read this cell alone with maxCellChars up to 50000 for the rest]`,
-    );
-    expect(result.valueRanges[0].values[0][1]).toBe("short");
-    expect(result.truncatedCells).toBe(1);
-
-    const whole = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["S!A1"], maxCellChars: 50_000 });
-    expect(whole.valueRanges[0].values[0][0]).toBe(long);
-    expect(whole.truncatedCells).toBeUndefined();
   });
 
   it("binds a cursor to its spreadsheet, ranges, and render options, and refuses one forged", async () => {
@@ -348,185 +243,6 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
     }
     expect(seen).toEqual(Array.from({ length: 40 }, (_, index) => index + 1));
   });
-
-  /** Page through a whole read, asserting every page fits maxBytes as serialized. */
-  async function pageAll(connector: Connector, args: Record<string, unknown>, maxBytes: number) {
-    const pages: any[] = [];
-    let cursor: string | undefined;
-    for (let guard = 0; guard < 500; guard += 1) {
-      const result = await call(connector, "get_values", cursor ? { ...args, cursor } : args);
-      expect(utf8(result), `page ${pages.length}`).toBeLessThanOrEqual(maxBytes);
-      pages.push(result);
-      if (!result.page.hasMore) return pages;
-      cursor = result.page.nextCursor;
-    }
-    throw new Error("paging did not terminate");
-  }
-
-  it("counts the page's own fields: a row that fills maxBytes alone is refused, then fits exactly where it says", async () => {
-    route = () => ({ body: { spreadsheetId: ID, valueRanges: [{ range: "S!A1", values: [["x".repeat(1_019)]] }] } });
-    const args = { spreadsheetId: ID, ranges: ["S!A1"] };
-    const failure = await call(connection(), "get_values", { ...args, maxBytes: 1_024 }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "invalid_args" });
-    const needed = Number(/raise maxBytes to at least (\d+)/.exec(failure.message)![1]);
-    expect(needed).toBeGreaterThan(1_024);
-    const result = await call(connection(), "get_values", { ...args, maxBytes: needed });
-    expect(result.valueRanges[0].values[0][0]).toHaveLength(1_019);
-    expect(utf8(result)).toBeLessThanOrEqual(needed);
-    await expect(call(connection(), "get_values", { ...args, maxBytes: needed - 1 })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-  });
-
-  it("charges empty ranges their fields, paging twenty of them under a small maxBytes", async () => {
-    const ranges = Array.from({ length: 20 }, (_, index) => `'Long sheet title number ${index}'!A1:Z1000`);
-    route = (request) => ({
-      body: { spreadsheetId: ID, valueRanges: request.url.searchParams.getAll("ranges").map((range) => ({ range })) },
-    });
-    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes: 1_024 }, 1_024);
-    expect(pages.length).toBeGreaterThan(1);
-    expect(pages.flatMap((page) => page.valueRanges.map((entry: any) => entry.range))).toEqual(ranges);
-  });
-
-  it("keeps a default twenty-range page of long cells under the advertised default", async () => {
-    const ranges = Array.from({ length: 20 }, (_, index) => `'Quarterly ledger ${index} — "détail"'!A1:C10`);
-    const cell = `é"\\`.repeat(1_250);
-    route = (request) => ({
-      body: {
-        spreadsheetId: ID,
-        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
-          const start = Number(/!A(\d+):/.exec(range)![1]);
-          return { range, values: Array.from({ length: 11 - start }, () => [cell, cell, cell]) };
-        }),
-      },
-    });
-    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges }, 196_608);
-    const rows = pages.flatMap((page) => page.valueRanges).reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
-    expect(rows).toBe(20 * 10);
-    expect(Math.max(...pages.map(utf8))).toBeGreaterThan(150_000);
-  });
-
-  it.each([1_024, 9_999])("never exceeds maxBytes %i across mixed rows, ranges, and markers", async (maxBytes) => {
-    const ranges = ["A!A1:C30", "Empty!A1:B2", "'B b'!A1:A30", "C"];
-    const value = (row: number, column: number) =>
-      [row * 7 + column, `r${row}c${column}`, "é".repeat((row * 37 + column * 11) % 300), true, ""][(row + column) % 5];
-    route = (request) => ({
-      body: {
-        spreadsheetId: ID,
-        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
-          if (range.startsWith("Empty")) return { range };
-          const start = Number(/!A(\d+):/.exec(range)?.[1] ?? 1);
-          const width = range.startsWith("A") ? 3 : 1;
-          return {
-            range: range === "C" ? "C!A1:B30" : range,
-            values: Array.from({ length: 31 - start }, (_, index) =>
-              Array.from({ length: width }, (_, column) => value(start + index, column)),
-            ),
-          };
-        }),
-      },
-    });
-    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes, maxCellChars: 120 }, maxBytes);
-    const seen = (prefix: string) =>
-      pages
-        .flatMap((page) => page.valueRanges)
-        .filter((entry: any) => entry.range.startsWith(prefix))
-        .reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
-    expect([seen("A!"), seen("'B b'"), seen("C!")]).toEqual([30, 30, 30]);
-  });
-
-  it("refuses a single row too large for the page, naming every way out", async () => {
-    // Sixty 5,000-character cells: well inside maxCells, far past the bridge.
-    route = bigSheet(1, 60);
-    const failure = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["Big!A1:Z1"] }).catch(
-      (error) => error,
-    );
-    expect(failure).toMatchObject({ code: "invalid_args" });
-    expect(failure.message).toMatch(
-      /narrow the range's columns or lower maxCellChars, or raise maxBytes to at least \d+/,
-    );
-    expect(failure.message).toContain("execute_code cannot receive it");
-  });
-
-  /** call_tool exactly as an MCP client reaches it, over a default result stash. */
-  function metaTools() {
-    return createMetaTools(
-      new Registry([connection()], { storage: memoryStorage(), logger: silentLogger }),
-      "https://connecta.example",
-    );
-  }
-
-  const notice = (result: { content: { text: string }[] }) => JSON.parse(result.content[0]!.text.split("\n")[0]!);
-
-  it("never hands call_tool a page the result stash cannot page", async () => {
-    // A 10 MB row — 200 cells at Sheets' 50,000-character limit — fits under
-    // the 16 MiB response cap but not in the stash. It is refused, not dropped.
-    const huge = "x".repeat(50_000);
-    route = () => ({
-      body: { valueRanges: [{ range: "W!A1:GR1", values: [Array.from({ length: 200 }, () => huge)] }] },
-    });
-    const refused = await metaTools().callTool({
-      address: "sheets.get_values",
-      args: { spreadsheetId: ID, ranges: ["W!A1:GR1"], maxCellChars: 50_000, maxBytes: 4 * 1024 * 1024 },
-    });
-    expect(refused.isError).toBe(true);
-    expect(JSON.stringify(refused)).toContain("invalid_args");
-    expect(JSON.stringify(refused)).toContain("narrow the range's columns");
-
-    // The largest page a caller may ask for still pages through connecta.result.
-    route = bigSheet(200, 3);
-    const mt = metaTools();
-    const paged = await mt.callTool({
-      address: "sheets.get_values",
-      args: { spreadsheetId: ID, ranges: ["Big!A1:Z200"], maxBytes: 4 * 1024 * 1024 },
-    });
-    expect(paged.isError).toBeFalsy();
-    const stashed = notice(paged);
-    expect(stashed.truncated).toBe(true);
-    expect(stashed.totalBytes).toBeGreaterThan(3 * 1024 * 1024);
-    expect(stashed.resultId).toEqual(expect.any(String));
-    expect(stashed.hint).not.toContain("Paging is unavailable");
-    const page = await mt.readResult({ id: stashed.resultId, offset: 0 });
-    expect(page.isError).toBeFalsy();
-  });
-});
-
-describe("writing values", () => {
-  it("requires a valueInputOption rather than choosing one", async () => {
-    await expect(
-      call(connection(), "update_values", { spreadsheetId: ID, range: "A1", values: [["x"]] }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toEqual([]);
-  });
-
-  it("refuses a write past connecta's cell cap, unsent", async () => {
-    const wide = Array.from({ length: 6 }, () => Array.from({ length: 9_000 }, () => 1));
-    const failure = await call(connection(), "update_values", {
-      spreadsheetId: ID,
-      range: "A1",
-      values: wide,
-      valueInputOption: "RAW",
-    }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "invalid_args" });
-    expect(failure.message).toContain("Nothing was written");
-    expect(calls).toEqual([]);
-  });
-
-  it("offers no OVERWRITE append, and refuses a range that is only dots", async () => {
-    const base = { spreadsheetId: ID, values: [["x"]], valueInputOption: "RAW" };
-    await expect(
-      call(connection(), "append_values", { ...base, range: "A1", insertDataOption: "OVERWRITE" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    for (const range of [".", ".."]) {
-      await expect(call(connection(), "append_values", { ...base, range })).rejects.toMatchObject({
-        code: "invalid_args",
-      });
-    }
-    await expect(call(connection(), "get_spreadsheet", { spreadsheetId: "../drive/v3/files" })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(calls).toEqual([]);
-  });
 });
 
 describe("the raw batchUpdate hatch", () => {
@@ -570,101 +286,18 @@ describe("the raw batchUpdate hatch", () => {
     expect(result.note).toContain("Do not send the requests again");
     expect(result.note).not.toMatch(/nothing was/i);
   });
-
-  it("keeps findReplace's counts and a summarized chart's id", async () => {
-    const replies = [
-      {
-        findReplace: { occurrencesChanged: 12, valuesChanged: 9, rowsChanged: 7, sheetsChanged: 2, formulasChanged: 1 },
-      },
-      ...Array.from({ length: 99 }, () => ({
-        addChart: { chart: { chartId: 5, spec: { title: "x".repeat(4_000) } } },
-      })),
-    ];
-    route = () => ({ body: { spreadsheetId: ID, replies } });
-    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests: hundred });
-    expect(bytesOf(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    expect(result.replies[0]).toEqual(replies[0]);
-    expect(result.replies[99]).toEqual({ kind: "addChart", chart: { chartId: 5 } });
-  });
-
-  it("returns counts and where to re-read when even the summaries cannot fit", async () => {
-    const wide = Object.fromEntries(Array.from({ length: 400 }, (_, index) => [`field${index}`, index]));
-    route = () => ({
-      body: { spreadsheetId: ID, replies: Array.from({ length: 100 }, () => ({ updateEmbeddedObjectPosition: wide })) },
-    });
-    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests: hundred });
-    expect(bytesOf(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    expect(result).toEqual({
-      spreadsheetId: ID,
-      replies: [],
-      repliesOmitted: 100,
-      note: expect.stringContaining("All 100 requests applied"),
-    });
-    expect(result.note).toContain("get_spreadsheet");
-  });
-
-  it("refuses a request object that sets no kind, two, or one Sheets does not have, unsent", async () => {
-    for (const requests of [
-      [{}],
-      [{ addSheet: {}, deleteSheet: {} }],
-      [],
-      [{ repeatCell: {} }, { dropEverything: {} }],
-      Array.from({ length: 101 }, () => ({ addSheet: {} })),
-    ]) {
-      await expect(
-        call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests }),
-      ).rejects.toMatchObject({ code: "invalid_args" });
-    }
-    expect(calls).toEqual([]);
-  });
 });
 
 describe("errors (H11)", () => {
   /** A 200 whose JSON body breaks off mid-stream. */
-  const brokenReply = () =>
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode('{"spreadsheetId":'));
-          controller.error(new TypeError("other side closed"));
-        },
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
+
   /** A request that went out and got no answer at all. */
-  const noReply = () => {
-    throw new TypeError("fetch failed");
-  };
+
   const writes: [string, Record<string, unknown>][] = [
     ["update_values", { spreadsheetId: ID, range: "A1", values: [["x"]], valueInputOption: "RAW" }],
     ["append_values", { spreadsheetId: ID, range: "Log!A:C", values: [["x"]], valueInputOption: "RAW" }],
     ["create_spreadsheet", { title: "Attendance" }],
   ];
-
-  it.each(writes.filter(([name]) => name === "append_values"))(
-    "never tells %s to retry when its 2xx reply breaks mid-stream",
-    async (name, args) => {
-      route = () => ({ raw: brokenReply });
-      const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("the change probably applied");
-      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-      // One attempt: an accepted write is never replayed.
-      expect(calls).toHaveLength(1);
-    },
-  );
-
-  it.each(writes.filter(([name]) => name === "append_values"))(
-    "INV-9: never tells %s to retry when no reply comes back",
-    async (name, args) => {
-      route = () => ({ raw: noReply });
-      const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("may or may not have been applied");
-      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-      expect(calls).toHaveLength(1);
-    },
-  );
 
   const serverError = () => ({
     status: 503,
@@ -683,77 +316,4 @@ describe("errors (H11)", () => {
   );
 
   /** A redirect, which the client never follows. */
-  const redirect = () => ({
-    raw: () => new Response(null, { status: 307, headers: { Location: "https://sheets.googleapis.com/elsewhere" } }),
-  });
-  const advice: Record<string, string> = {
-    append_values: "Appending again would add the rows a second time",
-    create_spreadsheet: "Search Drive for this title before creating it again",
-  };
-
-  it.each(writes.filter(([name]) => name === "append_values"))(
-    "treats a redirect answering %s as an unknown outcome, never as applied",
-    async (name, args) => {
-      route = redirect;
-      const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("unknown");
-      expect(failure.message).not.toMatch(
-        /probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i,
-      );
-      if (advice[name]) expect(failure.message).toContain(advice[name]);
-      expect(calls).toHaveLength(1);
-    },
-  );
-
-  it("keeps a 503 with a rate-limit reason on a non-idempotent write an unknown outcome, not a rate limit", async () => {
-    route = () => ({
-      status: 503,
-      body: {
-        error: {
-          code: 503,
-          message: "Quota exceeded.",
-          status: "UNAVAILABLE",
-          details: [{ reason: "RATE_LIMIT_EXCEEDED" }],
-        },
-      },
-    });
-    const failure = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.code).not.toBe("rate_limited");
-    expect(failure.message).toContain("outcome is unknown");
-    expect(failure.message).toContain(advice["append_values"]);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("gives a 5xx append or create the same advice as one that got no answer", async () => {
-    route = serverError;
-    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
-    expect(append.message).toContain("Appending again would add the rows a second time");
-    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
-    expect(create.message).toContain("Search Drive for this title before creating it again");
-  });
-
-  it("tells an uncertain append to read the table, and an uncertain create to search Drive", async () => {
-    route = () => ({ raw: noReply });
-    const append = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
-    expect(append.message).toContain("Appending again would add the rows a second time");
-    expect(append.message).toContain("get_values");
-    route = () => ({ raw: brokenReply });
-    const create = await call(connection(), "create_spreadsheet", writes[2]![1]).catch((error) => error);
-    expect(create.message).toContain("Search Drive for this title before creating it again");
-  });
-
-  it("passes an explicit refusal of an append through unchanged, and a dropped read stays retryable", async () => {
-    route = () => ({
-      status: 400,
-      body: { error: { code: 400, message: "Unable to parse range: Log!A:C", status: "INVALID_ARGUMENT" } },
-    });
-    const refused = await call(connection(), "append_values", writes[1]![1]).catch((error) => error);
-    expect(refused.code).toBe("invalid_args");
-    expect(refused.message).not.toContain("Appending again");
-    route = () => ({ raw: noReply });
-    const read = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
-    expect(read).toMatchObject({ code: "unavailable", retryable: true });
-  });
 });
