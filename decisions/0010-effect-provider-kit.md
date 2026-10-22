@@ -42,7 +42,7 @@ The prototype gives four kinds of evidence:
   `conflict`, where Tithe.ly answers `connector_call_failed`; the default is
   gone (B.3).
 - **Against today's mappers.** `src/providers/stripe/kit-prototype.test.ts`
-  maps 360 combinations of status, error body, headers and value-safety
+  maps 16 branch rows of status, error body, headers and value-safety
   verdict through `stripeFailure` and through the kit, and requires the same
   code, message, retry advice and wait, with the advice as its own segment.
 - **Against the core's verdicts (final round).** `test/kit-core-verdicts.test.ts`
@@ -939,6 +939,23 @@ mapping is the vendor's verdict and its provenance, not the write's outcome:
 `Send` before the answer is read, so value safety decides what the failure may
 quote before any detail exists.
 
+**B.3 implementation reconciliation (2026-10-22).** `src/http/errors.ts`
+is the internal failure contract, with one completeness-checked tag vocabulary
+shared by the typed-client boundary. Providers remain unmigrated. Mapping
+rules now have ten compact table rows in `http-kit.test.ts`; Stripe's former
+360-combination comparison is sixteen distinct branch rows, keeping its
+separate token-narrowing and core-provenance checks. The whole-call core table
+remains unchanged.
+
+A blocked physical write reports its first reservation's answer even when
+the tool is classified read: the core's positive-read rule can require write
+capacity for a POST or method override. The default server-error range is
+500–599. The core retains a diagnostic `retryAfterMs` on a generic unknown
+write while forbidding retry; Q8 removes both retryability and wait. The kit
+preserves those core fields and never strips them with a second outcome rule.
+No caller-facing Promise entry is added; B.1's boundary/lifetime matrix and
+B.2's transport/renewal contracts remain the entry points.
+
 **The vendor contract.** Classification and wording are two steps, and the
 first cannot reach prose:
 
@@ -1019,7 +1036,7 @@ The kit runs them in this order for every `StatusFailure`:
   That is code review's to refuse; the contract makes it the only way, and a
   visible one.
 
-**Stripe** (`stripeFailure`, proven equal over 360 cases):
+**Stripe** (`stripeFailure`, proven equal over 16 distinct branch rows):
 
 ```ts
 const stripeErrors: VendorErrors<{ type?; code?; declineCode?; param? }> = {

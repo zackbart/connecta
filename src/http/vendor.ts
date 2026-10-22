@@ -29,6 +29,7 @@ import { parameterPairs } from "./write-request.js";
 import type { GuardedClient } from "./client.js";
 import {
   validateVendorErrors,
+  isHttpFailure,
   RequestRefused,
   ResendRefused,
   StatusFailure,
@@ -283,21 +284,6 @@ function parse(text: string | undefined, redact: (value: unknown) => unknown): {
     return undefined;
   }
   return { value: redact(value) };
-}
-
-const TAGS = new Set([
-  "RequestRefused",
-  "TransportFailure",
-  "RedirectRefused",
-  "ResponseTooLarge",
-  "ResendRefused",
-  "StatusFailure",
-  "UnreadableBody",
-  "Refusal",
-]);
-
-function isHttpFailure(error: unknown): error is HttpFailure {
-  return typeof error === "object" && error !== null && TAGS.has((error as { _tag?: unknown })._tag as string);
 }
 
 /** The endpoint manifest drift checks compare against the vendor's published contract. */

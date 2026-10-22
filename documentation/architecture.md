@@ -1984,6 +1984,27 @@ storage is the root's namespaced to its principal.
 | Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
 | QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
+### Internal provider HTTP failures (contributor)
+
+The kit's `src/http/errors.ts` maps every `HttpFailure` tag through
+`toConnectorCallError`. Its completeness-checked tag vocabulary is also the
+typed-client boundary's guard. Vendor classification reads a token-only copy,
+complete bounded facts and reviewed headers; only after the verdict is fixed
+does wording receive display facts (eight list entries) and, where the
+operation's value-safety review permits it, the body. Required vendor meanings
+for 401/403/404 precede the other defaults; 409 has no shared conflict default.
+
+The mapping records each request's own served provenance and raw 401 facts.
+`api()` and invocation retain the sole write-outcome decision in the core's
+`providerCallFailure`/`settleWrite`. A blocked resend reports the first
+reservation's answer even for a read-classified tool issuing a physical write.
+Structured resend advice reaches output only when the core permits it. Generic
+unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
+adds no Promise entry or lifetime owner. The rule tables in `http-kit.test.ts`,
+Stripe's sixteen-branch comparison and `kit-core-verdicts.test.ts` establish
+these internal contracts. No maintained provider uses the kit yet; it stays
+off the root import graph and published declarations stay unchanged.
+
 ### What stays plain
 
 - **Everything a deployment writes against.** The `Connector` contract,

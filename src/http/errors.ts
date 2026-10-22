@@ -1,4 +1,4 @@
-// Internal prototype for decision 0010 (B.3). Unreachable from src/index.ts.
+// Internal HTTP failure contract (decision 0010, B.3). Unreachable from src/index.ts.
 //
 // Every way a kit request can fail, as a tagged error, and the one mapping
 // from those to the wire `ConnectorCallError`. A provider supplies meaning
@@ -92,6 +92,23 @@ export type HttpFailure =
   | StatusFailure
   | UnreadableBody
   | Refusal;
+
+// One completeness-checked vocabulary for the typed client boundary.
+const TAGS = {
+  RequestRefused: true,
+  TransportFailure: true,
+  RedirectRefused: true,
+  ResponseTooLarge: true,
+  ResendRefused: true,
+  StatusFailure: true,
+  UnreadableBody: true,
+  Refusal: true,
+} satisfies Record<HttpFailure["_tag"], true>;
+
+export function isHttpFailure(error: unknown): error is HttpFailure {
+  if (typeof error !== "object" || error === null || !("_tag" in error)) return false;
+  return typeof error._tag === "string" && Object.hasOwn(TAGS, error._tag);
+}
 
 /** One machine-readable value from an error body: a code, a reason, a type. */
 type Fact = string | number | boolean;
@@ -199,13 +216,13 @@ interface AuthBeforeExecution<F extends Facts> {
 /** Refuse empty evidence at connection construction (INV-11); prose is never proof by itself. */
 export function validateVendorErrors(vendor: VendorErrors<any>): void {
   const proof = vendor.authBeforeExecution;
-  if (proof && (!proof.evidence.trim() || typeof proof.matches !== "function")) {
+  if (proof && (typeof proof.evidence !== "string" || !proof.evidence.trim() || typeof proof.matches !== "function")) {
     throw new Error("An authBeforeExecution declaration requires nonempty evidence and a narrow raw-fact predicate.");
   }
 }
 
-// No 409: `conflict` is a refusal, so it tells invocation a write did not
-// land. Only a vendor that documents its 409 may say that, in its own table.
+// No 409 default: only a vendor that documents its meaning may name a conflict.
+// The core decides refusal from the served answer's provenance, never this code.
 const DEFAULTS: Readonly<Record<number, StatusRule>> = {
   400: () => ({ code: "invalid_args" }),
   422: () => ({ code: "invalid_args" }),
@@ -246,13 +263,16 @@ function boundedFact(value: unknown): Fact | undefined {
 
 /** Keep tokens, finite numbers, and booleans, in complete lists; anything else is dropped. */
 function bounded<F extends Facts>(facts: F): F {
-  const out: Record<string, Fact | Fact[] | undefined> = {};
-  for (const [name, value] of Object.entries(facts)) {
-    out[name] = Array.isArray(value)
-      ? value.map(boundedFact).filter((fact): fact is Fact => fact !== undefined)
-      : boundedFact(value);
-  }
-  return out as F;
+  return Object.fromEntries(
+    Object.entries(facts)
+      .filter(([name]) => TOKEN.test(name))
+      .map(([name, value]) => [
+        name,
+        Array.isArray(value)
+          ? value.map(boundedFact).filter((fact): fact is Fact => fact !== undefined)
+          : boundedFact(value),
+      ]),
+  ) as F;
 }
 
 /** The facts the detail line shows: each list cut to its first eight entries. */
@@ -263,7 +283,7 @@ function displayed<F extends Facts>(facts: F): F {
 }
 
 function visibleHeaders(headers: Headers, allowed: readonly string[] | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const name of allowed ?? []) {
     const value = headers.get(name);
     if (value !== null && value.length <= MAX_HEADER && !hasControl(value)) out[name.toLowerCase()] = value;
@@ -303,10 +323,12 @@ export function toConnectorCallError(
   vendor: VendorErrors<any>,
   options: MapOptions,
 ): ConnectorCallError {
-  const error = answered(failure, verdict(failure, vendor, options), options.dispatches);
-  if (options.classification === "read") return error;
-  recordUnauthorized(vendor, options);
-  return failure._tag === "ResendRefused" ? resent(failure.first, vendor, options) : error;
+  if (options.classification === "write") recordUnauthorized(vendor, options);
+  // A served read can still issue a physical write (POST or a method override).
+  // A blocked resend always reports that reservation's original attempt.
+  return failure._tag === "ResendRefused"
+    ? resent(failure.first, vendor, options)
+    : answered(failure, verdict(failure, vendor, options), options.dispatches);
 }
 
 /**
@@ -469,7 +491,7 @@ function classified(input: Classified, vendor: VendorErrors<any>): Verdict {
   const table = vendor.statuses;
   const rule =
     table[input.status] ??
-    (input.status >= 500 ? (table.serverError ?? serverErrorDefault) : undefined) ??
+    (input.status >= 500 && input.status <= 599 ? (table.serverError ?? serverErrorDefault) : undefined) ??
     DEFAULTS[input.status] ??
     table.otherwise ??
     otherwiseDefault;
