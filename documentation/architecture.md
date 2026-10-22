@@ -2173,7 +2173,18 @@ compiling and configuring the real thing.
   bridge; a spread has no caller or admission authority. Candidate credential
   probes get anonymous read-call services instead of deriving authority.
   Credentials and charges check closure before and after every await, pending
-  work is interrupted, and late recovery facts are dropped. Invocation owns
+  work is interrupted, and late recovery facts are dropped. Every published
+  Promise view and connector operation also races its complete caller-facing
+  Promise against its owner through `settleOnClose`: credential and fetch
+  views, guarded helpers, token minting, catalog loading, MCP operations and
+  applicable authorization operations. An opaque storage, crypto, resolver
+  or body-cleanup wait cannot keep that caller pending after closure.
+  Work starts synchronously after the owner guard so shared-session waiter
+  accounting and claim ownership keep their existing ordering. Late
+  rejections are observed; dispatch and lease guards still contain detached
+  work. Per-await I/O cancellation remains useful for releasing resources,
+  while prompt refusal is enforced at the boundary
+  (`test/promise-boundary-lifetime.test.ts`). Invocation owns
   the recovery and logical-call records it reads after teardown. Closing an
   outer call also revokes nested calls paused in preparation. Request-owned
   MCP sessions and token flights outlive individual calls and close with the

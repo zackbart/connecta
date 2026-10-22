@@ -467,6 +467,21 @@ explicit finalizer and a closed-state check:
   `recordRecovery` go through the same lease, so a retained view refuses in
   the same way. B.1 closes the Promise view's credentials too; it does not
   wait for D.6.
+- Every Promise-view capability and connector operation races its **whole
+  caller-facing Promise** at its entry boundary. `settleOnClose` checks the
+  owner before synchronously starting work, observes any detached rejection,
+  and settles the caller when its call lease or request closes. Correctness
+  does not depend on finding and racing every internal storage, crypto,
+  token-resolver or response-cleanup await. Credentials and budget services
+  already provide the same structural race at their Effect boundary.
+  Per-await races remain where they abort real I/O or stop a storage
+  continuation from submitting another write. A detached continuation must
+  still pass the transport's preparation/dispatch checks and the lease's
+  capability guards; it cannot deliver a result to the closed caller.
+  Handler and helper races sit inside the existing write/fact settlement
+  boundary, preserving its single decider. Auxiliary joins use the request
+  owner, and shared session joins retain separate caller waiters. Submitted
+  refresh coordination and tracked cleanup retain their independent owners.
 
 What a call owns and what its request owns are kept apart:
 
