@@ -2668,7 +2668,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // turn it back into a pending consent flow.
     let oauthGeneration: string | undefined;
     if (isOauth && (state.client || state.connecting)) {
-      const provider = newProvider(ctx, state);
+      // Inspect the request's shared grant without subscribing this caller's
+      // signal before it joins the connection's waiter count below.
+      const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
       oauthGeneration = await provider.liveEpoch();
       if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
         closeHalf(state);
