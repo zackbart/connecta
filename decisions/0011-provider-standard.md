@@ -184,8 +184,10 @@ decisions, and review decisions stay as code (0009).
 
 The mapping below was checked against the tracked provider tree at `8f367235`
 and amended by 0012. Every existing evidence or implementation file named here
-has a home. Hosted material is deleted: C.0b deletes the five pure-MCP folders
-whole and the Google observation checks, and C.0c deletes the rest.
+has a home. Hosted material is deleted. C.0b removed the five pure-MCP
+folders, `mcp-catalog`, `oauth-discovery`, their parsers and Google's catalog
+observation captures. C.0c removes `mcp-docs` and remaining hosted manual
+checks, including Forms' hosted-absence check, and the rest.
 
 | Today                                                       | Provider                                             | Moves to                                                                                                                                                             |
 | ----------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -195,7 +197,7 @@ whole and the Google observation checks, and C.0c deletes the rest.
 | `contracts.fixture.json`                                    | RevenueCat (hosted capture)                          | deleted with the folder                                                                                                                                              |
 | `contracts.fixture.json`                                    | Mixpanel (Query API subset)                          | `evidence/openapi.document.json`, pinned by `evidence/openapi.json` with `vendored: true`; the `manual` check that records its URL and digest today becomes that pin |
 | `drift.json` `mcp-catalog.reviewed`                         | Docs, Drive, Gmail, Sheets, Slides                   | deleted, with no `evidence/catalog.json` replacement                                                                                                                 |
-| `drift.json` manual hosted-absence review                   | Forms                                                | deleted: no kind decision remains to evidence                                                                                                                        |
+| `drift.json` manual hosted-absence review                   | Forms                                                | deleted in C.0c: no kind decision remains to evidence                                                                                                                |
 | `catalog.review.md`                                         | Intercom                                             | deleted with the folder                                                                                                                                              |
 | `mcp-catalog-2026-10-15.md`                                 | Notion                                               | deleted                                                                                                                                                              |
 | `openapi.source.json`                                       | Cloudflare, Notion, Stripe, Vercel                   | `evidence/openapi.json`, same keys                                                                                                                                   |

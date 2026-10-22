@@ -222,8 +222,8 @@ C.0b's migration guide documents its options.
   - `test/hosted-presets.test.ts` and the `REMOTE_MCP_ONLY` and
     `REMOTE_ONLY` exemptions;
   - both pending-list entries and their baseline lines;
-  - the `mcp-catalog` and `oauth-discovery` check types and their parsers,
-    Google's observation captures, and Forms' hosted-absence check.
+  - C.0b removed `mcp-catalog`, `oauth-discovery`, their parsers and
+    Google's catalog observation captures.
 
   It ships the dated operator migration guide with those five mappings. It
   overlaps B.5 only on the `PENDING` and baseline lines.
@@ -233,7 +233,8 @@ C.0b's migration guide documents its options.
     maps and hosted captures of Stripe, Vercel, Cloudflare, Notion, Mixpanel
     and GitHub, including GitHub's `hosted.ts` and Vercel's recorded MCP
     documentation;
-  - the `mcp-docs` check type and the hosted manual checks;
+  - C.0c removes `mcp-docs` and remaining hosted manual checks, including
+    Forms' hosted-absence check;
   - `classify`, `owners` and `ProviderKind` from `src/provider.ts`, and
     `remoteMcp({ classify })`;
   - `catalog-drift.ts` review code, `generated.hosted` and the UI's drift

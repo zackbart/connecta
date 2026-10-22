@@ -48,10 +48,12 @@ vendor.
 The only new option is an optional top-level `headers` map of non-secret
 extra headers, such as a toolset selector. Connecta cannot enforce
 "non-secret", so the values register as sent secrets and only header names
-are ever described. The map joins the negotiation digest and the cache's
-configuration identity, and it is sent to the resource origin only.
-Construction refuses the map alongside `auth.type: "headers"`. It also
-refuses, case-insensitively, these names:
+are ever described. Echoed values are redacted only when at least eight
+characters long. The map joins the negotiation digest and the cache's
+configuration identity. Extra headers are sent only to the configured
+resource origin and exact pathname, never OAuth metadata, registration or
+token requests. Construction refuses the map alongside
+`auth.type: "headers"`. It also refuses, case-insensitively, these names:
 
 - the auth-owned header and `Cookie`;
 - `Host`, `Content-*` and hop-by-hop headers;
@@ -83,18 +85,22 @@ returns. Otherwise one dropped tool would take down the whole connector.
 Static catalogs still fail at construction, so a typo cannot silently do
 nothing.
 
-**INV-9 holds through reclassification.** The registry keeps the hint-derived
-class beside the effective class, and the transport sends once whenever
-either says write. The same rule governs failure outcome and advice: a call
-whose server hints say write reports `writeOutcome: "unknown"`, non-retryable,
-after a possible dispatch, so the agent never re-sends it. An override changes
-approval, read-only gating and catalog presentation, which follow the
-effective class, never replay safety. Today a server-marked write overridden
-to `"read"` could be resent on auth renewal or reconnect.
+**INV-9 holds through reclassification.** The registry keeps a source class
+beside the effective class. The source class uses the verified provider
+review where present, otherwise annotations; deployment overrides never enter
+it. Effective OR source write makes a call write-like and governs every
+resend, replay and write outcome, with that classification recorded at
+dispatch. Ambiguous dispatched failures are unknown and non-retryable;
+provider `retryAfterMs` remains diagnostic. Programs track write-like calls
+but budget only effective writes. Approval, read-only gating and catalog
+presentation follow the effective class, so an override never changes replay
+safety. Provider reviews remain supported until C.0c. Before C.0a a
+server-marked write overridden to `"read"` could be resent on auth renewal or
+reconnect; #939 fixed this.
 
 C.0a owns INV-1's canonical text. In substance, a hosted tool's fail-closed
 verdict comes from its annotations or the deployment's `classification` map.
-No release-reviewed hosted verdict remains.
+After C.0c, no release-reviewed hosted verdict remains.
 
 **Transition.** New deployment policy uses only `ConnectaConfig.classification`,
 widened in C.0a. The generic `remoteMcp({ classify })` and provider-review
