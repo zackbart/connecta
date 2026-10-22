@@ -1,4 +1,4 @@
-// HTTP request facts and fixed write reservations (B.2/B.4 prototype).
+// HTTP request facts and fixed write reservations (B.2/B.4).
 import { Context, Effect } from "effect";
 import type { ProviderRequest } from "../provider-call.js";
 import { dispatchProviderRequest, providerRequest } from "../provider-call.js";

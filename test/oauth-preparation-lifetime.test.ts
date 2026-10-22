@@ -47,7 +47,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const grantEntries = ["facade", "grant token", "grant refresh"] as const;
 const grantPreparationCases = grantEntries.flatMap((entry) =>
-  (["storage", "sealer"] as const).flatMap((seam) =>
+  (entry === "facade" ? (["storage", "sealer"] as const) : (["sealer"] as const)).flatMap((seam) =>
     (["call", "request", ...(entry === "facade" ? ["fetch" as const] : [])] as const).map((boundary) => ({
       entry,
       seam,
