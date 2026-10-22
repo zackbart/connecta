@@ -1704,7 +1704,10 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     from per-call decode time (Q4).
   - `kit-prototype.ts` and its suite are deleted, and `tsconfig.build.json`
     stops excluding `src/http`.
-  - Phase C starts only after B.5 merges. If B.5 shows that HttpApiClient adds
+  - Phase C starts only after B.5 merges. _Amended by
+    [0012](./0012-hosted-mcp-runtime-discovery.md):_ this gate applies to
+    C.1–C.8. C.0a, C.0b and C.0d use no kit code and may start earlier;
+    C.0c waits for B.5. If B.5 shows that HttpApiClient adds
     cost without benefit (its bytes buy no typed request or manifest a
     hand-rolled encoder would not give, or an effect upgrade breaks it), the
     fallback is fixed now: keep the kit, drop `HttpApiClient`, and encode
