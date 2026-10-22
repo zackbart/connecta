@@ -422,7 +422,6 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   });
 
   it("INV-7: a caller's abort ends both implementations, and invocation reads it as the caller's", async () => {
-    const outcomes: unknown[] = [];
     for (const connector of [current(), kit()]) {
       const reason = new Error("caller left");
       const controller = new AbortController();
@@ -441,21 +440,11 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
         () => undefined,
         (caught: unknown) => caught,
       );
-      // Invocation classifies any failure after its signal aborts as the
-      // caller's cancellation, so both are the same outcome on the wire.
+      // Both Promise edges preserve the caller's exact reason. A wrapped
+      // network failure would lose its identity before invocation sees it.
       expect(controller.signal.aborted).toBe(true);
-      outcomes.push(
-        error === reason
-          ? "reason"
-          : error instanceof ConnectorCallError
-            ? (error.cause as Error | undefined)?.message === reason.message
-            : error,
-      );
+      expect(error).toBe(reason);
     }
-    // Today's transport wraps the reason as an `unavailable` cause (a
-    // redacted copy of it since #911); the kit rethrows the reason itself, as
-    // runEdge does at every other edge.
-    expect(outcomes).toEqual([true, "reason"]);
   });
 
   it("INV-9: a write answered 401 (Q8), a 5xx and a broken connection match the core", async () => {

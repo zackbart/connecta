@@ -1,39 +1,35 @@
-// One API call's request ledger and private failure provenance. The symbol is
-// copied by deriveContext, while each api() entry installs a fresh ledger even
-// if a direct caller reuses its context concurrently. No request facts escape
-// into the agent envelope or operator records.
-import { contextKey, deriveContext } from "./derived-context.js";
+import {
+  boundaryFor,
+  delegatorFor,
+  recordRequestField,
+  recordProviderResponse,
+  tracksRequests,
+  isKnownProviderFailure,
+  type ProviderRequest,
+  type CallTool,
+} from "./provider-call-facts.js";
+// One API call's request ledger in call services, and private failure
+// provenance. Each api() entry installs fresh services even if a direct caller
+// reuses its context concurrently. No request facts escape into agent or
+// operator records.
+import {
+  Classification,
+  ProviderLedger,
+  LogicalLedger,
+  recordedService,
+  requestClosed,
+  viewClosed,
+  setViewService,
+  callFromContext,
+  contextView,
+  viewLease,
+  settleOnClose,
+} from "./runtime/call.js";
 import { callClassification } from "./call-classification.js";
-import { carryResendAdvice, ConnectorCallError } from "./errors.js";
-import { followRedactedCopies } from "./redaction-identity.js";
-import type { Connector, ConnectorContext } from "./types.js";
+import { ConnectorCallError } from "./errors.js";
+import type { ConnectorContext } from "./types.js";
 
-export interface ProviderRequest {
-  readonly dispatched: boolean;
-  readonly status?: number;
-  auxiliary: boolean;
-  provider: string;
-  /** The HTTP method it was sent with, when its channel knows it. */
-  readonly method?: string;
-  /** Positive operation/tool evidence; an HTTP method alone proves no read. */
-  classification?: "read" | "write" | undefined;
-  /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
-  key?: string;
-  /**
-   * Its answer was a 401 that the transport's reviewed `authBeforeExecution`
-   * evidence covers: the vendor rejected the credential before it acted on
-   * the request. Only that makes a 401 a refusal (`servedRefusal`).
-   */
-  authBeforeExecution?: true;
-  /**
-   * Its answer was a 401, and a renewal then replaced the credential it sent
-   * with a different one ({@link renewedAfterUnauthorized}). The 401 no
-   * longer needs the operator's recovery. The single `settleWrite` decider
-   * still reports unknown, without the handoff (Q8).
-   */
-  readonly renewed?: true;
-}
-interface ProviderCall {
+export interface ProviderCall {
   requests: ProviderRequest[];
   classification?: "read" | "write" | undefined;
   /** The handler settled: its outcome may be reported, so nothing more leaves. */
@@ -43,63 +39,42 @@ interface ProviderCall {
   /** The call whose handler entered this one; undefined for the outermost. */
   parent?: ProviderCall;
 }
-const CALL = Symbol("provider call");
-type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
-// A redacted copy of a failure is the same failure: its verdict follows it.
-const refusals = followRedactedCopies(new WeakMap<object, ProviderRequest>());
-const knownFailures = followRedactedCopies(new WeakSet<object>());
-// Verdicts that already account for a write's 401 in words of their own: a
-// renewal's (`unsentAfterUnauthorized`) or Q8's own. Q8 adds no sentence to them.
-const explainedUnauthorized = followRedactedCopies(new WeakSet<object>());
-// Verdicts the one Q8 decision (`settleWrite`) made. They are final: nothing
-// after it may add retry, resend, key-reuse or wait advice to them.
-const settledWrites = followRedactedCopies(new WeakSet<object>());
-// The authorization verdict a request's own 401 was mapped to, kept for the
-// call's verdict whatever failure surfaces after it (Q8).
-const unauthorizedAnswers = new WeakMap<ProviderRequest, ConnectorCallError>();
-const trackedConnectors = new WeakSet<object>();
-
-// Call identities, each bound to the connector object it was built as and
-// the `callTool` function it had then. A copy (`{ ...boundary }`,
-// `Object.assign`) is another object and is in neither table, so it can
-// share a boundary's function but never its standing; reassigning the
-// property on the original leaves the recorded function behind.
-type CallTool = Connector["callTool"];
-interface Boundary {
-  /** The api() or remoteMcp() object whose own code enters the logical call. */
-  boundary: object;
-  own: CallTool;
-}
-const boundaries = new WeakMap<object, Boundary>();
-const delegators = new WeakMap<object, CallTool>();
-
 // One invocation's logical call: the connector object and the `callTool`
 // function it invoked, and the object of every boundary entered beneath it,
-// each captured when it ran, never read back from a mutable property. Keyed
-// like every call side table so a derived context shares it.
-interface LogicalCall {
+// each captured when it ran, never read back from a mutable property. The
+// LogicalLedger service shares it with derived views.
+export interface LogicalCall {
   target: object;
   entered: CallTool;
   boundaries: object[];
   /** Every resource request dispatched under it, once per dispatch, from any ledger. */
   sent: ProviderRequest[];
 }
-const logicalCalls = new WeakMap<object, LogicalCall>();
 
 export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
-  const parent = (ctx as CallContext)[CALL];
+  const parent = recordedService(ctx, ProviderLedger);
   const call: ProviderCall = { requests: [], classification, closed: false, nested: [], ...(parent ? { parent } : {}) };
   parent?.nested.push(call);
-  return deriveContext<CallContext>(ctx, { [CALL]: call });
+  let view: ConnectorContext;
+  const lease = callFromContext(ctx, classification ?? callClassification(ctx) ?? "write", {
+    providerLedger: call,
+    ledger: {
+      open: ({ auxiliary, provider, method, key }) =>
+        providerRequest(view, auxiliary, provider, { method, ...(key === undefined ? {} : { key }) }),
+      dispatch: (request, headers, method) => dispatchProviderRequest(view, request, headers, method),
+    },
+  });
+  view = contextView(lease, ctx);
+  return view;
 }
 
 /** Whether `ctx`'s call was entered by another api() boundary's handler. */
 export function nestedProviderCall(ctx: ConnectorContext): boolean {
-  return (ctx as CallContext)[CALL]?.parent !== undefined;
+  return recordedService(ctx, ProviderLedger)?.parent !== undefined;
 }
 
 export function providerRequests(ctx: ConnectorContext): readonly ProviderRequest[] | undefined {
-  return (ctx as CallContext)[CALL]?.requests;
+  return recordedService(ctx, ProviderLedger)?.requests;
 }
 
 /**
@@ -115,7 +90,7 @@ export function nestedProviderRequests(ctx: ConnectorContext): ProviderRequest[]
       visit(inner);
     }
   };
-  const call = (ctx as CallContext)[CALL];
+  const call = recordedService(ctx, ProviderLedger);
   if (call) visit(call);
   return found;
 }
@@ -127,17 +102,31 @@ export function nestedProviderRequests(ctx: ConnectorContext): ProviderRequest[]
  * and never leaves after the failure is reported.
  */
 export function closeProviderCall(ctx: ConnectorContext): void {
-  const call = (ctx as CallContext)[CALL];
-  if (call) call.closed = true;
+  const call = recordedService(ctx, ProviderLedger);
+  if (call) {
+    const close = (current: ProviderCall) => {
+      current.closed = true;
+      for (const child of current.nested) close(child);
+    };
+    close(call);
+  }
+  viewLease(ctx)?.close();
 }
 
 /**
- * Refuse a resource request whose call has ended, before credential reads
- * and again immediately before it is sent. Auxiliary requests (token mints,
- * lookups) cannot perform the write and may be shared with other calls.
+ * Refuse every request after its request scope ends, before credential reads
+ * and again immediately before dispatch. Resource requests also require an
+ * open call. Auxiliary requests (token mints, lookups) may outlive that call,
+ * but never their request.
  */
 export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, auxiliary: boolean): void {
-  if (auxiliary || (ctx as CallContext)[CALL]?.closed !== true) return;
+  if (requestClosed(ctx))
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `This ${provider} request belongs to a request that has already ended, so it was not sent.`,
+      { retryable: false },
+    );
+  if (auxiliary || (recordedService(ctx, ProviderLedger)?.closed !== true && !viewClosed(ctx))) return;
   throw new ConnectorCallError(
     "connector_call_failed",
     `This ${provider} request belongs to a call that has already ended, so it was not sent.`,
@@ -157,17 +146,7 @@ export function dispatchProviderRequest(
   if (hasMethodOverride(headers)) request.classification = "write";
   recordRequestField(request, "method", method);
   recordRequestField(request, "dispatched", true);
-  if (ctx && !request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
-}
-
-/** A physical send owns its fields permanently; its own answer is recorded once. */
-function recordRequestField(request: ProviderRequest, field: keyof ProviderRequest, value: unknown): void {
-  Object.defineProperty(request, field, { value, enumerable: true, writable: false, configurable: false });
-}
-
-export function recordProviderResponse(request: ProviderRequest, status: number): void {
-  if (request.status !== undefined) throw new Error("Provider request already answered.");
-  recordRequestField(request, "status", status);
+  if (ctx && !request.auxiliary) recordedService(ctx, LogicalLedger)?.sent.push(request);
 }
 
 // Only a fetch that records physical sends may accept an unsent handoff.
@@ -220,67 +199,24 @@ export function providerRequest(
     dispatched: false,
     auxiliary,
     provider,
-    classification: (ctx as CallContext)[CALL]?.classification ?? callClassification(ctx),
+    classification:
+      recordedService(ctx, ProviderLedger)?.classification ??
+      recordedService(ctx, Classification) ??
+      callClassification(ctx),
     ...sent,
   };
-  (ctx as CallContext)[CALL]?.requests.push(request);
+  recordedService(ctx, ProviderLedger)?.requests.push(request);
   return request;
-}
-
-/**
- * Declare that every request the connector's handlers send goes through a
- * channel the call ledger records: a guarded transport, `ctx.fetch`, or
- * `ctx.oauth.fetch`. Only then does an empty ledger prove that a failed
- * write never left. Maintained providers declare it; an arbitrary `api()`
- * handler can reach the network some other way, so its ledger proves nothing.
- */
-export function tracksEveryRequest<T extends object>(connector: T): T {
-  trackedConnectors.add(connector);
-  return connector;
-}
-
-export function tracksRequests(connector: object): boolean {
-  return trackedConnectors.has(connector);
-}
-
-/**
- * Declare a maintained connector whose `callTool` hands each call to at most
- * one api() or remoteMcp() boundary and sends nothing else that could apply
- * it (GitHub). Only then may that boundary's verdict stand for the call. The
- * object and its function are recorded now, at construction: a later
- * assignment to the property, or a copy of the object, declares nothing.
- */
-export function delegatesEachCall<T extends Connector>(connector: T): T {
-  delegators.set(connector, connector.callTool);
-  return connector;
-}
-
-/**
- * Record a just-built api() or remoteMcp() object as a boundary, with its
- * published `callTool`. Its own code then names the same object, from its
- * closure, in {@link enterProviderBoundary}.
- */
-export function providerBoundary(connector: Connector): void {
-  boundaries.set(connector, { boundary: connector, own: connector.callTool });
-}
-
-/**
- * `alias` serves `base` itself (`defineProvider`'s inheriting stamp), so it
- * takes `base`'s recorded identities. Only construction code calls this.
- */
-export function aliasCallIdentity(alias: object, base: object): void {
-  const boundary = boundaries.get(base);
-  const delegator = delegators.get(base);
-  if (boundary) boundaries.set(alias, boundary);
-  if (delegator) delegators.set(alias, delegator);
 }
 
 /**
  * The invocation opens one logical call on the context it hands a connector,
  * naming the exact object and `callTool` function it is about to invoke.
  */
-export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): void {
-  logicalCalls.set(contextKey(ctx), { target, entered, boundaries: [], sent: [] });
+export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): LogicalCall {
+  const call: LogicalCall = { target, entered, boundaries: [], sent: [] };
+  setViewService(ctx, LogicalLedger, call);
+  return call;
 }
 
 /**
@@ -288,7 +224,7 @@ export function openLogicalCall(ctx: ConnectorContext, target: object, entered: 
  * `boundary` is the object it was built as, from its own closure, never `this`.
  */
 export function enterProviderBoundary(ctx: ConnectorContext, boundary: object): void {
-  logicalCalls.get(contextKey(ctx))?.boundaries.push(boundary);
+  recordedService(ctx, LogicalLedger)?.boundaries.push(boundary);
 }
 
 /**
@@ -299,8 +235,7 @@ export function enterProviderBoundary(ctx: ConnectorContext, boundary: object): 
  * that composed several calls, or could send around them, never inherits an
  * inner verdict.
  */
-export function knownForLogicalCall(ctx: object, error: unknown): boolean {
-  const call = logicalCalls.get(contextKey(ctx));
+export function knownCallFailure(call: LogicalCall | undefined, error: unknown): boolean {
   return call !== undefined && isKnownProviderFailure(error) && call.boundaries.length <= 1 && ownsLogicalCall(call);
 }
 
@@ -313,8 +248,7 @@ export function knownForLogicalCall(ctx: object, error: unknown): boolean {
  * GET or HEAD ({@link readRequest}). An inner request's key never speaks for a composite,
  * a wrapper, a second write, or an earlier unrelated request.
  */
-export function keyProtectsLogicalCall(ctx: object | undefined, key: string | undefined): boolean {
-  const call = ctx ? logicalCalls.get(contextKey(ctx)) : undefined;
+export function keyProtectsCall(call: LogicalCall | undefined, key: string | undefined): boolean {
   const [boundary, ...others] = call?.boundaries ?? [];
   if (!call || key === undefined || boundary === undefined || others.length > 0 || !tracksRequests(boundary))
     return false;
@@ -331,10 +265,10 @@ export function keyProtectsLogicalCall(ctx: object | undefined, key: string | un
  * borrow its standing.
  */
 function ownsLogicalCall(call: LogicalCall): boolean {
-  const boundary = boundaries.get(call.target);
+  const boundary = boundaryFor(call.target);
   return (
     (boundary?.own === call.entered && boundary.boundary === call.boundaries[0]) ||
-    delegators.get(call.target) === call.entered
+    delegatorFor(call.target) === call.entered
   );
 }
 
@@ -360,72 +294,32 @@ export function providerFetch(
   auxiliary: boolean,
   send: typeof fetch,
 ): typeof fetch {
-  return async (input, init) => {
-    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    const request = providerRequest(ctx, auxiliary, provider, { method });
-    dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    const response = await send(input, init);
-    recordProviderResponse(request, response.status);
-    return response;
-  };
-}
-
-/**
- * Whether a served HTTP status says the request was refused, not applied: a
- * 4xx other than 408. A 408 is a timeout, whose request may have been acted
- * on; a 2xx or 5xx never proves a write unapplied. A 401 passes here, and
- * `servedRefusal` still asks for the vendor's reviewed evidence.
- */
-export function refusedStatus(status: number | undefined): boolean {
-  return status !== undefined && status >= 400 && status < 500 && status !== 408;
-}
-
-/**
- * Refusal provenance, recorded where the answer is observed: the request was
- * served a refusing status (`refusedStatus`) and the mapper failed on it. An
- * error code alone is never this evidence.
- */
-export function vendorRefusal<T>(error: T, request: ProviderRequest): T {
-  if (error !== null && typeof error === "object" && refusedStatus(request.status)) {
-    refusals.set(error, request);
-    if (request.status === 401 && authorizationFailure(error) && !unauthorizedAnswers.has(request))
-      unauthorizedAnswers.set(request, error);
-  }
-  return error;
-}
-
-/** An authorization verdict, the kind that keeps the `authorize_connector` handoff. */
-export function authorizationFailure(error: unknown): error is ConnectorCallError {
-  return (
-    error instanceof ConnectorCallError &&
-    (error.code === "auth_required" || error.code === "downstream_oauth_required")
-  );
-}
-
-/**
- * The authorization verdict `request`'s own 401 answer was mapped to, as
- * {@link vendorRefusal} recorded it. Undefined when nothing mapped that
- * answer, such as a body past the ceiling.
- */
-export function unauthorizedAnswer(request: ProviderRequest): ConnectorCallError | undefined {
-  return unauthorizedAnswers.get(request);
-}
-
-/**
- * A renewal answered `request`'s own 401 (a refresh, a login, a fresh token
- * minted) with `fresh`, a credential other than `sent`, the one the request
- * carried: that 401 no longer needs the operator's recovery (Q8). It names
- * the one request it answered and never marks another. A renewal that hands
- * back the credential the request already sent (an earlier recovery reused)
- * renewed nothing.
- */
-export function renewedAfterUnauthorized(request: ProviderRequest | undefined, sent: string, fresh: string): void {
-  if (request?.status === 401 && fresh !== sent && !request.renewed) recordRequestField(request, "renewed", true);
+  return (input, init) =>
+    settleOnClose(
+      ctx,
+      async (signal) => {
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        const request = providerRequest(ctx, auxiliary, provider, { method });
+        dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        const signals = [signal, init?.signal ?? (input instanceof Request ? input.signal : undefined)].filter(
+          (signal): signal is AbortSignal => signal !== undefined && signal !== null,
+        );
+        const sent = signals.length ? { ...init, signal: AbortSignal.any(signals) } : init;
+        const response = await send(input, sent);
+        recordProviderResponse(request, response.status);
+        if (signal.aborted) {
+          void response.body?.cancel().catch(() => {});
+          throw signal.reason;
+        }
+        return response;
+      },
+      auxiliary,
+    );
 }
 
 /** Whether an invocation opened the logical call `ctx` belongs to; it then settles Q8 itself. */
 export function inLogicalCall(ctx: object): boolean {
-  return logicalCalls.has(contextKey(ctx));
+  return recordedService(ctx, LogicalLedger) !== undefined;
 }
 
 /**
@@ -433,57 +327,27 @@ export function inLogicalCall(ctx: object): boolean {
  * ledger, nested ones included; undefined outside one.
  */
 export function logicalCallRequests(ctx: object | undefined): readonly ProviderRequest[] | undefined {
-  return ctx ? logicalCalls.get(contextKey(ctx))?.sent : undefined;
+  return ctx ? recordedService(ctx, LogicalLedger)?.sent : undefined;
 }
 
-export function refusalRequest(error: unknown): ProviderRequest | undefined {
-  return error !== null && typeof error === "object" ? refusals.get(error) : undefined;
-}
-
-export function knownProviderFailure<T>(error: T): T {
-  if (error !== null && typeof error === "object") knownFailures.add(error);
-  return error;
-}
-
-export function isKnownProviderFailure(error: unknown): boolean {
-  return error !== null && typeof error === "object" && knownFailures.has(error);
-}
-
-/** Withdraw a verdict that does not hold for the call that reports it. */
-export function forgetProviderFailure(error: object): void {
-  knownFailures.delete(error);
-  refusals.delete(error);
-}
-
-/** Preserve internal verdicts and resend advice through redaction and provider recovery wording. */
-export function carryProviderFailure<T>(from: unknown, to: T): T {
-  if (to !== null && typeof to === "object") {
-    const refusal = refusalRequest(from);
-    if (refusal) refusals.set(to, refusal);
-    if (isKnownProviderFailure(from)) knownFailures.add(to);
-    if (explainsUnauthorized(from)) explainedUnauthorized.add(to);
-    if (isSettledWrite(from)) settledWrites.add(to);
-    carryResendAdvice(from, to);
-  }
-  return to;
-}
-
-/** Mark a verdict that already accounts for a write's 401 in its own words. */
-export function explainedUnauthorizedVerdict<T>(error: T): T {
-  if (error !== null && typeof error === "object") explainedUnauthorized.add(error);
-  return error;
-}
-
-export function explainsUnauthorized(error: unknown): boolean {
-  return error !== null && typeof error === "object" && explainedUnauthorized.has(error);
-}
-
-/** Mark a verdict the Q8 decision made, final for every step after it. */
-export function settledWrite<T>(error: T): T {
-  if (error !== null && typeof error === "object") settledWrites.add(error);
-  return error;
-}
-
-export function isSettledWrite(error: unknown): boolean {
-  return error !== null && typeof error === "object" && settledWrites.has(error);
-}
+export {
+  recordProviderResponse,
+  tracksEveryRequest,
+  tracksRequests,
+  delegatesEachCall,
+  providerBoundary,
+  refusedStatus,
+  vendorRefusal,
+  authorizationFailure,
+  unauthorizedAnswer,
+  renewedAfterUnauthorized,
+  refusalRequest,
+  knownProviderFailure,
+  isKnownProviderFailure,
+  forgetProviderFailure,
+  explainedUnauthorizedVerdict,
+  explainsUnauthorized,
+  settledWrite,
+  isSettledWrite,
+  type ProviderRequest,
+} from "./provider-call-facts.js";

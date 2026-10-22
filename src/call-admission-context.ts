@@ -1,24 +1,11 @@
-// Internal provider requests share the enclosing invocation's admission
-// partition and concurrency permit. Keep this authority off the public context
-// and bind it only after the registry admits the tool call.
+// The Promise view of the call's admission service; authority stays internal.
 import type { CallAdmissionPermit } from "./call-admission.js";
-import { contextKey } from "./derived-context.js";
+import { Budget, callScopeKnown, chargeView, recordedService, setViewService } from "./runtime/call.js";
 import { chargeCallBudget } from "./runtime/call-admission.js";
-import { runEdge } from "./runtime/run.js";
 import type { ConnectorContext } from "./types.js";
-
-const permits = new WeakMap<object, CallAdmissionPermit>();
-
 export function attachCallAdmission(ctx: ConnectorContext, permit: CallAdmissionPermit): void {
-  permits.set(contextKey(ctx), permit);
+  setViewService(ctx, Budget, { charge: chargeCallBudget(permit, ctx.signal) });
 }
-
-/**
- * Charge one sequential auxiliary request using the enclosing concurrency slot.
- * Await before dispatch and propagate refusal. Contexts outside an invocation
- * have no registry policy to charge.
- */
 export function chargeConnectorCall(ctx: ConnectorContext): Promise<void> {
-  const permit = permits.get(contextKey(ctx));
-  return permit ? runEdge(chargeCallBudget(permit, ctx.signal)) : Promise.resolve();
+  return recordedService(ctx, Budget) || callScopeKnown(ctx) ? chargeView(ctx) : Promise.resolve();
 }

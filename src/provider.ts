@@ -16,7 +16,7 @@ import {
   type Field,
 } from "./config-schema.js";
 import { reviewedClassification } from "./catalog-drift.js";
-import { aliasCallIdentity } from "./provider-call.js";
+import { aliasCallIdentity } from "./provider-call-facts.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,

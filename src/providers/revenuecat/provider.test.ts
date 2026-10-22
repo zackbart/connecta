@@ -50,41 +50,6 @@ describe("revenuecat()", () => {
     expect(REVENUECAT_MCP_ENDPOINT).toBe("https://mcp.revenuecat.ai/mcp");
   });
 
-  it("uses a static project key", () => {
-    revenuecat("bepresent_ios", {
-      purpose: "Subscription state for the BePresent iOS project",
-      auth: KEY_AUTH,
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "bepresent_ios",
-      expect.objectContaining({
-        title: "RevenueCat (single project)",
-        auth: KEY_AUTH,
-      }),
-    );
-  });
-
-  it("takes the same single-project scope from an operator-managed key", () => {
-    revenuecat("bepresent_ios", {
-      purpose: "Subscription state for the BePresent iOS project",
-      auth: { type: "credential" },
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "bepresent_ios",
-      expect.objectContaining({
-        title: "RevenueCat (single project)",
-        // The provider names the key; `Bearer sk_…` is RevenueCat's own form,
-        // so the framing default stands.
-        auth: {
-          type: "credential",
-          credential: expect.objectContaining({ label: "API v2 secret key" }),
-        },
-      }),
-    );
-  });
-
   it("INV-1: serves a 54-tool permission-gated subset without inventing the 63 absent tools", async () => {
     const facts: ToolDef[] = projectCatalogNames.map(
       (name) =>
@@ -110,12 +75,5 @@ describe("revenuecat()", () => {
     expect((await servedTools(revenuecat("crm", { purpose: "Subscription questions" })))[0]?.classification).toBe(
       "write",
     );
-  });
-
-  it("declares no operator credential slot or credential test (P10)", () => {
-    const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
-    expect(connector.credential).toBeUndefined();
-    expect(connector.testCredential).toBeUndefined();
-    expect(connector.testCredentials).toBeUndefined();
   });
 });

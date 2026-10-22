@@ -631,17 +631,22 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
 
   /** A Stripe 401 whose body stalls until `release`, so the invocation's deadline or caller ends the call. */
   function stalledStripe(headers: Record<string, string>) {
-    const bodies: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const bodies = new Set<ReadableStreamDefaultController<Uint8Array>>();
     const answered = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
         answered();
+        let held!: ReadableStreamDefaultController<Uint8Array>;
         return new Response(
           new ReadableStream<Uint8Array>({
             start(body) {
-              bodies.push(body);
+              held = body;
+              bodies.add(body);
               body.enqueue(new TextEncoder().encode('{"error":'));
+            },
+            cancel() {
+              bodies.delete(held);
             },
           }),
           { status: 401, headers },
@@ -652,6 +657,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
       answered,
       release: () => {
         for (const body of bodies) body.close();
+        bodies.clear();
       },
     };
   }

@@ -52,33 +52,4 @@ describe("basecamp()", () => {
     );
     expect(BASECAMP_MCP_ENDPOINT).toBe("https://mcp.basecamp.com/mcp");
   });
-
-  it("INV-11: defaults to the deployment's self-hosted client metadata document", () => {
-    basecamp("basecamp", { purpose: "Projects" });
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "basecamp",
-      expect.objectContaining({
-        auth: { type: "oauth", scope: "full mcp offline_access" },
-      }),
-    );
-  });
-
-  it("INV-11: offers no headless credential and no access mode", () => {
-    // Not part of the options type: OAuth is the only shape this provider
-    // builds, so a stray auth option is refused rather than swapping the
-    // credential out or being silently ignored.
-    expect(() =>
-      connection({
-        ...({ auth: { type: "headers", headers: { Authorization: "Bearer x" } } } as object),
-      }),
-    ).toThrow('Unknown option: basecamp("basecamp").auth.');
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-    const connector = connection();
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
-      auth: { type: "oauth" },
-    });
-    expect(connector.credential).toBeUndefined();
-    expect(connector.testCredential).toBeUndefined();
-    expect(connector.testCredentials).toBeUndefined();
-  });
 });

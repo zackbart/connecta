@@ -3,9 +3,7 @@ import { hasControlCharacters } from "./tool-name.js";
 import { writeRefusal } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
-import { isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
-import { attachCallAdmission } from "./call-admission-context.js";
-import { attachCallClassification } from "./call-classification.js";
+import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
@@ -34,16 +32,19 @@ import {
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
-import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
-import { recoveryFor } from "./call-recovery.js";
+import { sentSecretsFor, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
+import { recoveryRecord, recordRecoveryFacts } from "./call-recovery.js";
+import { callFromContext, contextView, viewServices } from "./runtime/call.js";
+import { chargeCallBudget } from "./runtime/call-admission.js";
+import { callEntry } from "./runtime/call-entry.js";
 import {
   forgetProviderFailure,
   isKnownProviderFailure,
   isSettledWrite,
-  keyProtectsLogicalCall,
-  knownForLogicalCall,
+  keyProtectsCall,
+  knownCallFailure,
+  type LogicalCall,
   knownProviderFailure,
-  logicalCallRequests,
   openLogicalCall,
 } from "./provider-call.js";
 import { classifyWriteOutcome, settleWrite, settleWriteResult } from "./write-outcome.js";
@@ -192,14 +193,14 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
  * Whether a failed attempt is the downstream tool's own answer. For a read:
  * an MCP `isError`, or a boundary's known refusal/unsent failure. For a
  * write, only refusal provenance that holds for the whole logical call
- * (`knownForLogicalCall`); an `isError` arrives over a 2xx after the handler
+ * (`knownCallFailure`); an `isError` arrives over a 2xx after the handler
  * ran. A typed error alone is not proof: a body ceiling, refused redirect, or
  * handler error may follow execution. Boundaries supply provenance, never
  * wording.
  */
-function answeredFailure(error: unknown, write: boolean, ctx: object | undefined): boolean {
+function answeredFailure(error: unknown, write: boolean, call: LogicalCall | undefined): boolean {
   if (!write) return error instanceof DownstreamToolError || isKnownProviderFailure(error);
-  return ctx !== undefined && knownForLogicalCall(ctx, error);
+  return knownCallFailure(call, error);
 }
 
 export interface InvocationTiming {
@@ -352,15 +353,15 @@ export class InvocationService {
       let attempts = 0;
       let resultBytes: number | undefined;
       let dispatchedToConnector = false;
-      // The context a dispatched call ran with, read for recovery facts the
-      // connector recorded before an interrupting deadline (call-recovery.ts).
-      let dispatchContext: object | undefined;
+      // The logical call bridge; recovery is a separate invocation-owned record.
+      let logicalCall: LogicalCall | undefined;
+      const recoveryState = recoveryRecord();
       let preInvocationAuthFailure = false;
       let answered = false;
       // A dispatched failure's advice to send it again, composed by enrich
       // only once the outcome allows it (resendAdvice), and its advice to
       // reuse an idempotency key, only where that key protects the whole
-      // logical call (keyResendAdvice, keyProtectsLogicalCall).
+      // logical call (keyResendAdvice, keyProtectsCall).
       let failureAdvice: string | undefined;
       let failureKeyAdvice: KeyResendAdvice | undefined;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
@@ -413,12 +414,12 @@ export class InvocationService {
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
-        const recovery = recoveryFor(dispatchContext);
+        const recovery = recoveryState.facts;
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
         // settled verdict is final: no enricher adds advice to it.
         const recoveryRetry =
-          !settled && keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
+          !settled && keyProtectsCall(logicalCall, recovery?.["idempotencyKey"])
             ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
             : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
@@ -459,7 +460,7 @@ export class InvocationService {
         // whose outcome is unknown, whatever redaction did to the message.
         // Key-reuse advice also needs its key to protect the logical call.
         else if (!settled) {
-          if (failureKeyAdvice && keyProtectsLogicalCall(dispatchContext, failureKeyAdvice.key))
+          if (failureKeyAdvice && keyProtectsCall(logicalCall, failureKeyAdvice.key))
             error = { ...error, message: withResendAdvice(error.message, failureKeyAdvice.advice) };
           if (failureAdvice !== undefined)
             error = { ...error, message: withResendAdvice(error.message, failureAdvice) };
@@ -585,7 +586,7 @@ export class InvocationService {
           resolved?.definition.classification !== "read" &&
           (error.code === "cancelled" || isTimeoutFailure(error))
         ) {
-          const departed = settleWrite(logicalCallRequests(dispatchContext) ?? [], undefined, true);
+          const departed = settleWrite(logicalCall?.sent ?? [], undefined, true);
           if (departed !== undefined) {
             failureAdvice = failureKeyAdvice = undefined;
             error = carryFailureFacts(departed, classifyWithoutAdvice(sentSecrets.redact(departed)));
@@ -769,70 +770,99 @@ export class InvocationService {
 
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
           attempts = 1;
-          const call = async (permit: CallAdmissionPermit) => {
-            const connectorContext = this.registry.contextFor(
-              target.connector.id,
-              this.catalog.baseUrl,
-              this.catalog.requestScope,
-              defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
-            );
-            attachCallAdmission(connectorContext, permit);
-            attachCallClassification(connectorContext, write ? "write" : "read");
-            trackCredentialReads(connectorContext);
-            sentSecrets.include(sentSecretsFor(connectorContext));
-            dispatchContext = connectorContext;
-            // The one object and function this call invokes, read once: its
-            // logical call, auth check, and dispatch all name them, so a
-            // connector that reassigns its own callTool mid-call changes none.
-            const connector = target.connector;
-            const callTool = connector.callTool;
-            openLogicalCall(connectorContext, connector, callTool);
-            try {
-              if (target.connector.credential) {
-                if (!connectorContext.credential) {
-                  throw new ConnectorCallError(
-                    "auth_required",
-                    "Operator-managed credential storage is not configured. Call " +
-                      `authorize_connector({ connector: "${target.connector.id}" }).`,
-                  );
-                }
-                if (!(await connectorContext.credential.getAll())) {
-                  throw new ConnectorCallError(
-                    "auth_required",
-                    `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`,
-                  );
-                }
-              }
-              await resolveInvocationAuth(connector, callTool, connectorContext);
-            } catch (error) {
-              const code = classifyCallError(error).code;
-              preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
-              throw error;
-            }
-            // Cancellation can arrive during admission or context construction.
-            if (admissionSignal?.aborted) throw admissionSignal.reason;
-            dispatchedToConnector = true;
-            recordCallEntry(
-              this.catalog.requestScope,
-              {
-                address: canonicalAddress,
-                classification: write ? "write" : "read",
-                fresh: target.classificationFresh === true,
-              },
-              target.definition,
-            );
-            // Reflect.apply, never the function's own `call` or `apply`
-            // property, which anyone holding the function could replace.
-            return await Reflect.apply(callTool, connector, [
-              target.toolName,
-              args ?? {},
-              connectorContext,
-              // The connector may retain or mutate its definition. Keep the
-              // invocation's classification and schema private, even during
-              // this call, and give every dispatch its own deep copy.
-              { definition: structuredClone(target.definition), ...defined({ input }) },
-            ]);
-          };
+          const call = (permit: CallAdmissionPermit) =>
+            Effect.gen({ self: this }, function* () {
+              const operationContext = this.registry.contextFor(
+                target.connector.id,
+                this.catalog.baseUrl,
+                this.catalog.requestScope,
+                defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
+              );
+              const lease = callFromContext(operationContext, write ? "write" : "read", {
+                admitted: true,
+                // An invocation deadline aborts when its call finishes. A
+                // request-owned auxiliary must retain only request cancellation.
+                requestSourceSignal: context.requestSignal,
+                served: write ? "write" : "read",
+                charge: (signal) => runEdge(chargeCallBudget(permit, signal)),
+                chargeClosed: () =>
+                  new CallAdmissionError(
+                    "closed",
+                    "connector_call_failed",
+                    "This call has ended; its admission permit can no longer be charged.",
+                  ),
+                record: (facts) => recordRecoveryFacts(recoveryState, facts),
+              });
+              yield* Effect.addFinalizer(() => Effect.sync(lease.close));
+              const connectorContext = contextView(lease, operationContext);
+              sentSecrets.include(sentSecretsFor(connectorContext));
+              // The one object and function this call invokes, read once: its
+              // logical call, auth check, and dispatch all name them, so a
+              // connector that reassigns its own callTool mid-call changes none.
+              const connector = target.connector;
+              const callTool = connector.callTool;
+              logicalCall = openLogicalCall(connectorContext, connector, callTool);
+              yield* Effect.tryPromise({
+                try: async () => {
+                  try {
+                    if (target.connector.credential) {
+                      if (!connectorContext.credential) {
+                        throw new ConnectorCallError(
+                          "auth_required",
+                          "Operator-managed credential storage is not configured. Call " +
+                            `authorize_connector({ connector: "${target.connector.id}" }).`,
+                        );
+                      }
+                      if (!(await connectorContext.credential.getAll())) {
+                        throw new ConnectorCallError(
+                          "auth_required",
+                          `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`,
+                        );
+                      }
+                    }
+                    await resolveInvocationAuth(connector, callTool, connectorContext);
+                  } catch (error) {
+                    const code = classifyCallError(error).code;
+                    preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
+                    throw error;
+                  }
+                },
+                catch: (error) => error,
+              });
+              // Cancellation can arrive during admission or context construction.
+              if (admissionSignal?.aborted) throw admissionSignal.reason;
+              dispatchedToConnector = true;
+              recordCallEntry(
+                this.catalog.requestScope,
+                {
+                  address: canonicalAddress,
+                  classification: write ? "write" : "read",
+                  fresh: target.classificationFresh === true,
+                },
+                target.definition,
+              );
+              // Reflect.apply, never the function's own `call` or `apply`
+              // property, which anyone holding the function could replace.
+              const options = { definition: structuredClone(target.definition), ...defined({ input }) };
+              const entry = callEntry(connector, callTool);
+              if (entry)
+                return yield* entry(target.toolName, args ?? {}, options).pipe(
+                  Effect.provideContext(viewServices(connectorContext)),
+                );
+              return yield* Effect.tryPromise({
+                try: () =>
+                  Reflect.apply(callTool, connector, [
+                    target.toolName,
+                    args ?? {},
+                    connectorContext,
+                    // The connector may retain or mutate its definition. Keep the
+                    // invocation's classification and schema private, even during
+                    // this call, and give every dispatch its own deep copy.
+                    options,
+                  ]),
+                catch: (error) => error,
+              });
+            });
           // The permit belongs to this scope, so success, failure, and the
           // deadline's interruption all release it. Interruption stops the
           // wait instead of waiting for the connector, so an uncooperative one
@@ -848,15 +878,9 @@ export class InvocationService {
                   admitted(this.registry, target, args, admissionSignal),
                 );
                 stage = "downstream";
-                const reply = yield* timed(
-                  (elapsed) => {
-                    connectorMs += elapsed;
-                  },
-                  Effect.tryPromise({
-                    try: () => Promise.resolve(call(permit)),
-                    catch: (error) => error,
-                  }),
-                );
+                const reply = yield* timed((elapsed) => {
+                  connectorMs += elapsed;
+                }, call(permit));
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
                   // The downstream suspended for input. A handler asks for
                   // input from inside its run, so a write may already have
@@ -895,12 +919,10 @@ export class InvocationService {
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
             const thrown = Cause.squash(attempt.cause);
             if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
-            answered = answeredFailure(thrown, write, dispatchContext);
+            answered = answeredFailure(thrown, write, logicalCall);
             // Q8 is decided here for every served write, whatever its
             // connector made of the 401: over the logical call's whole ledger.
-            const attemptError = write
-              ? settleWrite(logicalCallRequests(dispatchContext) ?? [], thrown, answered)
-              : thrown;
+            const attemptError = write ? settleWrite(logicalCall?.sent ?? [], thrown, answered) : thrown;
             if (attemptError !== thrown) answered = false;
             failureAdvice = resendAdviceOf(attemptError);
             failureKeyAdvice = keyResendAdviceOf(attemptError);
@@ -963,7 +985,7 @@ export class InvocationService {
       // success, whatever its handler made of the 401, and its result is not
       // processed.
       if (dispatchedToConnector && completed.definition.classification !== "read") {
-        const unknown = settleWriteResult(logicalCallRequests(dispatchContext) ?? []);
+        const unknown = settleWriteResult(logicalCall?.sent ?? []);
         if (unknown) {
           failureAdvice = failureKeyAdvice = undefined;
           return failed(carryFailureFacts(unknown, classifyWithoutAdvice(sentSecrets.redact(unknown))));

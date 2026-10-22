@@ -695,12 +695,12 @@ export interface KeyResendAdvice {
 /**
  * Attach advice that reusing `key` with the same arguments cannot repeat the
  * write, a segment of its own like {@link resendAdvice}. It holds only where
- * that key protects the whole logical call (`keyProtectsLogicalCall`): one
+ * that key protects the whole logical call (`keyProtectsCall`): one
  * boundary entered, one write sent, carrying `key`. Attach it only once the
  * call's ledger shows a dispatched request carrying `key`: a key generated
  * but never sent protects nothing. Two places compose it. The invocation
  * sees the whole call and composes it for a served call once
- * `keyProtectsLogicalCall` holds. {@link classifyCallError} composes it for a
+ * `keyProtectsCall` holds. {@link classifyCallError} composes it for a
  * dispatched direct call, which has no invocation: only the one boundary that
  * sent the keyed request attaches it, and any boundary above that one
  * finalizes the write as unknown, which drops it. Either way the key stays in

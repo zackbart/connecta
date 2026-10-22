@@ -3,7 +3,7 @@
 // read-only POSTs and refusals, failure mapping, cursors, and two named tools.
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult } from "../../types.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
@@ -448,9 +448,7 @@ export function stripeRest(mode: StripeMode, connectedAccount: string | undefine
         const { data } = await callRest(
           vendor,
           restCall(vendor, "GET", "/v1/account"),
-          deriveContext(ctx, {
-            credential: { get: async () => key, getAll: async () => ({ value: key }) },
-          }),
+          credentialProbeContext(ctx, { value: key }),
         );
         const account = record(data);
         const name = text(record(account["business_profile"])["name"]);

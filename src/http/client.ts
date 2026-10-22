@@ -239,7 +239,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       // A genuine key the vendor honors rides only on the tool's own request,
       // added after sent-secret registration like guarded-fetch's visible
       // headers. Only a key sent here is recorded, so only it can make the
-      // write repeatable or earn key-reuse advice (`keyProtectsLogicalCall`).
+      // write repeatable or earn key-reuse advice (`keyProtectsCall`).
       const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
       if (idempotency) {
         const name = idempotency.header.toLowerCase();

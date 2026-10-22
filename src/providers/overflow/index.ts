@@ -35,7 +35,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
@@ -1783,12 +1783,7 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
             await callOverflow(
               send,
               { method: "GET", path: "/locations", query: { limit: 1, sortBy: "displayOrder" } },
-              deriveContext(ctx, {
-                credential: {
-                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
-                  getAll: async () => values,
-                },
-              }),
+              credentialProbeContext(ctx, values),
             ),
           );
           const first = asRecord(asArray(payload["data"])[0]);

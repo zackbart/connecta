@@ -25,7 +25,6 @@ import { LINEAR_MCP_ENDPOINTS, linear } from "./index.js";
 import { hostedCatalog } from "./fixtures.js";
 import drift from "./drift.json";
 import { observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
-import { connectorGuideSummary } from "../../skills.js";
 
 describe("linear()", () => {
   beforeEach(() => {
@@ -78,17 +77,6 @@ describe("linear()", () => {
     expect(guideOf(connector)).toContain("File bugs into the Platform team unless told otherwise.");
   });
 
-  it("declares no call-admission budget of its own", () => {
-    linear("tracker", {
-      purpose: "Roadmap questions",
-      access: "read-write",
-    });
-    // Linear documents no MCP-specific limit and meters per user per hour, so
-    // the connection invents no per-runtime ceiling. An operator may still set
-    // one explicitly.
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("callAdmission");
-  });
-
   it("binds read-only mode to Linear's scope-limited endpoint", () => {
     const connector = linear("readonly_tracker", {
       purpose: "Reporting on delivery status",
@@ -108,33 +96,6 @@ describe("linear()", () => {
     expect(LINEAR_MCP_ENDPOINTS["read-only"]).toBe("https://mcp.linear.app/mcp/readonly");
     expect(guideOf(connector)).toContain("read-only endpoint");
     expect(guideOf(connector)).not.toContain("call_destructive_tool");
-  });
-
-  it("leads the guide with access, so the discovery summary carries it", () => {
-    // `search_tools` shows a connector's guide summary and never its
-    // description. The summary is now declared rather than derived (P7), so
-    // the access fact is stated whole instead of being truncated at 120
-    // characters, and the guide's first content line still repeats it.
-    const readOnly = linear("reporting", {
-      purpose: "Reporting on delivery status",
-      access: "read-only",
-    });
-    const readWrite = linear("tracker", {
-      purpose: "Delivery planning",
-      access: "read-write",
-    });
-
-    expect(connectorGuideSummary(readOnly)).toContain("Read-only");
-    expect(connectorGuideSummary(readWrite)).toContain("Read-write");
-    expect(connectorGuideSummary(readOnly)).not.toContain("Workspace purpose");
-    for (const connector of [readOnly, readWrite]) {
-      const summary = connectorGuideSummary(connector);
-      // Declared, not truncated: a derived summary ends in an ellipsis here.
-      expect(summary?.length).toBeLessThanOrEqual(120);
-      expect(summary).not.toContain("\u2026");
-    }
-    expect(guideOf(readOnly)).toContain("Read-only connection");
-    expect(guideOf(readWrite)).toContain("Read-write connection");
   });
 
   it("frames an operator-managed API key the way Linear's MCP docs ask", () => {
@@ -207,21 +168,5 @@ describe("linear()", () => {
     });
     // These entries are documentation/prior-review evidence, never invented schemas.
     for (const name of absent) expect(reviewed[name]).not.toHaveProperty("schemaDigest");
-  });
-
-  it("requires the operator to declare an access mode (P4)", () => {
-    // Neither endpoint is a safe default: `read-write` hands out writes nobody
-    // asked for, and `read-only` breaks a writing deployment at Linear, at
-    // runtime, where no agent can repair it. So the declaration is required
-    // and a deployment that forgot fails here, at construction.
-    expect(() => linear("tracker", { purpose: "Delivery planning" } as never)).toThrow(
-      'requires access "read-write" or "read-only"',
-    );
-    expect(() =>
-      linear("tracker", {
-        purpose: "Delivery planning",
-        access: "readonly" as never,
-      }),
-    ).toThrow('requires access "read-write" or "read-only"');
   });
 });

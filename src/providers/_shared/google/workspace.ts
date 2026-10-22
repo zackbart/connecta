@@ -1,3 +1,4 @@
+import { callMemo } from "../../../runtime/call.js";
 /**
  * Google Workspace access as the person calling, with no per-user consent:
  * a service account with domain-wide delegation mints a token *as* the user
@@ -685,13 +686,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   // One resolution per call context: a tool that sends several requests acts
   // as one account throughout, and the mapping runs once rather than per
   // request. The context dies with its call, and so does the entry.
-  const subjects = new WeakMap<ConnectorContext, Promise<string>>();
+  const subjectKey = {};
   const tokenRequest = async (ctx: ConnectorContext): Promise<DelegatedTokenRequest> => {
-    let subject = subjects.get(ctx);
-    if (!subject) {
-      subject = subjectFor(provider, connection.subject, ctx);
-      subjects.set(ctx, subject);
-    }
+    const subject = callMemo(ctx, subjectKey, () => subjectFor(provider, connection.subject, ctx));
     return { account: connection.account, subject: await subject, scopes };
   };
   // The transport is bound to one token, so the request that a 401 answers

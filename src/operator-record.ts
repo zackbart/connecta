@@ -48,7 +48,7 @@
 // boundary removes credentials used by the upstream request from those answers, including
 // allowed diagnostics, tool results and nested error causes/data (INV-5).
 
-import { carryProviderFailure } from "./provider-call.js";
+import { carryProviderFailure } from "./provider-call-facts.js";
 import { followRedactedCopies, keepErrorName } from "./redaction-identity.js";
 import {
   classificationCode,
