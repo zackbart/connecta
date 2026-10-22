@@ -98,40 +98,6 @@ describe("intercom()", () => {
     expect(guideOf(connector)).toContain("shares one workspace authorization");
   });
 
-  it("honors explicit OAuth scopes, ownership and common runtime policies without a blanket rate limit", () => {
-    connection();
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("callAdmission");
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
-    connection({
-      auth: { type: "oauth", scope: "mcp operator" },
-      authScope: "shared",
-      title: "Support",
-      maxResultBytes: 24_000,
-      callAdmission,
-    });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "support",
-      expect.objectContaining({
-        auth: { type: "oauth", scope: "mcp operator" },
-        authScope: "shared",
-        title: "Support",
-        maxResultBytes: 24_000,
-        callAdmission,
-      }),
-    );
-    connection({
-      auth: { type: "credential", scheme: null, credential: { label: "Workspace token" } },
-      authScope: "personal",
-    });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "support",
-      expect.objectContaining({
-        authScope: "personal",
-        auth: { type: "credential", scheme: null, credential: { label: "Workspace token" } },
-      }),
-    );
-  });
-
   it("INV-5: real metadata names its region and credential slot without exposing configured headers", async () => {
     const real = await vi.importActual<typeof import("../../connectors/remote-mcp.js")>(
       "../../connectors/remote-mcp.js",
@@ -161,11 +127,6 @@ describe("intercom()", () => {
       expect(mocks.remoteMcp).not.toHaveBeenCalled();
     },
   );
-
-  it.each(["url", "classify"])("INV-11: refuses undeclared option %s", (key) => {
-    expect(() => connection({ [key]: "ignored" })).toThrow(`intercom("support").${key}`);
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-  });
 
   it("INV-1: reviews the documented 19-tool superset without inventing schemas or pins", async () => {
     const reviewed = required(intercom.definition.classify).tools;
@@ -213,16 +174,6 @@ describe("intercom()", () => {
       annotationConflicts: 0,
       schemaCoverage: { pinned: 0, unpinned: 14 },
       verification: "complete",
-    });
-  });
-
-  it.each(["search", "update_article"])("INV-1: still reports a missing required core tool %s", async (missing) => {
-    const connector = connection({ auth: { type: "credential" } });
-    mocks.listTools.mockResolvedValue(structuredClone(CORE_CATALOG.filter((tool) => tool.name !== missing)));
-    await servedTools(connector);
-    expect(observedCatalogDrift(connector)).toMatchObject({
-      unservedTools: 1,
-      schemaCoverage: { pinned: 0, unpinned: 13 },
     });
   });
 

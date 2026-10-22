@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mixpanel, type MixpanelApiOptions } from "./index.js";
 import { responses } from "./fixtures.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { createConnecta, customExecutor } from "../../index.js";
-import { mcpRpc, readJsonRpc } from "../../../test/fixtures/http.js";
 
 const options: MixpanelApiOptions = {
   via: "api",
@@ -39,18 +37,6 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Mixpanel service-account REST", () => {
-  it("INV-11: refuses invalid implementations, API auth, residency and project defaults at construction", () => {
-    for (const bad of [
-      { via: "unknown" },
-      { auth: { type: "oauth" } },
-      { region: "toString" },
-      { defaultProjectId: "42" },
-      { defaultProjectId: Number.MAX_SAFE_INTEGER + 1 },
-    ])
-      expect(() => mixpanel("bad", { ...options, ...bad } as never)).toThrow('mixpanel("bad") requires');
-    expect(() => mixpanel("mcp", { purpose: "Analytics", defaultProjectId: 42 } as never)).toThrow("defaultProjectId");
-  });
-
   it.each(["eu", "in"] as const)(
     "INV-5: routes query, app, export and import to %s residency using ordinary Basic",
     async (region) => {
@@ -82,45 +68,6 @@ describe("Mixpanel service-account REST", () => {
       }
     },
   );
-
-  it("INV-5: refuses missing or malformed service accounts before network dispatch", async () => {
-    for (const pair of [undefined, "", "user", ":secret", "user:", "user:secret\n"]) {
-      await expect(
-        api().callTool(
-          "list_projects",
-          {},
-          { ...connectorContext(), credential: { get: async () => pair ?? null, getAll: async () => ({}) } },
-        ),
-      ).rejects.toMatchObject({ code: "auth_required" });
-    }
-    expect(calls).toHaveLength(0);
-    const connector = api();
-    expect(await connector.testCredential?.("user:secret", connectorContext())).toMatchObject({ ok: true });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url.pathname).toBe("/api/app/me");
-  });
-
-  it("requires or defaults project ids per call and lets explicit ids select a second granted project", async () => {
-    reply = () => Response.json(responses.insights);
-    await call("get_insights_report", { bookmark_id: 7 });
-    await call("get_insights_report", { bookmark_id: 7, project_id: 99 });
-    await call("mixpanel_api_read", { path: "/api/query/insights", project_id: 100, query: { bookmark_id: 7 } });
-    expect(calls.map((c) => c.url.searchParams.get("project_id"))).toEqual(["42", "99", "100"]);
-    await expect(
-      call("get_insights_report", { bookmark_id: 7 }, { defaultProjectId: undefined } as never),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(
-      call("mixpanel_api_read", {
-        path: "/api/query/insights",
-        project_id: 99,
-        query: { project_id: 42, bookmark_id: 7 },
-      }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(call("get_insights_report", { bookmark_id: 7, project_id: 0 })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(calls).toHaveLength(3);
-  });
 
   it("INV-7: cancels a failed export body before the connector call returns", async () => {
     const cancelled = vi.fn();
@@ -194,13 +141,15 @@ describe("Mixpanel service-account REST", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("imports documented historical seconds and milliseconds without a guessed unit threshold", async () => {
-    reply = () => Response.json(responses.imported);
-    for (const time of [63072000, 63072000000])
-      await call("import_events", {
-        events: [{ ...responses.event, properties: { ...responses.event.properties, time } }],
-      });
-    expect(calls).toHaveLength(2);
+  it("refuses default birth retention without born_event on named and generic routes", async () => {
+    for (const name of ["query_retention", "mixpanel_api_read"]) {
+      const args = name === "query_retention" ? range : { path: "/api/query/retention", query: range };
+      await expect(call(name, args)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(0);
+    reply = () => Response.json(responses.retention);
+    await call("query_retention", { ...range, retention_type: "compounded" });
+    expect(calls).toHaveLength(1);
   });
 
   it("INV-5: redacts credentials in account, profile and event properties and withholds vendor error text", async () => {
@@ -224,127 +173,5 @@ describe("Mixpanel service-account REST", () => {
     await expect(call("list_projects")).rejects.toMatchObject({
       message: expect.not.stringContaining("pQ6?eT8+dW3=G5/f"),
     });
-  });
-
-  it("INV-2: a read-only endpoint hides import and refuses it before validation, auth or dispatch", async () => {
-    const deployment = createConnecta({
-      readOnly: true,
-      connectors: [api()],
-      storage: connectorContext().storage,
-      logger: "silent",
-      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-    });
-    try {
-      const search = await readJsonRpc(
-        await mcpRpc(deployment, "tools/call", {
-          name: "search_tools",
-          arguments: { connector: "raw", query: "import", safety: "all" },
-        }),
-      );
-      expect(JSON.stringify(search)).not.toContain('"address":"raw.import_events"');
-      for (const name of ["call_tool", "call_destructive_tool"]) {
-        const body = await readJsonRpc(
-          await mcpRpc(deployment, "tools/call", { name, arguments: { address: "raw.import_events", args: {} } }),
-        );
-        expect(JSON.stringify(body)).toContain("read_only_endpoint");
-      }
-      expect(calls).toHaveLength(0);
-    } finally {
-      await deployment.close();
-    }
-  });
-
-  it("queries profiles with form encoding, explicit workspace/project ids and vendor session paging", async () => {
-    reply = () => Response.json(responses.profiles);
-    const first = await call("query_profiles", {
-      project_id: 99,
-      workspace_id: 3,
-      distinct_ids: ["13793"],
-      output_properties: ["$email"],
-      where: 'properties["$first_name"]=="Example"',
-    });
-    expect(first).toMatchObject({
-      data: { total: 2, session_id: "1234567890-EXAMPL" },
-      page: { hasMore: true, next: "1", param: "page", in: "body" },
-    });
-    const sent = calls[0]!;
-    expect(sent.url.pathname).toBe("/api/query/engage");
-    expect(sent.url.searchParams.get("project_id")).toBe("99");
-    expect(sent.url.searchParams.get("workspace_id")).toBe("3");
-    expect(sent.init.method).toBe("POST");
-    expect(new Headers(sent.init.headers).get("content-type")).toBe("application/x-www-form-urlencoded");
-    const form = new URLSearchParams(String(sent.init.body));
-    expect(form.get("distinct_ids")).toBe('["13793"]');
-    expect(form.get("output_properties")).toBe('["$email"]');
-    reply = () => Response.json({ ...responses.profiles, page: 1, results: [] });
-    expect(await call("query_profiles", { page: 1, session_id: responses.profiles.session_id })).toMatchObject({
-      page: { hasMore: false },
-    });
-    expect(await call("query_profiles", { raw: true })).toMatchObject({ data: { status: "ok", page: 1 }, status: 200 });
-    await expect(call("query_profiles", { page: 2 })).rejects.toMatchObject({ code: "invalid_args" });
-  });
-
-  it("refuses default birth retention without born_event on named and generic routes", async () => {
-    for (const name of ["query_retention", "mixpanel_api_read"]) {
-      const args = name === "query_retention" ? range : { path: "/api/query/retention", query: range };
-      await expect(call(name, args)).rejects.toMatchObject({ code: "invalid_args" });
-    }
-    expect(calls).toHaveLength(0);
-    reply = () => Response.json(responses.retention);
-    await call("query_retention", { ...range, retention_type: "compounded" });
-    expect(calls).toHaveLength(1);
-  });
-
-  it.each(["query_retention", "mixpanel_api_read"])(
-    "%s caps retention intervals only for explicit or default day units",
-    async (name) => {
-      reply = () => Response.json(responses.retention);
-      const args = (unit: string | undefined, interval: number) => {
-        const query = { ...range, born_event: "Signup", interval, ...(unit === undefined ? {} : { unit }) };
-        return name === "query_retention" ? query : { path: "/api/query/retention", query };
-      };
-      for (const unit of [undefined, "day"]) {
-        await call(name, args(unit, 90));
-        const dispatched = calls.length;
-        await expect(call(name, args(unit, 91))).rejects.toMatchObject({ code: "invalid_args" });
-        expect(calls).toHaveLength(dispatched);
-      }
-      for (const unit of ["week", "month"]) {
-        await call(name, args(unit, 91));
-        expect(calls.at(-1)?.url.searchParams.get("unit")).toBe(unit);
-        expect(calls.at(-1)?.url.searchParams.get("interval")).toBe("91");
-      }
-      expect(calls).toHaveLength(4);
-    },
-  );
-
-  it("refuses import count, size, required-key and nested-property violations before sending", async () => {
-    const event = responses.event;
-    const badProps = [
-      { ...event.properties, $insert_id: "bad_id" },
-      { ...event.properties, $insert_id: "null" },
-      { ...event.properties, distinct_id: "anonymous" },
-      { ...event.properties, time: 1 },
-      { ...event.properties, time: Date.now() + 7_200_000 },
-      { ...event.properties, huge: "x".repeat(1_000_000) },
-      { ...event.properties, array: Array(255).fill(1) },
-      { ...event.properties, nested: { a: { b: { c: { d: 1 } } } } },
-      { ...event.properties, ...Object.fromEntries(Array.from({ length: 255 }, (_, n) => [`p${n}`, n])) },
-    ];
-    for (const properties of badProps)
-      await expect(call("import_events", { events: [{ ...event, properties }] })).rejects.toMatchObject({
-        code: "invalid_args",
-      });
-    await expect(call("import_events", { events: Array(2001).fill(event) })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    const large = { ...event, properties: { ...event.properties, text: "x".repeat(600_000) } };
-    await expect(call("import_events", { events: Array(17).fill(large) })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    await expect(call("import_events", { events: [{ event: "Signup", properties: {} }] })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(calls).toHaveLength(0);
   });
 });

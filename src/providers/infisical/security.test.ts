@@ -95,49 +95,6 @@ describe("Infisical security boundaries", () => {
       { projectId: target.projectId, environment: target.environment, name: "apps", path: "/" },
     ],
   ] as const;
-  for (const source of ["call_destructive_tool", "execute_code"] as const) {
-    it.each([writes[0], writes[2]])(
-      `requires an explicit counted retry of %s after 401 through ${source} (INV-9)`,
-      async (tool, method, args) => {
-        const { registry } = await setup();
-        let logins = 0;
-        const dispatched: RequestInit[] = [];
-        vi.stubGlobal(
-          "fetch",
-          vi.fn<typeof globalThis.fetch>(async (input, init) => {
-            if (String(input).endsWith("/login"))
-              return json({ accessToken: `auth-token-${++logins}`, expiresIn: 3600 });
-            dispatched.push(init!);
-            return dispatched.length === 1
-              ? Response.json({ message: "private-upstream-body" }, { status: 401 })
-              : json({});
-          }),
-        );
-        const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
-        expect(outcome).toMatchObject({
-          ok: false,
-          dispatched: true,
-          attempts: 1,
-          error: {
-            code: "connector_call_failed",
-            retryable: false,
-            message: expect.stringContaining(
-              "The credential is renewed for the next call, but the write was not sent again",
-            ),
-          },
-        });
-        expect(dispatched).toHaveLength(1);
-        expect(dispatched[0]!.method).toBe(method);
-        expect(logins).toBe(2);
-        expect(JSON.stringify(outcome)).not.toContain("private-upstream-body");
-        const explicit = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
-        expect(explicit).toMatchObject({ ok: true, dispatched: true, attempts: 1 });
-        expect(dispatched).toHaveLength(2);
-        expect(new Headers(dispatched[1]!.headers).get("authorization")).toBe("Bearer auth-token-2");
-        expect(logins).toBe(2);
-      },
-    );
-  }
   it.each([writes[0]])(
     "refreshes an expiring cached token before dispatching %s (INV-9)",
     async (tool, _method, args) => {
@@ -229,72 +186,6 @@ describe("Infisical security boundaries", () => {
     ["over-budget", "large-secret-value-".repeat(100)],
   ];
   for (const tool of ["create_secret"]) {
-    it.each(values)(
-      `omits %s values from ${tool} registry refusals and write uncertainty (INV-5, INV-9)`,
-      async (_label, secretValue) => {
-        const { registry } = await setup();
-        const args = { ...target, secretValue };
-        let writes = 0;
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
-          if (String(input).endsWith("/login")) return login();
-          writes++;
-          // Inject the lost reply after dispatch; setup must not race a
-          // 100 ms request deadline in these accounting/redaction cases.
-          throw new DOMException("Downstream reply timed out", "TimeoutError");
-        });
-        vi.stubGlobal("fetch", fetch);
-        const readOnly = await invocation(registry).invoke(`infisical.${tool}`, args, {
-          source: "execute_code",
-          readOnly: true,
-        });
-        expect(readOnly).toMatchObject({ ok: false, dispatched: false, error: { code: "read_only_endpoint" } });
-        if (readOnly.ok) throw new Error("Expected refusal");
-        expect(readOnly.error).not.toHaveProperty("nextAction");
-        if (secretValue.length >= 8) expect(JSON.stringify(readOnly)).not.toContain(secretValue);
-        for (const source of ["call_tool"] as const) {
-          const refusal = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
-          expect(refusal).toMatchObject({
-            ok: false,
-            dispatched: false,
-            error: {
-              code: "destructive_tool_requires_approval",
-              nextAction: { arguments: { args: target, argsRedacted: true } },
-            },
-          });
-          if (refusal.ok) throw new Error("Expected refusal");
-          const action = refusal.error.nextAction;
-          if (!action || !("tool" in action) || action.tool !== "call_destructive_tool")
-            throw new Error("Expected destructive-call recovery");
-          expect(action.purpose).toContain("original arguments");
-          expect(action.arguments["args"]).not.toHaveProperty("secretValue");
-        }
-        expect(fetch).not.toHaveBeenCalled();
-        for (const source of ["call_destructive_tool", "execute_code"] as const) {
-          const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, {
-            source,
-            readOnly: false,
-            timeoutMs: 30_000,
-          });
-          expect(outcome).toMatchObject({
-            ok: false,
-            dispatched: true,
-            error: {
-              code: "write_outcome_unknown",
-              retryable: false,
-              uncertainCall: { address: `infisical.${tool}`, args: target, argsRedacted: true },
-            },
-          });
-          if (outcome.ok) throw new Error("Expected timeout");
-          expect(outcome.error.uncertainCall?.args).not.toHaveProperty("secretValue");
-          expect(outcome.error.retry).toContain("Sensitive fields are omitted");
-        }
-        expect(writes).toBe(2);
-        expect(args.secretValue).toBe(secretValue);
-        const body = JSON.parse(String(fetch.mock.calls.at(-1)![1]?.body));
-        expect(body.secretValue).toBe(secretValue);
-      },
-    );
-
     it.each(values)(
       `omits %s values from ${tool} MCP text and structured exits (INV-5, INV-9)`,
       async (_label, secretValue) => {

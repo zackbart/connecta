@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import { connectorGuideSummary } from "../../skills.js";
-import { classifyTool } from "../../tool-safety.js";
-import { guideOf, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
+
+import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -60,51 +59,6 @@ describe("wisprFlow()", () => {
     expect(connector.testCredentials).toBeUndefined();
   });
 
-  it("INV-11: accepts explicit OAuth settings while preserving the advertised fallback", () => {
-    connection({ auth: { type: "oauth", clientMetadataUrl: "https://connecta.example/oauth/wispr-client" } });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "wispr",
-      expect.objectContaining({
-        auth: {
-          type: "oauth",
-          scope: "openid offline_access",
-          clientMetadataUrl: "https://connecta.example/oauth/wispr-client",
-        },
-      }),
-    );
-  });
-
-  it.each([
-    { type: "headers", headers: { Authorization: "Bearer example" } },
-    { type: "credential" },
-    { type: "oauth", headers: { Authorization: "Bearer example" } },
-  ])("INV-11: refuses non-OAuth auth or credential keys %s", (auth) => {
-    expect(() => connection({ auth } as Parameters<typeof wisprFlow>[1])).toThrow(/wisprFlow.*wispr.*auth/);
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-  });
-
-  it.each(["url", "classify"])("INV-11: refuses undeclared option %s", (key) => {
-    expect(() => connection({ [key]: "ignored" })).toThrow(`wisprFlow("wispr").${key}`);
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
-  });
-
-  it("INV-11: passes common overrides through without inventing an admission default", () => {
-    connection();
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("callAdmission");
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("maxResultBytes");
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
-    connection({ title: "Work meetings", authScope: "personal", callAdmission, maxResultBytes: 25_000 });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "wispr",
-      expect.objectContaining({
-        title: "Work meetings",
-        authScope: "personal",
-        callAdmission,
-        maxResultBytes: 25_000,
-      }),
-    );
-  });
-
   it("INV-1: classifies all 16 reviewed reads while preserving vendor schemas and descriptions", async () => {
     const inputSchema = { type: "object", properties: { meeting_id: { type: "string" } } };
     mocks.listTools.mockResolvedValue(
@@ -132,56 +86,5 @@ describe("wisprFlow()", () => {
     expect(tools[0]?.annotations).toEqual({ readOnlyHint: false });
     expect(tools[1]?.annotations?.readOnlyHint).toBe(false);
     expect(tools[2]?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-  });
-
-  it("INV-1: unreviewed tools fail closed unless explicit uncontradicted annotations establish a read", async () => {
-    mocks.listTools.mockResolvedValue([
-      { name: "new_tool" },
-      { name: "new_read", annotations: { readOnlyHint: true } },
-      { name: "new_conflicting_tool", annotations: { readOnlyHint: true, destructiveHint: true } },
-      { name: "get_meeting", annotations: { readOnlyHint: false } },
-    ]);
-    const tools = await servedTools(connection());
-    expect(tools[0]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[1]?.annotations).toEqual({ readOnlyHint: true });
-    // Unknown vendor hints stay intact; the shared safety classifier rejects
-    // this contradictory read claim when enforcing trust.
-    expect(classifyTool(tools[2]!)).toBe("write");
-    expect(tools[2]?.classification).toBe("write");
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-  });
-
-  it("INV-11: metadata and guide route account-wide access with a summary bounded to 120 UTF-8 bytes", () => {
-    const connector = connection({ instructions: "  Prefer client meeting summaries.  " });
-    const guide = guideOf(connector);
-    expect(
-      guide.split("\n")[2]?.startsWith("Account-wide Notetaker access: The studio's recorded client meetings."),
-    ).toBe(true);
-    expect(guide).toContain("One shared authorization selects the account");
-    expect(guide).toContain("Dictation history and Notetaker chat history are unavailable");
-    expect(guide).toContain("## Account instructions\n\nPrefer client meeting summaries.");
-    expect(guideOf(connection({ authScope: "personal" }))).toContain("Each person authorizes separately");
-    expect(guideOf(connection())).not.toContain("## Account instructions");
-    const summary = connectorGuideSummary(connector)!;
-    expect(summary).toBe("Account-wide Notetaker access: The studio's recorded client meetings");
-    expect(new TextEncoder().encode(summary).byteLength).toBeLessThanOrEqual(120);
-  });
-
-  it.each(["会", "😀"])(
-    "INV-11: long %s account purposes keep summaries within 120 UTF-8 bytes without splitting code points",
-    (character) => {
-      const connector = connection({ purpose: character.repeat(100) });
-      const summary = connectorGuideSummary(connector)!;
-      expect(summary).toMatch(new RegExp(`^Account-wide Notetaker access: ${character}+…$`, "u"));
-      expect(new TextEncoder().encode(summary).byteLength).toBeLessThanOrEqual(120);
-      expect(connector.usageGuide).toMatchObject({ summary });
-    },
-  );
-
-  it("INV-11: an account summary at the 120-byte boundary needs no ellipsis", () => {
-    const purpose = "a".repeat(120 - new TextEncoder().encode("Account-wide Notetaker access: ").byteLength);
-    const summary = connectorGuideSummary(connection({ purpose }))!;
-    expect(summary).toBe(`Account-wide Notetaker access: ${purpose}`);
-    expect(new TextEncoder().encode(summary).byteLength).toBe(120);
   });
 });

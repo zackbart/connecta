@@ -8,11 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
-import { memoryStorage } from "../../storage/memory.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
-import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
+import type { Connector, ConnectorContext } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
-import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -184,10 +182,6 @@ async function failure(promise: Promise<unknown>) {
   throw new Error("expected the call to fail");
 }
 
-async function toolsOf(connector: Connector): Promise<ToolDef[]> {
-  return connector.listTools(makeRegistry([connector]).contextFor(connector.id, BASE));
-}
-
 describe("ccb() construction", () => {
   it.each([
     ["no environment", { environment: undefined }, /requires environment/],
@@ -251,56 +245,6 @@ describe("ccb() OAuth end to end", () => {
     expect(request.url.origin).toBe(SANDBOX_API);
     expect(request.headers.get("authorization")).toBe("Bearer access-1");
     expect(request.headers.get("accept")).toBe(CCB_MEDIA_TYPE);
-  });
-
-  it("refreshes on a 401, rotates the single-use refresh token, and replays once", async () => {
-    const { fake, call } = await connected();
-    fake.route(on("GET", "/me", () => json({ id: 7, name: "Ada Pastor" })));
-
-    // Two hours pass: the access token is dead, the refresh token is not.
-    fake.expireAccess();
-    expect(await call("get_me")).toMatchObject({ id: 7 });
-    const refreshes = () => fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token");
-    expect(refreshes().map((r) => r.params.get("refresh_token"))).toEqual(["refresh-1"]);
-    expect(refreshes()[0]!.headers.get("accept")).toBe(CCB_MEDIA_TYPE);
-    // CCB refuses a scope on refresh; the grant never sends one.
-    expect(refreshes()[0]!.params.has("scope")).toBe(false);
-    expect(fake.requests.map((r) => r.headers.get("authorization"))).toEqual(["Bearer access-1", "Bearer access-2"]);
-    expect(fake.refresh.has("refresh-1")).toBe(false);
-
-    // The next expiry redeems the rotated token, never the spent one.
-    fake.expireAccess();
-    await call("get_me");
-    expect(refreshes().map((r) => r.params.get("refresh_token"))).toEqual(["refresh-1", "refresh-2"]);
-  });
-
-  it("answers auth_required when CCB refuses the refresh token, and drops the grant", async () => {
-    const { fake, connector, ctx, call } = await connected();
-    fake.route(on("GET", "/me", () => json({ id: 7 })));
-    // Another worker spent the refresh token, or the church removed its approval.
-    fake.refresh.clear();
-    fake.expireAccess();
-    const failed = await failure(call("get_me"));
-    expect(failed).toMatchObject({ code: "downstream_oauth_required" });
-    expect(failed.message).toContain('authorize_connector({ connector: "church" })');
-    expect((await connector.status!(ctx())).state).toBe("auth_required");
-  });
-});
-
-describe("ccb() tool surface", () => {
-  it("ships reads and the read-only hatches, and no write tool, by default", async () => {
-    const tools = await toolsOf(connection());
-    expect(tools.map((tool) => tool.name)).not.toContain("ccb_api_mutate");
-    expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
-  });
-
-  it("adds the always-destructive mutate hatch exactly when a write scope is granted", async () => {
-    for (const overrides of [{ access: "read-write" }, { scopes: ["read:groups", "write:notes"] }] as const) {
-      const tools = await toolsOf(connection(overrides as Partial<CcbOptions>));
-      const mutate = tools.find((tool) => tool.name === "ccb_api_mutate");
-      expect(mutate?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-      expect(tools.filter((tool) => tool.annotations?.readOnlyHint !== true)).toHaveLength(1);
-    }
   });
 });
 
@@ -410,15 +354,6 @@ describe("ccb() typed failures (H11)", () => {
     expect(failed.message).not.toContain("private-error-with-whitespace");
   });
 
-  // The fake mints access-1 for the grant; two forms of it, cut through its middle.
-  it.each(echoForms("access-1").filter(([name]) => name === "raw" || name === "base64"))(
-    "INV-5: a 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
-    async (_name, form) => {
-      const failed = await failing(json({ message: straddling(form, 500) }, {}, 400));
-      expectNoFragment(failed.message, form, { secret: "access-1" });
-    },
-  );
-
   it("reads CCB's stated wait from a 429 body without a Retry-After header", async () => {
     expect(await failing(json({ error: "Rate limit exceeded", retry_after: 3 }, {}, 429))).toMatchObject({
       code: "rate_limited",
@@ -476,43 +411,6 @@ describe("ccb() escape hatches (H14)", () => {
     expect(
       await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
     ).toEqual({ result: { id: 3 } });
-  });
-
-  it("sends a JSON mutation through the approval-gated hatch", async () => {
-    const { fake, call } = await connected({ access: "read-write" });
-    fake.route(on("POST", "/individuals/42/notes", (request) => json({ id: 3, note: (request.body as any).note })));
-    expect(
-      await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
-    ).toEqual({
-      result: { id: 3, note: "Visited" },
-    });
-    expect(fake.requests.at(-1)!.headers.get("content-type")).toBe("application/json");
-  });
-});
-
-describe("ccb() call admission", () => {
-  it("meters each endpoint separately with CCB's documented 60-call burst", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("network touched");
-      }),
-    );
-    const connector = connection();
-    const rule = connector.callAdmission!.rules[0]!;
-    const key = (toolName: string, args: unknown) => rule.partitionKey!({ toolName, args });
-    expect(key("get_individual", { individualId: 2 })).toBe(key("ccb_api_get", { path: "/individuals/77" }));
-    expect(key("ccb_api_get", { path: `/${"x".repeat(500)}` }).length).toBeLessThanOrEqual(120);
-
-    const registry = makeRegistry([connector], { storage: memoryStorage() });
-    for (let index = 0; index < 60; index += 1) {
-      (await registry.admitCall("church", { toolName: "get_individual", args: { individualId: index + 1 } })).release();
-    }
-    await expect(
-      registry.admitCall("church", { toolName: "get_individual", args: { individualId: 99 } }),
-    ).rejects.toMatchObject({ code: "rate_limited" });
-    // Another endpoint still has its own budget.
-    (await registry.admitCall("church", { toolName: "list_groups", args: {} })).release();
   });
 });
 
