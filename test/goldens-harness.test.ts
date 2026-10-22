@@ -1053,6 +1053,120 @@ describe(suiteName, { timeout: 120_000 }, () => {
     await expectCleanCapture();
   });
 
+  it("closes the epoch when ownership is released, before teardown's promise settles", WORKERS, async () => {
+    const sources = goldenSources();
+    const start = sources.start;
+    let constructed = false;
+    let late: Promise<void> | undefined;
+    let failure: unknown;
+    const sourceStart = vi.spyOn(sources, "start").mockImplementation(() => {
+      const state = start();
+      const stop = state.stop;
+      state.stop = (restarting) => {
+        stop(restarting);
+        if (constructed && !late)
+          late = Promise.resolve().then(() => {
+            try {
+              crypto.getRandomValues(new Uint8Array(1));
+            } catch (error) {
+              failure = error;
+            }
+          });
+      };
+      return state;
+    });
+    try {
+      const rejected = probeSpec(async () => "unused");
+      rejected.create = () => {
+        constructed = true;
+        throw new Error("construction rejected");
+      };
+      await expect(captureCall(rejected, "probe")).rejects.toThrow("construction rejected");
+      await late;
+      expect(failure).toMatchObject({ message: "Golden capture epoch is closed" });
+      await expectCleanCapture();
+    } finally {
+      sourceStart.mockRestore();
+    }
+  });
+
+  it(
+    "isolates late work after 102 delayed digests exhaust the native extension cap",
+    { ...WORKERS, timeout: 600_000 },
+    async () => {
+      const sources = goldenSources();
+      const start = sources.start;
+      let owner: ReturnType<typeof start>;
+      const sourceStart = vi.spyOn(sources, "start").mockImplementation(() => (owner = start()));
+      // Model captured native completions delayed by 11,000 native turns without
+      // adding a production injection hook. Counters stay bound to their owner.
+      const digest = (state: ReturnType<typeof start>) => {
+        state.inFlight++;
+        state.events++;
+        const pending = (async () => {
+          await crypto.subtle.digest("SHA-256", new Uint8Array([1]));
+          for (let turn = 0; turn < 11_000; turn++) await sources.turn();
+        })().finally(() => {
+          state.inFlight--;
+          state.events++;
+          state.nativePending.delete(pending);
+        });
+        state.nativePending.add(pending);
+        return pending;
+      };
+      let late: Promise<void> | undefined;
+      let requestFailure: unknown;
+      try {
+        const rejected = probeSpec(async () => "unused");
+        rejected.create = () => {
+          const previous = owner;
+          late = (async () => {
+            try {
+              for (let operation = 0; operation < 102; operation++) await digest(previous);
+            } catch {
+              // Even a continuation that catches a closed-source error must not
+              // enter the next capture by looking up its new global fetch.
+            }
+            try {
+              await fetch("https://probe.example/from-previous-capture");
+            } catch (error) {
+              requestFailure = error;
+            }
+          })();
+          throw new Error("construction rejected");
+        };
+        await expect(captureCall(rejected, "probe")).rejects.toThrow(
+          "native completion wait budget exceeded (100 extensions)",
+        );
+        let enteredNextNetwork = 0;
+        const next = JSON.parse(
+          await captureCall(
+            probeSpec(async () => {
+              const current = owner;
+              for (let operation = 0; operation < 3; operation++) await digest(current);
+              return "clean";
+            }),
+            "probe",
+            {
+              seam: (send) => (input, init) => {
+                enteredNextNetwork++;
+                return send(input, init);
+              },
+            },
+          ),
+        ) as Row;
+        await late;
+        expect(next.steps).toEqual([]);
+        expect(enteredNextNetwork).toBe(0);
+        expect(next.result).toMatchObject({ ok: true, value: "clean" });
+        expect(requestFailure).toMatchObject({ message: "Golden capture epoch is closed" });
+        await expectCleanCapture();
+      } finally {
+        sourceStart.mockRestore();
+      }
+    },
+  );
+
   it("observes requests issued by native crypto after the handler returns", CONTROLLED_IO, async () => {
     const captured = JSON.parse(
       await captureCall(

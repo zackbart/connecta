@@ -1671,6 +1671,14 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   Unsupported producer dependencies reject within the turn bound; teardown
   always clears timers and releases capture ownership, including after failed
   construction and overlapping capture rejection. The next capture must work.
+  Each capture has an async-context epoch that closes before ownership is
+  released, even when its native extension cap is exhausted. Controlled-source dispatchers reject closed
+  continuations before touching another capture's state. Fake request entry,
+  admission, response delivery, and serialization check their owning epoch,
+  including after asynchronous body inspection. Late work cannot record into
+  or receive a response from a later capture, which never waits for it.
+  Closing also attaches rejection handlers to outstanding counted promises,
+  consuming abandoned native body-read rejections without awaiting them.
   Source regressions explicitly assert either completion or bounded rejection
   followed by recovery. Crypto-delay probes at 11,000 and 100,000 host turns
   must complete with unchanged observations; producer-fed bodies need not.
