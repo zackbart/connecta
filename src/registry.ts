@@ -48,7 +48,8 @@ import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialRe
 import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
-import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
+import type { ConnectorCaller } from "./connector-caller.js";
+import { operationView, settleOnClose } from "./runtime/call.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
 import { workspaceSubjectOf } from "./workspace-subject.js";
 import { runEdge } from "./runtime/run.js";
@@ -728,17 +729,19 @@ export class Registry implements RegistryView {
         getAll: readValues,
       };
     }
-    const context: ConnectorContext = {
-      storage: namespaced(this.opts.storage, scopes.connector(id)),
-      logger: this.opts.logger,
-      baseUrl,
-      ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
-      ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
-      ...(credentialAccess ? { credential: credentialAccess } : {}),
-      requestScope,
-      ...callOptions,
-    };
-    attachCaller(context, scope?.caller);
+    const context = operationView(
+      {
+        storage: namespaced(this.opts.storage, scopes.connector(id)),
+        logger: this.opts.logger,
+        baseUrl,
+        ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
+        ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
+        ...(credentialAccess ? { credential: credentialAccess } : {}),
+        requestScope,
+        ...callOptions,
+      },
+      scope?.caller,
+    );
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),
@@ -1174,34 +1177,37 @@ export class Registry implements RegistryView {
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (!requestScope) {
-      return this.loadTools(id, baseUrl, requestScope, callOptions, scope);
-    }
+    const owner = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+    return settleOnClose(owner, async (signal) => {
+      if (!requestScope) {
+        return this.loadTools(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope);
+      }
 
-    let loads = this.requestCatalogLoads.get(requestScope);
-    if (!loads) {
-      loads = new Map();
-      this.requestCatalogLoads.set(requestScope, loads);
-    }
-    const requestLoads = loads;
-    const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
-    let load = requestLoads.get(key);
-    if (!load) {
-      const started: SharedRead<ToolDef[]> = new SharedRead(
-        (signal) => this.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
-        // Settled or cancelled, the read leaves the map before any caller
-        // resumes, so the next one asks the caches afresh.
-        () => {
-          if (requestLoads.get(key) === started) requestLoads.delete(key);
-          if (requestLoads.size === 0) {
-            this.requestCatalogLoads.delete(requestScope);
-          }
-        },
-      );
-      requestLoads.set(key, started);
-      load = started;
-    }
-    return runEdge(load.join(callOptions.signal));
+      let loads = this.requestCatalogLoads.get(requestScope);
+      if (!loads) {
+        loads = new Map();
+        this.requestCatalogLoads.set(requestScope, loads);
+      }
+      const requestLoads = loads;
+      const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
+      let load = requestLoads.get(key);
+      if (!load) {
+        const started: SharedRead<ToolDef[]> = new SharedRead(
+          (signal) => this.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
+          // Settled or cancelled, the read leaves the map before any caller
+          // resumes, so the next one asks the caches afresh.
+          () => {
+            if (requestLoads.get(key) === started) requestLoads.delete(key);
+            if (requestLoads.size === 0) {
+              this.requestCatalogLoads.delete(requestScope);
+            }
+          },
+        );
+        requestLoads.set(key, started);
+        load = started;
+      }
+      return runEdge(load.join(signal), { signal });
+    });
   }
 
   async credentialDriftFor(id: string): Promise<string | undefined> {
@@ -1254,40 +1260,42 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
     const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
-    // Whatever the state turns out to be, it carries the drift the last
-    // refresh saw. Reading it is a lookup, not a probe: a connector that has
-    // listed nothing yet reports nothing, and status never lists on its own to
-    // make the field appear.
-    // The report is rebuilt rather than spread through: what the seam returned
-    // is third-party output, and status is read by the operator UI and copied
-    // into responses.
-    const withObservations = (status: ConnectorStatus): ConnectorStatus =>
-      this.withCatalogObservations(id, baseUrl, status, scope);
-    // Credential declarations own their readiness even when a static catalog
-    // or a plugin status would otherwise report success. Never probe an empty slot.
-    if (connector.credential) {
+    return settleOnClose(ctx, async () => {
+      // Whatever the state turns out to be, it carries the drift the last
+      // refresh saw. Reading it is a lookup, not a probe: a connector that has
+      // listed nothing yet reports nothing, and status never lists on its own to
+      // make the field appear.
+      // The report is rebuilt rather than spread through: what the seam returned
+      // is third-party output, and status is read by the operator UI and copied
+      // into responses.
+      const withObservations = (status: ConnectorStatus): ConnectorStatus =>
+        this.withCatalogObservations(id, baseUrl, status, scope);
+      // Credential declarations own their readiness even when a static catalog
+      // or a plugin status would otherwise report success. Never probe an empty slot.
+      if (connector.credential) {
+        try {
+          const values = (await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner)) ?? null;
+          const shape = storedCredentialShape(connector.credential, values);
+          if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
+          if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
+        } catch (err) {
+          return withObservations(failureStatus(id, err));
+        }
+      }
+      if (connector.status) {
+        try {
+          return withObservations(await connector.status(ctx));
+        } catch (err) {
+          return withObservations(failureStatus(id, err));
+        }
+      }
       try {
-        const values = (await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner)) ?? null;
-        const shape = storedCredentialShape(connector.credential, values);
-        if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
-        if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
+        await this.getTools(id, baseUrl, requestScope, callOptions, scope);
+        return withObservations({ state: "ok" });
       } catch (err) {
         return withObservations(failureStatus(id, err));
       }
-    }
-    if (connector.status) {
-      try {
-        return withObservations(await connector.status(ctx));
-      } catch (err) {
-        return withObservations(failureStatus(id, err));
-      }
-    }
-    try {
-      await this.getTools(id, baseUrl, requestScope, callOptions, scope);
-      return withObservations({ state: "ok" });
-    } catch (err) {
-      return withObservations(failureStatus(id, err));
-    }
+    }).catch((error) => this.withCatalogObservations(id, baseUrl, failureStatus(id, error), scope));
   }
 
   /** Rotate the storage generation; in-flight old readers cannot republish it. */

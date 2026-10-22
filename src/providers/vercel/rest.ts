@@ -5,7 +5,7 @@
 // environment variables, bounded logs, raw-byte uploads, teams).
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
@@ -1130,9 +1130,7 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         const { data } = await callRest(
           vendor,
           restCall(vendor, "GET", "/v2/user"),
-          deriveContext(ctx, {
-            credential: { get: async () => token, getAll: async () => ({ value: token }) },
-          }),
+          credentialProbeContext(ctx, { value: token }),
         );
         const payload = record(data);
         const user = record(payload["user"] ?? payload);

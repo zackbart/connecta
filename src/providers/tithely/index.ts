@@ -56,7 +56,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
@@ -1262,12 +1262,7 @@ async function testKeyPair(
     const payload = await callTithely(
       send,
       { method: "GET", path: "/organizations-list", query: { limit: 1 } },
-      deriveContext(ctx, {
-        credential: {
-          get: async (field?: string) => (field ? (values[field] ?? null) : null),
-          getAll: async () => values,
-        },
-      }),
+      credentialProbeContext(ctx, values),
     );
     const first = asRecord(asArray(asRecord(payload)["data"])[0]);
     const name = text(first["name"]);

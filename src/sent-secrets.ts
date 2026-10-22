@@ -2,16 +2,14 @@
 // only; never part of a context's public shape, a failure record, storage, or a log. Web APIs only.
 import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
-import { contextKey } from "./derived-context.js";
+import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
-const contexts = new WeakMap<object, SentSecrets>();
 const requests = new WeakMap<object, SentSecrets>();
-const wrappedCredentials = new WeakSet<ConnectorContext>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
 const explicitSecretName = /secret|password/i;
 const identifierName = /(?:id|user(?:name)?|login|email)$|^public/i;
@@ -2295,13 +2293,7 @@ export class SentSecrets {
 }
 
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
-  let secrets = contexts.get(contextKey(ctx));
-  if (!secrets) {
-    secrets = new SentSecrets();
-    contexts.set(contextKey(ctx), secrets);
-  }
-  sentSecretsForRequest(ctx.requestScope ?? ctx).include(secrets);
-  return secrets;
+  return viewSecrets(ctx);
 }
 
 /** One identity per upstream request, including all discovery and call work. */
@@ -2350,28 +2342,18 @@ export function agentOutputOperations<T extends Record<string, (...args: never[]
 
 /** Slot reads cover custom handlers too, including keys put in query strings. A field named
  * as an identifier (an application or client ID, a username, a public key) is matched whole. */
-export function trackCredentialReads(ctx: ConnectorContext): void {
-  if (!ctx.credential || wrappedCredentials.has(ctx)) return;
-  wrappedCredentials.add(ctx);
-  const credential = ctx.credential;
-  const register = (field: string | undefined, value: string) => {
-    const secrets = sentSecretsFor(ctx);
-    if (field && explicitSecretName.test(field)) secrets.secret(value);
-    else if (field && identifierName.test(field)) secrets.identifier(value);
+export function registerCredentialValues(
+  secrets: SentSecrets,
+  values: import("./types.js").ConnectorCredentialValues | null,
+): void {
+  for (const [field, value] of Object.entries(values ?? {})) {
+    if (explicitSecretName.test(field)) secrets.secret(value);
+    else if (identifierName.test(field)) secrets.identifier(value);
     else secrets.add(value);
-  };
-  ctx.credential = {
-    async get(field) {
-      const value = await credential.get(field);
-      if (value) register(field, value);
-      return value;
-    },
-    async getAll() {
-      const values = await credential.getAll();
-      for (const [field, value] of Object.entries(values ?? {})) register(field, value);
-      return values;
-    },
-  };
+  }
+}
+export function trackCredentialReads(ctx: ConnectorContext): void {
+  wrapViewCredentials(ctx);
 }
 
 /** A connector's result or error as it enters: every connector's credentials and the

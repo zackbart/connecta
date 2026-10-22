@@ -52,8 +52,6 @@ function attempt<A>(operation: () => Promise<A>): Effect.Effect<A, unknown> {
 
 export function uiData(registry: RegistryView, baseUrl: string, options: UiDataOptions): Effect.Effect<UiData> {
   return Effect.suspend(() => {
-    const requestScope = {};
-    if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
     const vault = options.credentialVault;
     const owner = options.personalCredentialOwner;
     /**
@@ -64,7 +62,12 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
      * `status()` can quote a downstream error body, which can quote the
      * secret it just rejected (INV-6). An `ok` status is simply dropped.
      */
-    const logStatus = (id: string, state: ConnectorStatus["state"] | "failed", failure: unknown) => {
+    const logStatus = (
+      id: string,
+      state: ConnectorStatus["state"] | "failed",
+      failure: unknown,
+      requestScope: object,
+    ) => {
       if (state === "ok") return;
       const logger = registry.contextFor(id, baseUrl, requestScope).logger;
       logFailure(
@@ -78,7 +81,12 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
     // Status first, then the catalog only when status is ok. A failed status
     // read is an error status, not a failed row: the row still reports the
     // connector's credential.
-    const observe = (c: Connector, drift: string | undefined, signal: AbortSignal): Effect.Effect<Observed> => {
+    const observe = (
+      c: Connector,
+      drift: string | undefined,
+      signal: AbortSignal,
+      requestScope: object,
+    ): Effect.Effect<Observed> => {
       if (drift) {
         return Effect.succeed({
           status: { state: "auth_required", message: drift },
@@ -204,15 +212,15 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       );
     };
 
-    const detail = (c: Connector, signal: AbortSignal) =>
+    const detail = (c: Connector, signal: AbortSignal, requestScope: object) =>
       Effect.gen(function* () {
         const drift = yield* attempt(() => registry.credentialDriftFor(c.id));
         // One deadline covers the whole row. The status and catalog reads once
         // had a second one of the same length inside it, which could only fire
         // after this one had already ended the row.
-        const { status, tools, catalogFailed } = yield* observe(c, drift, signal);
+        const { status, tools, catalogFailed } = yield* observe(c, drift, signal, requestScope);
         const credential = yield* credentialFor(c);
-        logStatus(c.id, status.state, statusFailure(status));
+        logStatus(c.id, status.state, statusFailure(status), requestScope);
         const problem = uiProblemFor(c, status.state, {
           credentialDrift: Boolean(drift),
           catalogFailed,
@@ -242,9 +250,9 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
         } satisfies UiConnector;
       });
 
-    const unavailable = (c: Connector, error: unknown) =>
+    const unavailable = (c: Connector, error: unknown, requestScope: object) =>
       Effect.sync((): UiConnector => {
-        logStatus(c.id, "failed", error);
+        logStatus(c.id, "failed", error, requestScope);
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),
@@ -258,18 +266,24 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
       });
 
     const row = (c: Connector): Effect.Effect<UiConnector> =>
-      withDeadlineEffect((signal) => detail(c, signal), {
-        timeoutMs: options.timeoutMs ?? DETAIL_TIMEOUT_MS,
-        ...(options.signal ? { signal: options.signal } : {}),
-        timeoutError: new Error(DETAIL_TIMED_OUT),
-      }).pipe(
-        // A hook that throws where it should reject fails its own row too.
-        Effect.catchDefect((defect) => Effect.fail(defect)),
-        Effect.catch((error) => unavailable(c, error)),
-        Effect.ensuring(
-          Effect.suspend(() => closeScope(c, registry.contextFor(c.id, baseUrl, requestScope), options.defer)),
-        ),
-      );
+      Effect.suspend(() => {
+        // A row ends independently. Revoking its probe must not revoke a live
+        // sibling that happens to belong to the same operator payload.
+        const requestScope = {};
+        if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
+        return withDeadlineEffect((signal) => detail(c, signal, requestScope), {
+          timeoutMs: options.timeoutMs ?? DETAIL_TIMEOUT_MS,
+          ...(options.signal ? { signal: options.signal } : {}),
+          timeoutError: new Error(DETAIL_TIMED_OUT),
+        }).pipe(
+          // A hook that throws where it should reject fails its own row too.
+          Effect.catchDefect((defect) => Effect.fail(defect)),
+          Effect.catch((error) => unavailable(c, error, requestScope)),
+          Effect.ensuring(
+            Effect.suspend(() => closeScope(c, registry.contextFor(c.id, baseUrl, requestScope), options.defer)),
+          ),
+        );
+      });
 
     return Effect.forEach(registry.listConnectors(), row, {
       concurrency: resolveDiscoveryConcurrency(options.discoveryConcurrency),

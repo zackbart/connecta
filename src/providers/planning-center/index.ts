@@ -33,7 +33,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { deriveContext } from "../../derived-context.js";
+import { credentialProbeContext } from "../../runtime/credential-probe.js";
 import { unprojectedResults } from "../_shared/sensitive-fields.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import { ConnectorCallError } from "../../errors.js";
@@ -2994,12 +2994,7 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
           const document = asRecord(
             await call(
               { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
-              deriveContext(ctx, {
-                credential: {
-                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
-                  getAll: async () => values,
-                },
-              }),
+              credentialProbeContext(ctx, values),
             ),
           );
           const me = created(document, "person record");
