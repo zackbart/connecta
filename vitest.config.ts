@@ -29,6 +29,7 @@ const WORKERS_SUITES = [
   "test/call-auxiliary-lifetime.test.ts",
   "test/call-renewal-lifetime.test.ts",
   "test/oauth-preparation-lifetime.test.ts",
+  "test/promise-boundary-lifetime.test.ts",
   "test/operation-cancellation.test.ts",
   "test/remote-mcp-renewal-lifetime.test.ts",
   "test/direct-write-finalizer.test.ts",
