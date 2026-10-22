@@ -499,6 +499,73 @@ describe("server route contracts", () => {
     }
   });
 
+  it("refuses ?toolkit= on /mcp with an explicit 404 after the retirement", async () => {
+    const warn = vi.fn();
+    const connecta = createTestConnecta({
+      connectors: [testConnector("alpha")],
+      auth: machineAuth(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { ...silentLogger, warn },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
+    });
+
+    // Every ?toolkit= value — a formerly configured name, garbage, or empty —
+    // gets the same 404: an endpoint URL minted before the retirement (#178)
+    // must not silently widen into the full registry.
+    for (const value of ["support", "no-such-toolkit", ""]) {
+      const response = await mcpRpc(
+        connecta,
+        "tools/call",
+        { name: "search_tools", arguments: { query: "read" } },
+        {
+          token: TOKEN,
+          query: `?toolkit=${value}`,
+        },
+      );
+      expect(response.status, `?toolkit=${value}`).toBe(404);
+      expectMcpCors(response);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      const body = (await response.json()) as {
+        error: { message: string };
+      };
+      expect(body.error.message).toContain("#178");
+    }
+    // The client-facing body is discarded by SDK transports, so the reason
+    // must also reach the operator log (#47).
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls[0]?.[0]).toContain("#178");
+
+    // Auth still runs first: an unauthenticated ?toolkit= request is a plain
+    // 401, revealing nothing about the retirement.
+    const unauthenticated = await mcpRpc(
+      connecta,
+      "tools/call",
+      { name: "search_tools", arguments: { query: "read" } },
+      {
+        query: "?toolkit=support",
+      },
+    );
+    expect(unauthenticated.status).toBe(401);
+
+    // The same credential without the param reaches the endpoint normally —
+    // and the call actually succeeds, which is the only way this contrasts
+    // with the 404 above rather than with some other refusal.
+    const clean = await mcpRpc(
+      connecta,
+      "tools/call",
+      { name: "search_tools", arguments: { query: "read" } },
+      { token: TOKEN },
+    );
+    expect(clean.status).toBe(200);
+    const cleanBody = (await clean.json()) as {
+      error?: unknown;
+      result?: { isError?: boolean };
+    };
+    expect(cleanBody.error, JSON.stringify(cleanBody)).toBeUndefined();
+    expect(cleanBody.result?.isError).toBeFalsy();
+  });
+
   it("verifies OAuth callback state before exchange and keeps all unverifiable callbacks opaque", async () => {
     const acceptedOrder: string[] = [];
     const rejectedFinish = vi.fn();

@@ -286,6 +286,38 @@ describe("operator store identity wiring", () => {
     expect(paths.slice(-2)).toEqual([CONFIG, "/ui/data"]);
   });
 
+  it("drops a response the previous identity asked for", async () => {
+    const sessionA: FakeSession = {
+      id: "sess_a",
+      getToken: async () => "token-a",
+    };
+    const { store, fetchMock, configMock, changeSession } = await loadStore(sessionA);
+
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.boot();
+
+    // identity-a asks for its activity and the answer is slow. The request is
+    // on the wire, past its token lookup, before anything else happens.
+    const slow = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => slow.promise);
+    const inFlight = store.loadActivity(true);
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/ui\/api\/activity\?/), expect.anything()),
+    );
+
+    // identity-b arrives while it is in flight, and its own load never settles here.
+    configMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
+    changeSession({ id: "sess_b", getToken: async () => "token-b" });
+
+    slow.resolve(Response.json({ events: [{ connectorId: "identity-a client" }] }));
+    await inFlight;
+
+    // The fence, not a race: identity-a's events never land on identity-b's
+    // screen, and the collection stays idle so the new identity refetches.
+    expect(store.getState()).toMatchObject({ activityEvents: [], activityPhase: "idle", activityNotice: null });
+    expect(JSON.stringify(store.getState())).not.toContain("identity-a client");
+  });
+
   it("gates without a session and never asks for operator data", async () => {
     const { store, fetchMock, paths } = await loadStore({
       id: "sess_a",

@@ -416,6 +416,16 @@ describe("reviewed text policy and global admission (#846)", () => {
     expect(withholdSignedLinks(input, { domains: ["files.example"], buckets: [] })).toBe(input);
   });
 
+  it.each(["&#61;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const input = `https://public.example/a<br>https://files.example/a?token${equals}PRIVATE`;
+    const result = safety.redact({ message: input, description: input }, "GET", "/v1/things") as any;
+    expect(result.message).not.toContain("PRIVATE");
+    expect(result.description).toBe(input);
+    const signed = input.replace("token", "X-Amz-Signature");
+    expect(JSON.stringify(safety.redact({ description: signed }, "GET", "/v1/things"))).not.toContain("PRIVATE");
+  });
+
   it("INV-5: protects resource diagnostics and partial event copies while preserving customer URLs", () => {
     const safety = engine({
       operations: {},
@@ -441,6 +451,12 @@ describe("reviewed text policy and global admission (#846)", () => {
     expect(safety.redact({ description: input.replace("See ", "") }, "GET", "/v1/things")).toEqual({
       description: input.replace("See ", ""),
     });
+  });
+
+  it("INV-5: removes a private suffix after an existing signing placeholder", () => {
+    expect(
+      withholdSignedLinks("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE", { domains: [], buckets: [] }),
+    ).not.toContain("PRIVATE");
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
