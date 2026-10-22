@@ -536,7 +536,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
   }
 
   /** An outer api() write whose handler calls `inner`, and then propagates, fails later, or succeeds. */
-  function outer(child: Connector, behavior: "propagate" | "later" | "success", tracked = false) {
+  function outer(child: Connector, behavior: "propagate" | "later" | "network" | "success", tracked = false) {
     const connector = api("outer", {
       tools: [
         {
@@ -547,6 +547,8 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
             if (behavior === "propagate") return child.callTool("create", {}, ctx);
             await child.callTool("create", {}, ctx).catch(() => undefined);
             if (behavior === "success") return { ok: true };
+            if (behavior === "network")
+              throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
             throw new ConnectorCallError("unavailable", "A later request failed.", { retryAfterMs: 30_000 });
           },
         },
@@ -560,6 +562,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
     [false, "later"],
     [true, "propagate"],
     [true, "later"],
+    [false, "network"],
   ] as const)(
     "INV-9: an inner api() write's 401 (declared: %s) decides the outer write that does %s",
     async (declaredProof, behavior) => {
