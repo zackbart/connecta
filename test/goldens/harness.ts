@@ -230,13 +230,18 @@ function deterministic(): { real: RealWork; restart(): void; restore(): Promise<
       if (state.violation) throw state.violation;
       if (state.inFlight || state.microtasks || state.timers.size)
         throw new Error("Outstanding controlled work at scenario boundary");
-      state.stop();
+      state.stop(true);
       state = goldenSources().start();
       state.loading = false;
     },
     async restore() {
       try {
-        for (let turns = 0; (state.inFlight || state.microtasks) && turns < MAX_SETTLE_CHANGES; turns++) {
+        const extend = nativeExtensions(state, "Golden teardown");
+        for (let turns = 0; state.inFlight || state.microtasks; turns++) {
+          if (turns >= MAX_SETTLE_CHANGES) {
+            if (!(await extend())) break;
+            turns = 0;
+          }
           state.tick(0);
           await realTurn();
         }
@@ -391,6 +396,22 @@ const CLOCK_QUIET_TURNS = 8;
 /** Bounds that turn a call that keeps working, or keeps waiting on timers, into a failure instead of a hang. */
 const MAX_SETTLE_CHANGES = 10_000;
 const MAX_CLOCK_ADVANCES = 1_000;
+const MAX_NATIVE_EXTENSIONS = 100;
+
+/** Only genuinely native operations may extend a bounded polling window. */
+function nativeExtensions(real: RealWork, where: string): () => Promise<boolean> {
+  let extensions = 0;
+  return async () => {
+    if (real.nativePending.size === 0) return false;
+    if (++extensions > MAX_NATIVE_EXTENSIONS)
+      throw new Error(`${where}: native completion wait budget exceeded (${MAX_NATIVE_EXTENSIONS} extensions)`);
+    const pending = [...real.nativePending];
+    await real.waitForNative();
+    if (pending.some((operation) => real.nativePending.has(operation)))
+      throw new Error(`${where}: native completion wait returned with unsettled operations`);
+    return true;
+  };
+}
 
 interface Waiting {
   request: SeenRequest;
@@ -436,6 +457,7 @@ function installNetwork(capture: Capture): Network {
   let waiting: Waiting[] = [];
   const pending = new Set<Waiting>();
   const fake = (async (input: unknown, init?: RequestInit) => {
+    real.assertCurrent();
     const sent = issued++;
     const after = delivered;
     let request: SeenRequest;
@@ -448,6 +470,7 @@ function installNetwork(capture: Capture): Network {
     } finally {
       arrived++;
     }
+    real.assertCurrent();
     const { method, url, headers, body } = request;
     const key = JSON.stringify([method, url.href, headers, body ?? null]);
     return new Promise<Response>((resolve, reject) => {
@@ -458,7 +481,12 @@ function installNetwork(capture: Capture): Network {
         after,
         resolve(response) {
           pending.delete(waiter);
-          resolve(response);
+          try {
+            real.assertCurrent();
+            resolve(response);
+          } catch (error) {
+            reject(error);
+          }
         },
         reject(error) {
           pending.delete(waiter);
@@ -469,9 +497,18 @@ function installNetwork(capture: Capture): Network {
       waiting.push(waiter);
     });
   }) as typeof fetch;
-  globalThis.fetch = seam ? seam(fake) : fake;
+  const send = seam ? seam(fake) : fake;
+  globalThis.fetch = (input, init) => {
+    try {
+      real.assertCurrent();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return send(input, init);
+  };
 
   async function drive<T>(work: () => Promise<T>, answer?: Answer): Promise<Driven<T>> {
+    real.assertCurrent();
     const steps: Step[] = [];
     const releases: Array<{ release(): void }> = [];
     delivered = 0;
@@ -488,8 +525,12 @@ function installNetwork(capture: Capture): Network {
     };
     const settle = async (turns: number) => {
       let last = "";
+      const extend = nativeExtensions(real, spec.provider);
       for (let quiet = 0, changes = 0, total = 0; quiet < turns; total++) {
-        if (total > MAX_SETTLE_CHANGES) throw new Error(`${spec.provider}: controlled work never settled`);
+        if (total > MAX_SETTLE_CHANGES) {
+          if (!(await extend())) throw new Error(`${spec.provider}: controlled work never settled`);
+          total = changes = 0;
+        }
         // Synchronous: 0 ms timers created by microtasks stay due now.
         real.tick(0);
         await realTurn();
@@ -515,6 +556,7 @@ function installNetwork(capture: Capture): Network {
       }
     };
     const admit = () => {
+      real.assertCurrent();
       const batch = waiting.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.sent - b.sent));
       waiting = [];
       if (!answer) {
@@ -553,6 +595,7 @@ function installNetwork(capture: Capture): Network {
         previous = { key: waiter.key, reply: replyKey! };
         batchReleases.push({
           release: () => {
+            real.assertCurrent();
             if (reply === "network") waiter.reject(networkFailure());
             else if (reply === "timeout") waiter.reject(timeoutFailure());
             else waiter.resolve(response!);
@@ -607,12 +650,16 @@ function installNetwork(capture: Capture): Network {
     } catch (error) {
       // An invalid capture can still have concurrent fake requests in flight.
       // Drain/cancel them under this capture's fakes, never the next one's.
+      const extend = nativeExtensions(real, `${spec.provider} rejected capture`);
       for (let turn = 0; turn < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight > 0; turn++) {
         for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
         waiting = [];
         real.tick(0);
         await realTurn();
-        if (turn > MAX_SETTLE_CHANGES) break;
+        if (turn > MAX_SETTLE_CHANGES) {
+          if (!(await extend())) break;
+          turn = 0;
+        }
       }
       throw error;
     }
@@ -621,6 +668,7 @@ function installNetwork(capture: Capture): Network {
   return {
     drive,
     restore() {
+      real.assertCurrent();
       globalThis.fetch = realFetch;
     },
   };
@@ -1101,6 +1149,7 @@ async function failures(capture: Capture): Promise<unknown> {
  * reads, so a migration that reorders a schema or a result changes a golden.
  */
 function stable(value: unknown, capture: Capture): string {
+  capture.real.assertCurrent();
   return `${redact(JSON.stringify(value, null, 2), capture.secrets)
     .split(capture.nonce)
     .join("")}\n`;
@@ -1187,21 +1236,23 @@ async function captureGoldensInOrder(
   options: CaptureOptions,
   reverse: boolean,
 ): Promise<Partial<Record<GoldenFile, string>>> {
-  const clock = deterministic();
-  try {
-    spec = await fresh(spec, options.load);
-    const capture = captureFor(spec, clock, options);
-    capture.reverse = reverse;
-    const files: Partial<Record<GoldenFile, string>> = {
-      catalog: stable(await catalog(capture), capture),
-      calls: stable(await calls(capture), capture),
-      failures: stable(await failures(capture), capture),
-    };
-    if (spec.setup) files.setup = stable(JSON.parse(capture.setup ?? "[]"), capture);
-    return files;
-  } finally {
-    await clock.restore();
-  }
+  return goldenSources().capture(async () => {
+    const clock = deterministic();
+    try {
+      spec = await fresh(spec, options.load);
+      const capture = captureFor(spec, clock, options);
+      capture.reverse = reverse;
+      const files: Partial<Record<GoldenFile, string>> = {
+        catalog: stable(await catalog(capture), capture),
+        calls: stable(await calls(capture), capture),
+        failures: stable(await failures(capture), capture),
+      };
+      if (spec.setup) files.setup = stable(JSON.parse(capture.setup ?? "[]"), capture);
+      return files;
+    } finally {
+      await clock.restore();
+    }
+  });
 }
 
 /**
@@ -1215,20 +1266,22 @@ async function captureCallInOrder(
   options: CaptureOptions,
   reverse: boolean,
 ): Promise<string> {
-  const clock = deterministic();
-  try {
-    spec = await fresh(spec, options.load);
-    const capture = captureFor(spec, clock, options);
-    capture.reverse = reverse;
-    const call =
-      label === "echo"
-        ? echoCall(capture)
-        : spec.calls.find((candidate) => (candidate.label ?? candidate.tool) === label);
-    if (!call) throw new Error(`${spec.provider}: no call labelled "${label}"`);
-    return stable(await row(capture, call), capture);
-  } finally {
-    await clock.restore();
-  }
+  return goldenSources().capture(async () => {
+    const clock = deterministic();
+    try {
+      spec = await fresh(spec, options.load);
+      const capture = captureFor(spec, clock, options);
+      capture.reverse = reverse;
+      const call =
+        label === "echo"
+          ? echoCall(capture)
+          : spec.calls.find((candidate) => (candidate.label ?? candidate.tool) === label);
+      if (!call) throw new Error(`${spec.provider}: no call labelled "${label}"`);
+      return stable(await row(capture, call), capture);
+    } finally {
+      await clock.restore();
+    }
+  });
 }
 
 // Both orders start with an independent module graph, clock, network and

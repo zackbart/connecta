@@ -25,6 +25,7 @@ import planningCenter from "./goldens/planning-center/spec.js";
 
 import { canonicalGolden } from "./goldens/canonical.js";
 import { PRIVATE_KEY, PUBLIC_KEY } from "./goldens/rsa-fixture.js";
+import { goldenSources } from "./goldens/sources.js";
 
 // Small source probes use one order. Nightly's Node job exercises every seed.
 const determinism = process.env.CONNECTA_GOLDENS_DETERMINISM === "1";
@@ -78,6 +79,103 @@ const savedImmediate = (globalThis as { setImmediate?: (callback: () => void) =>
 const savedTimeout = globalThis.setTimeout.bind(globalThis);
 const savedAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
 const savedDigest = crypto.subtle.digest.bind(crypto.subtle);
+
+// A producer-fed body read deliberately exceeding the 10,000-turn
+// polling limit. It must reject rather than extending the native-only budget.
+// Harness-native turns avoid virtual time and runner-clock mocks.
+function delayedRead(): Promise<string> {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let turn = 0; turn < 11_000; turn++) await goldenSources().turn();
+        controller.enqueue(new TextEncoder().encode("body"));
+        controller.close();
+      },
+    }),
+  ).text();
+}
+// A counted read whose producer queues controlled work after the driver's
+// tick. Native yields must never strand the subsequent zero-time callback.
+function queuedTimerRead(turns = 0, callbacks = 1): Promise<string> {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let turn = 0; turn < turns; turn++) await goldenSources().turn();
+        const produce = () => {
+          if (--callbacks > 0) queueMicrotask(() => setTimeout(produce, 0));
+          else {
+            controller.enqueue(new TextEncoder().encode("body"));
+            controller.close();
+          }
+        };
+        queueMicrotask(() => setTimeout(produce, 0));
+      },
+    }),
+  ).text();
+}
+function producedStream(produce: (close: () => void) => void | Promise<void>): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      return produce(() => {
+        controller.enqueue(new TextEncoder().encode("body"));
+        controller.close();
+      });
+    },
+  });
+}
+function producedRead(produce: (close: () => void) => void | Promise<void>): Promise<string> {
+  return new Response(producedStream(produce)).text();
+}
+const controlledIOCases = [
+  {
+    name: "a positive timer behind a microtask",
+    produce: (close: () => void) => {
+      queueMicrotask(() => setTimeout(close, 1));
+    },
+  },
+  {
+    name: "a zero-delay interval needing three callbacks",
+    produce: (close: () => void) => {
+      let callbacks = 0;
+      const interval = setInterval(() => {
+        if (++callbacks === 3) {
+          clearInterval(interval);
+          close();
+        }
+      }, 0);
+    },
+  },
+  {
+    name: "a longer-delay chain",
+    produce: (close: () => void) => {
+      queueMicrotask(() => setTimeout(() => setTimeout(() => setTimeout(close, 5_000), 50), 2));
+    },
+  },
+  {
+    name: "a native producer's direct zero timer then future close",
+    produce: async (close: () => void) => {
+      for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+      setTimeout(() => setTimeout(close, 1), 0);
+    },
+  },
+];
+// These timeouts only guard regressions: rejection comes from the harness's
+// bounded turn loop, never from elapsed time.
+const CONTROLLED_IO = { ...WORKERS, timeout: 30_000 };
+const DRAIN_REJECTION = "Controlled work could not drain after rejected capture";
+async function expectCleanCapture(): Promise<void> {
+  const clean = JSON.parse(
+    await captureCall(
+      probeSpec(async () => "clean"),
+      "probe",
+    ),
+  ) as Row;
+  expect(clean.result).toMatchObject({ ok: true, value: "clean" });
+}
+const countedReadCases = [
+  { name: "delayed counted I/O", read: delayedRead },
+  { name: "counted I/O with a queued zero timer", read: queuedTimerRead },
+];
 const savedNow = performance.now.bind(performance);
 const savedDateNow = Date.now.bind(Date);
 const descriptorDateNow = Object.getOwnPropertyDescriptor(Date, "now")!.value as () => number;
@@ -646,6 +744,465 @@ describe(suiteName, { timeout: 120_000 }, () => {
     const a = await captureCall(spec, "probe", { jitter: 1 });
     expect(a).toBe(await captureCall(spec, "probe", { jitter: 2 }));
     expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: "body" });
+  });
+
+  it.each([0, 3])(
+    "drives a counted body producer's queued zero timer after %i native turns",
+    WORKERS,
+    async (turns) => {
+      const baseline = await captureCall(
+        probeSpec(async () => new Response("body").text()),
+        "probe",
+      );
+      expect(
+        await captureCall(
+          probeSpec(async () => queuedTimerRead(turns)),
+          "probe",
+        ),
+      ).toBe(baseline);
+    },
+  );
+
+  it.each(["timer", "microtask"] as const)(
+    "completes a native producer's direct zero-time %s after native turns",
+    CONTROLLED_IO,
+    async (source) => {
+      const row = JSON.parse(
+        await captureCall(
+          probeSpec(async () =>
+            producedRead(async (close) => {
+              for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+              if (source === "timer") setTimeout(close, 0);
+              else queueMicrotask(close);
+            }),
+          ),
+          "probe",
+        ),
+      ) as Row;
+      expect(row.result).toMatchObject({ ok: true, value: "body" });
+      expect(row.waitedMs).toBeUndefined();
+      await expectCleanCapture();
+    },
+  );
+
+  // Unsupported producers deliberately assert bounded rejection and a clean
+  // following capture. They must never become unbounded native waits.
+  it.each(controlledIOCases)(
+    "rejects controlled I/O produced by $name within the bound and recovers",
+    CONTROLLED_IO,
+    async ({ produce }) => {
+      await expect(
+        captureCall(
+          probeSpec(async () => producedRead(produce)),
+          "probe",
+        ),
+      ).rejects.toThrow(DRAIN_REJECTION);
+      await expectCleanCapture();
+    },
+  );
+
+  it.each([
+    {
+      name: "a reader",
+      read: async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader();
+        const { value } = await reader.read();
+        await reader.read();
+        return new TextDecoder().decode(value);
+      },
+    },
+    { name: "a response clone", read: (stream: ReadableStream<Uint8Array>) => new Response(stream).clone().text() },
+    { name: "a tee", read: (stream: ReadableStream<Uint8Array>) => new Response(stream.tee()[0]).text() },
+    {
+      name: "a synchronous transform",
+      read: async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+        const { value } = await reader.read();
+        await reader.read();
+        return value;
+      },
+    },
+  ])("rejects a future-timer read through $name within the bound and recovers", CONTROLLED_IO, async ({ read }) => {
+    await expect(
+      captureCall(
+        probeSpec(async () =>
+          read(
+            producedStream((close) => {
+              queueMicrotask(() => setTimeout(close, 1));
+            }),
+          ),
+        ),
+        "probe",
+      ),
+    ).rejects.toThrow(DRAIN_REJECTION);
+    await expectCleanCapture();
+  });
+
+  it.each([
+    {
+      name: "an endless controlled interval",
+      produce: () => {
+        setInterval(() => {}, 1);
+      },
+    },
+    { name: "a stream that never closes and has no timers", produce: () => {} },
+    {
+      name: "a future timer whose callback would fail",
+      produce: () => {
+        setTimeout(() => {
+          throw new Error("timer producer failed");
+        }, 1);
+      },
+    },
+    {
+      name: "a native producer's failing microtask",
+      produce: async () => {
+        for (let turn = 0; turn < 3; turn++) await goldenSources().turn();
+        queueMicrotask(() => {
+          throw new Error("microtask producer failed");
+        });
+      },
+    },
+  ])("rejects $name within the bound and recovers", CONTROLLED_IO, async ({ produce }) => {
+    await expect(
+      captureCall(
+        probeSpec(async () => producedRead(produce)),
+        "probe",
+      ),
+    ).rejects.toThrow(DRAIN_REJECTION);
+    await expectCleanCapture();
+  });
+
+  it(
+    "rejects overlapping capture without releasing its owner, then recovers after bounded rejection",
+    CONTROLLED_IO,
+    async () => {
+      let overlaps = 0;
+      await expect(
+        captureCall(
+          probeSpec(async () => {
+            await expect(
+              captureCall(
+                probeSpec(async () => "overlap"),
+                "probe",
+              ),
+            ).rejects.toThrow("Overlapping golden captures are unsupported");
+            overlaps++;
+            return producedRead((close) => {
+              queueMicrotask(() => setTimeout(close, 1));
+            });
+          }),
+          "probe",
+        ),
+      ).rejects.toThrow(DRAIN_REJECTION);
+      expect(overlaps).toBe(1);
+      await expectCleanCapture();
+    },
+  );
+
+  it("rejects a future-timer read after construction fails within the bound and recovers", CONTROLLED_IO, async () => {
+    const spec = probeSpec(async () => "unused");
+    spec.create = () => {
+      void producedRead((close) => {
+        queueMicrotask(() => setTimeout(close, 1));
+      });
+      throw new Error("construction rejected");
+    };
+    await expect(captureCall(spec, "probe")).rejects.toThrow(DRAIN_REJECTION);
+    await expectCleanCapture();
+  });
+
+  it("rejects a producer-fed read beyond 10,000 turns within the bound and recovers", CONTROLLED_IO, async () => {
+    await expect(captureCall(probeSpec(delayedRead), "probe")).rejects.toThrow("controlled work never settled");
+    await expectCleanCapture();
+  });
+
+  it.each(countedReadCases)(
+    "rejects concurrent fake requests during $name and recovers",
+    CONTROLLED_IO,
+    async ({ read }) => {
+      const error = new Error("fixture rejected");
+      const spec = probeSpec(
+        async () => Promise.all([fetch("https://probe.example/a"), fetch("https://probe.example/b")]),
+        () => {
+          void read();
+          throw error;
+        },
+      );
+      await expect(captureCall(spec, "probe")).rejects.toThrow(error);
+      await expectCleanCapture();
+    },
+  );
+
+  it.each(countedReadCases)(
+    "rejects construction during $name within the bound and recovers",
+    CONTROLLED_IO,
+    async ({ read }) => {
+      const spec = probeSpec(async () => "unused");
+      spec.create = () => {
+        void read();
+        throw new Error("construction rejected");
+      };
+      await expect(captureCall(spec, "probe")).rejects.toThrow(
+        read === delayedRead ? DRAIN_REJECTION : "construction rejected",
+      );
+      await expectCleanCapture();
+    },
+  );
+
+  it("completes 6,000 controlled timer/microtask callbacks within the turn bound", CONTROLLED_IO, async () => {
+    const row = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          let left = 6_000;
+          const repeat = () => {
+            if (--left > 0) queueMicrotask(() => setTimeout(repeat, 0));
+          };
+          setTimeout(repeat, 0);
+          return "done";
+        }),
+        "probe",
+      ),
+    ) as Row;
+    expect(row.result).toMatchObject({ ok: true, value: "done" });
+    await expectCleanCapture();
+  });
+
+  it(
+    "completes a counted body read with 6,000 timer/microtask callbacks within the turn bound",
+    CONTROLLED_IO,
+    async () => {
+      const row = JSON.parse(
+        await captureCall(
+          probeSpec(async () => queuedTimerRead(0, 6_000)),
+          "probe",
+        ),
+      ) as Row;
+      expect(row.result).toMatchObject({ ok: true, value: "body" });
+      await expectCleanCapture();
+    },
+  );
+
+  it("rejects a controlled read awaiting the fake network within the bound and recovers", CONTROLLED_IO, async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                const response = await fetch("https://probe.example/body");
+                controller.enqueue(new TextEncoder().encode(await response.text()));
+                controller.close();
+              },
+            }),
+          ).text(),
+        ),
+        "probe",
+      ),
+    ).rejects.toThrow("controlled work never settled");
+    await expectCleanCapture();
+  });
+
+  it.each(["response", "upload"])(
+    "rejects a directly driven TransformStream %s within the bound and recovers",
+    CONTROLLED_IO,
+    async (destination) => {
+      await expect(
+        captureCall(
+          probeSpec(async () => {
+            const stream = new TransformStream<Uint8Array, Uint8Array>();
+            const writer = stream.writable.getWriter();
+            setTimeout(() => {
+              void writer.write(new TextEncoder().encode("body")).then(() => writer.close());
+            }, 1);
+            if (destination === "response") return new Response(stream.readable).text();
+            const response = await fetch("https://probe.example/upload", {
+              method: "POST",
+              body: stream.readable,
+              duplex: "half",
+            } as RequestInit);
+            return response.text();
+          }),
+          "probe",
+        ),
+      ).rejects.toThrow(DRAIN_REJECTION);
+      await expectCleanCapture();
+    },
+  );
+
+  it("awaits native crypto without advancing a deadline or changing capture bytes", CONTROLLED_IO, async () => {
+    const baseline = await captureCall(
+      probeSpec(async () => "done"),
+      "probe",
+    );
+    const captured = await captureCall(
+      probeSpec(async () => {
+        let expired = false;
+        const deadline = setTimeout(() => {
+          expired = true;
+        }, 1);
+        for (let operation = 0; operation < 3; operation++)
+          await crypto.subtle.digest("SHA-256", new Uint8Array([operation]));
+        clearTimeout(deadline);
+        expect(expired).toBe(false);
+        return "done";
+      }),
+      "probe",
+    );
+    expect(captured).toBe(baseline);
+    await expectCleanCapture();
+  });
+
+  it("closes the epoch when ownership is released, before teardown's promise settles", WORKERS, async () => {
+    const sources = goldenSources();
+    const start = sources.start;
+    let constructed = false;
+    let late: Promise<void> | undefined;
+    let failure: unknown;
+    const sourceStart = vi.spyOn(sources, "start").mockImplementation(() => {
+      const state = start();
+      const stop = state.stop;
+      state.stop = (restarting) => {
+        stop(restarting);
+        if (constructed && !late)
+          late = Promise.resolve().then(() => {
+            try {
+              crypto.getRandomValues(new Uint8Array(1));
+            } catch (error) {
+              failure = error;
+            }
+          });
+      };
+      return state;
+    });
+    try {
+      const rejected = probeSpec(async () => "unused");
+      rejected.create = () => {
+        constructed = true;
+        throw new Error("construction rejected");
+      };
+      await expect(captureCall(rejected, "probe")).rejects.toThrow("construction rejected");
+      await late;
+      expect(failure).toMatchObject({ message: "Golden capture epoch is closed" });
+      await expectCleanCapture();
+    } finally {
+      sourceStart.mockRestore();
+    }
+  });
+
+  it(
+    "isolates late work after 102 delayed digests exhaust the native extension cap",
+    { ...WORKERS, timeout: 600_000 },
+    async () => {
+      const sources = goldenSources();
+      const start = sources.start;
+      let owner: ReturnType<typeof start>;
+      const sourceStart = vi.spyOn(sources, "start").mockImplementation(() => (owner = start()));
+      // Model captured native completions delayed by 11,000 native turns without
+      // adding a production injection hook. Counters stay bound to their owner.
+      const digest = (state: ReturnType<typeof start>) => {
+        state.inFlight++;
+        state.events++;
+        const pending = (async () => {
+          await crypto.subtle.digest("SHA-256", new Uint8Array([1]));
+          for (let turn = 0; turn < 11_000; turn++) await sources.turn();
+        })().finally(() => {
+          state.inFlight--;
+          state.events++;
+          state.nativePending.delete(pending);
+        });
+        state.nativePending.add(pending);
+        return pending;
+      };
+      let late: Promise<void> | undefined;
+      let requestFailure: unknown;
+      try {
+        const rejected = probeSpec(async () => "unused");
+        rejected.create = () => {
+          const previous = owner;
+          late = (async () => {
+            try {
+              for (let operation = 0; operation < 102; operation++) await digest(previous);
+            } catch {
+              // Even a continuation that catches a closed-source error must not
+              // enter the next capture by looking up its new global fetch.
+            }
+            try {
+              await fetch("https://probe.example/from-previous-capture");
+            } catch (error) {
+              requestFailure = error;
+            }
+          })();
+          throw new Error("construction rejected");
+        };
+        await expect(captureCall(rejected, "probe")).rejects.toThrow(
+          "native completion wait budget exceeded (100 extensions)",
+        );
+        let enteredNextNetwork = 0;
+        const next = JSON.parse(
+          await captureCall(
+            probeSpec(async () => {
+              const current = owner;
+              for (let operation = 0; operation < 3; operation++) await digest(current);
+              return "clean";
+            }),
+            "probe",
+            {
+              seam: (send) => (input, init) => {
+                enteredNextNetwork++;
+                return send(input, init);
+              },
+            },
+          ),
+        ) as Row;
+        await late;
+        expect(next.steps).toEqual([]);
+        expect(enteredNextNetwork).toBe(0);
+        expect(next.result).toMatchObject({ ok: true, value: "clean" });
+        expect(requestFailure).toMatchObject({ message: "Golden capture epoch is closed" });
+        await expectCleanCapture();
+      } finally {
+        sourceStart.mockRestore();
+      }
+    },
+  );
+
+  it("observes requests issued by native crypto after the handler returns", CONTROLLED_IO, async () => {
+    const captured = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          void crypto.subtle.digest("SHA-256", new Uint8Array([1])).then(() => fetch("https://probe.example/late"));
+          return "done";
+        }),
+        "probe",
+      ),
+    ) as Row;
+    expect(captured.steps.flat()).toHaveLength(1);
+    expect(captured.steps.flat()[0]!.url).toBe("https://probe.example/late");
+    await expectCleanCapture();
+  });
+
+  it("accounts for rejected native crypto and rejected body reads, then recovers", CONTROLLED_IO, async () => {
+    const row = JSON.parse(
+      await captureCall(
+        probeSpec(async () => {
+          await expect(crypto.subtle.digest("unsupported", new Uint8Array())).rejects.toThrow();
+          await expect(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new Error("body rejected"));
+                },
+              }),
+            ).text(),
+          ).rejects.toThrow("body rejected");
+          return "done";
+        }),
+        "probe",
+      ),
+    ) as Row;
+    expect(row.result).toMatchObject({ ok: true, value: "done" });
+    await expectCleanCapture();
   });
 
   it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", WORKERS, async () => {
