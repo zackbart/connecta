@@ -1,4 +1,4 @@
-import { duringViewCall, viewSignal } from "../runtime/call.js";
+import { duringViewCall, settleOnClose, viewSignal } from "../runtime/call.js";
 /**
  * The safety machinery every hand-written HTTP surface needs, extracted once
  * (#341): path confinement, encoded query and framed bodies, per-request
@@ -601,8 +601,14 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     let response: Response | undefined;
     let result: T;
     try {
-      result = await requestOnce(request, ctx, map);
+      // Own the whole helper, including refusal cleanup between I/O and the
+      // mapper. Settle its ledger outside the race so revocation cannot skip
+      // the dispatched write's final verdict.
+      result = await settleOnClose(ctx, () => requestOnce(request, ctx, map), auxiliary);
     } catch (error) {
+      // Auxiliary preparation has always refused an ended request in the
+      // provider's words, even if closure wins the whole-helper race first.
+      if (auxiliary) assertProviderCallOpen(ctx, provider, true);
       // No rejection proves a dispatched write unsent: fetch may have made
       // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
       // retrying dispatcher), whatever the last one reports.
