@@ -2195,11 +2195,22 @@ compiling and configuring the real thing.
   code is the final failure's when that is an authorization verdict, else
   the one the 401's own answer was mapped to (`vendorRefusal` records it on
   the request), else `auth_required`. A 401 whose credential a renewal then
-  replaced is marked `renewed` on the request (static OAuth's refresh,
-  Infisical's login, Google's fresh token for a read's replay, through
-  `renewedAfterUnauthorized`) and no longer decides the call. A declared
-  401 stands as a refusal only as the call's one request and its own
-  failure; otherwise it too is decided this way. A 408 is a
+  replaced is marked `renewed` on its own request and no longer decides the
+  call. `renewedAfterUnauthorized(request, sent, fresh)` names that one
+  request and marks it only when the renewal yielded a credential other
+  than the one it sent; its callers are static OAuth's refresh, Infisical's
+  login (through `answeredRequest`, the guarded transport's response-to-entry
+  lookup), Google's fresh token for a read's replay, and the kit's
+  refresh-once. A declared 401 stands as a refusal only as the call's one
+  request and its own failure; otherwise it too is decided this way. Each
+  `api()` call's ledger records the ledgers of `api()` boundaries entered
+  beneath its handler (`nestedProviderRequests`), so an inner request's 401
+  decides the outer write, and an outer ledger with nested requests is never
+  empty proof. When the invocation's deadline or the caller's cancellation
+  cuts off a served write, no connector failure arrives: the invocation
+  takes the verdict from the logical call's recorded requests
+  (`departedWriteVerdict`, the core's counterpart of the kit's
+  `departedVerdict`), unless the only request sent is a declared refusal. A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the

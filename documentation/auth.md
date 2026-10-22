@@ -1361,7 +1361,8 @@ resend before it leaves, so any fresh call after the target is reconciled uses
 the fresh token. The call
 fails with a non-retryable `connector_call_failed` whose outcome is unknown.
 If the refresh fails instead, whatever it met (a dead grant, a waiter
-deadline, the caller leaving), the 401's verdict stays:
+deadline, the caller leaving), or hands back the token the API just
+rejected, the 401's verdict stays:
 `downstream_oauth_required`, never retryable, with `reconciliationRequired`
 and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
@@ -1383,7 +1384,9 @@ rejected token for the next deliberate call and retains `auth_required` with
 `writeOutcome: "unknown"` and the operator handoff. Infisical renews the login
 for a later call: the write then fails as a non-retryable
 `connector_call_failed` with an unknown outcome, and a login that fails keeps
-`auth_required` with the operator handoff and the unknown outcome.
+`auth_required` with the operator handoff and the unknown outcome. So does a
+recovery that hands back the token the write sent, such as one already spent
+on an earlier 401 in the same request: it renewed nothing.
 
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation

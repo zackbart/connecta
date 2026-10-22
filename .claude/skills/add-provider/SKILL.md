@@ -426,6 +426,12 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
   `drift.json`, as Stripe does), keep `matches` to raw status, headers, method
   and path, and add the provider to `AUTH_BEFORE_EXECUTION` in
   `test/provider-failure-sweep.test.ts`. Without such a page, leave it out.
+- A provider that renews its credential after a 401 (a login, a refresh, a
+  minted token) records it with `renewedAfterUnauthorized(request, sent,
+  fresh)`: the one request that 401 answered (`answeredRequest(response)` in
+  a guarded mapper), the credential it sent, and the renewed one. Never mark
+  any other request, and a renewal that hands back the sent credential
+  renewed nothing.
 
 ## Definition and behavior
 

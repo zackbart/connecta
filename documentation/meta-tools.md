@@ -1051,13 +1051,19 @@ renewed, the failure keeps its authorization code (`auth_required`, or
 re-read the target before any fresh call. That holds whatever renewal meets: a
 refused or unreachable token endpoint, a disconnect, or the caller leaving. It
 also holds whatever the call met after the 401: a body past the response
-ceiling, a later failure in the same call, or a 401 on a later request of a
-composite write. An idempotency key never makes such a write repeatable, so
-it gets no key-reuse advice.
+ceiling, a later failure in the same call, a 401 on a later request of a
+composite write, or a 401 answered inside another `api()` connector the
+handler called. It holds when the call's deadline or the caller's
+cancellation cuts the write off after the 401: the result is that verdict,
+not `write_outcome_unknown`. An idempotency key never makes such a write
+repeatable, so it gets no key-reuse advice.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after
-the target is reconciled. Google Workspace renews on the next call, so its
+the target is reconciled. Renewal succeeds only when it yields a different
+credential than the one the write sent: a refresh or login that hands back
+the rejected token, or an earlier recovery in the same request, renews
+nothing, and the write keeps its handoff. Google Workspace renews on the next call, so its
 write keeps the authorization code and handoff. A write answered 401 is a
 known refusal only where its provider has reviewed vendor documentation that
 the vendor authenticates a request before acting on it. Among the maintained
