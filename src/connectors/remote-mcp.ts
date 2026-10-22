@@ -3549,9 +3549,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // exists, this call is still a proven unsent failure.
         if (!active) throw knownProviderFailure(err);
         const { state, client, dispatch, write } = active;
-        const direct = write && callClassification(ctx) === undefined;
-        // The request's own abort reason passes by identity for a read or a
-        // served call. A direct write's is finalized below: it may have left.
+        // An effective-read invocation cannot finalize the server's write.
+        const direct = write && callClassification(ctx) !== "write";
+        // Only a served write can defer its abort to invocation. Direct writes
+        // and server writes served as reads finalize it here: it may have left.
         const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
         if (ownAbort && !direct) throw err;
         // A grant revoked after connect surfaces here, not in ensureConnected.
@@ -3607,6 +3608,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           dispatched: dispatch.sent,
           ...(status === undefined ? {} : { status }),
           fallback: "write",
+          ...(callClassification(ctx) === "read" ? { sourceWrite: true as const } : {}),
           request: dispatch.request?.entry,
         });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);

@@ -2,6 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { attachCallClassification } from "../src/call-classification.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -46,7 +47,8 @@ type Answer =
   | "reset"
   | "refused"
   | "timeout"
-  | "deadline";
+  | "deadline"
+  | "prepare";
 
 function setup(
   options: {
@@ -221,6 +223,7 @@ function setup(
       error?: {
         code: string;
         retryable: boolean;
+        retryAfterMs?: number;
         message: string;
         reconciliationRequired?: boolean;
         writeOutcome?: string;
@@ -267,13 +270,19 @@ function setup(
 
 describe("remote MCP OAuth writes after a 401", () => {
   it("INV-4 INV-9: write-to-read overrides never replay server writes after renewal, reconnect or transport recovery", async () => {
-    for (const [answer, oauth, versionNegotiation, sameOriginOAuth] of [
-      [401, true, "legacy", false],
-      [401, true, "legacy", true],
-      ["reset", false, "legacy", false],
-      ["mismatch", false, "auto", false],
+    for (const [answer, oauth, versionNegotiation, sameOriginOAuth, recover] of [
+      [401, true, "legacy", false, false],
+      [401, true, "legacy", true, false],
+      ["reset", false, "legacy", false, true],
+      ["mismatch", false, "auto", false, true],
+      ["reset", false, "legacy", false, false],
+      ["prepare", false, "legacy", false, false],
     ] as const) {
-      if (answer === "reset" || answer === "mismatch") {
+      if (answer === "prepare") {
+        vi.spyOn(Client.prototype, "callTool").mockRejectedValue(
+          new ConnectorCallError("rate_limited", "Unsent preparation refusal.", { retryAfterMs: 50 }),
+        );
+      } else if (recover) {
         // Model recovery/fallback issuing a fresh JSON-RPC id after failure.
         vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, params, options) {
           try {
@@ -294,9 +303,15 @@ describe("remote MCP OAuth writes after a 401", () => {
       flow.answers.set("create_item", answer);
       const failed = await flow.outcome("create_item", { id: 1 });
       expect.soft(failed.error, String(answer)).toBeDefined();
-      if (answer === 401) expect.soft(failed.error).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect.soft(flow.sent("create_item"), String(answer)).toHaveLength(1);
-      expect.soft(flow.applied).toEqual(answer === 401 ? [] : ["create_item 1"]);
+      if (answer === "prepare") {
+        expect.soft(failed.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 50 });
+        expect.soft(failed.error).not.toHaveProperty("writeOutcome");
+      } else {
+        expect.soft(failed.error, String(answer)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+        expect.soft(failed.error).not.toHaveProperty("retryAfterMs");
+      }
+      expect.soft(flow.sent("create_item"), String(answer)).toHaveLength(answer === "prepare" ? 0 : 1);
+      expect.soft(flow.applied).toEqual(answer === 401 || answer === "prepare" ? [] : ["create_item 1"]);
       expect.soft(flow.refreshes()).toBe(oauth ? 1 : 0);
       if (oauth) {
         expect

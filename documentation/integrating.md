@@ -322,7 +322,9 @@ runtime tool leaves its override dormant with an operator warning; the override
 applies if that exact name returns. Unknown static tool names fail construction.
 No argument can change these rules. A write-to-read override changes exposure
 and approval, but a server-declared write still gets one wire attempt across
-OAuth renewal, reconnect and transport recovery. Connector `readOnly` remains
+OAuth renewal, reconnect and transport recovery. After possible dispatch, its
+failure also reports an unknown outcome with no retry or wait advice; a proven
+unsent failure retains its own recovery advice. Connector `readOnly` remains
 optional and composes with endpoint policy.
 
 Remote catalogs evolve. Discovery, direct calls, and program calls all enforce

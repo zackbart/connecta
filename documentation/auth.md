@@ -1368,7 +1368,9 @@ and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
 once more. MCP sends a tool only once when either its effective classification
 or its original server hints say write. A deployment write-to-read override
-cannot make a server-declared write replayable. A direct call outside an
+cannot make a server-declared write replayable. Its failure after possible
+dispatch is also an unknown outcome, non-retryable and without wait advice;
+a proven unsent failure retains its own recovery advice. A direct call outside an
 invocation uses the dispatched definition, a reviewed write verdict, or the
 tool's hints, and fails closed as a write.
 
