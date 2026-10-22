@@ -8,10 +8,6 @@
 export const DRIFT_VERSION = 2;
 /** An operation key: `"METHOD /path"`, the kit manifest's spelling. */
 export const OPERATION = /^(GET|HEAD|POST|PUT|PATCH|DELETE) (\/\S*)$/;
-// Only the four behavioral hints are drift evidence. Titles and schemas remain
-// vendor-owned; this catalog review does not grant a runtime classification.
-export const CATALOG_HINTS = ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"];
-
 /** Evidence that is malformed before any vendor is read. */
 export class EvidenceError extends Error {}
 
@@ -63,9 +59,7 @@ export function generatedProblems(recordValue, { kind, files } = {}) {
     }
     const hosted = generated["hosted"];
     if (!sortedUnique(hosted) || (kind === "api" ? hosted.length !== 0 : kind !== undefined && hosted.length === 0)) {
-      found.push(
-        "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
-      );
+      found.push("D2: generated.hosted lists served hosted names, sorted; api providers have no hosted names");
     }
     const evidence = generated["evidence"];
     const expected = files && HASHED_EVIDENCE.filter((name) => files.includes(`evidence/${name}`));
@@ -113,10 +107,7 @@ function validateV2Check(record, check, today) {
       new Date(`${day}T00:00:00Z`).toISOString().startsWith(day) &&
       day <= today, "manual check requires lastVerified as a past YYYY-MM-DD day");
   }
-  if (check.type === "mcp-catalog") {
-    require(check.catalog === "evidence/catalog.json", "public catalog compares against evidence/catalog.json");
-  }
-  if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
+  if (check.type === "mcp-docs") {
     const hosted = new Set(record.generated.hosted);
     require(Object.keys(check.reviewedAccess ?? {}).every((name) =>
       hosted.has(name),
@@ -140,26 +131,17 @@ function validateV2Check(record, check, today) {
 
 /**
  * A check as the version-1 checkers read it. Version 2 keeps no hand-typed
- * lists, so its hosted names, catalog baseline, endpoint rows and reference
- * pages come from the generated block, the evidence folder and the rows.
- * `catalog` is the parsed `evidence/catalog.json`, or undefined when the
- * folder has none; `today` is the `YYYY-MM-DD` day a manual check is checked
+ * lists, so its hosted names, endpoint rows and reference pages come from
+ * the generated block and the rows.
+ * `today` is the `YYYY-MM-DD` day a manual check is checked
  * against.
  */
-export function checkView(record, check, { catalog, today = new Date().toISOString().slice(0, 10) } = {}) {
+export function checkView(record, check, { today = new Date().toISOString().slice(0, 10) } = {}) {
   if (record.version !== DRIFT_VERSION) return check;
   validateV2Check(record, check, today);
   if (check.type === "manual") return { ...check, rationale: check.reason };
-  if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
+  if (check.type === "mcp-docs") {
     return { ...check, reviewed: record.generated.hosted };
-  }
-  if (check.type === "mcp-catalog") {
-    if (catalog?.method !== "tools/list" || !Array.isArray(catalog.tools)) {
-      throw new EvidenceError(`${check.catalog} is not a tools/list capture`);
-    }
-    // Missing hints stay missing: the baseline is the capture, never a runtime verdict.
-    const reviewed = catalog.tools.map((tool) => ({ name: tool?.name, annotations: tool?.annotations ?? {} }));
-    return { ...check, reviewed };
   }
   if (check.type === "endpoints" || check.type === "versioned-endpoints") {
     const endpoints = check.endpoints.map(({ operation, ...row }) => ({ ...parseOperation(operation), ...row }));
@@ -185,33 +167,6 @@ export function validateCheck(check, recording, version = 1) {
   const strings = (value) =>
     Array.isArray(value) && value.length > 0 && value.every(nonempty) && new Set(value).size === value.length;
   require(check && typeof check === "object", "check must be an object");
-  if (check.type === "mcp-catalog") {
-    let url;
-    try {
-      url = new URL(check.endpoint);
-    } catch {
-      url = undefined;
-    }
-    require(url?.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash, "public catalog requires a credential-free HTTPS endpoint");
-    require(Array.isArray(check.reviewed) &&
-      check.reviewed.length > 0, "public catalog requires reviewed names and annotations");
-    const names = new Set();
-    for (const tool of check.reviewed) {
-      require(nonempty(tool?.name) && !names.has(tool.name), "reviewed catalog requires unique non-empty names");
-      names.add(tool.name);
-      require(tool.annotations &&
-        typeof tool.annotations === "object" &&
-        !Array.isArray(tool.annotations), "reviewed catalog requires annotations");
-      for (const key of CATALOG_HINTS)
-        require(tool.annotations[key] === undefined ||
-          typeof tool.annotations[key] === "boolean", `invalid annotation ${key}`);
-    }
-    return;
-  }
   if (check.type === "manual") {
     require(nonempty(check.source) && nonempty(check.rationale), "manual check requires source and rationale");
     return;
@@ -221,12 +176,10 @@ export function validateCheck(check, recording, version = 1) {
     require(check.source === pin, `OpenAPI index check reads ${pin}`);
     return;
   }
-  if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
+  if (check.type === "mcp-docs") {
     require(nonempty(check.setup) &&
       strings(check.endpoints) &&
       strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
-    if (check.type === "oauth-discovery")
-      require(check.inventory === undefined, "OAuth discovery checks have no tool inventory");
     if (check.reviewedAccess !== undefined) {
       require(check.reviewedAccess !== null &&
         typeof check.reviewedAccess === "object" &&
@@ -317,7 +270,7 @@ export function validateCheck(check, recording, version = 1) {
  * before reading a vendor, as `checks[<index>]: <detail>` (or the detail
  * alone for the record itself). Empty when the record is readable.
  */
-export function driftRecordProblems(record, name, { catalog, today, recording = false } = {}) {
+export function driftRecordProblems(record, name, { today, recording = false } = {}) {
   try {
     validateRecord(record, name);
   } catch (error) {
@@ -326,7 +279,7 @@ export function driftRecordProblems(record, name, { catalog, today, recording = 
   const problems = [];
   for (const [index, check] of record.checks.entries()) {
     try {
-      validateCheck(checkView(record, check, { catalog, today }), recording, record.version);
+      validateCheck(checkView(record, check, { today }), recording, record.version);
     } catch (error) {
       problems.push(`checks[${index}]: ${error.message}`);
     }

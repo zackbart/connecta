@@ -39,6 +39,7 @@ const WORKERS_SUITES = [
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/unhandled-rejections.test.ts",
   // Native response reads can print sensitive downstream text below JS sinks.

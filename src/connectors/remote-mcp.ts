@@ -112,13 +112,13 @@ import {
   downstreamWriteContinuation,
 } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
-import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
+import { assertKnownOptions, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
-import { classifyTool } from "../tool-safety.js";
+import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
   recordProviderResponse,
@@ -131,6 +131,7 @@ import {
   type ProviderRequest,
 } from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
+import { recordRequestField } from "../provider-call-facts.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
@@ -258,6 +259,13 @@ export interface RemoteMcpOptions {
   skills?: boolean;
   auth?: RemoteMcpAuth;
   /**
+   * Non-secret resource context headers. Never credentials: use auth for those.
+   * Auth-owned, HTTP transport/session and OAuth client-auth headers are
+   * reserved. Cannot be combined with inline headers auth. Sent only at the
+   * resource URL path; echoed values are redacted at eight characters or more.
+   */
+  headers?: Record<string, string>;
+  /**
    * Reviewed read/write verdicts for this downstream's tools, by exact name.
    * Validated at construction. A listed read fills downstream silence but
    * never overrules an explicit write annotation; a listed write or
@@ -331,7 +339,46 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   auth: REMOTE_MCP_AUTH,
+  headers: strings(),
 });
+
+/** Extra headers are immutable code configuration, not another auth channel. */
+function extraResourceHeaders(id: string, opts: RemoteMcpOptions): Readonly<Record<string, string>> | undefined {
+  if (opts.headers === undefined) return undefined;
+  const refuse = () =>
+    new Error(
+      `remoteMcp(${JSON.stringify(id)}).headers requires non-secret resource headers without reserved or auth-owned names; use auth for credentials.`,
+    );
+  if (opts.auth?.type === "headers") throw refuse();
+  const authNames = new Set([
+    "authorization",
+    ...(opts.auth?.type === "credential" ? [opts.auth.header?.trim().toLowerCase() || "authorization"] : []),
+    ...(opts.auth?.type === "request" ? Object.keys(opts.auth.headers ?? {}).map((name) => name.toLowerCase()) : []),
+  ]);
+  const normalized: Record<string, string> = Object.create(null);
+  for (const [name, value] of Object.entries(opts.headers)) {
+    const lower = name.toLowerCase();
+    if (
+      !HEADER_NAME_TOKEN.test(name) ||
+      typeof value !== "string" ||
+      /[\r\n]/.test(value) ||
+      Object.hasOwn(normalized, lower) ||
+      authNames.has(lower) ||
+      /^(?:accept|cookie|host|origin|connection|keep-alive|proxy-authenticate|proxy-authorization|te|trailer|transfer-encoding|upgrade|last-event-id|dpop|www-authenticate)$/.test(
+        lower,
+      ) ||
+      /^(?:content-|mcp-)/.test(lower) ||
+      /(?:api[-_]?key|token|secret|password|credential|authorization|signature|session)/.test(lower)
+    )
+      throw refuse();
+    try {
+      normalized[lower] = new Headers({ [lower]: value }).get(lower)!;
+    } catch {
+      throw refuse();
+    }
+  }
+  return Object.freeze(Object.fromEntries(Object.entries(normalized).sort(([a], [b]) => a.localeCompare(b))));
+}
 
 /**
  * How long a downstream gets to answer the session-termination DELETE before
@@ -1443,6 +1490,8 @@ function registrationErrorCode(body: string): string | undefined {
 interface CallDispatch {
   /** At most one request for this call may leave connecta. */
   write: boolean;
+  /** Source policy requires write outcome accounting even when served as a read. */
+  sourceWrite: boolean;
   /** A request for this call was handed to fetch; no other one may be. */
   sent: boolean;
   /** The answer was a 401, so the SDK renews the grant and resends. */
@@ -1469,8 +1518,8 @@ interface CallDispatch {
  */
 const DISPATCH = Symbol("connecta.dispatch");
 
-function newDispatch(write: boolean): CallDispatch {
-  return { write, sent: false, unauthorized: false, redirected: false, resendRefused: false };
+function newDispatch(write: boolean, sourceWrite: boolean): CallDispatch {
+  return { write, sourceWrite, sent: false, unauthorized: false, redirected: false, resendRefused: false };
 }
 
 function withDispatch<T extends object>(params: T, dispatch: CallDispatch): T {
@@ -1570,6 +1619,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `remoteMcp(${JSON.stringify(id)}).callAdmission`);
+  const extraHeaders = extraResourceHeaders(id, opts);
   const skillsEnabled = opts.skills;
   if (skillsEnabled !== undefined && typeof skillsEnabled !== "boolean") {
     throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);
@@ -2380,6 +2430,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     /** A code exchange never transfers ownership to the refresh coordinator. */
     exchangeOnly = false,
   ): Transport => {
+    const resourceInit = (input: RequestInfo | URL, init?: RequestInit): RequestInit | undefined => {
+      if (!extraHeaders) return init;
+      const target = new URL(input instanceof Request ? input.url : String(input));
+      const resource = new URL(opts.url);
+      if (target.origin !== resource.origin || target.pathname !== resource.pathname) return init;
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
+      return { ...init, headers };
+    };
     const initiatingSignal = ctx.signal;
     ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
@@ -2440,7 +2499,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           method: init?.method ?? "GET",
         });
       const entry = request?.entry;
-      if (request && entry) dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+      if (request && entry) {
+        if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
+        dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+      }
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
@@ -2531,7 +2593,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         exchangeFetch(learnedUrlSafeFetch(id, url, trackedFetch)),
         signal,
         ctx.defer,
-        exchangeFetch(learnedUrlSafeFetch(id, url, guardedFetch)),
+        exchangeFetch(learnedUrlSafeFetch(id, url, (input, init) => guardedFetch(input, resourceInit(input, init)))),
       );
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
@@ -2570,7 +2632,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return sendingEachWriteOnce(
       new StreamableHTTPClientTransport(url, {
         ...(headers ? { requestInit: { headers } } : {}),
-        fetch: guardedFetch,
+        fetch: (input, init) => guardedFetch(input, resourceInit(input, init)),
       }),
       flights,
       untrackedRead,
@@ -2874,6 +2936,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               opts.versionNegotiation ?? "auto",
               opts.auth?.type,
               opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              ...(extraHeaders ? [extraHeaders] : []),
               credentialHeader,
               credentialScheme,
               opts.authScope ?? "shared",
@@ -2900,6 +2963,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               url: new URL(opts.url).href,
               auth: opts.auth?.type ?? null,
               headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              ...(extraHeaders ? { extraHeaders } : {}),
               credentialHeader,
               credentialScheme,
               authScope: opts.authScope ?? "shared",
@@ -3106,6 +3170,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               ...(describedClientMetadataUrl !== undefined ? { clientMetadataUrl: describedClientMetadataUrl } : {}),
             }
           : { mode: "none" };
+  if (extraHeaders)
+    authDescription.headerNames = [...new Set([...(authDescription.headerNames ?? []), ...Object.keys(extraHeaders)])];
   const endpoint = describedEndpoint(opts.url);
 
   const optionSources = Object.freeze({
@@ -3378,14 +3444,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // dispatched definition's, else a reviewed write or the annotations.
           const reviewed = classification?.tools[name];
           const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
-          const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
-          const write =
-            (callClassification(ctx) ??
-              definition?.classification ??
-              (verdict !== undefined && verdict !== "read"
-                ? "write"
-                : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
-          const dispatch = newDispatch(write);
+          const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
+          const sourceFacts = definition ?? {
+            name,
+            ...(facts.annotations ? { annotations: facts.annotations as NonNullable<ToolDef["annotations"]> } : {}),
+          };
+          // Reviews remain source policy until C.0c; deployment overrides never are.
+          const source = sourceClassification(sourceFacts, verdict === undefined ? undefined : { verdict });
+          const serverWrite =
+            (definition !== undefined || state.toolDefinitions.has(name) || verdict !== undefined) &&
+            source === "write";
+          const write = serverWrite || (callClassification(ctx) ?? definition?.classification ?? source) === "write";
+          const dispatch = newDispatch(write, serverWrite);
           dispatch.request = {
             entry: providerRequest(ctx, !write, `Connector "${id}"'s MCP server`, { method: "POST" }),
             ctx,
@@ -3465,8 +3535,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (!active) throw knownProviderFailure(err);
         const { state, client, dispatch, write } = active;
         const direct = write && callClassification(ctx) === undefined;
-        // The request's own abort reason passes by identity for a read or a
-        // served call. A direct write's is finalized below: it may have left.
+        // Served calls defer their abort to invocation, whose ledger retains
+        // source-write provenance even when the effective class is read.
         const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
         if (ownAbort && !direct) throw err;
         // A grant revoked after connect surfaces here, not in ensureConnected.
@@ -3794,6 +3864,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (opts.auth?.type === "headers") {
       for (const value of Object.values(opts.auth.headers)) secrets.header(value);
     }
+    for (const value of Object.values(extraHeaders ?? {})) secrets.header(value);
     const state = entryFor(ctx);
     let active = activeContexts.get(state);
     if (!active) {

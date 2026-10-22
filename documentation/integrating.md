@@ -93,22 +93,9 @@ the deployment constructs its registry.
 
 ## Maintained integrations
 
-Import a provider individually. For example, Linear requires an explicit
-choice of its downstream endpoint:
-
-```ts
-import { linear } from "@zackbart/connecta/providers/linear";
-
-const tracker = linear("tracker", {
-  purpose: "Engineering issues in our workspace",
-  access: "read-only",
-});
-// Add tracker to the deployment's connectors array.
-```
-
-Linear defaults to OAuth; its read-only endpoint requests only the downstream
-read scope. That is separate from Connecta endpoint or connector `readOnly`. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
-workspace instructions, and admission choices.
+Import a provider individually from its published subpath. For former Basecamp,
+Intercom, Linear, RevenueCat, and Wispr Flow presets, follow the
+[hosted MCP migration guide](./hosted-mcp-migration.md) to configure `remoteMcp()`.
 
 The [human README](../README.md#what-you-can-connect) lists available
 integrations. In the installed package, `dist/providers/<name>/index.d.ts`
@@ -121,43 +108,6 @@ mapping from admitted identity to the downstream account; an agent acts as its
 pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
-
-Intercom uses `intercom()` from `@zackbart/connecta/providers/intercom`:
-
-```ts
-import { intercom } from "@zackbart/connecta/providers/intercom";
-
-const support = intercom("support", {
-  purpose: "Customer support triage",
-  region: "eu",
-});
-// Add support to the deployment's connectors array.
-```
-
-Set `region` explicitly to `"us"` or `"eu"` to match the workspace; AU is
-unsupported. OAuth defaults to personal ownership because it acts as the
-authorizing teammate. Non-loopback OAuth callbacks require an Intercom Customer
-Support allowlist entry for the deployment's redirect URI before authorization
-can complete. Alternatively, set `auth: { type: "credential" }` and connect an
-API token through the [shared credential procedure](./auth.md#connect-a-shared-credential);
-token auth defaults to shared ownership. Fin Operator tools require OAuth,
-workspace availability and teammate permission. Their expected absence adds no
-missing-tool drift; missing core tools still do. Schema coverage reports all
-present reviewed tools as unpinned. Article operations, internal
-notes and Operator actions can write; a note can reopen a snoozed conversation.
-Use a read-only endpoint when writes are unwanted. Catalog review is based on
-[Intercom's docs](https://developers.intercom.com/docs/guides/mcp), with unpinned
-schemas; inspect live tools and the runtime guide before acting on sensitive
-customer data.
-
-Wispr Flow uses OAuth only through `wisprFlow()` from
-`@zackbart/connecta/providers/wispr-flow`. It reaches the authorized account's
-Notetaker content, with personal and work accounts holding separate data.
-Its runtime guide, available through `connecta.skill("connector:<id>")` in `execute_code`, describes account access,
-search limits, transcript permissions and paging. The
-reviewed classification includes task writes listed in Claude's directory even
-though Wispr's public help describes read-only access; discover the account's
-actual tools before assuming those writes exist.
 
 For minimal Stripe OAuth/API-key examples with and without connector `readOnly`, see [Stripe setup](./provider-auth-migration.md#stripe). With an API key, prefer a restricted `rk_` key with only read permissions for read-only access; Stripe enforces it too.
 
@@ -293,11 +243,47 @@ also supports OAuth, static headers, and request-local token resolution. Use
 for those cases. Secrets belong in deployment secret storage or the vault,
 not source literals.
 
+Use optional top-level `headers` for non-secret resource context:
+`remoteMcp("crm", { url: "https://crm.example/mcp", headers: {
+"X-MCP-Toolsets": "tickets,notes" }, readOnly: true })`. These headers apply to
+MCP handshake, catalog and call requests at the exact resource URL path, never OAuth
+metadata, token or registration requests. Values are included in cache and
+negotiation identities; values of at least eight characters are redacted if echoed. Configuration descriptions
+show only names. Never put credentials here. Use `auth` for secrets. Extra
+headers cannot be combined with `auth.type: "headers"`, collide with an
+auth-owned name, or set HTTP transport/session headers
+(`Accept`, `Cookie`, `Host`, `Content-*`, hop-by-hop headers, `Last-Event-ID`,
+`Mcp-*`), OAuth client-auth headers, or credential-named headers such as
+`X-Api-Key`. Names are case-insensitive.
+
+Runtime-discovered tools default to read exactly when `readOnlyHint === true &&
+destructiveHint !== true`; otherwise they are writes. Override individual tools
+only in deployment code through the existing `classification` map:
+
+```ts
+classification: {
+  crm: { list_tickets: "read", update_ticket: "write", internal_export: "hidden" },
+},
+```
+
+`"write"` requires the host's approval path. `"hidden"` omits a tool from search
+and describe and refuses guessed-name calls, including programs. An absent
+runtime tool leaves its override dormant with an operator warning once per catalog change; the override
+applies if that exact name returns. Unknown static tool names fail construction.
+No argument can change these rules. A write-to-read override changes exposure
+and approval. Replay and failure decisions treat a call as a write when either its
+effective class or its source class is write. The source class is the verified
+provider review, where one exists during migration, otherwise the server annotations;
+deployment overrides never change it. A write gets one wire attempt across
+OAuth renewal, reconnect, transport and authorization recovery, including program re-runs. After possible dispatch, its
+failure also reports an unknown outcome with no retry or wait advice; a proven
+unsent failure retains its own recovery advice. Connector `readOnly` remains
+optional and composes with endpoint policy.
+
 Remote catalogs evolve. Discovery, direct calls, and program calls all enforce
-classification against the current catalog. Missing or contradictory read hints
-fail closed as writes. `classify` can supply a reviewed per-tool verdict;
-schema changes can invalidate a reviewed read. Exact deployment classification
-overrides take precedence. See
+classification against the current catalog. `classify` and existing provider
+reviews remain supported during migration; schema changes can invalidate a
+reviewed read. Exact deployment classification overrides take precedence. See
 [reviewed classification](./architecture.md#providers-and-reviewed-classification)
 for precedence, schema digests, and `unlisted: "hide"`. Review the behavior
 before declaring a read, and do not use classification to bypass provider target

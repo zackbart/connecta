@@ -1,5 +1,6 @@
 import type { Connector, ConnectorContext, ToolDef } from "./types.js";
 import { vettedSchemaDigest } from "./catalog-drift.js";
+import { cloneTool, sourceClassification } from "./tool-safety.js";
 
 // Only built-in factories register local credential checks. This hook is not
 // part of Connector, and a replacement callTool cannot inherit its proof.
@@ -60,7 +61,12 @@ export async function classificationDigest(definition: ToolDef): Promise<string>
     const schema = await vettedSchemaDigest(definition);
     const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const bytes = new TextEncoder().encode(
-      JSON.stringify({ classification: definition.classification, annotations, schema }),
+      JSON.stringify({
+        classification: definition.classification,
+        source: sourceClassification(definition),
+        annotations,
+        schema,
+      }),
     );
     return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
       byte.toString(16).padStart(2, "0"),
@@ -75,7 +81,7 @@ export async function classificationDigest(definition: ToolDef): Promise<string>
 export function recordCallEntry(scope: object, call: Omit<EnteredCall, "definition">, definition: ToolDef): void {
   // Snapshot synchronously. Recovery hashes this private copy only when it
   // needs a replay binding, without changing ordinary admission or completion.
-  requestFor(scope).entered.push({ ...call, definition: structuredClone(definition) });
+  requestFor(scope).entered.push({ ...call, definition: cloneTool(definition) });
 }
 
 export function bindReplayReads(scope: object, reads: ReplayRead[]): void {

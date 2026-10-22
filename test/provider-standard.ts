@@ -22,7 +22,6 @@ import type { Connector, ConnectorContext } from "../src/types.js";
 export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set([
-    "basecamp",
     "breeze",
     "ccb",
     "cloudflare",
@@ -32,22 +31,17 @@ export const PENDING = {
     "github",
     "gmail",
     "infisical",
-    "intercom",
-    "linear",
     "mixpanel",
     "notion",
     "overflow",
     "planning-center",
-    "revenuecat",
     "sheets",
     "slides",
     "stripe",
     "vercel",
-    "wispr-flow",
   ]),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
   step2: new Set([
-    "basecamp",
     "breeze",
     "ccb",
     "cloudflare",
@@ -57,19 +51,15 @@ export const PENDING = {
     "github",
     "gmail",
     "infisical",
-    "intercom",
-    "linear",
     "mixpanel",
     "notion",
     "overflow",
     "planning-center",
-    "revenuecat",
     "sheets",
     "slides",
     "stripe",
     "tithely",
     "vercel",
-    "wispr-flow",
   ]),
 } as const;
 
@@ -137,15 +127,7 @@ const KIND_FILES: Readonly<Record<string, { required: string[]; forbidden: strin
   mcp: { required: ["hosted.ts"], forbidden: ["api.ts", "tools.ts", "safety.ts", "openapi.generated.ts"] },
   dual: { required: ["api.ts", "tools.ts", "hosted.ts"], forbidden: [] },
 };
-const CHECK_TYPES = new Set([
-  "endpoints",
-  "versioned-endpoints",
-  "openapi-index",
-  "mcp-docs",
-  "mcp-catalog",
-  "oauth-discovery",
-  "manual",
-]);
+const CHECK_TYPES = new Set(["endpoints", "versioned-endpoints", "openapi-index", "mcp-docs", "manual"]);
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -367,12 +349,6 @@ export function driftViolations(
     }
     if (keys.has("reviewed"))
       found.push(`D4: ${at} hand-keeps a reviewed list; use generated.hosted or evidence/catalog.json`);
-    if (check["type"] === "mcp-catalog") {
-      const catalog = parse(provider.read("evidence/catalog.json"));
-      if (check["catalog"] !== "evidence/catalog.json" || !record(catalog) || catalog["method"] !== "tools/list") {
-        found.push(`D4: ${at} compares hosted names and annotations against evidence/catalog.json (tools/list)`);
-      }
-    }
     if (check["type"] === "endpoints" || check["type"] === "versioned-endpoints") {
       const entries = Array.isArray(check["endpoints"]) ? check["endpoints"] : [];
       if (
@@ -386,8 +362,7 @@ export function driftViolations(
     }
   }
   if (found.length > 0) return found;
-  const catalog = parse(provider.read("evidence/catalog.json"));
-  return driftRecordProblems(drift, provider.name, { catalog, today, recording }).map(
+  return driftRecordProblems(drift, provider.name, { today, recording }).map(
     (problem) => `D3: providers:check rejects ${problem}`,
   );
 }
