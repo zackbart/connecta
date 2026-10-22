@@ -123,26 +123,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Read installed Playwright version
-        id: playwright
-        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-      # Even a cache hit needs the runner's system libraries.
       - name: Install Chromium and system dependencies
-        id: install
-        timeout-minutes: 5
-        continue-on-error: true
-        run: pnpm run test:browser:install --with-deps
-      # A timed-out first attempt can leave apt-get holding the dpkg lock.
-      - name: Retry Chromium installation once
-        if: steps.install.outcome == 'failure'
-        timeout-minutes: 9
-        run: |
-          bash scripts/ci-settle-apt.sh
-          pnpm run test:browser:install --with-deps
+        timeout-minutes: 16
+        uses: ./.github/actions/install-chromium
       - name: Run browser tests
         run: pnpm run test:browser
       # test-results/ holds output only for failed attempts, flaky ones included.

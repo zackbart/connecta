@@ -1,0 +1,39 @@
+name: Install Chromium
+description: Cache Chromium and bound system dependency and browser installs independently.
+runs:
+  using: composite
+  steps:
+    # The frozen pnpm install resolves this version from pnpm-lock.yaml.
+    - name: Read resolved Playwright version
+      id: playwright
+      shell: bash
+      run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v5
+      id: browsers
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}
+    - name: Install Chromium system dependencies (one retry)
+      shell: bash
+      run: |
+        for attempt in 1 2; do
+          echo "System dependency install attempt $attempt/2"
+          # Run timeout as root so it can terminate apt's entire process group,
+          # rather than leaving a privileged apt process holding the lock.
+          if sudo timeout --kill-after=15s 120s env APT_SETTLE_SECONDS=90 bash scripts/ci-settle-apt.sh &&
+             sudo timeout --kill-after=15s 180s env "PATH=$PATH" pnpm exec playwright install-deps chromium; then
+            exit 0
+          fi
+        done
+        exit 1
+    - name: Download Chromium on cache miss (one retry)
+      if: steps.browsers.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        for attempt in 1 2; do
+          echo "Chromium download attempt $attempt/2"
+          if timeout --kill-after=15s 120s pnpm run test:browser:install; then
+            exit 0
+          fi
+        done
+        exit 1
