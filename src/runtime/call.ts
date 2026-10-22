@@ -577,7 +577,12 @@ export function viewSignal(ctx: CloseOwner, requestOwned = false): AbortSignal {
   // The original caller signal is distinct from the revocable call signal:
   // ending a call must not stop its request's session or auxiliary work.
   const source = requestOwned ? callerSignal(ctx) : ctx.signal;
-  if (!source || source === request) return request;
+  const leaseSignal = requestOwned ? undefined : recordedService(ctx, Signal);
+  // A derived transport signal can add cancellation, never replace the lease
+  // that owns this wait. Both inputs here are native, even for source facades.
+  const owned = (signal: AbortSignal) =>
+    leaseSignal && leaseSignal !== source ? AbortSignal.any([signal, leaseSignal]) : signal;
+  if (!source || source === request) return owned(request);
   let binding = state.signals.get(source);
   if (!binding) {
     const controller = new AbortController();
@@ -626,7 +631,7 @@ export function viewSignal(ctx: CloseOwner, requestOwned = false): AbortSignal {
   // Some adapters expose cancellation through a live getter without an abort
   // event. Poll it at each boundary, including after an awaited operation.
   binding.refresh();
-  return binding.signal;
+  return owned(binding.signal);
 }
 
 /**
