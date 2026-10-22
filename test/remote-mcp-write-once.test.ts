@@ -47,8 +47,7 @@ type Answer =
   | "reset"
   | "refused"
   | "timeout"
-  | "deadline"
-  | "prepare";
+  | "deadline";
 
 function setup(
   options: {
@@ -300,7 +299,7 @@ describe("remote MCP OAuth writes after a 401", () => {
         ...(oauth ? { headers: { "X-Context": "tenant_selector" } } : {}),
       });
       if (oauth) await flow.seedOAuth();
-      flow.answers.set("create_item", answer);
+      if (answer !== "prepare") flow.answers.set("create_item", answer);
       const failed = await flow.outcome("create_item", { id: 1 });
       expect.soft(failed.error, String(answer)).toBeDefined();
       if (answer === "prepare") {
