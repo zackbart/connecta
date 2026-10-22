@@ -1,6 +1,7 @@
 import { Context } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  Budget,
   Credentials,
   Signal,
   contextView,
@@ -9,6 +10,7 @@ import {
   operationView,
   type CallInputs,
 } from "../src/runtime/call.js";
+import { chargeConnectorCall } from "../src/call-admission-context.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -52,6 +54,76 @@ function trackedSignal(failure?: Error) {
 }
 
 describe("call revocation cleanup", () => {
+  it.each(["call", "request"] as const)(
+    "INV-7: a retained use after %s closure never starts its credential or budget callback",
+    async (boundary) => {
+      const scope = {};
+      const request = openRequest(scope);
+      let credentialReads = 0;
+      let charges = 0;
+      const lease = openCall({
+        ...inputs(),
+        requestSignal: request.signal,
+        credentials: async () => {
+          credentialReads++;
+          return { value: "retained-credential-1234" };
+        },
+        charge: async () => {
+          charges++;
+        },
+      });
+      const operation = operationView(
+        {
+          storage: memoryStorage(),
+          logger: silentLogger,
+          baseUrl: "https://connecta.example",
+          requestScope: scope,
+          credential: { get: async () => null, getAll: async () => null },
+        },
+        undefined,
+      );
+      const view = contextView(lease, operation);
+      const credentials = Context.get(lease.services, Credentials).values;
+      const budget = Context.get(lease.services, Budget).charge;
+      (boundary === "call" ? lease : request).close();
+      await expect(runEdge(credentials)).rejects.toThrow(/call has ended/);
+      await expect(runEdge(budget)).rejects.toThrow(/call has ended/);
+      await expect(view.credential!.getAll()).rejects.toThrow(/call has ended/);
+      await expect(view.credential!.get()).rejects.toThrow(/call has ended/);
+      await expect(chargeConnectorCall(view)).rejects.toThrow(/call has ended/);
+      expect({ credentialReads, charges }).toEqual({ credentialReads: 0, charges: 0 });
+    },
+  );
+
+  it.each(["credentials", "budget"] as const)(
+    "INV-7: %s fulfilled before revocation cannot be consumed after its abort race detaches",
+    async (capability) => {
+      const lease = openCall({
+        ...inputs(),
+        credentials: async () => ({ value: "completed-credential-1234" }),
+      });
+      const signal = Context.get(lease.services, Signal)!;
+      const remove = signal.removeEventListener.bind(signal);
+      // Close in the gap between successful I/O and delivery to its consumer:
+      // the losing abort wait detaches as the successful contender completes.
+      signal.removeEventListener = (...args) => {
+        remove(...args);
+        lease.close();
+      };
+      try {
+        const effect =
+          capability === "credentials"
+            ? Context.get(lease.services, Credentials).values
+            : Context.get(lease.services, Budget).charge;
+        await expect(runEdge(effect)).rejects.toThrow(/call has ended/);
+        expect(lease.closed()).toBe(true);
+      } finally {
+        signal.removeEventListener = remove;
+        lease.close();
+      }
+    },
+  );
+
   it("INV-7: throwing signal detach cannot stop any lease revocation, request abort, or finalizer", async () => {
     const scope = {};
     const request = openRequest(scope);
