@@ -417,6 +417,13 @@ export class InvocationService {
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
+        // Remote source-write provenance removes wait advice. Other providers
+        // keep their diagnostic retryAfterMs even when the outcome is unknown.
+        const withoutRemoteWait = (failure: CallErrorDetails): CallErrorDetails => {
+          if (!sentSourceWrite()) return failure;
+          const { retryAfterMs: _wait, ...facts } = failure;
+          return facts;
+        };
         const recovery = recoveryState.facts;
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
@@ -431,9 +438,8 @@ export class InvocationService {
           (resolved?.definition.classification === "write" || sentSourceWrite())
         ) {
           const echoed = argumentEcho;
-          const { retryAfterMs: _wait, ...facts } = error;
           return {
-            ...facts,
+            ...withoutRemoteWait(error),
             code: "write_outcome_unknown",
             message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
@@ -465,8 +471,7 @@ export class InvocationService {
         const unknownWrite =
           enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
         if (unknownWrite) {
-          const { retryAfterMs: _wait, ...facts } = error;
-          error = { ...facts, retryable: false, writeOutcome: "unknown" };
+          error = { ...withoutRemoteWait(error), retryable: false, writeOutcome: "unknown" };
         }
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
