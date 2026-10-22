@@ -97,6 +97,103 @@ export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "s
   });
 }
 
+/** Activity writes and first-use DDL must use the same real driver transaction. */
+export function sqlActivityRollbackContract(open: () => Promise<SqlFixture>): void {
+  it("rolls back the activity insert when retention pruning fails and recovers on the same store", async () => {
+    const db = await open();
+    const activity = db.activity({ retentionDays: 1 });
+    const now = Date.now();
+    const retained = event(0, { occurredAt: new Date(now - 3_600_000).toISOString() });
+    const expired = event(1, { occurredAt: new Date(now - 1_800_000).toISOString() });
+    await activity.record(retained);
+    await activity.record(expired);
+    // Age a row after seeding so record() has not already pruned it.
+    await db.exec("UPDATE tool_call_activity SET occurred_at_ms = ? WHERE id = ?", now - 3 * 86_400_000, expired.id);
+    const rows = () => db.rows("SELECT * FROM tool_call_activity ORDER BY id");
+    const before = await rows();
+    await db.exec(`CREATE TRIGGER fail_activity_prune BEFORE DELETE ON tool_call_activity
+      BEGIN SELECT RAISE(ABORT, 'injected activity retention failure'); END`);
+
+    const rejected = event(2, { occurredAt: new Date(now).toISOString() });
+    await expect(activity.record(rejected)).rejects.toThrow(/injected activity retention failure/);
+    expect(await rows()).toEqual(before);
+    expect(await db.rows("SELECT id FROM tool_call_activity WHERE id = ?", rejected.id)).toEqual([]);
+
+    await db.exec("DROP TRIGGER fail_activity_prune");
+    const recovered = event(3, { occurredAt: new Date(now + 1).toISOString() });
+    await expect(activity.record(recovered)).resolves.toBeUndefined();
+    expect((await activity.list!({ limit: 10 })).events).toEqual([recovered, retained]);
+    expect(await rows()).toEqual([before[0], expect.objectContaining({ id: recovered.id, occurred_at_ms: now + 1 })]);
+  });
+
+  it.each([
+    ["key-value", "sqlStorage", "connecta_kv", "connecta_kv_expiry"],
+    ["activity", "sqlActivityStore", "tool_call_activity", "tool_call_activity_recent"],
+  ] as const)(
+    "rolls back %s schema initialization midway and retries on the same store",
+    async (kind, factoryName, table, index) => {
+      const db = await open();
+      await db.exec("CREATE TABLE batch_failure_probe (value TEXT NOT NULL)");
+      try {
+        const schema = () => db.rows("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name");
+        const before = await schema();
+        const factory = vi.spyOn(sqlStores, factoryName);
+        let driver: sqlStores.SqlDriver;
+        let initialize: () => Promise<void>;
+        const recorded = event(0, { occurredAt: new Date().toISOString() });
+        try {
+          if (kind === "activity") {
+            const activity = db.activity();
+            initialize = async () => activity.record(recorded);
+          } else {
+            const storage = db.storage();
+            initialize = () => storage.set("recovered", "value");
+          }
+          const captured = factory.mock.calls[0]?.[0];
+          if (!captured) throw new Error("The SQL adapter did not construct its store");
+          driver = captured;
+        } finally {
+          factory.mockRestore();
+        }
+        const batch = driver.batch.bind(driver);
+        // Keep the actual schema statements and real adapter transaction. The
+        // inserted statement prepares successfully, then fails during execution
+        // after CREATE TABLE but before CREATE INDEX, on every driver.
+        const injection = vi
+          .spyOn(driver, "batch")
+          .mockImplementationOnce((statements) =>
+            batch([
+              statements[0]!,
+              { sql: "INSERT INTO batch_failure_probe (value) VALUES (?)", params: [null] },
+              ...statements.slice(1),
+            ]),
+          );
+        try {
+          await expect(initialize()).rejects.toThrow(/NOT NULL constraint failed: batch_failure_probe.value/);
+        } finally {
+          injection.mockRestore();
+        }
+        expect(await schema()).toEqual(before);
+        expect(await db.rows("SELECT name FROM sqlite_master WHERE name IN (?, ?)", table, index)).toEqual([]);
+
+        // schemaOnce must stay unset on failure. The same instance retries, and
+        // IF NOT EXISTS also makes a fresh instance safe over the completed DDL.
+        await expect(initialize()).resolves.toBeUndefined();
+        expect(
+          await db.rows("SELECT name FROM sqlite_master WHERE name IN (?, ?) ORDER BY name", table, index),
+        ).toEqual([{ name: table }, { name: index }]);
+        if (kind === "activity") {
+          expect((await db.activity().list!({ limit: 10 })).events).toEqual([recorded]);
+        } else {
+          expect(await db.storage().get("recovered")).toBe("value");
+        }
+      } finally {
+        await db.exec("DROP TABLE batch_failure_probe");
+      }
+    },
+  );
+}
+
 /**
  * One SQL database as a suite sees it: fresh stores over it, and raw SQL for
  * looking underneath them. `open` must return an empty database each call.
@@ -138,6 +235,7 @@ export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | 
  */
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   sqlBatchRollbackContract(open);
+  sqlActivityRollbackContract(open);
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
