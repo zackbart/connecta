@@ -412,13 +412,14 @@ const connectaConfig = {
   maintainers: opaque<readonly MemberRef[]>({ check: assertMemberList }),
   /** Named tool pools, each served at `/mcp/<name>` to its members only. */
   pools: record(object(pool)),
-  /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
+  /** Exact connector id -> tool name -> verdict. Hidden tools cannot be discovered or called.
+   * Unknown static names fail construction; absent runtime names stay dormant and are reported. */
   classification: record(
     record(
-      opaque<"read" | "write">({
+      opaque<"read" | "write" | "hidden">({
         check: (value, path) => {
-          if (value !== "read" && value !== "write") {
-            throw new ConfigError(`${path} must be "read" or "write".`);
+          if (value !== "read" && value !== "write" && value !== "hidden") {
+            throw new ConfigError(`${path} must be "read", "write", or "hidden".`);
           }
         },
       }),

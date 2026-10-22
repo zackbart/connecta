@@ -67,7 +67,7 @@ export interface FactChip {
 /** A tool whose read/write verdict deployment code overrides. */
 export interface OverrideChip {
   address: string;
-  classification: "read" | "write";
+  classification: ConnectaConfigDescription["classification"][string][string];
 }
 
 export interface ConfigSummary {

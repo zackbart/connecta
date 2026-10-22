@@ -137,10 +137,41 @@ configuration and credential connection procedures in the installed package.
 ## Recheck exposure and tool routes
 
 Generic connections classify from the live server's annotations and explicit
-deployment policy. An absent, false, or contradictory `readOnlyHint` is treated
-as a write. The old preset's review no longer supplies a read verdict or hides
+deployment policy. A tool is a read exactly when `readOnlyHint === true &&
+destructiveHint !== true`; otherwise it is a write. The old preset's review no longer supplies a read verdict or hides
 unlisted names. Server descriptions and schemas supply tool guidance; the
 operator owns auth, scope, subject isolation, and result-safety choices.
+
+Retain deployment-authored overrides that you have checked against the live
+catalog in the top-level `ConnectaConfig.classification` map, under the preserved
+connector id. These are exact tool names, not arguments or `remoteMcp()` options:
+
+```ts
+classification: {
+  crm: {
+    list_tickets: "read",
+    update_ticket: "write",
+    internal_export: "hidden",
+  },
+},
+```
+
+`"read"` sets the effective read class for tool routing and read-only exposure.
+`"write"` selects the host approval path. `"hidden"` omits the tool from search
+and describe and refuses guessed-name calls, including programs. An absent
+runtime tool leaves its override dormant, with one operator warning per catalog
+change; the override applies if that exact name returns. Never copy the retired
+preset's review into this map or promote tools merely to recover their old route.
+
+An override does not change replay safety. A call is write-like when either its
+effective class or its source class is write. The source class is a verified
+provider review where one remains during migration, otherwise the server's
+annotations; these five deleted presets no longer supply reviews. Write-like
+calls get one attempt across OAuth renewal, reconnect, authorization recovery
+and program re-runs. An ambiguous dispatched failure, including timeout or
+cancellation, reports an unknown outcome with no retry or wait advice. Approval,
+read-only gating and catalog presentation keep using the effective class. See
+[generic remote connections](./integrating.md#another-remote-mcp-server) for the configuration rules.
 
 Across the former hosted presets and the hosted halves scheduled for later
 migration, about 290 of roughly 350 reviewed reads lacked retained evidence of

@@ -103,7 +103,7 @@ export interface ConnectaConfigDescription {
   readOnly: boolean;
   /** The principals plain `/mcp` admits, resolved, in declaration order. Empty on an open deployment. */
   maintainers: Array<{ namespace: string; id: string }>;
-  classification: Record<string, Record<string, "read" | "write">>;
+  classification: Record<string, Record<string, "read" | "write" | "hidden">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
   /** Agents declared in code, by name, in declaration order. Never token state. */

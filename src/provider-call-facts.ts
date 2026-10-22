@@ -13,6 +13,8 @@ export interface ProviderRequest {
   readonly method?: string;
   /** Positive operation/tool evidence; an HTTP method alone proves no read. */
   classification?: "read" | "write" | undefined;
+  /** Remote MCP's source class said write, recorded at physical dispatch. */
+  readonly sourceWrite?: true;
   /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
   key?: string;
   /**

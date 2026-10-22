@@ -711,7 +711,8 @@ function sandboxProvider(
             unrecorded: true,
           };
         }
-        if (writes >= maxWrites) {
+        const budgeted = target.definition.classification !== "read";
+        if (budgeted && writes >= maxWrites) {
           return {
             kind: "refuse",
             error: {
@@ -721,7 +722,7 @@ function sandboxProvider(
             },
           };
         }
-        writes++;
+        if (budgeted) writes++;
         if (programWrites) sending.settle = programWrites.begin();
         return { kind: "dispatch" };
       }),

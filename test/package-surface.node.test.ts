@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+
+import type { ConnectaConfig, RemoteMcpOptions } from "../src/index.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
@@ -73,6 +75,10 @@ function lockedVersions(name: string): { resolved: string | undefined; locked: s
 
 describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
+    expectTypeOf<RemoteMcpOptions["headers"]>().toEqualTypeOf<Record<string, string> | undefined>();
+    expectTypeOf<NonNullable<ConnectaConfig["classification"]>[string][string]>().toEqualTypeOf<
+      "read" | "write" | "hidden"
+    >();
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");
     // node:sqlite, behind ./sqlite, is unflagged from Node 22.13.
