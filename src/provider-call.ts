@@ -150,8 +150,7 @@ export function dispatchProviderRequest(ctx: ConnectorContext, request: Provider
   assertProviderCallOpen(ctx, request.provider, request.auxiliary);
   if (hasMethodOverride(headers)) request.classification = "write";
   request.dispatched = true;
-  const call = logicalCalls.get(contextKey(ctx));
-  if (!request.auxiliary && !call?.sent.includes(request)) call?.sent.push(request);
+  if (!request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
 }
 
 /** Override presence invalidates read evidence, whatever value the header carries. */
@@ -313,10 +312,7 @@ export function providerFetch(
 ): typeof fetch {
   return async (input, init) => {
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    const request = (init && boundProviderRequest(init)) ?? providerRequest(ctx, auxiliary, provider, { method });
-    // Link only this delegated send. Reusing init for another physical fetch
-    // must create another entry, not inherit this request's refusal proof.
-    if (init) requestInits.delete(init);
+    const request = providerRequest(ctx, auxiliary, provider, { method });
     dispatchProviderRequest(ctx, request, init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const response = await send(input, init);
     request.status = response.status;

@@ -2234,9 +2234,14 @@ compiling and configuring the real thing.
   `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header
   makes the request a write regardless of its classification or method. A
   declared refusal followed by a successful write also leaves success intact.
-  A guarded transport delegating through `ctx.fetch` reuses its bound ledger
-  entry, preserving the declaration, status and classification, and the
-  logical call counts that same request once.
+  A guarded transport delegating through `ctx.fetch` records the wrapper
+  separately from each physical send. Each physical entry records its own
+  outgoing method and response; a later response cannot erase an earlier
+  401, and a delegated POST cannot inherit a wrapper's GET read evidence.
+  The inner entry does not inherit the wrapper's declaration or explicit
+  read evidence, including when the init is copied. Until linked recording
+  is reviewed, that duplicate may conservatively keep a successful
+  composite unknown even when the wrapper proves its own refusal or read.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the

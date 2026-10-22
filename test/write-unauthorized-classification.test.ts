@@ -378,7 +378,64 @@ describe("write 401 settlement requires positive read evidence", () => {
   );
 });
 
-describe("guarded requests delegated through ctx.fetch share one entry", () => {
+describe("guarded requests delegated through ctx.fetch record each physical send separately", () => {
+  it.each(HOW)("INV-9: a later accepted POST cannot erase the first physical POST's 401 (%s)", async (how) => {
+    const sent: number[] = [];
+    let statuses: (number | undefined)[] = [];
+    vi.stubGlobal("fetch", async () => {
+      const status = sent.length === 0 ? 401 : 200;
+      sent.push(status);
+      return Response.json({ id: "created" }, { status });
+    });
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      maxResponseBytes: 1024,
+      authenticate: () => ({}),
+      fetch: async (url, init, ctx) => {
+        await (ctx as ApiHandlerContext).fetch(url, init);
+        return (ctx as ApiHandlerContext).fetch(url, init);
+      },
+    });
+    const connector = outer(async (ctx) => {
+      const result = await send({ method: "POST", path: "/items" }, ctx, (response) => response.json());
+      statuses = providerRequests(ctx)!.map((request) => request.status);
+      return result;
+    });
+    expectUnknown(await run(connector, how), how);
+    expect(sent).toEqual([401, 200]);
+    expect(statuses).toEqual([200, 401, 200]);
+  });
+
+  it.each(HOW)("INV-1 INV-9: a delegated POST records its sent method instead of inheriting GET (%s)", async (how) => {
+    const methods: (string | undefined)[] = [];
+    let recorded: (string | undefined)[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method);
+      return new Response(null, { status: 401 });
+    });
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      maxResponseBytes: 1024,
+      authenticate: () => ({}),
+      fetch: (url, init, ctx) => {
+        init.method = "POST";
+        return (ctx as ApiHandlerContext).fetch(url, init);
+      },
+    });
+    const connector = outer(async (ctx) => {
+      await send({ method: "GET", path: "/items", classification: "read" }, ctx, () => {
+        throw new ConnectorCallError("auth_required", "Denied");
+      }).catch(() => undefined);
+      recorded = providerRequests(ctx)!.map((request) => request.method);
+      return { id: "claimed-success" };
+    });
+    expectUnknown(await run(connector, how), how);
+    expect(methods).toEqual(["POST"]);
+    expect(recorded).toEqual(["GET", "POST"]);
+  });
+
   it.each(HOW)("INV-9: two physical ctx.fetch sends never share a guarded refusal proof (%s)", async (how) => {
     let sends = 0;
     let recorded = 0;
@@ -403,52 +460,64 @@ describe("guarded requests delegated through ctx.fetch share one entry", () => {
     });
     expectUnknown(await run(connector, how), how);
     expect(sends).toBe(2);
-    expect(recorded).toBe(2);
+    expect(recorded).toBe(3);
   });
 
   it.each(HOW)(
-    "INV-9: a declared refusal followed by an accepted POST succeeds without a duplicate 401 (%s)",
+    "INV-9: delegated read/refusal provenance conservatively remains unknown until linked recording is reviewed (%s)",
     async (how) => {
-      const sent: string[] = [];
-      let recorded = 0;
-      let logical: number | undefined;
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = new URL(String(input)).pathname;
-        sent.push(`${init?.method} ${path}`);
-        return Response.json({ id: "created" }, { status: path === "/denied" ? 401 : 200 });
-      });
-      const send = guardedFetch({
-        provider: "Tickets",
-        baseUrl: "https://tickets.example",
-        maxResponseBytes: 1024,
-        authenticate: () => ({}),
-        authBeforeExecution: { evidence: "Reviewed fixture refusal", matches: () => true },
-        fetch: (url, init, ctx) => (ctx as ApiHandlerContext).fetch(url, init),
-      });
-      const connector = tracksEveryRequest(
-        api("tickets", {
-          tools: [
-            {
-              ...CREATE,
-              handler: async (_args, ctx) => {
-                await send({ method: "POST", path: "/denied" }, ctx, () => {
-                  throw new ConnectorCallError("auth_required", "Refused");
-                }).catch(() => undefined);
-                const response = await ctx.fetch("https://tickets.example/accepted", { method: "POST" });
-                recorded = providerRequests(ctx)!.length;
-                logical = logicalCallRequests(ctx)?.length;
-                return response.json();
-              },
-            },
-          ],
-        }),
-      );
-      const result = await run(connector, how);
-      if (how === "program") expect(result).toMatchObject({ result: "done" });
-      else expect(result.ok).toBe(true);
-      expect(sent).toEqual(["POST /denied", "POST /accepted"]);
-      expect(recorded).toBe(2);
-      if (how !== "direct") expect(logical).toBe(2);
+      for (const proof of ["read", "declared"] as const)
+        for (const copy of [false, true]) {
+          const sent: string[] = [];
+          let recorded = 0;
+          let logical: number | undefined;
+          vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            sent.push(`${init?.method} ${path}`);
+            return Response.json({ id: "created" }, { status: path === "/denied" ? 401 : 200 });
+          });
+          const send = guardedFetch({
+            provider: "Tickets",
+            baseUrl: "https://tickets.example",
+            maxResponseBytes: 1024,
+            authenticate: () => ({}),
+            ...(proof === "declared"
+              ? { authBeforeExecution: { evidence: "Reviewed fixture refusal", matches: () => true } }
+              : {}),
+            fetch: (url, init, ctx) => (ctx as ApiHandlerContext).fetch(url, copy ? { ...init } : init),
+          });
+          const connector = tracksEveryRequest(
+            api("tickets", {
+              tools: [
+                {
+                  ...CREATE,
+                  handler: async (_args, ctx) => {
+                    await send(
+                      {
+                        method: proof === "read" ? "GET" : "POST",
+                        path: "/denied",
+                        ...(proof === "read" ? { classification: "read" as const } : {}),
+                      },
+                      ctx,
+                      () => {
+                        throw new ConnectorCallError("auth_required", "Refused");
+                      },
+                    ).catch(() => undefined);
+                    const response = await ctx.fetch("https://tickets.example/accepted", { method: "POST" });
+                    recorded = providerRequests(ctx)!.length;
+                    logical = logicalCallRequests(ctx)?.length;
+                    return response.json();
+                  },
+                },
+              ],
+            }),
+          );
+          const result = await run(connector, how);
+          expectUnknown(result, how);
+          expect(sent).toEqual([`${proof === "read" ? "GET" : "POST"} /denied`, "POST /accepted"]);
+          expect(recorded).toBe(3);
+          if (how !== "direct") expect(logical).toBe(3);
+        }
     },
   );
 });
