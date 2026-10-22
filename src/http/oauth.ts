@@ -9,8 +9,8 @@
 //
 // This file decides nothing about that write. The transport recorded its
 // answer in the call's dispatch ledger when the resource server gave it, and
-// the one mapping (src/http/errors.ts) reads it from there: unknown, unless
-// the vendor documents that it authenticates first. A renewal that fails,
+// api()'s boundary delegates the verdict to the core's settleWrite. The
+// middleware records facts only, including a successful renewal. A renewal that fails,
 // for any reason, is the authorization server's failure and is discarded,
 // so it can neither turn the write into a refusal nor advertise a retry; the
 // ledger notes only a renewal that succeeded, so the agent is not sent to

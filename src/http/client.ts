@@ -15,8 +15,8 @@ import { guardedTransport } from "../guarded-transport.js";
 // before `fetch`, with its method, any idempotency key it carries, and its
 // status once answered: the facts `api()`'s boundary decides a write from.
 //
-// effect/http is annotated unstable in 4.0.5. This file and src/http/vendor.ts
-// are the only kit modules that import it; providers never do.
+// effect/http is annotated unstable in 4.0.5. Only client.ts, oauth.ts and
+// vendor.ts import the HTTP area modules; providers never do.
 
 import { Effect, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -25,7 +25,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
 import { ConnectorCallError } from "../errors.js";
-import { recordProviderResponse, type ProviderRequest } from "../provider-call.js";
+import { hasMethodOverride, recordProviderResponse, type ProviderRequest } from "../provider-call.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
@@ -240,7 +240,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         }
         // Resolve the runtime-owned sender before recording a physical dispatch.
         const transport = yield* Effect.try({
-          try: () => guardedTransport(write),
+          try: () => guardedTransport(write || hasMethodOverride(request.headers)),
           catch: (error) => new Refusal({ error: error as ConnectorCallError }),
         });
         const body = bodyInit(request);

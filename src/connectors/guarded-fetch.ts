@@ -596,7 +596,11 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
 
       const headers: Record<string, string> = { ...constantHeaders };
       for (const [name, value] of Object.entries(request.headers ?? {})) {
-        if (value !== undefined) headers[name] = value;
+        if (value !== undefined) {
+          const previous = hasHeader(headers, name);
+          if (previous) delete headers[previous];
+          headers[name] = value;
+        }
       }
       if (request.body !== undefined && !hasHeader(headers, "content-type")) {
         headers["Content-Type"] = "application/json";
@@ -616,7 +620,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         if (shadow) {
           throw new ConnectorCallError(
             "invalid_args",
-            `A ${provider} request may not set the ${shadow} header; authentication is connector-owned.`,
+            `A ${provider} request may not set the ${shadow.toLowerCase()} header; authentication is connector-owned.`,
           );
         }
         headers[name] = value;
@@ -639,7 +643,10 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         for (const [name, value] of Object.entries(request.visibleHeaders ?? {})) {
           const shadow = hasHeader(headers, name);
           if (shadow) {
-            throw new ConnectorCallError("invalid_args", `A ${provider} request sets the ${shadow} header twice.`);
+            throw new ConnectorCallError(
+              "invalid_args",
+              `A ${provider} request sets the ${shadow.toLowerCase()} header twice.`,
+            );
           }
           headers[name] = value;
         }

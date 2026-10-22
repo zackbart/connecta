@@ -23,7 +23,7 @@ async function close(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
-async function call(baseUrl: string, classification: "write" | "read" = "write") {
+async function call(baseUrl: string, classification: "write" | "read" = "write", override = false) {
   const lease = openCall({
     caller: undefined,
     classification,
@@ -42,7 +42,11 @@ async function call(baseUrl: string, classification: "write" | "read" = "write")
   try {
     const result = await runEdge(
       guarded.client
-        .execute(Request.post("/items").pipe(Request.bodyJsonUnsafe({ id: 1 })))
+        .execute(
+          Request.post("/items", override ? { headers: { "X-HTTP-Method-Override": "POST" } } : {}).pipe(
+            Request.bodyJsonUnsafe({ id: 1 }),
+          ),
+        )
         .pipe(Effect.flatMap(guarded.read), Effect.result, Effect.provideContext(lease.services)),
     );
     return { result, ledger: Context.get(lease.services, Dispatches) };
@@ -124,6 +128,9 @@ it("INV-9 INV-11: Node without /node refuses writes before dispatch and permits 
     error: { code: "connector_call_failed", message: expect.stringContaining("@zackbart/connecta/node") },
   });
   expect(refused.ledger.every((entry) => !entry.request?.dispatched)).toBe(true);
+  expect(send).not.toHaveBeenCalled();
+  const override = await call("https://tickets.example", "read", true);
+  expect(override.result._tag === "Failure" && override.result.failure).toMatchObject({ _tag: "Refusal" });
   expect(send).not.toHaveBeenCalled();
   expect((await call("https://tickets.example", "read")).result._tag).toBe("Success");
   expect(send).toHaveBeenCalledTimes(1);

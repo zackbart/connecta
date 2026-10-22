@@ -808,7 +808,11 @@ Node-dispatcher change. Changing those OAuth/delegated sends is a separate
 migration. No provider changes transport here. Both transports share
 `src/http-policy.ts`; `guarded-transport-parity.test.ts` compares one fixture
 table's exact requests, sent-secret registration, core ledger entries and
-mapped failures, on Node and workerd. Its table replaces the superseded
+mapped failures, on Node and workerd. Header precedence is case-insensitive:
+request headers replace constants even when their names differ in case, and
+collision messages name the lowercase field. This corrects the Promise
+helper's prior accidental concatenation of differently cased overrides; the
+maintained provider goldens remain unchanged. Its table replaces the superseded
 transport tests in `http-kit.test.ts`. Production Grant/facade parity also
 replaces its synthetic renewal/accounting cases; generic Grant interruption,
 direct-client overrides and vendor authentication proof remain distinct.
