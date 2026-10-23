@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { createExecuteTool } from "../src/execute.js";
 import { classifyCallError, type CallErrorDetails } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { grantFromOAuth } from "../src/http/oauth.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { providerRequests, tracksEveryRequest, type ProviderRequest } from "../src/provider-call.js";
@@ -37,13 +37,11 @@ const scenarios = [
 type Scenario = (typeof scenarios)[number];
 type Entry = "served read" | "served write" | "direct write" | "caught program" | "uncaught program";
 type AccountingError = CallErrorDetails & { writes?: { succeeded: number; failed: number; unknown: number } };
-let previous: ReturnType<typeof configureGuardedTransport>;
 
 beforeEach(() => {
-  previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 afterEach(() => {
-  configureGuardedTransport(previous);
   vi.unstubAllGlobals();
 });
 

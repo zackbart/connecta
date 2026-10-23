@@ -3,7 +3,7 @@
 // goldens. Every Breeze call is a GET, writes included, so the read hatch's
 // allowlist is the safety boundary under test here.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { errors, breezeSafety } from "./api.js";
 import { breezeTools } from "./tools.js";
 import { resultSafety } from "../../http/safety.js";
@@ -38,7 +38,7 @@ function queue(...items: StubResponse[]): void {
 }
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -58,7 +58,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 

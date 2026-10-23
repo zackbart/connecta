@@ -646,6 +646,11 @@ function closedEntry(
 const HANDLER_SEAMS = ["handler", "storage.get", "storage.put", "storage.CAS", "crypto.digest", "crypto.sign"] as const;
 const REMOTE_SEAMS = ["request-token.resolve", "storage.get", "fetch"] as const;
 const CALLBACK_OWNERS = ["request"] as const;
+// Audited against api-connector.ts's returned Connector, remote-mcp.ts's
+// settlingOperation wrappers, Registry.getTools/statusFor and CatalogService's
+// loadConnector/resolveTool/search/describe boundaries. closeScope is teardown,
+// not a revocable operation; api.describe and provider construction are synchronous.
+// Low-level closed-call memo, recovery and ledger guards live in http-kit.test.ts.
 // Explicit compatibility: adding an entry or a reachable seam is one table
 // line. No impossible Cartesian product (e.g. API prompts) is manufactured.
 export const ENTRIES: readonly Entry[] = [

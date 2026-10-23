@@ -4,10 +4,11 @@ import { once } from "node:events";
 import { Agent, RetryAgent, fetch as dispatcherFetch, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { Context, Effect, Schema } from "effect";
 import * as Request from "effect/http/HttpClientRequest";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { guardedClient } from "../src/http/client.js";
 import { nodeGuardedTransport } from "../src/http/node-transport.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+import { configureGuardedTransport, guardedTransport } from "../src/guarded-transport.js";
 import { Dispatches, RequestFacts, openCall, type CallServices } from "../src/http/services.js";
 import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
 import { StatusFailure, type HttpFailure } from "../src/http/errors.js";
@@ -74,8 +75,13 @@ async function call(baseUrl: string, classification: "write" | "read" = "write",
     lease.close();
   }
 }
+beforeEach(() => {
+  const previous = configureGuardedTransport(undefined);
+  onTestFinished(() => {
+    configureGuardedTransport(previous);
+  });
+});
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -295,7 +301,25 @@ it("INV-9: one guarded send owns one attempt under 421 and a global RetryAgent, 
 it("INV-9 INV-11: Node without /node refuses writes before dispatch and permits the read fallback", async () => {
   const send = vi.fn(async () => Response.json({}));
   vi.stubGlobal("fetch", send);
-  configureGuardedTransport(undefined);
+  // Each install retains its predecessor, and a repeated restore is inert.
+  const outer = installOwnedTransport();
+  const inner = installOwnedTransport();
+  expect(guardedTransport(true).send).toBe(inner.send);
+  inner.restore();
+  expect(guardedTransport(true).send).toBe(outer.send);
+  await guardedTransport(true).send(new URL("https://tickets.example"), {});
+  expect(outer.send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(1);
+  // Resolve fetch at send time, including a fake installed after the sender.
+  const replacement = vi.fn(async () => Response.json({}));
+  vi.stubGlobal("fetch", replacement);
+  await guardedTransport(true).send(new URL("https://tickets.example"), {});
+  expect(replacement).toHaveBeenCalledTimes(1);
+  outer.restore();
+  inner.restore();
+  expect(() => guardedTransport(true)).toThrow("Guarded writes on Node require the owned transport");
+  vi.stubGlobal("fetch", send);
+  send.mockClear();
   const refused = await call("https://tickets.example");
   expect(refused.result._tag === "Failure" && refused.result.failure).toMatchObject({
     _tag: "Refusal",

@@ -16,7 +16,7 @@
 // logical call: one boundary, one write sent, carrying that key.
 import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
@@ -42,10 +42,9 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 const BASE = "https://connecta.example";
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -1187,11 +1186,12 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
   });
 
   it("INV-9: a GET without positive read evidence gives a later write's key no advice", async () => {
-    const { served } = await lookupThenCreate((ctx) =>
+    const { served, state } = await lookupThenCreate((ctx) =>
       ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "GET" }),
     );
     if (served.ok) throw new Error("expected the write to fail");
     expectNoKeyAdvice(served.error);
+    expect(state.sent).toHaveLength(2);
   });
 
   it("INV-9: control: Stripe's own single keyed POST keeps its advice, direct and served", async () => {
