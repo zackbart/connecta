@@ -635,7 +635,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         const text = JSON.stringify(out);
         expect(text).toContain("echoed");
         expect(text).toContain("streamed");
-        expect(text).not.toContain("VENDOR_HELD");
+        expect(text.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
         expect(text).not.toContain(long);
         expect(text).not.toMatch(/\\?"ecre\\?"/);
       };
