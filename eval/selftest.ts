@@ -537,7 +537,11 @@ const required = (checks: Check[]) => checks.filter((item) => !item.advisory);
 let failures = 0;
 const args = flags(process.argv.slice(2));
 const include = new Set((args.get("include-skipped") ?? "").split(","));
-for (const task of ACTIVE_TASKS) {
+// `--tasks a,b` checks only those graders and references, then stops.
+const only = args.get("tasks")?.split(",");
+const selected = only ? ACTIVE_TASKS.filter((task) => only.includes(task.id)) : ACTIVE_TASKS;
+if (only && selected.length !== only.length) throw new Error(`Unknown --tasks entry in ${only.join(",")}`);
+for (const task of selected) {
   if (task.skip && !include.has(task.skip.flag)) {
     console.log(`skip ${task.id}: ${task.skip.reason} Enable with --include-skipped ${task.skip.flag}.`);
     continue;
@@ -625,7 +629,7 @@ for (const task of ACTIVE_TASKS) {
 for (const surface of ["six", "code"] as const)
   for (const grading of ["route", "outcome"] as const) {
     if (surface === "six" && grading === "route") continue;
-    for (const task of ACTIVE_TASKS) {
+    for (const task of selected) {
       const played = await play(task, "reference", surface, grading);
       const noop = await play(task, "noop", surface, grading);
       const ok =
@@ -652,6 +656,7 @@ if (failures) {
   console.error(`${failures} task(s) have a broken grader or reference.`);
   process.exitCode = 1;
 }
+if (only) process.exit();
 
 // Exercise the deployed arm selector and both HTTP encodings. Six returns
 // the original server itself, so its instructions, skills and errors are bytes

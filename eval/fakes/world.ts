@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
 import { assetTools, mixpanelTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
@@ -43,13 +44,15 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor;
+  rest?: RestVendor | "tithely";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
 
 export interface WorldOptions {
   restVendor?: RestVendor;
+  /** A Tithe.ly giving world, with an optional injected fault. */
+  tithely?: { fault?: TithelyFault };
   refundFault?: boolean;
   prerequisites?: boolean;
   assets?: boolean;
@@ -75,7 +78,8 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: FakeRestService[] = [];
+  readonly restServices: Array<FakeRestService | FakeTithely> = [];
+  readonly tithely = tithelyState();
   readonly now = Date.now();
   readonly ledger = new Ledger();
   readonly tracker: TrackerState;
@@ -97,6 +101,8 @@ export class World {
           : [vendor === "stripe" ? "stripe_sandbox" : vendor === "notion" ? "notion_bot" : "vercel_rest"];
       this.restServices = ids.map((id) => new FakeRestService(id, vendor, this.ledger, this.rest, options.refundFault));
     }
+    if (options.tithely)
+      this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     this.tracker = trackerState(this.now);
     this.chat = chatState(this.now);
     const clock = () => Date.now();
@@ -133,11 +139,14 @@ export class World {
   }
 
   connectorSpecs(): ConnectorSpec[] {
-    if (this.options.restVendor)
+    if (this.options.restVendor || this.options.tithely)
       return this.restServices.map((service) => ({
         id: service.name,
         title: service.name,
-        description: `Fake ${service.vendor} REST`,
+        description:
+          service.vendor === "tithely"
+            ? "Weekly giving reports and donor care for Grace Church and Hope Chapel"
+            : `Fake ${service.vendor} REST`,
         url: service.url,
         rest: service.vendor,
         credential: { label: "Fake vendor credential", value: service.credential },

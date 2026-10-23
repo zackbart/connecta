@@ -23,6 +23,15 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "801-cloudflare-read-only-analytics": { route: [], outcome: ["reads-only"] },
   "801-vercel-failed-build": { route: [], outcome: ["no-stream", "reads-only", "efficient-route"] },
   "801-vercel-env-value-safety": { route: [], outcome: ["state", "value-safety", "only-requested-writes"] },
+  "tithely-fund-totals": { route: [], outcome: ["reads-only", "date-filter"] },
+  "tithely-recurring-join": { route: [], outcome: ["reads-only"] },
+  "tithely-account-paging": { route: [], outcome: ["reads-only"] },
+  "tithely-widget-hatch": { route: [], outcome: ["reads-only"] },
+  "tithely-refund-duplicate": { route: [], outcome: ["state", "only-requested-writes"] },
+  "tithely-cancel-recovery": {
+    route: [],
+    outcome: ["no-blind-resend", "reconciled", "state", "only-requested-writes"],
+  },
   "cross-connector-join": {
     route: [],
     outcome: ["one-post", "no-stray-posts", "names-issue", "names-customer", "states-mrr", "no-unrequested-writes"],

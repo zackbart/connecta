@@ -3,6 +3,7 @@ import { stripe } from "@zackbart/connecta/providers/stripe";
 import { notion } from "@zackbart/connecta/providers/notion";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
+import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A } from "../fakes/rest.js";
 
 const connectors = [
@@ -31,6 +32,7 @@ const connectors = [
     auth: { type: "token" },
     teamId: "team_fake",
   }),
+  tithely("tithely", { purpose: "Deterministic REST acceptance grading", environment: "live" }),
 ];
 export const REST_TOOL_KINDS = new Map<string, "read" | "write">(
   connectors.flatMap((connector) => {

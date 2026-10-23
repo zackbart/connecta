@@ -19,6 +19,7 @@ import { stripe } from "@zackbart/connecta/providers/stripe";
 import { notion } from "@zackbart/connecta/providers/notion";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
+import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
@@ -92,6 +93,8 @@ export async function startNodeDeployment(
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
         if (spec.rest === "notion")
           return notion(spec.id, { ...options, auth: { type: "token" }, defaultPageSize: 100 });
+        if (spec.rest === "tithely")
+          return tithely(spec.id, { ...options, environment: "live", baseUrl: `${spec.url}/api/v1` });
         if (spec.rest === "vercel")
           return vercel(spec.id, { ...options, auth: { type: "token" }, teamId: "team_fake" });
         if (spec.rest === "cloudflare")
@@ -121,7 +124,8 @@ export async function startNodeDeployment(
   });
   for (const spec of connectors) {
     if (spec.credential?.value) {
-      if (spec.id === "cloudflare_legacy") await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
+      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely")
+        await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
       else await vault.set(spec.id, spec.credential.value, "operator");
     }
   }
