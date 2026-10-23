@@ -324,7 +324,7 @@ vendors"). The steps:
    to store withheld destinations. Record exact reviewed paths and evidence,
    false positives and binary/base64 exclusions. A `FileHosts` policy needs
    reviewed domains/buckets; do not infer one from the vendor's name. Keep
-   Notion's stricter host and proxy contracts.
+   Generic hosted MCP connections do not inherit vendored API safety rules.
 4. Build the engine with `valueSafety(TABLE, () => index)` and use
    `withholdsErrors(call.op)` so failures replace the vendor's text with
    codes and status. On the kit, the connection's `safety` option carries it

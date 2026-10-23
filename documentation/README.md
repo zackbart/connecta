@@ -37,18 +37,18 @@ product names stay.
 
 ## Contract reference
 
-| Guide                                                            | Owns                                                                                                       |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| [Meta-tools](./meta-tools.md)                                    | Six top-level tools, discovery, direct-call results, paging, skills, and recovery                          |
-| [Code mode](./code-mode.md)                                      | JavaScript guest API, executor requirements, output, retries, cancellation, limits, and writes             |
-| [Auth](./auth.md)                                                | Inbound identity, maintainers, pools and members, agents, credential ownership, and downstream OAuth       |
-| [Architecture (contributor reference)](./architecture.md)        | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation            |
-| [Operator UI](./operator-ui.md)                                  | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation |
-| [Operator UI tests (contributor reference)](./operator-tests.md) | Browser state matrix, real-server flows, and snapshot maintenance                                          |
-| [Migration to 0.33](./migration-0.33.md)                         | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners        |
-| [Provider migration for 0.29](./provider-migration-0.29.md)      | Historical 0.29 upgrade actions for Notion, Vercel, and Cloudflare                                         |
-| [Provider migration for 0.35](./provider-migration-0.35.md)      | Remove retired providers and configure generic hosted replacements                                         |
-| [Provider auth migration](./provider-auth-migration.md)          | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel             |
+| Guide                                                            | Owns                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [Meta-tools](./meta-tools.md)                                    | Six top-level tools, discovery, direct-call results, paging, skills, and recovery                             |
+| [Code mode](./code-mode.md)                                      | JavaScript guest API, executor requirements, output, retries, cancellation, limits, and writes                |
+| [Auth](./auth.md)                                                | Inbound identity, maintainers, pools and members, agents, credential ownership, and downstream OAuth          |
+| [Architecture (contributor reference)](./architecture.md)        | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation               |
+| [Operator UI](./operator-ui.md)                                  | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
+| [Operator UI tests (contributor reference)](./operator-tests.md) | Browser state matrix, real-server flows, and snapshot maintenance                                             |
+| [Migration to 0.33](./migration-0.33.md)                         | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
+| [Provider migration for 0.29](./provider-migration-0.29.md)      | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
+| [Provider migration for 0.35](./provider-migration-0.35.md)      | Provider upgrade actions for the pending consolidated 0.35.0 release                                          |
+| [Provider auth migration](./provider-auth-migration.md)          | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
 
 Each long contract starts with task routes. Follow those section links before
 reading the whole guide. Contributor references at the end are optional
@@ -87,6 +87,6 @@ The [changelog](../CHANGELOG.md) records shipped releases.
 [Decisions](https://github.com/zackbart/connecta/tree/main/decisions) explain
 history and may be superseded. [Spec coverage](https://github.com/zackbart/connecta/blob/main/spec/coverage.json)
 records implemented support, gaps, and test evidence. The
-[0.29 plan of record](https://github.com/zackbart/connecta/issues/703) and other
+[#703 rework](https://github.com/zackbart/connecta/issues/703) and other
 issues describe planned work; do not turn their goals into claims of shipped
 behavior.

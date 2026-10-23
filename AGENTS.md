@@ -14,7 +14,7 @@ configuration, contracts, and technical setup in agent docs. This file owns
 repository policy; scoped skills and provider guides own their task-specific
 detail. Update the owning guide when changing behavior, and keep the overview
 consistent without adding API or configuration instructions to it.
-The [0.29 plan of record #703](https://github.com/zackbart/connecta/issues/703)
+The [rework plan of record #703](https://github.com/zackbart/connecta/issues/703)
 owns the rework and supersedes older guidance wherever they conflict.
 [decisions/](./decisions/) explains past choices without binding later PRs.
 [spec/coverage.json](./spec/coverage.json) records current MCP support, gaps,
