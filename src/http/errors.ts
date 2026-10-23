@@ -467,6 +467,7 @@ function statusVerdict(
   const input = classificationInput(failure, vendor, withheld);
   const { facts, headers } = input;
   // Classification first, over facts and headers only.
+  const decided = classified(input, vendor);
   // The transport already applied the core's positive-read method/header rule.
   // A 421 advises an explicit retry only for that request; no resend happens here.
   const {
@@ -476,7 +477,7 @@ function statusVerdict(
     current,
     words,
     advice,
-  } = failure.status === 421 && read ? { code: "unavailable" as const, retryable: true } : classified(input, vendor);
+  } = failure.status === 421 && read ? { ...decided, code: "unavailable" as const, retryable: true } : decided;
   // Then the wording. The body reaches `detail` only when this operation's
   // value-safety review lets its vendor text through.
   const detail = vendor.detail({
