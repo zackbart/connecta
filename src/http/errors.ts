@@ -395,6 +395,22 @@ export interface MapOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
+/** Shed a defect's text and typed identity when any request withholds vendor text. */
+export function withheldDefect(
+  defect: unknown,
+  options: Pick<MapOptions, "dispatches"> & { readonly withholds: (operation: OperationRef) => boolean },
+  // Custom probe programs may send outside this ledger, so always withhold their defects.
+  always = false,
+): unknown {
+  try {
+    if (!always && !options.dispatches.some(({ operation }) => operation && options.withholds(operation)))
+      return defect;
+  } catch {
+    // A broken visibility hook cannot authorize exposing a defect's text.
+  }
+  return new Error("A provider hook withholding vendor text failed.");
+}
+
 /**
  * The single mapping from a kit failure to what an agent reads. It decides
  * no write: the core does, from its ledger (`providerCallFailure` at the

@@ -24,7 +24,14 @@ import type {
   CredentialTestResult,
 } from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
-import { errorMeanings, Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
+import {
+  errorMeanings,
+  Refusal,
+  toConnectorCallError,
+  withheldDefect,
+  type HttpFailure,
+  type VendorErrors,
+} from "./errors.js";
 import { hatch, type HatchDeclaration } from "./hatch.js";
 import { takesIdempotencyKey } from "./tools.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
@@ -323,16 +330,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                 return probe.failure?.(error, options) ?? { ok: false, message: error.message };
               }),
             ),
-            Effect.catchDefect((defect) => {
-              try {
-                // Custom probes may send outside this ledger, so always withhold their defects.
-                if (!probe.run && !map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
-                  return Effect.die(defect);
-              } catch {
-                // A broken visibility hook cannot authorize exposing a defect's text.
-              }
-              return Effect.die(new Error("A provider hook withholding vendor text failed."));
-            }),
+            Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map, !!probe.run))),
             Effect.provideContext(lease.services),
             Effect.ensuring(Effect.sync(lease.close)),
           ),

@@ -19,7 +19,14 @@ import type { ApiTool } from "../connectors/api-connector.js";
 import type { JsonSchema } from "../types.js";
 import { ConnectorCallError } from "../errors.js";
 import { runEdge } from "../runtime/run.js";
-import { recordUnauthorized, Refusal, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
+import {
+  recordUnauthorized,
+  Refusal,
+  RequestRefused,
+  toConnectorCallError,
+  withheldDefect,
+  type HttpFailure,
+} from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import { catalogSchema, Integer } from "./json-schema.js";
 import { boundCursor, Cursor, PageInfo, StandardPage, type Page } from "./paging.js";
@@ -505,16 +512,7 @@ function build<I extends Input, O extends Schema.Top>(
             }),
           ),
           Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
-          Effect.catchDefect((defect) => {
-            try {
-              if (!dispatches.some(({ operation }) => operation && map.withholds(operation))) return Effect.die(defect);
-            } catch {
-              // A broken visibility hook cannot authorize exposing a defect's text.
-            }
-            // Cover the program and every hook, including those in error mapping.
-            // api() preserves ConnectorCallError messages, so shed that identity.
-            return Effect.die(new Error("A provider hook withholding vendor text failed."));
-          }),
+          Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map))),
           Effect.provideContext(lease.services),
           // The call's finalizer: every capability kept from it refuses after this.
           Effect.ensuring(Effect.sync(lease.close)),
