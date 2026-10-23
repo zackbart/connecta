@@ -17,7 +17,6 @@ export type Seam =
   | "body.cancel.redirect"
   | "body.cancel.size"
   | "request-token.resolve"
-  | "request-token.mint"
   | "handler"
   | "authenticate"
   | "mapper";
