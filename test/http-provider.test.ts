@@ -425,13 +425,18 @@ it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writ
   // ceiling. Native declared/streamed refusals must stop before renewal.
   const compatibility = defineApiProvider({
     ...withoutCredential,
-    maxResponseBytes: 2 * 1024 * 1024,
+    maxResponseBytes: 8 * 1024 * 1024,
     oauthWrite401: "grant",
     authenticate: bearer,
     oauth: () => oauth,
   })("tickets", { purpose: "Support" });
   for (const tool of ["who", "send"] as const)
-    for (const declared of [false, true]) {
+    for (const [bytes, declared] of [
+      [2 * 1024 * 1024, false],
+      [2 * 1024 * 1024, true],
+      [9 * 1024 * 1024, false],
+      [9 * 1024 * 1024, true],
+    ] as const) {
       const ctx = makeRegistry([compatibility]).contextFor("tickets", "https://connecta.example", {});
       await seedGrant(ctx.storage, {
         issuer: oauth.tokenEndpoint,
@@ -448,12 +453,16 @@ it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writ
           }
           requests++;
           return declared
-            ? new Response(null, { status: 401, headers: { "content-length": String(4 * 1024 * 1024) } })
-            : new Response(new Uint8Array(1024 * 1024 + 1), { status: 401 });
+            ? new Response(null, { status: 401, headers: { "content-length": String(bytes) } })
+            : new Response(new Uint8Array(bytes), { status: 401 });
         }),
       );
       await expect(compatibility.callTool(tool, {}, ctx)).rejects.toMatchObject({
         code: tool === "who" ? "connector_call_failed" : "downstream_oauth_required",
+        message:
+          tool === "who"
+            ? "The OAuth challenge exceeded its response ceiling."
+            : 'Connector "tickets"\'s API answered this write with HTTP 401. Renewing the credential failed (connector_call_failed), and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.',
         retryable: false,
         writeOutcome: tool === "who" ? undefined : "unknown",
       });

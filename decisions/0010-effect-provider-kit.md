@@ -1680,8 +1680,7 @@ replayed. The failure belongs to the same resource dispatch; `settleWrite`
 still decides the final outcome. Without the opt-in the B.2 behavior is
 unchanged, and a failed renewal never makes the resource write retryable.
 This restores the static `Grant`/`ctx.oauth.fetch` parity described in B.2.
-
-The static opt-in also uses the shared `OAUTH_CHALLENGE_MAX_BYTES` limit for
+The same static opt-in uses the shared `OAUTH_CHALLENGE_MAX_BYTES` limit for
 discarded 401 challenges, before renewal. `GuardedClient.read(response,
 maxBytes?)` can only narrow its configured ceiling; the optional
 `maxUnauthorizedResponseBytes` declaration applies that lower ceiling to
@@ -1691,6 +1690,8 @@ can map that challenge failure without guessing which dispatch failed. A
 write's challenge refusal uses the same `writeUnauthorized` mapper; reads
 retain the static grant's ceiling diagnostic. No renewal begins after an
 oversized challenge, and default guarded clients are unchanged.
+Broken challenge streams retain their 401 and continue to renewal, matching
+the static facade; they are not surfaced challenge refusals.
 
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write

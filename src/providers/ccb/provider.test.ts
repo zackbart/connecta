@@ -471,18 +471,26 @@ describe("ccb() escape hatches (H14)", () => {
         "downstream_oauth_required",
       ],
     ] as const)
-      for (const declared of [true, false]) {
-        fake.route(
-          on(method, path, () =>
-            declared
-              ? new Response(null, { status: 401, headers: { "content-length": String(9 * 1024 * 1024) } })
-              : new Response(new Uint8Array(1024 * 1024 + 1), { status: 401 }),
-          ),
-        );
-        const before = fake.tokenRequests.length;
-        expect(await failure(call(tool, args))).toMatchObject({ code, retryable: false });
-        expect(fake.tokenRequests).toHaveLength(before);
-      }
+      for (const bytes of [2 * 1024 * 1024, 9 * 1024 * 1024])
+        for (const declared of [true, false]) {
+          fake.route(
+            on(method, path, () =>
+              declared
+                ? new Response(null, { status: 401, headers: { "content-length": String(bytes) } })
+                : new Response(new Uint8Array(bytes), { status: 401 }),
+            ),
+          );
+          const before = fake.tokenRequests.length;
+          expect(await failure(call(tool, args))).toMatchObject({
+            code,
+            message:
+              method === "GET"
+                ? "The OAuth challenge exceeded its response ceiling."
+                : 'Connector "church"\'s API answered this write with HTTP 401. Renewing the credential failed (connector_call_failed), and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.',
+            retryable: false,
+          });
+          expect(fake.tokenRequests).toHaveLength(before);
+        }
   });
 });
 
