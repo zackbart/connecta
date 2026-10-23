@@ -1158,6 +1158,92 @@ it("INV-5 INV-6: reviewed text bodies keep bounded UTF-8, JSON contracts, and wi
   }
 });
 
+it("INV-5 INV-6: binary replies require a review, stay bounded and check secrets before base64", WORKERS, async () => {
+  const safety = resultSafety({
+    review: "Fixture responses contain no stored credentials.",
+    sensitiveFields: { names: [], choice: "drop" },
+  });
+  for (const row of [
+    { declared: true, body: "%PDF", expected: "JVBERg==" },
+    { declared: true, body: "sk_test_0123456789", expected: btoa("[redacted]") },
+    { declared: true, body: "x", length: "65", tag: "ResponseTooLarge" },
+    { declared: true, body: "x".repeat(65), tag: "ResponseTooLarge" },
+    { declared: false, body: "%PDF", tag: "UnreadableBody" },
+  ]) {
+    answers.push(
+      () =>
+        new Response(new TextEncoder().encode(row.body), {
+          headers: { "Content-Type": "application/pdf", ...(row.length ? { "Content-Length": row.length } : {}) },
+        }),
+    );
+    const connection = connect(
+      {
+        ...ACME_API,
+        ...(row.declared
+          ? {
+              binaryBodies: {
+                review: "Reviewed fixture PDF response.",
+                forResponse: (_status: number, _operation: OperationRef, type: string) => type === "application/pdf",
+              },
+            }
+          : {}),
+      },
+      guardedClient(OPTIONS),
+      { errors: VENDOR, safety },
+    );
+    const outcome = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+    if (outcome._tag === "Failure") expect(outcome.failure._tag).toBe(row.tag);
+    else {
+      expect(row.tag).toBeUndefined();
+      expect(outcome.success.data).toEqual({
+        contentType: "application/pdf",
+        bytes: new TextEncoder().encode(row.body).length,
+        base64: row.expected,
+      });
+    }
+  }
+});
+
+it(
+  "INV-7 INV-9: explicit empty forms retain wire bytes and vendor deadlines cannot outlive caller cancellation",
+  WORKERS,
+  async () => {
+    const safety = resultSafety({
+      review: "Fixture paths carry no stored values.",
+      sensitiveFields: { names: [], choice: "drop" },
+    });
+    let body: BodyInit | null | undefined;
+    let type: string | null = null;
+    globalThis.fetch = (async (_url, init) => {
+      body = init?.body;
+      type = new Headers(init?.headers).get("content-type");
+      return Response.json({});
+    }) as typeof fetch;
+    const connection = connect(ACME_API, guardedClient(OPTIONS), { errors: VENDOR, safety });
+    await runEdge(connection.sendPath({ ...POST_ITEMS, form: {} }).pipe(Effect.provideContext(services("write"))));
+    expect(body).toBe("");
+    expect(type).toBe("application/x-www-form-urlencoded");
+    globalThis.fetch = (async (_url, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal!;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })) as typeof fetch;
+    const guarded = guardedClient({ ...OPTIONS, timeoutMs: 10 });
+    const deadline = await runEdge(Effect.result(guarded.client.get("/keys")).pipe(Effect.provideContext(services())));
+    expect(deadline._tag).toBe("Failure");
+    const controller = new AbortController();
+    const caller = services().pipe(Context.add(Signal, controller.signal));
+    const pending = runEdge(
+      Effect.result(guardedClient({ ...OPTIONS, timeoutMs: 60_000 }).client.get("/keys")).pipe(
+        Effect.provideContext(caller),
+      ),
+    );
+    controller.abort(new Error("caller closed"));
+    expect((await pending)._tag).toBe("Failure");
+  },
+);
+
 function acme(
   options: {
     withholds?: boolean;
