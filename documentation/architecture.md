@@ -1896,6 +1896,10 @@ complete bounded facts and reviewed headers; only after the verdict is fixed
 does wording receive display facts (eight list entries) and, where the
 operation's value-safety review permits it, the body. Required vendor meanings
 for 401/403/404 precede the other defaults; 409 has no shared conflict default.
+A 421 is `unavailable` and retryable only when the transport's core
+positive-read classification proves that request a read, including its actual
+method and method-override headers. The agent chooses another call; the kit
+does not resend it. A physical write retains its existing failure mapping.
 
 The mapping records each request's own served provenance and raw 401 facts.
 `api()` and invocation retain the sole write-outcome decision in the core's
@@ -2064,8 +2068,10 @@ policy over legacy unindexed paths declares its own resolver. Sent-secret redact
 covers response headers before result hooks can extract fragments. Withheld
 hooks admit only operation-bound status failures or unreadable bodies; other
 failures become defects whose text the API boundary withholds. Hook defects
-are rewrapped as plain errors when text is withheld, including defects that
-carry a `ConnectorCallError`.
+are rewrapped once at the tool edge when text is withheld, including defects
+from reviewed redaction, vendor error mapping, and the provider program that
+carry a `ConnectorCallError`. A failing visibility hook also withholds the
+defect's text; non-withheld operations retain their original defects.
 
 ### Why not Schema or HttpApi for core routes
 
