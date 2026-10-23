@@ -1973,20 +1973,28 @@ A `list` without the legacy `key` returns `{ items, page }`, with
 `page.nextCursor` only while `hasMore`, and the kit appends `limit` (the
 declared default and maximum), `cursor` and `fields` to the tool's filters;
 `read` and `get` take `fields: true`. `src/http/fields.ts` narrows after every
-projection and refuses an unknown first segment before dispatch.
-`src/http/hatch.ts` is the standard hatch (`_api_search`, `_api_details`,
-`_api_read`, `_api_write`) over an `OperationIndex` with explicit verdicts. It
-keeps the REST family's argument and envelope names, returns at most eight
-compact search entries within 16 KiB and details within 32 KiB (optional parts
-cut into `truncated`, required ones never), ranks exact path nouns, root
-collections and authored operations first, then operations found by a field
-they return or take, and points at the authored tool that serves an operation.
+projection and refuses an unknown first segment before dispatch; a selected
+result renders against a sparse output schema. `src/http/hatch.ts` is the
+standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
+an `OperationIndex` with explicit verdicts. It keeps the REST family's
+argument and envelope names and validates `fields` against the operation's
+declared response roots before dispatch. Search answers stay within 16 KiB
+(at most eight compact entries, long labels cut and marked, continuation by
+cursor); details stay within 32 KiB, paging whole parameters and body
+properties, and chunking any piece larger than one answer, behind a bound
+cursor. Search ranks exact path nouns, root collections and authored
+operations first, then operations found by a field they return or take, and
+points at the authored tool that serves an operation. `_api_read` omits
+`method` only when GET is its one reviewed read method.
 `src/http/vendor-index.ts` derives that index from a kit vendor's own
 declarations when the vendor has no pinned OpenAPI document: `form()` request
 contracts, `Summary` annotations and lenient success schemas become the
-index's parameters, bodies, summaries and searchable fields. Kit facts add
-the vendor status table's absence and conflict meanings and
-`idempotencyKey`, which the generated Conventions state. The helper derives connection metadata and probe messages from
+index's parameters, bodies, summaries and declared fields (optional
+`OpenApiData.fields`). Kit facts carry the vendor's declared
+`VendorErrors.meanings` and an `idempotencyKey` checked against the write
+builders at construction, which the generated Conventions state.
+
+The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. Its optional `authScope(options)`
