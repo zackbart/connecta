@@ -324,13 +324,12 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
       ...definition,
       authenticate,
       probe: {
-        ...definition.probe,
         ...(mode === "program"
           ? {
               run: (connection: import("../src/http/vendor.js").Connection) =>
                 connection.send(who, {}).pipe(Effect.map(({ data }) => data)),
             }
-          : {}),
+          : { operation: definition.probe.operation, request: definition.probe.request }),
         check: (values, options) => {
           expect(options.purpose).toBe("Support");
           return Object.values(values).includes("invalid") ? "Replace this candidate." : undefined;
@@ -444,7 +443,6 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     const connector = defineApiProvider({
       ...definition,
       probe: {
-        ...definition.probe,
         run: () =>
           Signal.use((value) => {
             signal = value;
@@ -473,7 +471,7 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
   const writeProbe = defineApiProvider({
     ...definition,
     probe: {
-      ...definition.probe,
+      describe: definition.probe.describe,
       run: (connection) =>
         connection
           .sendPath({ method: "POST", path: "/tickets", template: "/tickets" })
@@ -489,7 +487,7 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
       sensitiveFields: { names: [], choice: "drop" },
     }),
     probe: {
-      ...definition.probe,
+      describe: definition.probe.describe,
       run: (connection) =>
         connection
           .send(who, {})

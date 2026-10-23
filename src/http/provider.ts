@@ -89,15 +89,26 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly probe: {
-    readonly operation: ProbeOperation;
-    readonly request: unknown | ((options: Readonly<O>) => unknown);
-    /** Auth-dependent read-only probe programs use the same candidate services and failure edge. */
-    readonly run?: (connection: Connection, options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices>;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
     readonly failure?: (error: ConnectorCallError, options: Readonly<O>) => CredentialTestResult | undefined;
-  };
+  } & (
+    | {
+        /** Auth-dependent read-only programs use the same candidate services and failure edge. */
+        readonly run: (
+          connection: Connection,
+          options: Readonly<O>,
+        ) => Effect.Effect<unknown, HttpFailure, CallServices>;
+        readonly operation?: never;
+        readonly request?: never;
+      }
+    | {
+        readonly run?: never;
+        readonly operation: ProbeOperation;
+        readonly request: unknown | ((options: Readonly<O>) => unknown);
+      }
+  );
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */

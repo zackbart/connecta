@@ -20,7 +20,6 @@ import {
   READ_CAP_MS,
   safety,
   result,
-  verifyToken,
   describeProbe,
   settings,
 } from "./api.js";
@@ -245,8 +244,6 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   safety,
   result,
   probe: {
-    operation: verifyToken,
-    request: {},
     run: (connection, options) => cloudflareRuntime(connection, settings(options)).verify(),
     describe: describeProbe,
   },
