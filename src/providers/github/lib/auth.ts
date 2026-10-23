@@ -1,7 +1,7 @@
-import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError, resendAdvice } from "../../errors.js";
-import { attachFailureFacts } from "../../operator-record.js";
-import type { ConnectorContext } from "../../types.js";
+import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
+import { ConnectorCallError, resendAdvice } from "../../../errors.js";
+import { attachFailureFacts } from "../../../operator-record.js";
+import type { ConnectorContext } from "../../../types.js";
 import { appJwt, privateKeyDer } from "./key.js";
 import { ScopePolicy, target, type Target } from "./scope.js";
 
@@ -58,6 +58,18 @@ export class AppAuth {
   private readonly configuredDer?: Uint8Array<ArrayBuffer>;
   private readonly appId: string;
 
+  private readonly send = guardedFetch({
+    provider: "GitHub",
+    baseUrl: "https://api.github.com",
+    maxResponseBytes: 4 * 1024 * 1024,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "connecta",
+    },
+    authenticate: () => ({}),
+  });
+
   constructor(
     readonly app: GitHubApp,
     readonly policy: ScopePolicy,
@@ -105,65 +117,62 @@ export class AppAuth {
   /** `write` sends the request once: a failure that may follow the change is not retryable. */
   async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext, write = false): Promise<unknown> {
     ctx.signal?.throwIfAborted();
-    const guarded = guardedFetch({
-      provider: "GitHub",
-      baseUrl: "https://api.github.com",
-      maxResponseBytes: 4 * 1024 * 1024,
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "connecta",
+    return this.send(
+      {
+        classification: write ? "write" : "read",
+        ...request,
+        headers: { ...request.headers, Authorization: `Bearer ${bearer}` },
       },
-      authenticate: () => ({ Authorization: `Bearer ${bearer}` }),
-    });
-    return guarded({ classification: write ? "write" : "read", ...request }, ctx, async (response) => {
-      if (!response.ok) {
-        // Dispose of the body without interpreting error text or Content-Type.
-        await response.prefix(0);
-        const status = response.status;
-        const reset = Number(response.headers.get("x-ratelimit-reset"));
-        const retry = retryAfterMs(response.headers);
-        const wait =
-          retry ?? (Number.isFinite(reset) && reset > 0 ? Math.max(0, reset * 1000 - Date.now()) : undefined);
-        const rate =
-          status === 429 ||
-          (status === 403 && (retry !== undefined || response.headers.get("x-ratelimit-remaining") === "0"));
-        if (status === 401 || (status === 403 && !rate)) this.invalidate(bearer);
-        const code = rate
-          ? "rate_limited"
-          : status === 401 || status === 403
-            ? "auth_required"
-            : status === 409
-              ? "conflict"
-              : status >= 500
-                ? "unavailable"
-                : "connector_call_failed";
-        const failure = new ConnectorCallError(
-          code,
-          rate
-            ? "GitHub rate limit reached."
-            : code === "auth_required"
-              ? "Verify the GitHub App key, installation, repository selection and required permissions."
-              : code === "conflict"
-                ? "GitHub rejected a stale version. Read the current state."
-                : status === 404
-                  ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
-                  : "The GitHub API request failed; downstream error text is withheld.",
-          { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
-        );
-        if (rate) resendAdvice(failure, " Honor the retry timing before trying again.");
-        else if (code === "conflict") resendAdvice(failure, " before resubmitting");
-        throw attachFailureFacts(failure, { httpStatus: status });
-      }
-      const parsed = await response.jsonResult();
-      ctx.signal?.throwIfAborted();
-      if ("parseError" in parsed)
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "GitHub returned malformed JSON; response text is withheld.",
-        );
-      return parsed.value;
-    });
+      ctx,
+      async (response) => {
+        if (!response.ok) {
+          // Dispose of the body without interpreting error text or Content-Type.
+          await response.prefix(0);
+          const status = response.status;
+          const reset = Number(response.headers.get("x-ratelimit-reset"));
+          const retry = retryAfterMs(response.headers);
+          const wait =
+            retry ?? (Number.isFinite(reset) && reset > 0 ? Math.max(0, reset * 1000 - Date.now()) : undefined);
+          const rate =
+            status === 429 ||
+            (status === 403 && (retry !== undefined || response.headers.get("x-ratelimit-remaining") === "0"));
+          if (status === 401 || (status === 403 && !rate)) this.invalidate(bearer);
+          const code = rate
+            ? "rate_limited"
+            : status === 401 || status === 403
+              ? "auth_required"
+              : status === 409
+                ? "conflict"
+                : status >= 500
+                  ? "unavailable"
+                  : "connector_call_failed";
+          const failure = new ConnectorCallError(
+            code,
+            rate
+              ? "GitHub rate limit reached."
+              : code === "auth_required"
+                ? "Verify the GitHub App key, installation, repository selection and required permissions."
+                : code === "conflict"
+                  ? "GitHub rejected a stale version. Read the current state."
+                  : status === 404
+                    ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
+                    : "The GitHub API request failed; downstream error text is withheld.",
+            { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
+          );
+          if (rate) resendAdvice(failure, " Honor the retry timing before trying again.");
+          else if (code === "conflict") resendAdvice(failure, " before resubmitting");
+          throw attachFailureFacts(failure, { httpStatus: status });
+        }
+        const parsed = await response.jsonResult();
+        ctx.signal?.throwIfAborted();
+        if ("parseError" in parsed)
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "GitHub returned malformed JSON; response text is withheld.",
+          );
+        return parsed.value;
+      },
+    );
   }
 
   private invalidate(bearer: string): void {

@@ -32,6 +32,7 @@
 import { Data } from "effect";
 import { retryAfterMs } from "../http-policy.js";
 import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
+import { attachFailureFacts } from "../operator-record.js";
 import { vendorRefusal } from "../provider-call.js";
 import { providerFailureMessage } from "../write-outcome.js";
 import type { Dispatch } from "./services.js";
@@ -566,6 +567,7 @@ function statusVerdict(
     ...(wait === undefined ? {} : { retryAfterMs: wait }),
     ...(current ? { current } : {}),
   });
+  attachFailureFacts(error, { httpStatus: failure.status });
   return advice === undefined ? error : resendAdvice(error, advice);
 }
 

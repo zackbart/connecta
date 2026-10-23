@@ -2,13 +2,14 @@ import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
 import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
-import { AppAuth, type GitHubApp } from "./auth.js";
-import { restConnector } from "./rest.js";
-import { parseScopes, ScopePolicy, type GitHubScope } from "./scope.js";
+import { kit } from "./api.js";
+import { AppAuth, type GitHubApp } from "./lib/auth.js";
+import { restConnector } from "./tools.js";
+import { parseScopes, ScopePolicy, type GitHubScope } from "./lib/scope.js";
 import { skill } from "./skill.generated.js";
 
-export type { GitHubApp } from "./auth.js";
-export type { GitHubScope } from "./scope.js";
+export type { GitHubApp } from "./lib/auth.js";
+export type { GitHubScope } from "./lib/scope.js";
 
 export interface GitHubOptions extends ProviderOptions {
   app: GitHubApp;
@@ -22,9 +23,10 @@ export const github = defineProvider<GitHubOptions>({
   title: "GitHub",
   kind: "api",
   skill,
+  kit,
   bundle: {
-    baselineGzip: 164063,
-    note: "./providers/github retains its initial 164,063 B gzip baseline for size comparison. C.0c removes the hosted MCP half; the entry now carries portable GitHub App signing, scoped routing and six REST tools. Reported against this baseline, not capped (#899).",
+    baselineGzip: 322737,
+    note: "./providers/github remeasures at 322,737 B gzip in C.8 step 1 (#703), Node 22 CI static at f36b60e6: the six REST tools now run on the Effect provider kit, with private GitHub App signing, scoped installation tokens and lazy rejection recovery. This replaces the historical 164,063 B baseline that included the hosted half removed by C.0c. Provider entries are reported, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,

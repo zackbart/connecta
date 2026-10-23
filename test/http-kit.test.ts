@@ -13,6 +13,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
+import { failureRecord } from "../src/operator-record.js";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
@@ -278,6 +279,9 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         const mapped = toConnectorCallError(failure, VENDOR, { classification: "read", dispatches: [] });
         expect(mapped.code, failure._tag).toBe(code);
         expect(mapped.message).toContain(message);
+        expect(failureRecord({}, mapped).httpStatus).toBe(
+          failure._tag === "StatusFailure" ? failure.status : failure._tag === "ResendRefused" ? 409 : undefined,
+        );
         expect(JSON.stringify(mapped)).not.toMatch(/raw secret|private|secret=value/);
         if (failure._tag === "TransportFailure")
           expect(mapped.details).toEqual({ code: "ECONNREFUSED", host: "https://acme.example" });
