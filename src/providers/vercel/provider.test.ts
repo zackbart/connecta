@@ -1,3 +1,4 @@
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
@@ -22,6 +23,7 @@ describe("vercel() over an access token", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     sent = [];
     respond = () => Response.json({});
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -46,6 +48,7 @@ describe("vercel() over an access token", () => {
   });
 
   afterEach(() => {
+    configureGuardedTransport(undefined);
     globalThis.fetch = realFetch;
   });
 
@@ -87,7 +90,7 @@ describe("vercel() over an access token", () => {
     expect(JSON.stringify(long)).not.toMatch(/PRIVATE_SIG|PRIVATE_CREDENTIAL/);
   });
 
-  it("INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before select (#890)", async () => {
+  it("INV-1 INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before select (#890)", async () => {
     const connector = vercel("hosting", TOKEN);
     const headerPath = "daemons.config.livenessProbe.httpGet.httpHeaders";
     const daemon = {
@@ -123,10 +126,8 @@ describe("vercel() over an access token", () => {
     expect(error.message).not.toMatch(
       /stored-daemon-credential-marker|ordinary-daemon-header-marker|internal-endpoint-marker/,
     );
-  });
 
-  it("INV-1: daemon scaling and restarts require the write tool (#890)", async () => {
-    const connector = vercel("hosting", TOKEN);
+    sent = [];
     for (const args of [
       { method: "PUT", path: "/v1/projects/web/daemons/worker/instances", body: { iad1: 2 } },
       { method: "POST", path: "/v1/projects/web/daemons/worker/instances/dmni_01k7d0q5w3x8y9z0a1b2c3d4e5/restart" },
