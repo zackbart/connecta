@@ -1,5 +1,5 @@
 import { NODE } from "./fixtures/runtime-tags.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // Decision 0010's shared case table: the provider kit and today's api() core
 // run the same cases, served by the invocation and called directly, and must
 // reach the same verdict on every row: the write's outcome
@@ -40,11 +40,10 @@ const BASE = "https://connecta.example";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -530,6 +529,7 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
           sent: call.sent,
         };
       }
+      if (row.replies.length) expect(seen.kit.sent, "requests").not.toEqual([]);
       // The same requests leave on both sides.
       if (seen.core) {
         expect(seen.kit.sent, "requests").toEqual(seen.core.sent);

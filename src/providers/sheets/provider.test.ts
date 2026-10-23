@@ -5,8 +5,9 @@
 // test/google-workspace-delegation.test.ts; only the no-caller refusal is
 // repeated here, because it is this connector's own front door.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 
 import { sheets } from "./index.js";
@@ -248,12 +249,8 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
 
 describe("the raw batchUpdate hatch", () => {
   // Kit writes on Node use the owned transport that listen() installs.
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
   beforeEach(() => {
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(restoreTransport);
+    installOwnedTransport();
   });
 
   const bytesOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -300,12 +297,8 @@ describe("the raw batchUpdate hatch", () => {
 
 describe("errors (H11)", () => {
   // Kit writes on Node use the owned transport that listen() installs.
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
   beforeEach(() => {
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(restoreTransport);
+    installOwnedTransport();
   });
 
   /** A 200 whose JSON body breaks off mid-stream. */
@@ -326,11 +319,48 @@ describe("errors (H11)", () => {
   // Writing fixed cells is an operation hint, not an idempotency key, and
   // grants no retry credit (#902 round 11).
   it.each(writes.filter(([name]) => name === "update_values"))(
-    "INV-9: a 5xx answering %s is unknown, though it writes fixed cells",
+    "INV-5 INV-9: %s preserves unknown writes and private error-key classification",
     async (name, args) => {
       route = serverError;
       const failure = await call(connection(), name, args).catch((error) => error);
       expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      const connector = connection();
+      // Error-envelope keys feed classification before the final boundary.
+      // Private key collisions must keep rate-limit, precondition and scope advice.
+      for (const row of [
+        ...["reason", "errors", "error"].map((privateValue) => ({
+          privateValue,
+          error: { code: 403, message: "Quota exceeded", errors: [{ reason: "userRateLimitExceeded" }] },
+          expected: {
+            code: "rate_limited",
+            retryable: true,
+            message: expect.stringContaining("Google meters this API"),
+          },
+        })),
+        {
+          privateValue: "status",
+          error: { code: 400, message: "Precondition", status: "FAILED_PRECONDITION" },
+          expected: { code: "connector_call_failed", message: expect.stringContaining("precondition") },
+        },
+        {
+          privateValue: "reason",
+          error: { code: 403, message: "Scope refused", errors: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] },
+          expected: {
+            code: "provider_permission_denied",
+            message: expect.stringContaining("lacks a scope this call needs"),
+          },
+        },
+      ]) {
+        const ctx = context();
+        requestSentSecrets(ctx).arguments(
+          { private: row.privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        route = () => ({ body: { error: row.error }, status: row.error.code });
+        await expect(
+          connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"] }, ctx),
+        ).rejects.toMatchObject(row.expected);
+      }
     },
   );
 

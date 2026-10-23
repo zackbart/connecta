@@ -8,7 +8,8 @@ import { guardedFetch, type GuardedRequest } from "../src/connectors/guarded-fet
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, toConnectorCallError, type VendorErrors } from "../src/http/errors.js";
 import { Dispatches, IdempotencyKey, fromConnectorContext } from "../src/http/services.js";
-import { configureGuardedTransport, guardedTransport } from "../src/guarded-transport.js";
+import { guardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { retryAfterMs } from "../src/http-policy.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { providerCallContext, providerRequests, closeProviderCall } from "../src/provider-call.js";
@@ -141,7 +142,6 @@ const fixtures: Fixture[] = [
 ];
 afterEach(() => {
   vi.unstubAllGlobals();
-  configureGuardedTransport(undefined);
 });
 
 it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registration, bounded reads, failures and core ledger facts", async () => {
@@ -210,7 +210,7 @@ it("INV-3 INV-5 INV-6 INV-9 INV-11: both transports preserve requests, registrat
         };
         return answer;
       });
-      configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      installOwnedTransport();
       let result: unknown;
       try {
         if (kind === "promise") {

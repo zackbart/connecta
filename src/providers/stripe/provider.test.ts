@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
 
@@ -22,11 +22,10 @@ describe("stripe() over an API key", () => {
   let sent: Sent[];
   let respond: (request: Sent) => Response;
   const realFetch = globalThis.fetch;
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 
   beforeEach(() => {
     sent = [];
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    installOwnedTransport();
     respond = () => Response.json({ object: "list", data: [], has_more: false });
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request: Sent = {
@@ -42,7 +41,6 @@ describe("stripe() over an API key", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    configureGuardedTransport(restoreTransport);
   });
 
   const keyed = (key = "rk_test_51abc"): ConnectorContext => ({

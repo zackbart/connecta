@@ -4,7 +4,7 @@ import { makeRegistry } from "../../../test/helpers.js";
 import { attachCallClassification } from "../../call-classification.js";
 import { CredentialVault } from "../../credentials.js";
 import { ConnectorCallError } from "../../errors.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import type { ConnectorContext } from "../../types.js";
@@ -38,7 +38,6 @@ describe("cloudflare() over a key", () => {
   let sent: Sent[];
   let respond: (request: Sent) => Response;
   const realFetch = globalThis.fetch;
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 
   const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({
@@ -51,7 +50,7 @@ describe("cloudflare() over a key", () => {
 
   beforeEach(() => {
     sent = [];
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    installOwnedTransport();
     respond = () => envelope([]);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request: Sent = {
@@ -67,7 +66,6 @@ describe("cloudflare() over a key", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    configureGuardedTransport(restoreTransport);
   });
 
   const token = (value = "cf-token-123"): ConnectorContext => ({

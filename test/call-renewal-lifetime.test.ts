@@ -18,7 +18,7 @@ import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { oauthTransports, staticOAuthRequest } from "./fixtures/static-oauth-transport.js";
 
 const BASE = "https://connecta.example";
@@ -160,12 +160,10 @@ async function downstreamFlow(storage: KVStorage, scope: object, coordinator = n
   return { lease, view, provider, coordinator };
 }
 
-let previousTransport: ReturnType<typeof configureGuardedTransport>;
 beforeEach(() => {
-  previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 afterEach(() => {
-  configureGuardedTransport(previousTransport);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

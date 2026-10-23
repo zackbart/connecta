@@ -394,7 +394,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         throw new Error("A read ceiling must be a whole number of bytes >= 1.");
       if (prefix && response.status >= 200 && response.status <= 299) {
         if (!Number.isSafeInteger(prefix.maxBytes) || prefix.maxBytes < (format === "bytes" ? 0 : 1))
-          throw new Error("A success prefix needs a positive whole byte ceiling.");
+          throw new Error("A success prefix needs a whole byte ceiling >= 0 for bytes or >= 1 for text.");
         if (prefix.timeoutMs !== undefined && (!Number.isSafeInteger(prefix.timeoutMs) || prefix.timeoutMs < 1))
           throw new Error("A success prefix timeout must be a positive whole number.");
         return readSuccessPrefix(

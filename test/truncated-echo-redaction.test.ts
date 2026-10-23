@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCaller } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { breeze } from "../src/providers/breeze/index.js";
@@ -133,14 +133,16 @@ describe("shared REST failure mappers", () => {
         Response.json({ error: { message: straddling(form, 1_000) } }, { status: 400 }),
       );
       const connector = vercel("hosting", { purpose: "Ops", auth: { type: "token" }, teamId: "team_default" });
-      const previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      const previousTransport = installOwnedTransport();
       try {
         const error = await refusal(
           connector.callTool("vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }, keyed()),
         );
         expectNoFragment(error.message, form);
+        expect(previousTransport.send).toHaveBeenCalledTimes(1);
+        expect(error.code).toBe("invalid_args");
       } finally {
-        configureGuardedTransport(previousTransport);
+        previousTransport.restore();
       }
     },
   );
@@ -320,11 +322,10 @@ describe("Cloudflare zone-ownership lookups", () => {
 });
 
 describe("Cloudflare GraphQL errors", () => {
-  let previousTransport: ReturnType<typeof configureGuardedTransport>;
+  let transport: ReturnType<typeof installOwnedTransport>;
   beforeEach(() => {
-    previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    transport = installOwnedTransport();
   });
-  afterEach(() => configureGuardedTransport(previousTransport));
 
   it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a rejected query echoing the sent token %s across the 500-character cap leaks no fragment of it",
@@ -334,6 +335,7 @@ describe("Cloudflare GraphQL errors", () => {
       const query = `query Daily { viewer { zones(filter: { zoneTag: "023e105f4ecef8ad9ca31a8372d0c353" }) { dimensions { date } } } }`;
       const error = await refusal(connector.callTool("graphql_query", { query }, keyed()));
       expectNoFragment(error.message, form);
+      expect(transport.send).toHaveBeenCalledTimes(1);
     },
   );
 });

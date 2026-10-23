@@ -6,7 +6,7 @@
 // decoder agreeing on every input.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { errors } from "./api.js";
@@ -42,7 +42,7 @@ function queue(...items: StubResponse[]): void {
 
 beforeEach(() => {
   // listen() from the Node entry owns the write transport; here it is the stubbed fetch.
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -62,7 +62,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 

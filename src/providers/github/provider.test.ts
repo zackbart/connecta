@@ -1,4 +1,4 @@
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   apiFixture,
@@ -20,7 +20,6 @@ function value(result: any): any {
 }
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -164,7 +163,7 @@ describe("GitHub App provider", () => {
   it.each(["retargeted-base", "foreign-head", "stale-sha"])(
     "INV-4: explicit workflow scope covers base-retarget races and merge refuses unsafe head case %s",
     async (kind) => {
-      configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      installOwnedTransport();
       const fixture = apiFixture();
       const sha = "a".repeat(40);
       const base = "b".repeat(40);
@@ -201,7 +200,7 @@ describe("GitHub App provider", () => {
   );
 
   it("INV-6: permission 403 with unused rate budget is auth failure and evicts its token", async () => {
-    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    installOwnedTransport();
     const fixture = apiFixture();
     fixture.respond((request) =>
       request.url.pathname === "/repos/acme/one/releases"
@@ -223,7 +222,7 @@ describe("GitHub App provider", () => {
   });
 
   it("INV-6: REST malformed/sentinel error responses produce typed facts without body or content-type", async () => {
-    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    installOwnedTransport();
     const fixture = apiFixture();
     const logger = spyLogger();
     fixture.respond((request) =>

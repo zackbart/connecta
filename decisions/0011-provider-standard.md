@@ -274,12 +274,27 @@ Since 0012, a record describes only the vendored API contracts Connecta wraps.
 For heavily shared recursive contracts, an endpoint specification may opt into
 `contractAlgorithm: "ref-graph-v1"`. This hashes canonical structural nodes once,
 replacing local references with component hashes and treating a strongly connected
-reference component as one deterministic unit. It preserves full reachable request
-and success contracts, excludes the same prose/extensions/errors, and stays bounded
-without expanding shared graphs exponentially. The default inline algorithm and
-all existing digests remain unchanged. Stripe's first v2 endpoint baseline uses
-this versioned opt-in; small-contract mutation pairs must agree with the inline
-algorithm on whether a change matters.
+reference component as one deterministic unit. An intra-component reference hashes
+as a cycle reference plus its structural siblings, without expanding the target
+again. A sibling-bearing entry into a cyclic component likewise hashes the
+component reference and its siblings without inline expansion. It preserves
+reachable request and success structure, excludes the same
+prose/extensions/errors, and stays bounded without expanding shared graphs
+exponentially. The default inline algorithm and all existing provider digests
+remain unchanged. Stripe's first v2 endpoint baseline uses this versioned opt-in.
+Small-contract mutation pairs must never be less sensitive than inline.
+Acyclic pairs using only locally resolvable references agree with inline
+sensitivity. For unresolved or external references, the graph retains structural
+siblings that inline drops. Recursive pairs may also be more sensitive: the graph
+retains every cycle member's reference name and structural back-edge siblings;
+inline retains the reference name where expansion stops and drops that
+back-edge's siblings. Overriding siblings at a cyclic entry remain separate from
+the component target in the graph, so they cannot hide changes to overridden
+target fields as they can inline. Renaming a non-entry cycle member or changing
+a back-edge sibling therefore changes the graph digest even when inline's
+digest stays the same. The drift test covers non-entry member renames,
+back-edge sibling changes and target swaps, and self-reference siblings
+containing intra-component references.
 
 ### Generated, not hand-kept
 
