@@ -209,7 +209,7 @@ export function hatch(
   };
   // Find operations by the request or response properties they declare: a
   // query word must equal a word of a property's name. Rarer words weigh more,
-  // and words most operations' own records carry (id, status) decide nothing.
+  // and words three in four operations carry (id, status) decide nothing.
   // Reads, then the shallowest best match, lead.
   const words = (text: string) =>
     text
@@ -221,15 +221,13 @@ export function hatch(
   const byField = (query: string, method: RestMethod | undefined, found: ReadonlySet<Operation>) => {
     const candidates = index.ops.filter((op) => method === undefined || op.method === method);
     const leaf = (field: OperationField) => words(field.path.split(".").at(-1)!);
-    // Commonness counts the record's own properties, not those of records embedded in it.
+    // Eligibility and rarity count every declared path, nested ones included; depth only lowers rank.
     const carries = (op: Operation, term: string) =>
-      index
-        .fields(op)
-        .some((field) => field.path.split(".").length <= 2 && leaf(field).some((word) => same(term, word)));
+      index.fields(op).some((field) => leaf(field).some((word) => same(term, word)));
     const weights = new Map(
       [...new Set(words(query))].flatMap((term) => {
         const share = candidates.filter((op) => carries(op, term)).length;
-        return share > 0 && share <= Math.max(1, (candidates.length * 2) / 3)
+        return share > 0 && share <= Math.max(1, (candidates.length * 3) / 4)
           ? [[term, Math.log2(1 + candidates.length / share)] as const]
           : [];
       }),

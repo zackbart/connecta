@@ -264,7 +264,11 @@ it(
               ...optional,
             }),
           ),
-          success: Schema.Struct({ object: Schema.optionalKey(Schema.Struct({ widget_id: Schema.String })) }),
+          success: Schema.Struct({
+            object: Schema.optionalKey(
+              Schema.Struct({ widget_id: Schema.String, owner: Schema.Struct({ date_of_birth: Schema.String }) }),
+            ),
+          }),
         }).annotate(Summary, "Create a thing"),
       ),
       { prefix: "forms", title: "Forms", revision: "v1" },
@@ -288,6 +292,10 @@ it(
     // A field the operation returns finds it too, marked, after every path or summary match.
     expect((await formsCall("search", { query: "widget" })).operations).toEqual([
       expect.objectContaining({ path: "/things/{thing_id}", matched: "response field object.widget_id" }),
+    ]);
+    // A field only a nested record declares is still found.
+    expect((await formsCall("search", { query: "birth" })).operations).toEqual([
+      expect.objectContaining({ matched: "response field object.owner.date_of_birth" }),
     ]);
     // Every details answer stays within 32 KiB: a large contract pages whole pieces, and a piece
     // too large for one answer arrives as chunks of its JSON. Required names are never dropped.
