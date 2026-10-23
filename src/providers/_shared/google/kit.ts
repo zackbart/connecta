@@ -529,6 +529,9 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     callWrite: boolean,
     signal: AbortSignal | undefined,
   ): HttpFailure {
+    // A lookup inside a write call has not sent the write. Keep the lookup's
+    // own verdict; only a call-owned request gets uncertain-write wording.
+    write = write && own?.request?.auxiliary !== true;
     const status = own?.status;
     const dispatched = own?.request?.dispatched === true;
     const at = (phase: GoogleOutcome["phase"], code = status) =>

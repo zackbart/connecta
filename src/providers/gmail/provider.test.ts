@@ -3,6 +3,8 @@
 // encoding and refusals, body selection, charsets, attachments, and bounds.
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../../guarded-transport.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
@@ -190,7 +192,18 @@ describe("reading mail (H9, H10)", () => {
   });
 });
 
+function useOwnedTransport() {
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+}
+
 describe("writing drafts", () => {
+  useOwnedTransport();
   it("refuses header injection and malformed addresses before anything is sent", async () => {
     await expect(
       call(connection(), "create_draft", { subject: "Hi\r\nBcc: spy@evil.example", body: "x" }),
@@ -283,6 +296,55 @@ describe("writing drafts", () => {
     expect(failure).toMatchObject({ code: "invalid_args" });
     expect(failure.message).toContain("nested more than 20 levels");
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+
+    // Redaction must not hide an attachment or a kept header and allow its deletion.
+    const keptHeaders = [
+      { name: "Subject", value: "Kept subject" },
+      { name: "References", value: "<m1@mail.example>" },
+      { name: "In-Reply-To", value: "<m1@mail.example>" },
+    ];
+    const keptNames = ["Subject", "References", "In-Reply-To", "Reply"];
+    for (const privateValue of [
+      "attachment",
+      "attach",
+      "tachm",
+      "ment",
+      "Content-Disposition",
+      "Disposition",
+      "Dispo",
+      "sition",
+      "Content",
+      ...keptNames,
+    ]) {
+      calls.length = 0;
+      route = () => ({
+        body: existingDraft(
+          keptNames.includes(privateValue) ? keptHeaders : [],
+          keptNames.includes(privateValue)
+            ? undefined
+            : [
+                { mimeType: "text/plain", body: { data: b64url("Body") } },
+                {
+                  mimeType: "text/plain",
+                  headers: [{ name: "Content-Disposition", value: "attachment" }],
+                  body: { data: b64url("Attached notes") },
+                },
+              ],
+        ),
+      });
+      const ctx = context();
+      requestSentSecrets(ctx).arguments(
+        { private: privateValue },
+        { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+      );
+      await expect(
+        connection().callTool("update_draft", { draftId: "d1", body: "Revised." }, ctx),
+      ).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("Nothing was changed"),
+      });
+      expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+    }
   });
 
   it("splits address lists as RFC 5322 does: quoted commas, comments, and groups", async () => {
@@ -476,6 +538,17 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(failure).toMatchObject({ code: "invalid_args", message: expect.stringContaining("Read it without raw") });
     route = () => ({ body: MESSAGE });
     await expect(call(connection(), "get_message", { messageId: "m2", raw: true })).resolves.toEqual(MESSAGE);
+
+    // A valid inline body may be much larger than its projected result. The
+    // encoded-field validator must stay linear instead of exhausting V8's stack.
+    const bytes = 4 * 1024 * 1024;
+    route = () => ({
+      body: { id: "m4", payload: { mimeType: "text/plain", body: { size: bytes, data: b64url("x".repeat(bytes)) } } },
+    });
+    const projected = await call(connection(), "get_message", { messageId: "m4", maxBodyChars: 100 });
+    expect(projected.body).toContain("x".repeat(100));
+    expect(projected.bodyTruncated).toBe(true);
+    expect(size(projected)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 });
 
@@ -548,18 +621,23 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
 
 describe("round-6: measured budgets, said omissions, declared keys", () => {
   it("reports a saved draft as saved even when Gmail's id cannot be returned", async () => {
-    route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
-    const tooLong = await call(connection(), "create_draft", { body: "x" });
-    expect(tooLong).toMatchObject({ saved: true, sent: false, messageId: "m1", omittedIds: ["draftId"] });
-    expect(tooLong.draftId).toBeUndefined();
-    expect(tooLong.note).toContain("list_drafts");
-    expect(tooLong.note).toContain("do not create it again");
+    const restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
+      route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
+      const tooLong = await call(connection(), "create_draft", { body: "x" });
+      expect(tooLong).toMatchObject({ saved: true, sent: false, messageId: "m1", omittedIds: ["draftId"] });
+      expect(tooLong.draftId).toBeUndefined();
+      expect(tooLong.note).toContain("list_drafts");
+      expect(tooLong.note).toContain("do not create it again");
 
-    route = () => ({ body: { message: { id: "m2" } } });
-    const missing = await call(connection(), "create_draft", { body: "x" });
-    expect(missing).toMatchObject({ saved: true, sent: false, messageId: "m2" });
-    expect(missing.omittedIds).toBeUndefined();
-    expect(missing.note).toContain("list_drafts");
+      route = () => ({ body: { message: { id: "m2" } } });
+      const missing = await call(connection(), "create_draft", { body: "x" });
+      expect(missing).toMatchObject({ saved: true, sent: false, messageId: "m2" });
+      expect(missing.omittedIds).toBeUndefined();
+      expect(missing.note).toContain("list_drafts");
+    } finally {
+      configureGuardedTransport(restoreTransport);
+    }
   });
 });
 
