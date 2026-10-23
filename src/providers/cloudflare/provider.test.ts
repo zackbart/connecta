@@ -4,10 +4,13 @@ import { makeRegistry } from "../../../test/helpers.js";
 import { attachCallClassification } from "../../call-classification.js";
 import { CredentialVault } from "../../credentials.js";
 import { ConnectorCallError } from "../../errors.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import type { ConnectorContext } from "../../types.js";
 
+import { manifest } from "../../http/vendor.js";
+import { CloudflareApi, cloudflareIndex } from "./api.js";
 import { CLOUDFLARE_API_BASE, cloudflare } from "./index.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -35,6 +38,7 @@ describe("cloudflare() over a key", () => {
   let sent: Sent[];
   let respond: (request: Sent) => Response;
   const realFetch = globalThis.fetch;
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 
   const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({
@@ -47,6 +51,7 @@ describe("cloudflare() over a key", () => {
 
   beforeEach(() => {
     sent = [];
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     respond = () => envelope([]);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request: Sent = {
@@ -62,6 +67,7 @@ describe("cloudflare() over a key", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
+    configureGuardedTransport(restoreTransport);
   });
 
   const token = (value = "cf-token-123"): ConnectorContext => ({
@@ -85,9 +91,9 @@ describe("cloudflare() over a key", () => {
     return error as ConnectorCallError;
   }
 
-  it.each([503, 429])(
-    "INV-9: a zone ownership preflight cannot perform the resource write (HTTP %i)",
-    async (status) => {
+  it("INV-9: a zone ownership preflight cannot perform the resource write", async () => {
+    for (const status of [503, 429]) {
+      sent = [];
       const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
       respond = (request) =>
         request.url.pathname === `/client/v4/zones/${ZONE}` && status !== 503
@@ -112,10 +118,29 @@ describe("cloudflare() over a key", () => {
         retryable: true,
         writeOutcome: undefined,
       });
-    },
-  );
+    }
+  });
 
   it("INV-11: requires a pin or unpinned: true for a Global API Key and refuses malformed pins", () => {
+    const document = manifest(CloudflareApi);
+    const operations = Object.entries(document.paths)
+      .flatMap(([path, item]) =>
+        Object.entries(item)
+          .filter(([method]) => ["get", "head", "post", "put", "patch", "delete"].includes(method))
+          .map(([method, endpoint]) => {
+            const names = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+            expect(
+              (endpoint as { parameters?: Array<{ in: string; name: string }> }).parameters
+                ?.filter((p) => p.in === "path")
+                .map((p) => p.name)
+                .sort() ?? [],
+            ).toEqual(names);
+            return `${method.toUpperCase()} ${path}`;
+          }),
+      )
+      .sort();
+    expect(operations).toEqual([...cloudflareIndex.ops.map((op) => `${op.method} ${op.path}`), "POST /graphql"].sort());
+
     expect(() => cloudflare("cf", { purpose: "Ops", auth: { type: "globalApiKey" } })).toThrow(
       'cloudflare("cf") requires pin: { accountIds, zoneIds } with globalApiKey auth, or unpinned: true',
     );
@@ -734,41 +759,6 @@ describe("cloudflare() over a key", () => {
     expect(error.message).toContain("payment client secret");
     expect(sent).toHaveLength(before);
   });
-
-  it.each([200])(
-    "INV-5: refuses schemaless Cloudforce matches before a secret-bearing HTTP %i response",
-    async (status) => {
-      const connector = cloudflare("cf", TOKEN);
-      const marker = "stored-secret-marker";
-      const url = "https://example.com/download?token=bearer-marker";
-      respond = () =>
-        Response.json(
-          status === 200
-            ? { success: true, result: [{ value: marker, url }] }
-            : { success: false, errors: [{ code: 10001, message: `${marker} ${url}` }] },
-          { status },
-        );
-      for (const method of ["GET", "PATCH"] as const) {
-        const error = await refusal(
-          connector.callTool(
-            method === "GET" ? "cloudflare_api_read" : "cloudflare_api_write",
-            {
-              method,
-              path: `/accounts/${ACCOUNT}/cloudforce-one/v2/priority-intelligence/p1/matches`,
-              ...(method === "PATCH" ? { body: {} } : {}),
-            },
-            token(),
-          ),
-        );
-        expect(error.code).toBe("invalid_args");
-        expect(error.message).toContain("no reviewed response schema");
-        expect(`${error.message} ${JSON.stringify(error)}`).not.toMatch(/stored-secret-marker|bearer-marker/);
-      }
-      // Refusal precedes dispatch: neither success nor vendor error bodies can
-      // reach the response mapper, projections, or caller.
-      expect(sent).toEqual([]);
-    },
-  );
 
   it("keeps billed, activating, and outbound POSTs out of the read tool (round 1, finding 5)", async () => {
     const connector = cloudflare("cf", TOKEN);

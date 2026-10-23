@@ -403,6 +403,37 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(signal?.aborted).toBe(true);
   }
+  const fetch = vi.fn(async () => Response.json({}));
+  vi.stubGlobal("fetch", fetch);
+  const writeProbe = defineApiProvider({
+    ...definition,
+    probe: {
+      ...definition.probe,
+      run: (connection) =>
+        connection
+          .sendPath({ method: "POST", path: "/tickets", template: "/tickets" })
+          .pipe(Effect.map(({ data }) => data)),
+    },
+  })("tickets", { purpose: "Support" });
+  expect(await writeProbe.testCredential!("candidate", connectorContext())).toMatchObject({ ok: false });
+  expect(fetch).not.toHaveBeenCalled();
+  const withheldProbe = defineApiProvider({
+    ...definition,
+    safety: () => ({
+      reviewed: { redact: (value) => value, withholdsErrors: () => true },
+      sensitiveFields: { names: [], choice: "drop" },
+    }),
+    probe: {
+      ...definition.probe,
+      run: (connection) =>
+        connection
+          .send(who, {})
+          .pipe(Effect.andThen(Effect.die(new ConnectorCallError("auth_required", "stored-secret-fixture")))),
+    },
+  })("tickets", { purpose: "Support" });
+  await expect(withheldProbe.testCredential!("candidate", connectorContext())).rejects.toThrow(
+    "A provider hook withholding vendor text failed.",
+  );
 });
 
 it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writes once", WORKERS, async () => {

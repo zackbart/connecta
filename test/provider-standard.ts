@@ -16,13 +16,17 @@
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
-import { driftRecordProblems, generatedProblems } from "../scripts/drift-validate.mjs";
+import {
+  driftRecordProblems,
+  generatedProblems,
+  supplementalDocument,
+  validSupplementalPin,
+} from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
 export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set([
-    "cloudflare",
     "docs",
     "drive",
     "forms",
@@ -185,10 +189,38 @@ export function layoutViolations(provider: ProviderFacts): string[] {
 export function evidenceViolations(provider: ProviderFacts, _today: string): string[] {
   const found: string[] = [];
   const has = (path: string) => provider.files.includes(path);
+  const drift = parse(provider.read("drift.json"));
+  const pins = new Set<string>();
+  if (record(drift) && Array.isArray(drift["checks"])) {
+    for (const check of drift["checks"]) {
+      if (!record(check) || !record(check["specification"])) continue;
+      const pin = check["specification"]["pin"];
+      if (typeof pin !== "string") continue;
+      const document = supplementalDocument(pin);
+      if (!document) {
+        found.push("E3: supplemental pin needs a simple non-reserved filename");
+        continue;
+      }
+      pins.add(pin);
+      pins.add(document);
+      const value = parse(provider.read(`evidence/${pin}`));
+      const evidence =
+        record(drift["generated"]) && record(drift["generated"]["evidence"]) ? drift["generated"]["evidence"] : {};
+      if (
+        !validSupplementalPin(value) ||
+        !record(value) ||
+        value["digest"] !== evidence[document] ||
+        !has(`evidence/${document}`)
+      )
+        found.push(
+          "E3: supplemental pin needs https url/documentation, vendored: true and its matching document digest",
+        );
+    }
+  }
   for (const file of provider.files) {
     if (!file.startsWith("evidence/")) continue;
     const name = file.slice("evidence/".length);
-    if (!EVIDENCE_FILES.has(name) && !name.startsWith("pages/"))
+    if (!EVIDENCE_FILES.has(name) && !pins.has(name) && !name.startsWith("pages/"))
       found.push(`E1: ${file} is not a standard evidence name`);
   }
   if (has("evidence/openapi.json")) {
