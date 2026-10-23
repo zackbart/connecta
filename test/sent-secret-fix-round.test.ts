@@ -203,8 +203,30 @@ describe("redact before normalization or extraction", () => {
       { presentationId: "deck1", pageObjectId: "s1" },
       privateContext(value),
     );
-    expect(result.elements.map((element: any) => element.text)).toEqual([MARKER, MARKER]);
+    // The kit redacts each source leaf before joining the two runs.
+    expect(result.elements.map((element: any) => element.text)).toEqual([`${MARKER}${MARKER}`, `${MARKER}${MARKER}`]);
     expect(leaks(JSON.stringify(result), value)).toBe(false);
+
+    // A private value matching a public wire key cannot hide the shape's
+    // text before projection. Unknown keys and echoed values stay private.
+    stubGoogle(() => ({
+      objectId: "s1",
+      revisionId: "rev-1",
+      pageElements: [
+        {
+          objectId: "elem1",
+          shape: { text: { textElements: [{ textRun: { content: "Public retained text" } }] } },
+          prefix_shape: "shape",
+        },
+      ],
+    }));
+    const keyed: any = await connector.callTool(
+      "get_page",
+      { presentationId: "deck1", pageObjectId: "s1" },
+      privateContext("shape"),
+    );
+    expect(keyed.elements).toEqual([{ objectId: "elem1", kind: MARKER, text: "Public retained text" }]);
+    expect(JSON.stringify(keyed)).not.toContain("shape");
   });
 
   it("INV-5: a Google 400 cannot trim the beginning off a private value before its 500-character cap", async () => {

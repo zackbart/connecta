@@ -39,7 +39,7 @@
     "./providers/overflow starts at 20,410 B gzip before its C.2 kit migration. Provider entries are reported, not capped (#899).",
     "./providers/planning-center migrates onto the Effect provider kit from its 26,970 B guarded-fetch baseline; reported, not capped (#899).",
     "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
-    "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. Reported against this baseline, not capped (#899). Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; its former cap stayed at 89,685 B, set from the 29,685 B first measurement.",
+    "./providers/slides remeasures at 343,647 B gzip in C.7 (decision 0010), on a local Node 26 measure, from 35,074 B for the api() provider: it now runs on the Effect provider kit through the shared Google Workspace layer. A deployment pays the kit once. Reported against this baseline, not capped (#899).",
     "./providers/stripe remeasures at 377,374 B gzip in C.6 (decision 0010, #703, PR #951), Node 22 CI static at d39a49fa: its API tools now run on the Effect provider kit with the pinned compact operation index (638 operations), reviewed text and bounded binary bodies, and connected-account routing. This replaces the historical 232,089 B baseline that included the hosted MCP half removed by C.0c. Root and examples/worker remain unchanged at 398,591 B and 738,601 B in CI. Reported against this baseline, not capped (#899).",
     "./providers/tithely remeasures at 320,935 B gzip in B.5 (decision 0010), Node 22 CI static at 0b919ab7: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http), from 83,800 B for the guarded-fetch provider on the same local measure. Over the root it adds about 170 KB, which a deployment pays once for its first kit provider. Reported against this baseline, not capped (#899).",
     "./providers/vercel was measured at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): that historical entry carried the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899)."
@@ -104,7 +104,7 @@
       "baselineGzip": 26026
     },
     "./providers/slides": {
-      "baselineGzip": 35074
+      "baselineGzip": 343647
     },
     "./providers/stripe": {
       "baselineGzip": 377374
