@@ -248,7 +248,9 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   for (const row of rows) {
     const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       if (row.accept)
-        expect(new Headers(init?.headers).get("accept")).toBe(tithelyCalls[0]!.steps[0]![0]!.headers.accept);
+        expect(new Headers(init?.headers).get("accept")).toBe(
+          tithelyCalls.find(({ steps }) => steps.length > 0)!.steps[0]![0]!.headers.accept,
+        );
       return Response.json({ envelope: { visible: "yes", private: "drop" } });
     });
     vi.stubGlobal("fetch", fetch);

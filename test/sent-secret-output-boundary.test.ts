@@ -476,8 +476,8 @@ describe("provider sites the boundary cannot cover", () => {
       requestSentSecrets(held).arguments({ value: pco ? "ecre" : "bank" }, schema);
       const out = shown(
         await connector.callTool(
-          pco ? "pco_api_get" : "tithely_api_get",
-          { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organization" },
+          pco ? "pco_api_get" : "tithely_api_read",
+          { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organizations/org_1" },
           held,
         ),
       );
