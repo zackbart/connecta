@@ -177,12 +177,39 @@ describe("named reads (H9, H10)", () => {
       ["list_organizations", { raw: true }],
       ["get_charge", { chargeId: "ch_1", fields: ["bank"] }],
       ["list_charges", { organizationId: "org_1", fields: ["legal.date_of_birth"] }],
+      // A hatch write never leaves with a root no declared charge answer has.
+      ["tithely_api_write", { method: "POST", path: "/refunds/ch_1", fields: ["nope"] }],
     ] as const) {
       await expect(call(connection({ sensitiveFields: "return" }), tool, args), tool).rejects.toMatchObject({
         code: "invalid_args",
       });
     }
     expect(calls).toEqual([]);
+    // Charge answers arrive bare (as the reference documents) or enveloped; fields selects either.
+    const { organization: _organization, ...bare } = FULL_CHARGE;
+    for (const [tool, args, body, data] of [
+      [
+        "tithely_api_read",
+        { path: "/charges/ch_1", fields: ["amount", "donor_account.email"] },
+        bare,
+        { amount: "2500", donor_account: { email: "jane@example.com" } },
+      ],
+      [
+        "tithely_api_read",
+        { path: "/charges/ch_1", fields: ["object.amount"] },
+        { status: "success", charge_id: "ch_1", type: "Charge", object: bare },
+        { object: { amount: "2500" } },
+      ],
+      [
+        "tithely_api_write",
+        { method: "POST", path: "/refunds/ch_1", fields: ["charge_status"] },
+        { ...bare, charge_status: "refunded" },
+        { charge_status: "refunded" },
+      ],
+    ] as const) {
+      queue({ body });
+      expect(await call(connection(), tool, args), tool).toEqual({ status: 200, data });
+    }
     expect(() => connection({ sensitiveFields: "raw" })).toThrow(/sensitiveFields/);
   });
 

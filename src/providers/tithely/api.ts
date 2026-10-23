@@ -128,6 +128,10 @@ const Single = (id: string, record: Schema.Top) =>
 const Rows = (record: Schema.Top) =>
   Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(record)) });
 const Note = Schema.Struct({ ...Envelope.fields, note: Schema.optionalKey(Schema.String) });
+// A charge answer arrives either way: the reference documents the bare record for retrieve,
+// create, quick charge and refund, and Tithe.ly has also answered in the single-record envelope.
+// The hatch admits `fields` roots from both.
+const ChargeAnswer = Schema.Union([ChargeRecord, Single("charge_id", ChargeRecord)]);
 // Key annotations survive the form and query encodings the manifest renders.
 const described = <S extends Schema.Top>(schema: S, description: string) =>
   schema.pipe(Schema.annotateKey({ description }));
@@ -196,7 +200,7 @@ export const listCharges = get("listCharges", "/charges-list", {
 }).annotate(Summary, "List charges (gifts) for an organization or donor");
 export const getCharge = get("getCharge", "/charges/:charge_id", {
   params: id("charge_id"),
-  success: Single("charge_id", ChargeRecord),
+  success: ChargeAnswer,
 }).annotate(Summary, "Retrieve a charge");
 export const listRecurring = get("listRecurring", "/recurring-list", {
   query: { ...ScopeQuery, ...PageQuery },
@@ -254,7 +258,7 @@ export const TithelyApi = vendor(
         memo: optionalField("A memo or note for the gift."),
       }),
     ),
-    success: Single("charge_id", ChargeRecord),
+    success: ChargeAnswer,
   }).annotate(Summary, "Create a charge (gift) on a donor's stored payment method"),
   post("chargeOnce", "/charge-once", {
     payload: form(
@@ -270,11 +274,11 @@ export const TithelyApi = vendor(
         memo: optionalField("A memo or note for the gift."),
       }),
     ),
-    success: Single("charge_id", ChargeRecord),
+    success: ChargeAnswer,
   }).annotate(Summary, "Quick charge a donor once from a Tithely.js token, without an account"),
   post("refundCharge", "/refunds/:charge_id", {
     params: id("charge_id"),
-    success: Single("charge_id", ChargeRecord),
+    success: ChargeAnswer,
   }).annotate(Summary, "Refund a charge"),
   listRecurring,
   getRecurring,
