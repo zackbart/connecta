@@ -48,6 +48,8 @@ const bodyPaths = ["payload", "message.payload", "messages[*].payload"].flatMap(
 );
 export const GmailApi = {
   ...vendor({ name: "Gmail", manifestBase: "/gmail/v1/users/{userId}" }, ...OPERATIONS),
+  // Legacy body reads accept optional sizes. Attachment projection instead checks
+  // originalLength against the fresh part's required size and the download's optional size.
   encodedFields: [...bodyPaths, "data"].map((path) => ({
     path,
     encoding: "base64url" as const,
