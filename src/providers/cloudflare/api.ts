@@ -1051,7 +1051,7 @@ export function settings(options: Readonly<CloudflareOptions>): CloudflareRestOp
   const auth = options.auth.type;
   if (auth !== "apiToken" && auth !== "globalApiKey")
     throw new Error(
-      "remoteMcp with ConnectaConfig.classification for hosted MCP connections; use a distinct id beside the API connector.",
+      "remoteMcp() with ConnectaConfig.classification for hosted MCP connections; use a distinct id beside the API connector.",
     );
   const maxConcurrency = options.maxConcurrency ?? 6;
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
