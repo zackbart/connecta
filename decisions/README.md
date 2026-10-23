@@ -34,3 +34,7 @@ What changes for deployments, and what evidence would make us reconsider?
 A superseded record points to its replacement issue, PR, or record in its prose.
 
 [0001](./0001-ethos-verdict-table.md) preserves the old verdict table.
+
+[0014](./0014-api-tool-shape.md) sets the vendored API tool shape for each
+provider's step 2: a coverage hatch, curated tools and optional generated
+per-operation catalogs.

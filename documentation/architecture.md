@@ -2103,6 +2103,14 @@ and indexed hatches dispatch through `sendPath`. Parameter names outside
 `[A-Za-z0-9_-]+` fail construction. Manifest/index operation-set equality is
 checked independently of drift digests, which still use full vendor contracts.
 
+A tool may opt into `inputOrder: "original"` when legacy request bytes depend
+on argument insertion order. After normal successful decoding, the builder
+copies only decoded values in the original key order, recursively through
+objects and arrays. Dropped keys stay dropped and decoder-introduced keys
+append at the end. Capacity selectors, idempotency and the tool program all
+receive that reordered decoded value. The default preserves the decoder's
+existing order; the option retains no original values and skips no validation.
+
 `restKitTools` may declare a `writeSteps` map whose values are `"once"`.
 Construction freezes the map; every named step sends at most once and an
 undeclared step is refused before dispatch. Omitting it retains the single
