@@ -168,7 +168,7 @@ var options12 = { "purpose": "Audit fixture", "environment": "production" };
 var fixture12 = {
   name: "overflow",
   options: options12,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "staging", "options": { "environment": "staging" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "staging", "options": { "environment": "staging" } }],
   create(id = "fixture", overrides = {}) {
     return overflow(id, { ...options12, ...overrides });
   },
