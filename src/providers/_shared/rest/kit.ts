@@ -180,6 +180,8 @@ export interface RestKitOptions extends Pick<
   | "idempotencyHeader"
 > {
   readonly connection: Connection;
+  /** Construction-owned capacity for bounded auxiliary requests beside the one resource write. */
+  readonly writeSteps?: Readonly<Record<string, "once">>;
   /** Origin refusals precede argument repair, just as on the legacy hatch. */
   readonly checkServer?: (server: string | undefined) => string | undefined;
   readonly send: (call: RestCall) => Effect.Effect<RestResult, HttpFailure, CallServices>;
@@ -299,6 +301,7 @@ export function catalogOrder(actual: unknown, legacy: unknown): unknown {
 
 /** Four legacy tools, with kit leases, capacity, mapping and dispatch. */
 export function restKitTools(vendor: RestKitOptions): ApiTool[] {
+  const writeSteps = vendor.writeSteps === undefined ? undefined : Object.freeze({ ...vendor.writeSteps });
   const { index, title } = vendor;
   const tool = (kind: string) => `${vendor.vendor}_api_${kind}`;
   const PATH = pathSchema(vendor.pathExample);
@@ -597,6 +600,7 @@ export function restKitTools(vendor: RestKitOptions): ApiTool[] {
     );
   return declarations.map((declaration, i) => {
     const spec = {
+      ...(writeSteps === undefined ? {} : { writeSteps }),
       name: declaration.name,
       description: declaration.description,
       input: schema(declaration.inputSchema!),
