@@ -839,6 +839,55 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       enum: ["POST"],
       description: "The operation's HTTP method.",
     });
+    const orderedInput = Schema.Struct({
+      first: Schema.String,
+      second: Schema.String,
+      rows: Schema.Array(Schema.Struct({ a: Schema.String, b: Schema.String })),
+    });
+    const capacityArgs: string[] = [];
+    const preserve = write(connection, {
+      name: "ordered",
+      description: "Preserve decoded argument order.",
+      input: orderedInput,
+      inputOrder: "original",
+      output: Schema.Unknown,
+      destructive: false,
+      writeSteps: {
+        write: {
+          maxItems: 1,
+          items: (args) => {
+            capacityArgs.push(JSON.stringify(args));
+            return ["one"];
+          },
+          request: () => POST_ITEMS,
+        },
+      },
+      run: (args) => Effect.succeed(args),
+    });
+    const unchanged = read(connection, {
+      name: "decoded_order",
+      description: "Keep default decoder ordering.",
+      input: orderedInput,
+      output: Schema.Unknown,
+      run: (args) => Effect.succeed(args),
+    });
+    const orderedConnector = apiConnector("ordered", { tools: [preserve, unchanged] });
+    for (const args of [
+      { second: "two", rows: [{ b: "bee", a: "aye" }], first: "one" },
+      { rows: [{ a: "aye", b: "bee" }], first: "one", second: "two" },
+    ]) {
+      const result = await orderedConnector.callTool("ordered", args, context());
+      expect(JSON.stringify(result)).toBe(JSON.stringify(args));
+      expect(capacityArgs.at(-1)).toBe(JSON.stringify(args));
+      expect(result).not.toBe(args);
+      expect((result as typeof args).rows[0]).not.toBe(args.rows[0]);
+      expect(JSON.stringify(await orderedConnector.callTool("decoded_order", args, context()))).toBe(
+        '{"first":"one","second":"two","rows":[{"a":"aye","b":"bee"}]}',
+      );
+    }
+    await expect(
+      orderedConnector.callTool("ordered", { first: "one", second: 2, rows: [] }, context()),
+    ).rejects.toBeDefined();
     delete steps["write"];
     steps["extra"] = "once";
     const connector = apiConnector("acme", { tools });
