@@ -97,6 +97,7 @@ import {
   type ProviderRequest,
 } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { errors as breezeErrors } from "../src/providers/breeze/api.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
@@ -1255,6 +1256,7 @@ function acme(
     authenticate?: GuardedOptions["authenticate"];
     timeoutMs?: number;
     result?: Parameters<typeof connect>[2]["result"];
+    errors?: VendorErrors;
   } = {},
 ) {
   const guarded = guardedClient({
@@ -1265,7 +1267,7 @@ function acme(
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
   });
   return connect(ACME_API, options.refresh ? refreshOnce(guarded as never) : guarded, {
-    errors: VENDOR,
+    errors: options.errors ?? VENDOR,
     safety: resultSafety({
       review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
       reviewed: {
@@ -2001,7 +2003,14 @@ async function through(tool: ApiTool, args: Record<string, unknown>): Promise<{ 
 
 it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch", WORKERS, async () => {
   for (const test of [
-    { name: "read", method: "GET", served: "read", override: false, code: "unavailable", retryable: true },
+    {
+      name: "Breeze read with empty body",
+      method: "GET",
+      served: "read",
+      override: false,
+      code: "unavailable",
+      retryable: true,
+    },
     {
       name: "write",
       method: "POST",
@@ -2028,8 +2037,9 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
     },
   ] as const) {
     sent = [];
-    answers = [() => Response.json({}, { status: 421 })];
-    const connection = acme();
+    answers = [() => new Response(null, { status: 421 })];
+    const breezeRead = test.name === "Breeze read with empty body";
+    const connection = acme({ errors: breezeRead ? breezeErrors : VENDOR });
     const tool = read(connection, {
       name: "misdirected",
       description: "A request answered 421.",
@@ -2054,7 +2064,7 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
     expect(error, test.name).toMatchObject({
       code: test.code,
       retryable: test.retryable,
-      message: "Acme returned HTTP 421.",
+      message: breezeRead ? "Breeze request failed (HTTP 421)." : "Acme returned HTTP 421.",
     });
     expect(sent, test.name).toHaveLength(1);
     expect(sent[0]?.method, test.name).toBe(test.method);
