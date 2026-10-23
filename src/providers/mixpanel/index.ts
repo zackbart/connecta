@@ -1,11 +1,21 @@
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { apiConnector } from "../../connectors/api-connector.js";
+import { defineApiProvider } from "../../http/provider.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { tracksEveryRequest } from "../../provider-call.js";
-import { defineProvider, type ProviderContext } from "../../provider.js";
-import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { removedHostedMcp } from "../_shared/rest/dispatch.js";
-import { MIXPANEL_API_ADMISSION, mixpanelRest } from "./rest.js";
+import type { ConnectorCallAdmissionPolicy } from "../../types.js";
+import {
+  MIXPANEL_API_ADMISSION,
+  MixpanelApi,
+  settings,
+  MAX_RESPONSE_BYTES,
+  READ_CAP_MS,
+  authenticate,
+  safety,
+  mixpanelErrors,
+  result,
+  getAccount,
+  usageGuide,
+} from "./api.js";
+import { mixpanelTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
 
 export type MixpanelRegion = "us" | "eu" | "in";
@@ -49,12 +59,6 @@ export interface MixpanelApiOptions extends MixpanelCommonOptions {
 
 export type MixpanelOptions = MixpanelApiOptions;
 
-const REGION_COPY: Readonly<Record<MixpanelRegion, string>> = {
-  us: "US",
-  eu: "EU",
-  in: "India",
-};
-
 /** The closed options mixpanel() accepts; see `assertKnownOptions`. */
 const MIXPANEL_OPTIONS = variants(
   "via",
@@ -70,57 +74,39 @@ const MIXPANEL_OPTIONS = variants(
 );
 
 /** Mixpanel service-account REST; via: "api" is required. */
-export const mixpanel = defineProvider<MixpanelOptions>({
+export const mixpanel = defineApiProvider<MixpanelOptions>({
   name: "mixpanel",
   title: "Mixpanel",
-  kind: "api",
   readme: "Mixpanel",
   bundle: {
-    baselineGzip: 205500,
-    note: "./providers/mixpanel retains its 205,500 B gzip baseline from #823, which included the former hosted client alongside the REST connector, guarded transport, shared operation index and value-safety engine. C.0c removes the hosted MCP half. The nine-operation reviewed subset was shrunk to depth 3 without descriptions before that measurement: operations.ts is 1355 B gzip. Reported against this baseline, not capped (#899). No new runtime dependencies.",
+    baselineGzip: 336200,
+    note: "./providers/mixpanel remeasures locally at 336,200 B gzip in C.6 (#703), on Node 26 with the system zlib preload. The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. CI measurement remains for the orchestrator to record. Provider entries are reported, not capped (#899); no runtime dependency was added.",
   },
   skill,
   options: MIXPANEL_OPTIONS,
-  create: (id, options, provider) => {
-    const region = options.region ?? "us";
-    if (!["us", "eu", "in"].includes(region)) {
-      throw new Error('region must be "us", "eu", or "in".');
-    }
-    if (options.via !== "api") return removedHostedMcp();
-    return mixpanelApi(id, options, provider);
+  vendor: MixpanelApi,
+  baseUrl: (options) => settings(options).query,
+  displayTitle: (options) => `Mixpanel API (${options.region ?? "us"})`,
+  description: (options) =>
+    `Mixpanel service-account REST APIs (${options.region ?? "us"} residency): ${options.purpose}`,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
+  timeoutMs: READ_CAP_MS,
+  credential: {
+    label: "Mixpanel service account",
+    description:
+      "username:secret from Mixpanel organization settings. Import requires Owner or Admin on the target project.",
+    placeholder: "username:secret",
   },
+  defaultCallAdmission: MIXPANEL_API_ADMISSION,
+  authenticate,
+  safety,
+  errors: mixpanelErrors,
+  result,
+  probe: {
+    operation: getAccount,
+    request: {},
+    describe: () => "Authenticated Mixpanel service account; list_projects returns its reachable project metadata.",
+  },
+  guide: usageGuide,
+  tools: mixpanelTools,
 });
-
-function mixpanelApi(id: string, options: MixpanelApiOptions, provider: ProviderContext): Connector {
-  if (options.auth?.type !== "credential") throw new Error('via: "api" requires auth: { type: "credential" }.');
-  if (
-    options.defaultProjectId !== undefined &&
-    (!Number.isSafeInteger(options.defaultProjectId) || options.defaultProjectId < 1)
-  ) {
-    throw new Error("defaultProjectId must be a positive safe integer.");
-  }
-  const region = options.region ?? "us";
-  const rest = mixpanelRest(region, options.defaultProjectId);
-  const instructions = options.instructions?.trim();
-  return tracksEveryRequest(
-    apiConnector(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? `Mixpanel API (${region})`,
-      description: `Mixpanel service-account REST APIs (${region} residency): ${options.purpose}`,
-      credential: {
-        label: "Mixpanel service account",
-        description:
-          "username:secret from Mixpanel organization settings. Import requires Owner or Admin on the target project.",
-        placeholder: "username:secret",
-      },
-      testCredential: rest.testCredential,
-      callAdmission: options.callAdmission === undefined ? MIXPANEL_API_ADMISSION : options.callAdmission,
-      usageGuide: {
-        content: `# Mixpanel API usage\n\nService-account REST, ${region} residency. Account purpose: ${options.purpose}\n\nDefault project: ${options.defaultProjectId ?? "none; supply project_id"}.${skill.fragments.api}${instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""}`,
-        summary: `${REGION_COPY[region]} residency, service-account REST. Raw export, user activity, profiles, reports and event import.`,
-        required: true,
-      },
-      tools: rest.tools,
-    }),
-  );
-}

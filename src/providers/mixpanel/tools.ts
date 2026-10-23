@@ -1,30 +1,17 @@
+// Step-1 Mixpanel tools retain catalog, projection and paging bytes on kit leases.
+import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
-import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { credentialProbeContext } from "../../runtime/credential-probe.js";
-import { ConnectorCallError, resendAdvice } from "../../errors.js";
-import type { ConnectorContext, ConnectorCallAdmissionPolicy, CredentialTestResult, JsonSchema } from "../../types.js";
-import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
-import { callRest, restCall, restTools, restTransport, type RestVendor, type RestCall } from "../_shared/rest/tools.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
-import { openapi } from "./operations.js";
-import { MIXPANEL_VALUE_SAFETY } from "./value-safety.js";
-import type { MixpanelRegion } from "./index.js";
+import { ConnectorCallError } from "../../errors.js";
+import { Refusal, type HttpFailure } from "../../http/errors.js";
+import type { CallServices } from "../../http/services.js";
+import { read, write } from "../../http/tools.js";
+import type { Connection } from "../../http/vendor.js";
+import type { JsonSchema } from "../../types.js";
+import { catalogOrder, checked, restKitTools, schema } from "../_shared/rest/kit.js";
+import type { RestMethod } from "../_shared/rest/operation-index.js";
+import { INDEX, SAFETY, READ_POSTS, record, invalid, regionalConnection, scopedCall, sendMixpanel } from "./api.js";
+import type { MixpanelApiOptions } from "./index.js";
 
-/** Per runtime and connection, conservatively shared across its projects and API families. */
-export const MIXPANEL_API_ADMISSION: ConnectorCallAdmissionPolicy = {
-  rules: [
-    {
-      maxConcurrency: 5,
-      budget: { kind: "rolling-window", maxCalls: 60, windowMs: 3_600_000 },
-      maxQueueSize: 16,
-      queueTimeoutMs: 5_000,
-    },
-  ],
-};
-
-const INDEX = new OperationIndex(openapi, { vendor: "mixpanel", title: "Mixpanel" });
-const SAFETY = valueSafety(MIXPANEL_VALUE_SAFETY, () => INDEX);
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_EXPORT_BYTES = 1024 * 1024;
 const DEFAULT_EXPORT_BYTES = 64 * 1024;
 const MAX_IMPORT_BYTES = 10_000_000;
@@ -89,18 +76,6 @@ const EXPORT_PROPERTIES: Record<string, JsonSchema> = {
   },
 };
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function invalid(message: string): never {
-  throw new ConnectorCallError("invalid_args", message);
-}
-function project(value: unknown, defaultProjectId?: number): number {
-  const id = value ?? defaultProjectId;
-  if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1)
-    invalid("Supply a positive project_id from list_projects or configure defaultProjectId; never guess one.");
-  return id;
-}
 function dates(input: Record<string, unknown>): void {
   for (const key of ["from_date", "to_date"]) {
     const value = input[key];
@@ -125,162 +100,72 @@ function retention(query: Record<string, unknown>): void {
     invalid("birth retention, including the default, requires born_event. Use compounded for recurring retention.");
   }
 }
-function failure(status: number, headers: Headers): ConnectorCallError {
-  if (status === 401)
-    return new ConnectorCallError(
-      "auth_required",
-      "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
-    );
-  if (status === 403)
-    return new ConnectorCallError(
-      "provider_permission_denied",
-      "Mixpanel refused access. Check the service account's project membership, data sensitivity and role; import needs Owner or Admin.",
-      { retryable: false },
-    );
-  if (status === 429)
-    return resendAdvice(
-      new ConnectorCallError("rate_limited", "Mixpanel's project API budget is spent.", {
-        retryAfterMs: retryAfterMs(headers) ?? 60_000,
+type Program = (args: Record<string, any>) => Effect.Effect<any, HttpFailure, CallServices>;
+type Declaration = Omit<ApiTool, "handler"> & { run: Program };
+const authored = <A>(work: Effect.Effect<A, HttpFailure, CallServices>) =>
+  work.pipe(
+    Effect.catchDefect((error) =>
+      error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+    ),
+  );
+function inputSchema(node: JsonSchema): Schema.Codec<any> {
+  if (Object.keys(node.properties ?? {}).length === 0) return Schema.Record(Schema.String, Schema.Never);
+  const required = (node.required ?? []) as string[];
+  return Schema.Struct(
+    Object.fromEntries(
+      Object.entries(node.properties ?? {}).map(([key, property]) => {
+        const value =
+          typeof property.pattern === "string"
+            ? Schema.String.check(
+                Schema.makeFilter((value: string) => new RegExp(String(property.pattern)).test(value), {
+                  toJsonSchema: () => ({ pattern: property.pattern }),
+                }),
+              ).annotate({ description: property.description! })
+            : schema(property);
+        return [key, required.includes(key) ? value : Schema.optionalKey(value)];
       }),
-      "; respect the retry window",
-    );
-  const wait = retryAfterMs(headers);
-  if (status >= 500)
-    return new ConnectorCallError(
-      "unavailable",
-      `Mixpanel returned HTTP ${status}.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
-    );
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Mixpanel returned HTTP ${status}. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.`,
-    { retryable: false },
+    ),
   );
 }
-async function authenticate(ctx: ConnectorContext): Promise<Record<string, string>> {
-  const pair = await ctx.credential?.get();
-  if (!pair)
-    throw new ConnectorCallError(
-      "auth_required",
-      "An operator must set the Mixpanel service account as username:secret in this connection's operator UI.",
-    );
-  const colon = pair.indexOf(":");
-  if (colon < 1 || colon === pair.length - 1 || /[\r\n]/.test(pair))
-    throw new ConnectorCallError(
-      "auth_required",
-      "The Mixpanel service account must be username:secret, with both fields non-empty.",
-    );
-  const bytes = encoder.encode(pair);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return { Authorization: `Basic ${btoa(binary)}` };
-}
-function encode(call: RestCall) {
-  if (call.op.path === "/api/query/engage") {
-    const form = new URLSearchParams();
-    for (const [key, value] of Object.entries(call.body as Record<string, unknown>)) {
-      if (value !== undefined)
-        form.set(key, Array.isArray(value) || record(value) ? JSON.stringify(value) : String(value));
-    }
-    return {
-      query: call.query as Record<string, string | number>,
-      rawBody: form.toString(),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    };
-  }
-  const query: Record<string, string | number | boolean> = {};
-  for (const [key, value] of Object.entries(call.query)) {
-    if (value === undefined) continue;
-    if (Array.isArray(value)) query[key] = JSON.stringify(value);
-    else if (["string", "number", "boolean"].includes(typeof value)) query[key] = value as string | number | boolean;
-    else invalid(`Mixpanel query ${key} must be a scalar or JSON array.`);
-  }
-  return { query, ...(call.body !== undefined ? { body: call.body } : {}) };
-}
-
-/** Every dispatch has one fixed documented operation and residency host. */
-export function mixpanelRest(
-  region: MixpanelRegion,
-  defaultProjectId?: number,
-): { tools: ApiTool[]; testCredential(value: string, ctx: ConnectorContext): Promise<CredentialTestResult> } {
-  const app = region === "us" ? "mixpanel.com" : `${region}.mixpanel.com`;
-  const suffix = region === "us" ? "" : `-${region}`;
-  const origins = {
-    query: `https://${app}`,
-    app: `https://${app}`,
-    export: `https://data${suffix}.mixpanel.com`,
-    ingestion: `https://api${suffix}.mixpanel.com`,
-  };
-  const transports = Object.fromEntries(
-    Object.entries(origins).map(([server, baseUrl]) => [
-      server,
-      restTransport({
-        provider: "Mixpanel",
-        baseUrl,
-        maxResponseBytes: MAX_RESPONSE_BYTES,
-        timeoutMs: 60_000,
-        authenticate,
-      }),
-    ]),
-  ) as Record<string, GuardedTransport>;
-  const vendor: RestVendor = {
-    vendor: "mixpanel",
-    title: "Mixpanel",
-    index: INDEX,
-    valueSafety: SAFETY,
-    transport: (server) => transports[server ?? "query"] ?? "Mixpanel admits only its reviewed residency hosts.",
-    failure,
-    encode,
-    readPosts: [["POST", "/api/query/engage", "Queries existing profiles; no profile mutation or ingestion occurs."]],
-    scope: (call) =>
-      call.path === "/api/app/me"
-        ? call
-        : { ...call, query: { ...call.query, project_id: project(call.query.project_id, defaultProjectId) } },
-    result: (body) => {
-      if (record(body) && (body.status === "error" || body.status === 0 || body.error))
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "Mixpanel reported a failure in a successful HTTP response. Check parameters and project access.",
-          { retryable: false },
-        );
-      return body;
-    },
-  };
-  const request = (
-    ctx: ConnectorContext,
+export function mixpanelTools({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: Readonly<MixpanelApiOptions>;
+}): ApiTool[] {
+  const exports = regionalConnection(options, "export");
+  const ingestion = regionalConnection(options, "ingestion");
+  const call = (
     method: RestMethod,
     path: string,
-    query: Record<string, unknown> = {},
-    body?: unknown,
-  ) => callRest(vendor, restCall(vendor, method, path, { query, body }), ctx);
-
-  async function exportEvents(args: Record<string, unknown>, ctx: ConnectorContext) {
-    dates(args);
-    const maxBytes = args.max_bytes ?? DEFAULT_EXPORT_BYTES;
-    const limit = args.limit ?? 1000;
-    if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_EXPORT_BYTES)
-      invalid("max_bytes must be 1..1048576, Connecta's export ceiling.");
-    if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 100_000)
-      invalid("limit must be 1..100000, Mixpanel's export event ceiling.");
-    const call = restCall(vendor, "GET", "/api/2.0/export", { query: { ...args, max_bytes: undefined, limit } });
-    const framing = encode(call);
-    return transports.export!(
-      { method: "GET", path: call.path, query: framing.query, prefixOnly: true },
-      ctx,
-      async (response) => {
-        if (!response.ok) {
-          // Cancel the unread error stream without waiting for its first chunk.
-          // Await it so a direct connector call also owns the body's lifetime.
-          try {
-            await response.cancel();
-          } catch {
-            /* The status still describes an unreadable error response. */
-          }
-          if (ctx.signal?.aborted) throw ctx.signal.reason;
-          throw failure(response.status, response.headers);
-        }
-        const { bytes, truncated: byteTruncated } = await response.prefix(maxBytes);
-        const text = new TextDecoder().decode(bytes);
+    input: { query?: Readonly<Record<string, unknown>>; body?: unknown } = {},
+  ) => scopedCall(options, method, path, input);
+  const send = (prepared: ReturnType<typeof call>) =>
+    prepared.path === "/api/2.0/export"
+      ? exportEvents({
+          ...prepared.query,
+          ...(typeof prepared.query.event === "string" ? { event: JSON.parse(prepared.query.event) } : {}),
+        }).pipe(Effect.map((data) => ({ status: 200, data })))
+      : sendMixpanel(connection, exports, ingestion, prepared).pipe(
+          Effect.map(({ status, data }) => ({ status, data: data ?? null })),
+        );
+  const request = (method: RestMethod, path: string, query: Record<string, unknown> = {}, body?: unknown) =>
+    checked(() => call(method, path, { query, body })).pipe(Effect.flatMap(send));
+  const exportEvents: Program = (args) =>
+    authored(
+      Effect.gen(function* () {
+        dates(args);
+        const maxBytes = args.max_bytes ?? DEFAULT_EXPORT_BYTES;
+        const limit = args.limit ?? 1000;
+        if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_EXPORT_BYTES)
+          invalid("max_bytes must be 1..1048576, Connecta's export ceiling.");
+        if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 100_000)
+          invalid("limit must be 1..100000, Mixpanel's export event ceiling.");
+        const prepared = call("GET", "/api/2.0/export", { query: { ...args, max_bytes: undefined, limit } });
+        const answer = yield* sendMixpanel(connection, exports, ingestion, prepared, { maxBytes });
+        const text = typeof answer.data === "string" ? answer.data : "";
+        const byteTruncated = answer.prefix!.truncated;
         const complete = byteTruncated ? text.slice(0, text.lastIndexOf("\n") + 1) : text;
         const lines = complete.split("\n").filter((line) => line.trim() !== "");
         let events: unknown[];
@@ -297,16 +182,15 @@ export function mixpanelRest(
           });
         const truncated = byteTruncated || events.length >= limit;
         return {
-          events: SAFETY.redact(events.slice(0, limit), "GET", call.path),
-          bytes_read: bytes.length,
+          events: SAFETY.redact(events.slice(0, limit), "GET", prepared.path),
+          bytes_read: answer.prefix!.bytes,
           truncated,
           notice: truncated
             ? "Export may omit events at the byte or event cap. There is no cursor; narrow the date range or filters. Never infer absence from this sample."
             : "Complete response for the requested range and filters.",
         };
-      },
+      }),
     );
-  }
 
   function readTool(
     name: string,
@@ -314,25 +198,37 @@ export function mixpanelRest(
     path: string,
     properties: Record<string, JsonSchema>,
     required: string[],
-    handler?: ApiTool["handler"],
-  ): ApiTool {
+    run?: Program,
+  ): Declaration {
     return {
       name,
       description,
       annotations: READ,
       inputSchema: { type: "object", properties, required, additionalProperties: false },
       outputSchema: OUT,
-      handler:
-        handler ??
-        (async (args, ctx) => {
-          const { raw: _raw, ...query } = args;
-          if (query.from_date !== undefined || query.to_date !== undefined) dates(query);
-          if (path === "/api/query/retention") retention(query);
-          return await request(ctx, "GET", path, query);
-        }),
+      run:
+        run ??
+        ((args) =>
+          authored(
+            Effect.gen(function* () {
+              const { raw: _raw, ...query } = args;
+              if (query.from_date !== undefined || query.to_date !== undefined) dates(query);
+              if (path === "/api/query/retention") retention(query);
+              return yield* request("GET", path, query);
+            }),
+          )),
     };
   }
-  const generic = restTools(vendor)
+  const generic = restKitTools({
+    vendor: "mixpanel",
+    title: "Mixpanel",
+    index: INDEX,
+    valueSafety: SAFETY,
+    readPosts: READ_POSTS,
+    connection,
+    send,
+    scope: (prepared) => call(prepared.method, prepared.path, { query: prepared.query, body: prepared.body }),
+  })
     .filter((tool) => tool.name !== "mixpanel_api_write")
     .map((tool): ApiTool =>
       tool.name !== "mixpanel_api_read"
@@ -384,8 +280,8 @@ export function mixpanelRest(
                 query.project_id = args.project_id;
               }
               if (path === "/api/2.0/export") {
-                const call = restCall(vendor, "GET", path, { query });
-                INDEX.check(call.op, call.query, call.body);
+                const prepared = call("GET", path, { query });
+                INDEX.check(prepared.op, prepared.query, prepared.body);
                 let event = query.event;
                 if (typeof event === "string") {
                   try {
@@ -401,16 +297,21 @@ export function mixpanelRest(
                   invalid("event must be a JSON array of names.");
                 if (args.select !== undefined)
                   invalid("Generic export does not accept select; reduce the bounded export data in execute_code.");
-                return { status: 200, data: await exportEvents({ ...query, event }, ctx) };
+                return await tool.handler(
+                  { path: args.path, ...(args.select === undefined ? {} : { select: args.select }), query },
+                  ctx,
+                );
               }
               if (query.from_date !== undefined || query.to_date !== undefined) dates(query);
               if (path === "/api/query/retention") retention(query);
-              return await tool.handler({ ...args, query }, ctx);
+              return await tool.handler(
+                { path: args.path, ...(args.select === undefined ? {} : { select: args.select }), query },
+                ctx,
+              );
             },
           },
     );
-  const tools: ApiTool[] = [
-    ...generic,
+  const declarations: Declaration[] = [
     readTool(
       "list_projects",
       "Read service-account identity and reachable project metadata. Project tokens and credentials are redacted.",
@@ -439,7 +340,7 @@ export function mixpanelRest(
         },
         required: ["events", "bytes_read", "truncated", "notice"],
       },
-      handler: exportEvents,
+      run: exportEvents,
     },
     readTool(
       "get_profile_activity",
@@ -454,28 +355,31 @@ export function mixpanelRest(
         raw: RAW,
       },
       ["distinct_id", "from_date", "to_date"],
-      async (args, ctx) => {
-        dates(args);
-        const { distinct_id, raw, ...query } = args;
-        const result = await request(ctx, "GET", "/api/query/stream/query", { ...query, distinct_ids: [distinct_id] });
-        if (raw) return result;
-        const body = result.data;
-        const events = record(body) && record(body.results) ? body.results.events : undefined;
-        if (
-          !Array.isArray(events) ||
-          events.some((e) => !record(e) || !record(e.properties) || typeof e.properties.time !== "number")
-        )
-          throw new ConnectorCallError("connector_call_failed", "Mixpanel returned an unexpected activity shape.", {
-            retryable: false,
-          });
-        return {
-          status: result.status,
-          data: {
-            events: [...events].sort((a, b) => a.properties.time - b.properties.time),
-            notice: "Maintenance endpoint; Mixpanel documents no completeness guarantee or pagination cursor.",
-          },
-        };
-      },
+      (args) =>
+        authored(
+          Effect.gen(function* () {
+            dates(args);
+            const { distinct_id, raw, ...query } = args;
+            const result = yield* request("GET", "/api/query/stream/query", { ...query, distinct_ids: [distinct_id] });
+            if (raw) return result;
+            const body = result.data;
+            const events = record(body) && record(body.results) ? body.results.events : undefined;
+            if (
+              !Array.isArray(events) ||
+              events.some((e) => !record(e) || !record(e.properties) || typeof e.properties.time !== "number")
+            )
+              throw new ConnectorCallError("connector_call_failed", "Mixpanel returned an unexpected activity shape.", {
+                retryable: false,
+              });
+            return {
+              status: result.status,
+              data: {
+                events: [...events].sort((a, b) => a.properties.time - b.properties.time),
+                notice: "Maintenance endpoint; Mixpanel documents no completeness guarantee or pagination cursor.",
+              },
+            };
+          }),
+        ),
     ),
     readTool(
       "query_profiles",
@@ -493,39 +397,49 @@ export function mixpanelRest(
         raw: RAW,
       },
       [],
-      async (args, ctx) => {
-        const { project_id, workspace_id, raw, ...body } = args;
-        if (typeof body.page === "number" && body.page > 0 && !body.session_id)
-          invalid("A nonzero profile page requires session_id from the previous response.");
-        if (body.distinct_id !== undefined && body.distinct_ids !== undefined)
-          invalid("Use distinct_id or distinct_ids, not both.");
-        const result = await request(ctx, "POST", "/api/query/engage", { project_id, workspace_id }, body);
-        if (raw) return result;
-        const data = result.data;
-        if (
-          !record(data) ||
-          !Array.isArray(data.results) ||
-          typeof data.page_size !== "number" ||
-          data.page_size < 1 ||
-          typeof data.page !== "number" ||
-          typeof data.session_id !== "string"
-        )
-          throw new ConnectorCallError("connector_call_failed", "Mixpanel returned an unexpected profile page shape.", {
-            retryable: false,
-          });
-        const hasMore = data.results.length >= data.page_size;
-        return {
-          ...result,
-          data: {
-            results: data.results,
-            total: data.total,
-            page: data.page,
-            session_id: data.session_id,
-            page_size: data.page_size,
-          },
-          page: { hasMore, ...(hasMore ? { next: String(data.page + 1), param: "page", in: "body" as const } : {}) },
-        };
-      },
+      (args) =>
+        authored(
+          Effect.gen(function* () {
+            const { project_id, workspace_id, raw, ...body } = args;
+            if (typeof body.page === "number" && body.page > 0 && !body.session_id)
+              invalid("A nonzero profile page requires session_id from the previous response.");
+            if (body.distinct_id !== undefined && body.distinct_ids !== undefined)
+              invalid("Use distinct_id or distinct_ids, not both.");
+            const result = yield* request("POST", "/api/query/engage", { project_id, workspace_id }, body);
+            if (raw) return result;
+            const data = result.data;
+            if (
+              !record(data) ||
+              !Array.isArray(data.results) ||
+              typeof data.page_size !== "number" ||
+              data.page_size < 1 ||
+              typeof data.page !== "number" ||
+              typeof data.session_id !== "string"
+            )
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "Mixpanel returned an unexpected profile page shape.",
+                {
+                  retryable: false,
+                },
+              );
+            const hasMore = data.results.length >= data.page_size;
+            return {
+              ...result,
+              data: {
+                results: data.results,
+                total: data.total,
+                page: data.page,
+                session_id: data.session_id,
+                page_size: data.page_size,
+              },
+              page: {
+                hasMore,
+                ...(hasMore ? { next: String(data.page + 1), param: "page", in: "body" as const } : {}),
+              },
+            };
+          }),
+        ),
     ),
     readTool(
       "get_insights_report",
@@ -615,30 +529,37 @@ export function mixpanelRest(
         additionalProperties: false,
       },
       outputSchema: OUT,
-      handler: async (args, ctx) => {
-        const events = args.events as unknown[];
-        validateImport(events);
-        return await request(ctx, "POST", "/import", { project_id: args.project_id, strict: "1" }, events);
-      },
+      run: (args) =>
+        authored(
+          Effect.gen(function* () {
+            const events = args.events as unknown[];
+            validateImport(events);
+            return yield* request("POST", "/import", { project_id: args.project_id, strict: "1" }, events);
+          }),
+        ),
     },
   ];
-  return {
-    tools,
-    async testCredential(value, ctx) {
-      try {
-        await request(credentialProbeContext(ctx, { value }), "GET", "/api/app/me");
-        return {
-          ok: true,
-          message: "Authenticated Mixpanel service account; list_projects returns its reachable project metadata.",
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof ConnectorCallError ? error.message : "Mixpanel rejected the service account.",
-        };
-      }
-    },
-  };
+  return [
+    ...generic,
+    ...declarations.map((declaration) => {
+      const spec = {
+        inputOrder: "original" as const,
+        name: declaration.name,
+        description: declaration.description,
+        input: inputSchema(declaration.inputSchema!),
+        output: schema(declaration.outputSchema!),
+        run: declaration.run,
+      };
+      const tool = declaration.annotations?.readOnlyHint
+        ? read(connection, { ...spec, review: "Queries existing profiles; no profile mutation or ingestion occurs." })
+        : write(connection, { ...spec, destructive: false, writeSteps: { write: "once" } });
+      Object.assign(tool, {
+        inputSchema: catalogOrder(tool.inputSchema, declaration.inputSchema),
+        outputSchema: catalogOrder(tool.outputSchema, declaration.outputSchema),
+      });
+      return tool;
+    }),
+  ];
 }
 
 function validateImport(events: unknown[]): void {

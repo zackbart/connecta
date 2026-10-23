@@ -34,7 +34,7 @@
     "./providers/github retains its initial 164,063 B gzip baseline for size comparison. C.0c removes the hosted MCP half; the entry now carries portable GitHub App signing, scoped routing and six REST tools. Reported against this baseline, not capped (#899).",
     "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. Reported against this baseline, not capped (#899).",
     "./providers/infisical starts at 27,673 B gzip before its C.5 kit migration. Provider entries are reported, not capped (#899).",
-    "./providers/mixpanel retains its 205,500 B gzip baseline from #823, which included the former hosted client alongside the REST connector, guarded transport, shared operation index and value-safety engine. C.0c removes the hosted MCP half. The nine-operation reviewed subset was shrunk to depth 3 without descriptions before that measurement: operations.ts is 1355 B gzip. Reported against this baseline, not capped (#899). No new runtime dependencies.",
+    "./providers/mixpanel remeasures locally at 336,200 B gzip in C.6 (#703), on Node 26 with the system zlib preload. The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. CI measurement remains for the orchestrator to record. Provider entries are reported, not capped (#899); no runtime dependency was added.",
     "./providers/notion was measured at 211,946 B gzip (#801), against a 145,300 B baseline: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
     "./providers/overflow starts at 20,410 B gzip before its C.2 kit migration. Provider entries are reported, not capped (#899).",
     "./providers/planning-center migrates onto the Effect provider kit from its 26,970 B guarded-fetch baseline; reported, not capped (#899).",
@@ -89,7 +89,7 @@
       "baselineGzip": 27673
     },
     "./providers/mixpanel": {
-      "baselineGzip": 205500
+      "baselineGzip": 336200
     },
     "./providers/notion": {
       "baselineGzip": 211946
