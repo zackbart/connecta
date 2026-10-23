@@ -1997,12 +1997,16 @@ resends a write, and the defaults are unchanged. Google Workspace uses both,
 because its delegated tokens are minted per call and a refused write only
 needs the next call to mint again.
 
-The Google Workspace layer (`src/providers/_shared/google/kit.ts`) puts the
-delegated service account on a machine grant. The subject resolves once per
-call from deployment config and the admitted caller, and the private token
-exchange keeps its in-memory cache, so only token strings and expiries cross
-requests. Each product declares its operations, and a value-safety resolver
-refuses any path it does not declare. Revision-guarded writes set the
+All Google Workspace products use `src/providers/_shared/google/kit.ts`, which
+puts the delegated service account on a machine grant. `workspace.ts` owns
+shared options, connection parsing and subject resolution; `service-account.ts`
+owns token exchange and caching. JSON requests use `googleClient`, and
+Drive's `driveClient` adds binary and charset-aware text projections over
+that adapter. The subject resolves once per call from deployment config and
+the admitted caller, and the private token exchange keeps its in-memory
+cache, so only token strings and expiries cross requests. Each product
+declares its operations, and a value-safety resolver refuses any path it does
+not declare. Revision-guarded writes set the
 `revisionGuarded` request flag that Google's error table reads. For step 1, a
 catalog bridge builds kit `read` and `write` tools that keep each legacy
 declaration's annotations and schema bytes. `api()` validates every call
