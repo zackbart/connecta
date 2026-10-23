@@ -302,13 +302,14 @@ For an existing Node deployment, add the Node entry's pinned optional peer
 before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
 The current Node template already declares this dependency.
 
+- [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for the pending consolidated release.
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.
 - [Node storage from 0.28](../templates/node/README.md#storage) uses `connecta migrate-state` to copy the JSON state into SQLite. Activity JSONL is not imported.
 - [Worker storage from 0.28](../examples/worker/README.md#upgrading-from-028) copies KV into D1 with a one-shot migration.
 - [Worker deployments on Wrangler](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy) move to Alchemy once, adopting the Worker, D1 database, and Access applications so the script tag and Access AUD stay unchanged.
-- [Notion, Vercel, and Cloudflare for 0.35](./provider-migration-0.35.md) change defaults and retained API tool names.
+- [Notion, Vercel, and Cloudflare for 0.29](./provider-migration-0.29.md) change defaults and retained API tool names.
 - [Executor wiring](./code-mode.md#deploy-time-capability) requires branded shipped executors or a self-managed custom executor.
 
 ## Contributor reference

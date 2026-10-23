@@ -46,7 +46,8 @@ product names stay.
 | [Operator UI](./operator-ui.md)                                  | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
 | [Operator UI tests (contributor reference)](./operator-tests.md) | Browser state matrix, real-server flows, and snapshot maintenance                                             |
 | [Migration to 0.33](./migration-0.33.md)                         | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
-| [Provider migration for 0.35](./provider-migration-0.35.md)      | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
+| [Provider migration for 0.29](./provider-migration-0.29.md)      | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
+| [Provider migration for 0.35](./provider-migration-0.35.md)      | Provider upgrade actions for the pending consolidated 0.35.0 release                                          |
 | [Provider auth migration](./provider-auth-migration.md)          | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
 
 Each long contract starts with task routes. Follow those section links before
