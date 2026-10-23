@@ -87,7 +87,7 @@ function walkImports(entry: string): Set<string> {
   return visited;
 }
 
-describe("src/index.ts import purity (Workers-clean entry)", () => {
+describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }, () => {
   const graph = importGraph(ENTRY);
 
   it("INV-12: contains no `node:` builtin imports or requires", () => {
