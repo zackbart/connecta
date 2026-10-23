@@ -25,6 +25,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "tithely-recurring-join": { route: [], outcome: ["reads-only"] },
   "tithely-account-paging": { route: [], outcome: ["reads-only"] },
   "tithely-widget-hatch": { route: [], outcome: ["reads-only"] },
+  "tithely-donor-contact": { route: [], outcome: ["reads-only"] },
   "tithely-refund-duplicate": { route: [], outcome: ["state", "only-requested-writes"] },
   "tithely-cancel-recovery": {
     route: [],

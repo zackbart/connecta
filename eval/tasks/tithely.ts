@@ -101,6 +101,9 @@ const lapsed = (() => {
     other: donors.filter((d) => gave.has(d.account_id)),
   };
 })();
+const bob = seed.accounts.find((a) => a.account_id === BOB)!;
+const BOB_PHONE = String(bob.phone_number);
+const BOB_STREET = String(bob.address.street_address);
 const domainCount = seed.accounts.filter((a) => String(a.email).endsWith(`@${DOMAIN}`)).length;
 const apiDomainCount = seed.accounts.filter((a) => a.api && String(a.email).endsWith(`@${DOMAIN}`)).length;
 if (domainCount === apiDomainCount) throw new Error("The account-scope trap needs distinct counts");
@@ -169,6 +172,19 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       [...calls(world, "GET", `/organizations/${GRACE}`), ...calls(world, "GET", "/organizations-list")].some(success),
     );
     evidence(answer.includes(GRACE_WIDGET) && /grace/i.test(answer));
+    outcome("reads-only", "no write was attempted", readsOnly(world, trace));
+  } else if (id === "tithely-donor-contact") {
+    // No named projection carries an account's phone or street address; only Tithe.ly's records do.
+    destination(
+      calls(world, "GET").some(
+        (c) =>
+          success(c) &&
+          (c.args.path === `/accounts/${BOB}` ||
+            String(c.args.path).startsWith("/accounts-list") ||
+            ["/charges-list", "/recurring-list"].includes(String(c.args.path))),
+      ),
+    );
+    evidence(answer.replace(/\D/g, "").includes(BOB_PHONE) && answer.includes(BOB_STREET));
     outcome("reads-only", "no write was attempted", readsOnly(world, trace));
   } else if (id === "tithely-refund-duplicate") {
     const refunds = calls(world, "POST", /^\/refunds\//);
@@ -280,6 +296,15 @@ async function reference(id: string, ctx: ReferenceContext) {
       ["tithely_api_get", { path: `/organizations/${GRACE}` }],
     );
     ctx.answer(`Grace Church's Tithe.ly giving widget id is ${GRACE_WIDGET}.`);
+  } else if (id === "tithely-donor-contact") {
+    await read(ctx, "list_accounts", { limit: 99 });
+    await either(
+      ctx,
+      "call_tool",
+      ["tithely_api_read", { path: `/accounts/${BOB}` }],
+      ["tithely_api_get", { path: `/accounts/${BOB}` }],
+    );
+    ctx.answer(`Tithe.ly account ${BOB}: phone ${BOB_PHONE}, ${BOB_STREET}, Nashville TN 37209.`);
   } else if (id === "tithely-refund-duplicate") {
     await read(ctx, "list_charges", {
       organizationId: GRACE,
@@ -348,9 +373,18 @@ const SCENARIOS: Array<{
     id: "tithely-widget-hatch",
     title: "Read a field the projection drops",
     measures:
-      "Whether the agent reaches an organization field the named projection omits (the giving widget id) through raw access or the hatch.",
+      "Whether the agent finds an organization's giving widget id: through raw access or the hatch before Tithe.ly's step 2 kept it in the projection, from the projection after.",
     prompt:
       "Grace Church's web developer needs the Tithe.ly giving widget id for Grace Church to embed the giving form. Using the tithely giving connector, what is it?",
+    readOnly: true,
+  },
+  {
+    id: "tithely-donor-contact",
+    title: "Read fields no named tool returns",
+    measures:
+      "Whether the agent reaches a donor's phone number and street address, which no curated projection carries, through the hatch's account record.",
+    prompt:
+      "Using the tithely giving connector, what phone number and street address does Tithe.ly have on file for the donor Bob Smith? Cite the source.",
     readOnly: true,
   },
   {
