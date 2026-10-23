@@ -7,17 +7,28 @@ import { skill } from "./skill.generated.js";
  * this provider Workers-clean. `test/package-surface.node.test.ts` pins it: no
  * `cloudflare` package in any dependency field, every import relative.
  */
-import { apiConnector } from "../../connectors/api-connector.js";
-import type { Connector, ConnectorCallAdmissionPolicy, ConnectorCredentialConfig } from "../../types.js";
+import type { ConnectorCallAdmissionPolicy, ConnectorCredentialConfig } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
-import { restTools } from "../_shared/rest/tools.js";
-import { CLOUDFLARE_API_BASE, cloudflareRest, type CloudflareKeyAuth, type CloudflarePin } from "./rest.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { CALL_ADMISSION } from "../../provider.js";
+import { defineApiProvider } from "../../http/provider.js";
+import {
+  CloudflareApi,
+  authenticate,
+  cloudflareErrors,
+  cloudflareRuntime,
+  MAX_RESPONSE_BYTES,
+  READ_CAP_MS,
+  safety,
+  result,
+  verifyToken,
+  describeProbe,
+  settings,
+} from "./api.js";
+import { cloudflareTools } from "./tools.js";
 
-export { CLOUDFLARE_API_BASE } from "./rest.js";
-export type { CloudflarePin } from "./rest.js";
+import type { CloudflareKeyAuth, CloudflarePin } from "./lib/config.js";
+export { CLOUDFLARE_API_BASE } from "./lib/config.js";
+export type { CloudflarePin } from "./lib/config.js";
 
 interface CloudflareCommonOptions {
   /** Human-readable display name; defaults identify the implementation. */
@@ -135,10 +146,10 @@ function keyUsageGuide(
   auth: CloudflareKeyAuth,
   options: {
     purpose: string;
-    accountId?: string;
-    zoneId?: string;
-    pin?: CloudflarePin;
-    instructions?: string;
+    accountId?: string | undefined;
+    zoneId?: string | undefined;
+    pin?: CloudflarePin | undefined;
+    instructions?: string | undefined;
   },
 ): string {
   const { key, global_warning, shared, key_tail } = skill.fragments;
@@ -193,110 +204,26 @@ const CLOUDFLARE_OPTIONS = variants(
   ["oauth"],
 );
 
-function idsOf(id: string, value: unknown, path: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every((item) => typeof item === "string" && item.trim() !== "")
-  ) {
-    throw new Error(`cloudflare("${id}") ${path} must be a non-empty list of ids.`);
-  }
-  return value.map((item: string) => item.trim());
-}
-
-function optionalId(id: string, value: unknown, path: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim() === "" || /[/?#\s]/.test(value.trim())) {
-    throw new Error(`cloudflare("${id}") ${path} must be a Cloudflare id.`);
-  }
-  return value.trim();
-}
-
-function cloudflareKey(
-  auth: CloudflareKeyAuth,
-): (
-  id: string,
-  options: Readonly<CloudflareApiTokenOptions | CloudflareGlobalApiKeyOptions>,
-  provider: ProviderContext,
-) => Connector {
-  return (id, options, provider) => {
-    const maxConcurrency = options.maxConcurrency ?? 6;
-    if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
-      throw new Error(`cloudflare("${id}") maxConcurrency must be a positive integer.`);
-    }
-    let pin: CloudflarePin | undefined;
-    if (options.pin !== undefined) {
-      const accountIds = idsOf(id, options.pin.accountIds, "pin.accountIds");
-      const zoneIds = idsOf(id, options.pin.zoneIds, "pin.zoneIds");
-      if (!accountIds && !zoneIds) throw new Error(`cloudflare("${id}") pin names accountIds, zoneIds, or both.`);
-      pin = {
-        ...(accountIds ? { accountIds } : {}),
-        ...(zoneIds ? { zoneIds } : {}),
-      };
-    }
-    if (auth === "globalApiKey") {
-      const unpinned = (options as CloudflareGlobalApiKeyOptions).unpinned;
-      if (unpinned !== undefined && unpinned !== true) {
-        throw new Error(`cloudflare("${id}") unpinned must be true when set.`);
-      }
-      if (pin && unpinned) throw new Error(`cloudflare("${id}") takes pin or unpinned: true, not both.`);
-      if (!pin && !unpinned) {
-        throw new Error(
-          `cloudflare("${id}") requires pin: { accountIds, zoneIds } with globalApiKey auth, or unpinned: true: a Global API Key reaches every account and zone its user can.`,
-        );
-      }
-    }
-    const accountId = optionalId(id, options.accountId, "accountId");
-    const zoneId = optionalId(id, options.zoneId, "zoneId");
-    if (pin && accountId && pin.accountIds && !pin.accountIds.includes(accountId)) {
-      throw new Error(`cloudflare("${id}") accountId ${accountId} is outside its pin.`);
-    }
-    if (pin && zoneId && pin.zoneIds && !pin.accountIds && !pin.zoneIds.includes(zoneId)) {
-      throw new Error(`cloudflare("${id}") zoneId ${zoneId} is outside its pin.`);
-    }
-    const purpose = options.purpose.trim();
-    const rest = cloudflareRest({
-      auth,
-      baseUrl: options.baseUrl?.trim() || CLOUDFLARE_API_BASE,
+function usageGuide(options: Readonly<CloudflareOptions>) {
+  const { auth, accountId, zoneId, pin } = settings(options);
+  return {
+    content: keyUsageGuide(auth, {
+      purpose: options.purpose,
       accountId,
       zoneId,
       pin,
-    });
-    return tracksEveryRequest(
-      apiConnector(id, {
-        ...provider.connectorOptions,
-        title: options.title ?? (auth === "globalApiKey" ? "Cloudflare (Global API Key)" : "Cloudflare"),
-        description: `Cloudflare v4 API over REST (${auth === "globalApiKey" ? "Global API Key" : "API token"}${pin ? ", pinned" : ""}) — ${purpose}`,
-        credential: auth === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL,
-        ...(auth === "globalApiKey"
-          ? { testCredentials: rest.testCredentials }
-          : { testCredential: rest.testCredential }),
-        callAdmission: admissionPolicy(maxConcurrency),
-        usageGuide: {
-          content: keyUsageGuide(auth, {
-            purpose,
-            ...(accountId ? { accountId } : {}),
-            ...(zoneId ? { zoneId } : {}),
-            ...(pin ? { pin } : {}),
-            ...(options.instructions !== undefined ? { instructions: options.instructions } : {}),
-          }),
-          summary:
-            auth === "globalApiKey"
-              ? "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
-              : "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
-        },
-        tools: [...restTools(rest.vendor), ...rest.tools],
-      }),
-    );
+      instructions: options.instructions,
+    }),
+    summary:
+      auth === "globalApiKey"
+        ? "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
+        : "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
   };
 }
-
-/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
-export const cloudflare = defineProvider<CloudflareOptions>({
+/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp entry. */
+export const cloudflare = defineApiProvider<CloudflareOptions>({
   name: "cloudflare",
   title: "Cloudflare",
-  kind: "api",
   readme: "Cloudflare",
   bundle: {
     baselineGzip: 334055,
@@ -304,9 +231,25 @@ export const cloudflare = defineProvider<CloudflareOptions>({
   },
   skill,
   options: CLOUDFLARE_OPTIONS,
-  create: byAuth<CloudflareOptions>({
-    oauth: removedHostedMcp,
-    apiToken: cloudflareKey("apiToken"),
-    globalApiKey: cloudflareKey("globalApiKey"),
-  }),
+  vendor: CloudflareApi,
+  baseUrl: (options) => settings(options).baseUrl,
+  displayTitle: (options) => (options.auth.type === "globalApiKey" ? "Cloudflare (Global API Key)" : "Cloudflare"),
+  description: (options) =>
+    `Cloudflare v4 API over REST (${options.auth.type === "globalApiKey" ? "Global API Key" : "API token"}${settings(options).pin ? ", pinned" : ""}) — ${options.purpose}`,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
+  timeoutMs: READ_CAP_MS,
+  defaultCallAdmission: (options) => admissionPolicy(options.maxConcurrency ?? 6),
+  credential: (options) => (options.auth.type === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL),
+  authenticate,
+  errors: cloudflareErrors,
+  safety,
+  result,
+  probe: {
+    operation: verifyToken,
+    request: {},
+    run: (connection, options) => cloudflareRuntime(connection, settings(options)).verify(),
+    describe: describeProbe,
+  },
+  guide: usageGuide,
+  tools: cloudflareTools,
 });

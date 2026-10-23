@@ -27,7 +27,6 @@ import type { Connector, ConnectorContext } from "../src/types.js";
 export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set([
-    "cloudflare",
     "docs",
     "drive",
     "forms",

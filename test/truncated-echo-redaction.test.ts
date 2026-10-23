@@ -2,10 +2,11 @@
 // connecta shortens that text before it leaves: redaction must see the whole
 // text first. A cut through an echoed form leaves a fragment that no
 // registered form matches, so redacting after the cut leaks the fragment.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCaller } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { breeze } from "../src/providers/breeze/index.js";
@@ -313,6 +314,12 @@ describe("Cloudflare zone-ownership lookups", () => {
 });
 
 describe("Cloudflare GraphQL errors", () => {
+  let previousTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => configureGuardedTransport(previousTransport));
+
   it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a rejected query echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {

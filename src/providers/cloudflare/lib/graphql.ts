@@ -4,7 +4,7 @@
 // definitions are walked, so a `mutation` hidden in a string, a comment, or
 // after an anonymous query is still found, and anything that is not a query
 // or a fragment is refused. Nothing here does I/O.
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError } from "../../../errors.js";
 
 interface Token {
   readonly kind: "name" | "punct" | "string" | "number";
