@@ -282,14 +282,19 @@ reachable request and success structure, excludes the same
 prose/extensions/errors, and stays bounded without expanding shared graphs
 exponentially. The default inline algorithm and all existing provider digests
 remain unchanged. Stripe's first v2 endpoint baseline uses this versioned opt-in.
-Small-contract mutation pairs must never be less sensitive than inline;
-acyclic pairs agree with inline sensitivity. Recursive pairs may
-be more sensitive: the graph retains every cycle member's reference name and
-structural back-edge siblings; inline retains the reference name where expansion
-stops and drops that back-edge's siblings. Renaming a non-entry cycle member or
-changing such a sibling therefore changes the graph digest even when inline's
-digest stays the same. The drift test checks these distinctions and the
-sibling-bearing self-reference recursion case explicitly.
+Small-contract mutation pairs must never be less sensitive than inline.
+Acyclic pairs using only locally resolvable references agree with inline
+sensitivity. For unresolved or external references, the graph retains structural
+siblings that inline drops. Recursive pairs may also be more sensitive: the graph
+retains every cycle member's reference name and structural back-edge siblings;
+inline retains the reference name where expansion stops and drops that
+back-edge's siblings. Overriding siblings at a cyclic entry remain separate from
+the component target in the graph, so they cannot hide changes to overridden
+target fields as they can inline. Renaming a non-entry cycle member or changing
+a back-edge sibling therefore changes the graph digest even when inline's
+digest stays the same. The drift test covers non-entry member renames,
+back-edge sibling changes and target swaps, and self-reference siblings
+containing intra-component references.
 
 ### Generated, not hand-kept
 
