@@ -449,7 +449,7 @@ function resent(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
       { retryable: false },
     );
   }
-  const error = verdict(own, vendor, options);
+  const error = verdict(own, vendor, options, first);
   const marked = first.request ? vendorRefusal(error, first.request) : error;
   return providerFailureMessage(marked, `${marked.message} ${RESEND}`);
 }
@@ -505,6 +505,7 @@ function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
   options: Pick<MapOptions, "withholds" | "signal" | "dispatches">,
+  dispatch = options.dispatches.find((entry) => entry.failure === failure),
 ): ConnectorCallError {
   switch (failure._tag) {
     case "Refusal":
@@ -525,7 +526,9 @@ function verdict(
         { retryable: false },
       );
     case "ResponseTooLarge":
-      return new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false });
+      return attachFailureFacts(new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }), {
+        httpStatus: dispatch?.status,
+      });
     case "ResendRefused":
       return new ConnectorCallError(
         "connector_call_failed",

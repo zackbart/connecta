@@ -12,6 +12,7 @@ import type { ApiTool } from "../../../connectors/api-connector.js";
 import { callClassification } from "../../../call-classification.js";
 import { deriveContext } from "../../../derived-context.js";
 import { ConnectorCallError } from "../../../errors.js";
+import { attachFailureFacts } from "../../../operator-record.js";
 import {
   Refusal,
   StatusFailure,
@@ -440,8 +441,12 @@ function queryPairs(query: GoogleRequest["query"]): Array<[string, string]> {
  * the message and retry flag are its; the core still decides the outcome,
  * which for each of these is unknown.
  */
-function unknownWrite(message: string): Refusal {
-  return new Refusal({ error: new ConnectorCallError("connector_call_failed", message, { retryable: false }) });
+function unknownWrite(message: string, status: number | undefined): Refusal {
+  return new Refusal({
+    error: attachFailureFacts(new ConnectorCallError("connector_call_failed", message, { retryable: false }), {
+      httpStatus: status,
+    }),
+  });
 }
 
 /** A product's request path over its kit connection, keeping the legacy request and failure shapes. */
@@ -545,6 +550,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
             write
               ? unknownWrite(
                   `${provider} answered HTTP ${code} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
+                  status,
                 )
               : failure,
             at("redirected", code),
@@ -553,6 +559,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
           return noted(
             unknownWrite(
               `${provider} answered HTTP ${code} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
+              status,
             ),
             at("server-error", code),
           );
@@ -573,6 +580,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
           write
             ? unknownWrite(
                 `${provider} answered HTTP ${failure.status} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
+                status,
               )
             : failure,
           at("redirected", failure.status),
@@ -582,6 +590,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
           write
             ? unknownWrite(
                 `${provider} was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.`,
+                status,
               )
             : failure,
           at("awaiting-response", undefined),
@@ -595,6 +604,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
           write
             ? unknownWrite(
                 `${provider} accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.`,
+                status,
               )
             : failure,
           at("reading-body"),

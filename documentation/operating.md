@@ -126,6 +126,19 @@ mean the provider applied it; inspect state to check whether it took effect, or
 ask for the missing decision, before any fresh call. [Retry semantics](./code-mode.md#retry-semantics) and
 [writes](./code-mode.md#writes) describe program outcomes and write accounting.
 
+## Read failure records
+
+Failure logs and connector status report checked facts without downstream
+error text. When a response status was recorded, `httpStatus` is an integer
+from 100 through 599; status messages can include `with HTTP <status>`.
+It remains available for a write's bare 401 fallback, Google write failures
+whose outcome is unknown, and responses that exceed the connector's byte
+ceiling. If no answer was recorded, the field is absent. The status alone
+does not prove whether a write took effect or permit replaying it.
+
+For example, a `crm` write answered HTTP 503 can log `httpStatus: 503` while
+its outcome stays unknown. Inspect the target before repeating the call.
+
 ## Contributor reference
 
 ### Implementation and evidence
