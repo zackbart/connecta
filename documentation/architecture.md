@@ -1993,12 +1993,31 @@ it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
 are unchanged. The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while
-preserving the provider's exact diagnostic. On Node, kit writes go through the
+preserving the provider's exact diagnostic. Its optional `authScope(options)`
+selector fixes OAuth grant ownership from deployment mode at construction;
+CCB uses shared System Auth grants and personal Identity Auth grants. Tool
+arguments cannot select a grant's owner. On Node, kit writes go through the
 owned transport `listen` installs, so suites that call one without `listen`
 configure it themselves, as the goldens harness does. Anything a connection
 caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
+
+CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
+`refreshOnce` mapper receives only renewal facts and reuses the core's
+`unsentAfterUnauthorized` diagnostic, preserving the grant's authorization
+message and the message for a renewed credential whose write was not replayed.
+The error retains the resource dispatch's provenance; `settleWrite` decides
+the final outcome. The default middleware behavior and renewal ownership stay
+unchanged.
+
+The static compatibility option caps discarded 401 challenges with the shared
+OAuth challenge limit before renewal. A guarded client's optional
+`maxUnauthorizedResponseBytes` applies to declared and streamed bodies;
+`read(response, maxBytes)` can narrow a read's ceiling further. The middleware
+maps an oversized challenge using its own recorded dispatch, including a
+declared-size refusal before the response wrapper exists. It never renews
+after that refusal.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.

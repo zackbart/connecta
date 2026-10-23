@@ -421,4 +421,52 @@ it("INV-7 INV-9: binds OAuth to each call and refreshes reads while sending writ
     expect(requests).toBe(attempts);
     expect(tokens).toEqual(tool === "who" ? ["Bearer old", "Bearer fresh"] : ["Bearer old"]);
   }
+  // CCB's static compatibility mode has a separate, smaller challenge
+  // ceiling. Native declared/streamed refusals must stop before renewal.
+  const compatibility = defineApiProvider({
+    ...withoutCredential,
+    maxResponseBytes: 8 * 1024 * 1024,
+    oauthWrite401: "grant",
+    authenticate: bearer,
+    oauth: () => oauth,
+  })("tickets", { purpose: "Support" });
+  for (const tool of ["who", "send"] as const)
+    for (const [bytes, declared] of [
+      [2 * 1024 * 1024, false],
+      [2 * 1024 * 1024, true],
+      [9 * 1024 * 1024, false],
+      [9 * 1024 * 1024, true],
+    ] as const) {
+      const ctx = makeRegistry([compatibility]).contextFor("tickets", "https://connecta.example", {});
+      await seedGrant(ctx.storage, {
+        issuer: oauth.tokenEndpoint,
+        tokens: { access_token: "old", refresh_token: "refresh", token_type: "Bearer" },
+      });
+      let requests = 0;
+      let renewals = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: unknown) => {
+          if (String(url) === oauth.tokenEndpoint) {
+            renewals++;
+            return Response.json({ access_token: "fresh", token_type: "Bearer" });
+          }
+          requests++;
+          return declared
+            ? new Response(null, { status: 401, headers: { "content-length": String(bytes) } })
+            : new Response(new Uint8Array(bytes), { status: 401 });
+        }),
+      );
+      await expect(compatibility.callTool(tool, {}, ctx)).rejects.toMatchObject({
+        code: tool === "who" ? "connector_call_failed" : "downstream_oauth_required",
+        message:
+          tool === "who"
+            ? "The OAuth challenge exceeded its response ceiling."
+            : 'Connector "tickets"\'s API answered this write with HTTP 401. Renewing the credential failed (connector_call_failed), and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.',
+        retryable: false,
+        writeOutcome: tool === "who" ? undefined : "unknown",
+      });
+      expect(requests).toBe(1);
+      expect(renewals).toBe(0);
+    }
 });

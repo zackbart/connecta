@@ -1696,17 +1696,23 @@ describe("OAuth refresh-once (decision 0010, B.2)", NODE, () => {
     },
   );
 
-  it("INV-9: a vendor that documents authenticating first gets its 401 refusal, renewal or not", async () => {
+  it("INV-9: custom Grants without the static opt-in keep the vendor's documented 401 refusal, renewal or not", async () => {
     const documented: VendorErrors = {
       ...VENDOR,
       authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
     };
-    const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
-    answers.push(() => new Response(null, { status: 401 }));
-    expect(await call(tool("write", layer, { vendor: documented }), "write")).toMatchObject({
-      error: { code: "auth_required", message: "Acme returned HTTP 401. Acme rejected the token." },
-    });
-    expect(sent).toHaveLength(1);
+    for (const renewal of ["refused", "renewed"] as const) {
+      const { layer, state } = grant(
+        renewal === "refused" ? () => Effect.fail(new Refusal({ error: REJECTED })) : undefined,
+      );
+      sent = [];
+      answers.push(() => new Response(null, { status: 401 }));
+      expect(await call(tool("write", layer, { vendor: documented }), "write")).toMatchObject({
+        error: { code: "auth_required", message: "Acme returned HTTP 401. Acme rejected the token." },
+      });
+      expect(state.refreshes).toBe(1);
+      expect(sent).toHaveLength(1);
+    }
   });
 });
 

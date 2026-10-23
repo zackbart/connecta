@@ -18,7 +18,7 @@ var options2 = { "purpose": "Audit fixture", "environment": "production", "mode"
 var fixture2 = {
   name: "ccb",
   options: options2,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "identity", "options": { "mode": "identity", "access": "read" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "identity", "options": { "mode": "identity", "access": "read" } }],
   create(id = "fixture", overrides = {}) {
     return ccb(id, { ...options2, ...overrides });
   },

@@ -58,6 +58,8 @@ export interface GuardedOptions<R = never> {
   readonly baseUrl: string;
   /** Ceiling on any response body, in bytes. Required: it is a fact about the API. */
   readonly maxResponseBytes: number;
+  /** Optional lower ceiling for discarded OAuth 401 challenges. */
+  readonly maxUnauthorizedResponseBytes?: number;
   /** Constant headers, such as `Accept`. */
   readonly headers?: Readonly<Record<string, string>>;
   /**
@@ -85,14 +87,17 @@ export interface GuardedClient<R = CallServices> {
   readonly provider: string;
   readonly client: HttpClient.HttpClient.With<HttpFailure, R>;
   /** Read a response this client returned, never past the ceiling. */
-  readonly read: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<Reply, HttpFailure>;
+  readonly read: (
+    response: HttpClientResponse.HttpClientResponse,
+    maxBytes?: number,
+  ) => Effect.Effect<Reply, HttpFailure>;
 }
 
 const decoder = new TextDecoder();
-const responseEntries = new WeakMap<HttpClientResponse.HttpClientResponse, ProviderRequest>();
+const responseEntries = new WeakMap<object, ProviderRequest>();
 
 /** The core's physical request, also available to direct HttpClient middleware. */
-export function responseRequest(response: HttpClientResponse.HttpClientResponse): ProviderRequest | undefined {
+export function responseRequest(response: object): ProviderRequest | undefined {
   return responseEntries.get(response);
 }
 
@@ -101,6 +106,10 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`${provider} maxResponseBytes must be a whole number of bytes >= 1; received ${String(limit)}.`);
   }
+  const unauthorizedLimit = options.maxUnauthorizedResponseBytes;
+  if (unauthorizedLimit !== undefined && (!Number.isInteger(unauthorizedLimit) || unauthorizedLimit < 1))
+    throw new Error("maxUnauthorizedResponseBytes must be a whole number of bytes >= 1.");
+  const responseLimit = (status: number) => (status === 401 ? Math.min(limit, unauthorizedLimit ?? limit) : limit);
   const base = confinementBase(provider, options.baseUrl);
   const basePath = base.pathname.replace(/\/+$/, "");
   const constant = { ...options.headers };
@@ -288,6 +297,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         if (facts.sent) facts.sent.dispatch = dispatch;
         const refused = (failure: HttpFailure) => {
           dispatch.failure = failure;
+          responseEntries.set(failure, entry);
           return Effect.fail(failure);
         };
         const response = yield* Effect.tryPromise({
@@ -327,9 +337,10 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           return yield* refused(new RedirectRefused({ status: response.status }));
         }
         const declared = Number(response.headers.get("content-length"));
-        if (Number.isFinite(declared) && declared > limit && request.method !== "HEAD") {
+        const ceiling = responseLimit(response.status);
+        if (Number.isFinite(declared) && declared > ceiling && request.method !== "HEAD") {
           yield* cancel(response);
-          return yield* refused(tooLarge(provider, limit, `a declared ${declared} bytes`));
+          return yield* refused(tooLarge(provider, ceiling, `a declared ${declared} bytes`));
         }
         const answer = HttpClientResponse.fromWeb(request, response);
         responseEntries.set(answer, entry);
@@ -346,7 +357,11 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   return {
     provider,
     client: HttpClient.makeWith(postprocess, preprocess),
-    read: (response) => readReply(provider, limit, response),
+    read: (response, maxBytes) => {
+      if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1))
+        throw new Error("A read ceiling must be a whole number of bytes >= 1.");
+      return readReply(provider, Math.min(responseLimit(response.status), maxBytes ?? limit), response);
+    },
   };
 }
 

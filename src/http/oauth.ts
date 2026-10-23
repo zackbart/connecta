@@ -10,9 +10,9 @@
 // This file decides nothing about that write. The transport recorded its
 // answer in the call's dispatch ledger when the resource server gave it, and
 // api()'s boundary delegates the verdict to the core's settleWrite. The
-// middleware records facts only, including a successful renewal. A renewal that fails,
-// for any reason, is the authorization server's failure and is discarded,
-// so it can neither turn the write into a refusal nor advertise a retry; the
+// middleware records facts only, including a successful renewal. By default a failed
+// renewal is discarded; the static bridge can opt into the core's grant diagnostic.
+// Neither path can turn the write into a known refusal or advertise a retry; the
 // ledger notes only a renewal that succeeded, so the agent is not sent to
 // re-authorize a credential that already works. Even a wrapper here that
 // did resend would be stopped by the transport's one-dispatch guard.
@@ -24,17 +24,17 @@
 // The grant itself (storage, coordination across isolates, the token
 // request, the request-scope latch) stays in src/auth/.
 
-import { Context, Effect } from "effect";
+import { Cause, Context, Effect, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { readRequest, renewedAfterUnauthorized } from "../provider-call.js";
+import { readRequest, renewedAfterUnauthorized, type ProviderRequest } from "../provider-call.js";
 import { renewableGrantFor } from "../auth/renewable-grant.js";
 import type { ApiOAuthAccess } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { responseRequest, type GuardedClient } from "./client.js";
 import { Refusal, RequestRefused, type HttpFailure } from "./errors.js";
-import { Signal, duringCall, type CallServices } from "./services.js";
+import { Dispatches, Signal, duringCall, type CallServices } from "./services.js";
 
 /** The calling owner's renewable token, as the operations a transport needs from it. */
 export class Grant extends Context.Service<
@@ -84,15 +84,59 @@ export const bearer: Effect.Effect<Readonly<Record<string, string>>, HttpFailure
   Effect.map(grant.token, (token) => ({ Authorization: `Bearer ${token}` })),
 );
 
+/** Renewal facts only: a mapper never receives either access token. */
+type Write401Renewal =
+  | { readonly _tag: "Renewed" }
+  | { readonly _tag: "Unchanged" }
+  | { readonly _tag: "Failed"; readonly failure: unknown };
+
 /** Wrap a guarded client whose `authenticate` is {@link bearer}. */
-export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): GuardedClient<CallServices | Grant> {
+export function refreshOnce(
+  guarded: GuardedClient<CallServices | Grant>,
+  options?: {
+    readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
+    readonly challengeMaxBytes?: number;
+  },
+): GuardedClient<CallServices | Grant> {
   const inner = guarded.client;
+  const challengeFailure = (entry: ProviderRequest | undefined): Effect.Effect<never, HttpFailure, CallServices> =>
+    Effect.gen(function* () {
+      const error = new ConnectorCallError(
+        "connector_call_failed",
+        "The OAuth challenge exceeded its response ceiling.",
+        { retryable: false },
+      );
+      const refusal = new Refusal({
+        error:
+          !readRequest(entry ?? {}) && options?.writeUnauthorized
+            ? options.writeUnauthorized({ _tag: "Failed", failure: error })
+            : error,
+      });
+      const dispatch = entry ? (yield* Dispatches).find((item) => item.request === entry) : undefined;
+      if (dispatch) dispatch.failure = refusal;
+      return yield* Effect.fail(refusal);
+    });
   const execute = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
-      const response = yield* inner.execute(request);
+      const response = yield* inner.execute(request).pipe(
+        Effect.catchTag("ResponseTooLarge", (failure): Effect.Effect<never, HttpFailure, CallServices> => {
+          const entry = responseRequest(failure);
+          return options?.challengeMaxBytes !== undefined && entry?.status === 401
+            ? challengeFailure(entry)
+            : Effect.fail(failure);
+        }),
+      );
       if (response.status !== 401) return response;
       // Read under the ceiling now, so nothing is left open while renewing.
-      const reply = yield* guarded.read(response);
+      const reply = yield* guarded
+        .read(response, options?.challengeMaxBytes)
+        .pipe(
+          Effect.catchTag("ResponseTooLarge", (failure): Effect.Effect<never, HttpFailure, CallServices> =>
+            options?.challengeMaxBytes !== undefined
+              ? challengeFailure(responseRequest(response))
+              : Effect.fail(failure),
+          ),
+        );
       const grant = yield* Grant;
       const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
       const entry = responseRequest(response);
@@ -105,6 +149,23 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
         // other than the one it sent; the core decides from it (Q8).
         if (renewal._tag === "Success" && !(yield* Signal)?.aborted)
           renewedAfterUnauthorized(entry, stale, renewal.value);
+        if (options?.writeUnauthorized) {
+          const cause = renewal._tag === "Failure" ? Cause.findErrorOption(renewal.cause) : Option.none();
+          const failure = Option.isSome(cause) ? cause.value : undefined;
+          const facts: Write401Renewal =
+            renewal._tag === "Success"
+              ? { _tag: renewal.value === stale ? "Unchanged" : "Renewed" }
+              : {
+                  _tag: "Failed",
+                  failure:
+                    failure?._tag === "Refusal"
+                      ? failure.error
+                      : (failure ?? new Error("OAuth renewal did not complete.")),
+                };
+          // This is still the resource request's own 401. The common failure
+          // mapper attaches its provenance; settleWrite decides the outcome.
+          return yield* Effect.fail(new Refusal({ error: options.writeUnauthorized(facts) }));
+        }
         return HttpClientResponse.fromWeb(
           request,
           new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),
@@ -117,7 +178,15 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
         );
       renewedAfterUnauthorized(entry, stale, fresh);
       // `authenticate` runs again on the replay and reads the renewed token.
-      const replay = yield* inner.execute(request);
+      const replay = yield* inner
+        .execute(request)
+        .pipe(
+          Effect.catchTag("ResponseTooLarge", (failure) =>
+            options?.challengeMaxBytes !== undefined && responseRequest(failure)?.status === 401
+              ? grant.rejected
+              : Effect.fail(failure),
+          ),
+        );
       if (replay.status !== 401) return replay;
       yield* Effect.ignore(guarded.read(replay));
       return yield* grant.rejected;

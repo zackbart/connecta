@@ -1,16 +1,23 @@
-// The CCB (Pushpay ChMS) connection is hand-written fetch over `api()`'s
+// The CCB (Pushpay ChMS) connection runs on the provider kit over `api()`'s
 // downstream OAuth grant. A fake CCB stands in for both the token endpoint and
 // the API. Request shapes, projections, and status mapping live in the
 // characterization goldens; these tests pin the consent URL, the code exchange
 // with CCB's own Accept header, rotating single-use refresh tokens, one-attempt
 // POST renewal, paging edges, the sensitive-field boundary, and grant isolation.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
+import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import { resultSafety } from "../../http/safety.js";
+import { ccbSafety, errors } from "./api.js";
+import { ccbTools } from "./tools.js";
+import goldenSpec from "../../../test/goldens/ccb/spec.js";
+import type { Connection } from "../../http/vendor.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -132,7 +139,12 @@ function install(fake: Fake): void {
   vi.stubGlobal("fetch", vi.fn(fake.stub));
 }
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -183,12 +195,23 @@ async function failure(promise: Promise<unknown>) {
 }
 
 describe("ccb() construction", () => {
-  it.each([
-    ["no environment", { environment: undefined }, /requires environment/],
-    ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
-    ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
-  ])("refuses %s", (_label, overrides, message) => {
-    expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
+  it("INV-11: refuses invalid deployment options and keeps every kit decoder aligned with its catalog", () => {
+    for (const [_label, overrides, message] of [
+      ["no environment", { environment: undefined }, /requires environment/],
+      ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
+      ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
+      ["an empty title", { title: "" }, /title.*non-empty string/],
+      ["a blank title", { title: " " }, /title.*non-empty string/],
+    ] as const) {
+      expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
+    }
+    const kitConnection = { errors, safety: resultSafety(ccbSafety(OPTIONS)) } as Connection;
+    for (const tool of ccbTools({ connection: kitConnection, options: { ...OPTIONS, access: "read-write" } })) {
+      expect(
+        kitInputDisagreements(tool, goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {}),
+        tool.name,
+      ).toEqual([]);
+    }
   });
 });
 
@@ -284,6 +307,7 @@ describe("ccb() reads", () => {
       last_giving_date: "2026-09-01",
       date_anyone_run_giving_statement: "2026-01-02",
       family: { members: [{ id: 43, allergies: "shellfish" }] },
+      custom_fields: [{ id: 1, value: { notes: "private nested value" } }],
     };
     const attendance = { event_id: 12, occurrence: "20260927", prayer_requests: "private", notes: "leader notes" };
     const response = { id: 5, form_id: 2, payment: { method: "CREDIT_CARD", total: 2500 }, payment_status: "PAID" };
@@ -293,8 +317,15 @@ describe("ccb() reads", () => {
       on("GET", "/forms/2/responses", () => json([response], { "x-next-page": "" })),
       on("POST", "/search/individuals/results", () => json([individual], { "x-next-page": "" })),
       on("PUT", "/individuals/42", () => json(individual)),
+      on("GET", "/events/12", () => json({ id: 12, guest_counts: { notes: "private nested value", children: 3 } })),
+      on("GET", "/scheduling/categories/2/schedules", () =>
+        json([{ id: 1, metrics: { notes: "private nested value", needed: 2 } }], { "x-next-page": "" }),
+      ),
     ];
     const reads: Array<[string, Record<string, unknown>]> = [
+      ["get_individual", { individualId: 42 }],
+      ["get_event", { eventId: 12 }],
+      ["list_schedules", { categoryId: 2 }],
       ["get_individual", { individualId: 42, raw: true }],
       ["get_event_attendance", { eventId: 12, occurrence: "2026-09-27", raw: true }],
       ["list_form_responses", { formId: 2, raw: true }],
@@ -321,6 +352,15 @@ describe("ccb() reads", () => {
     expect(await returned.call("get_individual", { individualId: 42, raw: true })).toMatchObject({
       allergies: "peanuts",
       giving_number: "G-17",
+    });
+    expect(await returned.call("get_individual", { individualId: 42 })).toMatchObject({
+      customFields: { "1": { notes: "private nested value" } },
+    });
+    expect(await returned.call("get_event", { eventId: 12 })).toMatchObject({
+      guestCounts: { notes: "private nested value" },
+    });
+    expect(await returned.call("list_schedules", { categoryId: 2 })).toMatchObject({
+      schedules: [{ metrics: { notes: "private nested value" } }],
     });
     expect(JSON.stringify(await returned.call("ccb_api_get", { path: "/events/12/attendance/20260927" }))).toContain(
       "leader notes",
@@ -412,6 +452,45 @@ describe("ccb() escape hatches (H14)", () => {
       expect((await call(tool, args)).result).toEqual(result);
       expect(fake.requests.filter((request) => request.url.pathname === path)).toHaveLength(2);
     }
+    // The static grant discards at most 1 MiB of a 401 challenge, independently
+    // of CCB's 8 MiB resource ceiling. No oversized challenge starts renewal.
+    for (const [tool, args, method, path, code] of [
+      ["get_group", { groupId: 5 }, "GET", "/groups/5", "connector_call_failed"],
+      [
+        "ccb_api_search",
+        { domain: "individuals", body: {} },
+        "POST",
+        "/search/individuals/results",
+        "downstream_oauth_required",
+      ],
+      [
+        "ccb_api_mutate",
+        { method: "POST", path: "/individuals/42/notes", body: {} },
+        "POST",
+        "/individuals/42/notes",
+        "downstream_oauth_required",
+      ],
+    ] as const)
+      for (const bytes of [2 * 1024 * 1024, 9 * 1024 * 1024])
+        for (const declared of [true, false]) {
+          fake.route(
+            on(method, path, () =>
+              declared
+                ? new Response(null, { status: 401, headers: { "content-length": String(bytes) } })
+                : new Response(new Uint8Array(bytes), { status: 401 }),
+            ),
+          );
+          const before = fake.tokenRequests.length;
+          expect(await failure(call(tool, args))).toMatchObject({
+            code,
+            message:
+              method === "GET"
+                ? "The OAuth challenge exceeded its response ceiling."
+                : 'Connector "church"\'s API answered this write with HTTP 401. Renewing the credential failed (connector_call_failed), and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.',
+            retryable: false,
+          });
+          expect(fake.tokenRequests).toHaveLength(before);
+        }
   });
 });
 

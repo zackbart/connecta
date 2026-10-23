@@ -890,8 +890,8 @@ class Grant extends Context.Service<Grant, {
 
 The static OAuth facade bounds each discarded 401 challenge at 1 MiB before
 renewing; an oversized challenge does not start renewal. Broken bounded body
-reads retain the 401, and Q8 remains the core's decision. The kit uses its
-provider's declared response ceiling.
+reads retain the 401, and Q8 remains the core's decision. By default the kit
+uses its provider's declared response ceiling.
 
 `ctx.oauth.fetch` keeps its published contract for custom handlers. It returns
 a `Response` and allows every `apiOrigins` origin, so it shares this decision,
@@ -907,6 +907,13 @@ handoff until renewal succeeds, always non-retryable with
 cancellation, successful renewal and oversized/broken 401 bodies. It also
 checks direct calls and caught/uncaught program accounting against #902's
 `classifyWriteOutcome`, and records the wording changes in the OAuth goldens.
+
+The B.4 static OAuth bridge can opt into `oauthWrite401: "grant"` to restore
+this parity between `Grant` and `ctx.oauth.fetch`, including the legacy
+write-401 diagnostic. Its `refreshOnce` mapper uses the core's
+`unsentAfterUnauthorized` and records the refusal on the same dispatch;
+`settleWrite` remains final. It adds no replay or claim-CAS ownership change,
+and custom `Grant` users without the opt-in retain B.2's behavior.
 
 Since #902 the goldens record one 401 behaviour for a write: it is never
 resent. Google mints a token and sends the write once (two requests), and
@@ -1620,6 +1627,7 @@ common options and the title, and renders the guide through
 function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderDefinition<O>, "kind" | "create"> & {
   readonly displayTitle?: (options: Readonly<O>) => string;          // options.title wins; definition.title remains the provider name
   readonly description?: (options: Readonly<O>) => string;
+  readonly authScope?: (options: Readonly<O>) => "shared" | "personal"; // deployment mode fixes OAuth ownership
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;                 // environment or override; checked at construction
   readonly maxResponseBytes: number;
@@ -1628,6 +1636,7 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
   readonly pageSize?: { readonly default: number; readonly max: number }; // becomes the `defaultPageSize` option and its check
   readonly credential?: ConnectorCredentialConfig;                    // exclusive with oauth
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
+  readonly oauthWrite401?: "grant";                                   // opt-in legacy static OAuth write-401 diagnostic
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
   readonly safety: (options: Readonly<O>) => SafetyOptions;           // reviewed table or reason, and the sensitiveFields option
@@ -1653,6 +1662,36 @@ The success description receives the validated options. It copies no context.
 options; an explicit `options.title` takes precedence. A complete usage guide
 passes through unchanged so step-1 migrations preserve legacy fragments and
 option-dependent text without changing `SKILL.md`.
+
+CCB's C.4 migration adds the optional `authScope(options)` selector. Its
+deployment mode fixes grant ownership: System Auth is shared and Identity
+Auth is personal. The selector runs at construction from validated deployment
+options, never tool arguments; its result overrides a common scope option.
+The provider still uses `Grant`, refresh-once and the static OAuth coordinator's
+claim-CAS renewal ownership unchanged.
+
+CCB also opts into `oauthWrite401: "grant"` to preserve the static grant's
+write-401 diagnostic. `refreshOnce` accepts an optional `writeUnauthorized`
+mapper over three renewal facts: `Renewed`, `Unchanged`, or `Failed` with
+the typed failure. It receives neither token. The static bridge reuses the
+core's `unsentAfterUnauthorized`, retaining an authorization refusal's exact
+message, or the diagnostic for a renewed credential whose write was never
+replayed. The failure belongs to the same resource dispatch; `settleWrite`
+still decides the final outcome. Without the opt-in the B.2 behavior is
+unchanged, and a failed renewal never makes the resource write retryable.
+This restores the static `Grant`/`ctx.oauth.fetch` parity described in B.2.
+The same static opt-in uses the shared `OAUTH_CHALLENGE_MAX_BYTES` limit for
+discarded 401 challenges, before renewal. `GuardedClient.read(response,
+maxBytes?)` can only narrow its configured ceiling; the optional
+`maxUnauthorizedResponseBytes` declaration applies that lower ceiling to
+declared and streamed 401 bodies. A refusal before a response is wrapped
+retains its own request through `responseRequest(failure)`, so the middleware
+can map that challenge failure without guessing which dispatch failed. A
+write's challenge refusal uses the same `writeUnauthorized` mapper; reads
+retain the static grant's ceiling diagnostic. No renewal begins after an
+oversized challenge, and default guarded clients are unchanged.
+Broken challenge streams retain their 401 and continue to renewal, matching
+the static facade; they are not surfaced challenge refusals.
 
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write
