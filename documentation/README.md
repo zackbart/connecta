@@ -27,7 +27,11 @@ in that guide. For all three removed API providers, including Infisical, use
 [Provider migration for 0.35](./provider-migration-0.35.md).
 
 For a Vercel-hosted agent without a provisioned Connecta token, use
-[Vercel workload credentials (coming in 0.35.0)](./auth.md#vercel-workload-credentials).
+[Vercel workload credentials (available from 0.35.0)](./auth.md#vercel-workload-credentials).
+
+The separate `@zackbart/connecta-eve` helper is available from 0.35.0. Its
+[package guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
+owns installation, supported Node/Eve versions, and token-source setup.
 
 ## Audience rule
 

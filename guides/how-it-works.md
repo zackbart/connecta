@@ -2,179 +2,155 @@
 
 Connecta is a front door for the services your agent needs. It gives the
 agent one connection, then checks each request before it reaches a service.
-You run the deployment and decide what belongs behind that door.
+Your **operator**, the person or team running Connecta, chooses what belongs
+behind that door.
 
 This guide explains the pieces. The [operator documentation](../documentation/README.md)
 owns exact setup and behavior.
 
 ## Start with connections
 
-A **connector** is one connection to one service account or API. You might
-have a connector called `crm` and another called `tickets`.
-Two connectors can reach different accounts at the same service.
+A **connector** is one connection to a service. For example, a connector
+called `crm` could reach your shared CRM account, where you keep customer
+records. Its tools might find a person or update their address.
+A second connector could reach a different account at the same service.
 
-Each connector offers **tools**: actions such as finding a person, listing
-tickets, or updating a record. Tools have names, descriptions, and expected
-inputs so the agent can discover how to use them.
+An **API** is the interface a service gives other software. Connecta can wrap
+that interface in tools, or connect to a hosted MCP server that already offers
+tools. MCP is the standard used to make those tools available to AI apps.
 
 ```mermaid
 flowchart LR
-    Agent["assistant"] --> Connecta
-    Connecta --> API["Maintained provider<br/>Connecta wraps the API"]
-    Connecta --> MCP["Remote MCP connector<br/>the server supplies its tools"]
-    Connecta --> Custom["Custom API connector<br/>you describe its tools"]
-    API --> Vendor["Vendor API"]
-    MCP --> Server["Hosted MCP server"]
-    Custom --> CRM["Your CRM API"]
+    Connecta --> Maintained["Maintained integration"] --> Vendor["Vendor API"]
+    Connecta --> Remote["Remote MCP connection"] --> Hosted["Hosted tools"]
+    Connecta --> Custom["Your API connection"] --> CRM["Your CRM API"]
 ```
 
-A maintained provider comes with Connecta's tools and domain guidance.
-A generic remote MCP connection discovers whatever tools the server makes
-available to that account. A custom API connector lets you describe selected
-operations yourself.
+A maintained integration comes with Connecta's tools and guidance. A remote
+MCP connection uses the tools the server offers to that account. A custom
+API connection lets your operator describe selected actions.
 
-These choices all go through the same access and safety checks. A remote
-server's catalog may change; choosing it also means trusting that server's
-behavior and read/write labels.
+All three go through Connecta's access checks. A remote server's list of
+actions can change, and Connecta relies on truthful descriptions of which
+actions change data.
 
 The README lists [maintained connections](../README.md#what-you-can-connect).
-For setup, see [Integrating services](../documentation/integrating.md).
-
-For upgrades, 0.35.0 removes the Infisical, Notion, and Mixpanel provider
-factories. Notion and Mixpanel's hosted MCP servers use generic `remoteMcp()`
-connections; Infisical has no built-in replacement.
-The [0.35 provider migration guide](../documentation/provider-migration-0.35.md)
-owns the replacement steps.
+For setup and migrations, see [Integrating services](../documentation/integrating.md).
 
 ## A pool is a smaller front door
 
 A **pool** is a named selection of tools and the people or agents allowed
-to use them. It has its own endpoint, or connection address.
-One pool might offer only CRM reads; another might also allow ticket updates.
+to use them. The operator creates it and gives it an **endpoint**: a
+connection address for that pool.
+
+One pool might let the assistant read CRM records. Another might let a
+person update tickets. Tools and accounts are separate choices: a pool
+chooses the actions, while each connection uses its configured account.
 
 ```mermaid
 flowchart LR
-    Alice["alice · person"] --> Human["/mcp/tickets"]
-    Assistant["assistant · agent"] --> Machine["/agent/assistant"]
-    Human --> TicketTools["tickets pool<br/>ticket tools"]
-    Machine --> AgentTools["assistant pool<br/>CRM + ticket reads"]
-    TicketTools --> Services["Connected service accounts"]
-    AgentTools --> Services
+    Alice["alice · person"] --> Tickets["tickets pool<br/>ticket tools"]
+    Assistant["assistant · agent"] --> CRM["crm pool<br/>CRM reads"]
+    Tickets --> Check["Connecta checks access"]
+    CRM --> Check
+    Check --> Accounts["Use each connection's configured account"]
 ```
 
-People sign in through the deployment's human authentication provider.
-Agents prove a declared machine identity. Their pool membership comes from
-deployment code, never from a prompt or tool argument.
+People sign in. Agents use an identity configured by the operator.
+The model cannot change that identity or add itself to a pool.
 
 Each request uses one pool. Belonging to two pools does not merge them.
-Maintainers run the deployment and can reach its whole catalog through the
-main human endpoint; ordinary members use their assigned pools.
+An AI app can switch between pools it is allowed to use; its software must
+choose the right one for the conversation. The model does not choose its
+own access level.
 
-A pool chooses which tools are available. Credentials decide whose service
-account those tools use. Shared credentials belong to the deployment;
-personal connections belong to a signed-in person and are absent for agents.
-Google Workspace also supports an explicitly assigned pool owner for agent
-access to that person's account.
+Maintainers run the deployment and can reach its whole tool list through
+the main human endpoint. Other people use their assigned pools.
+Agents use shared accounts selected by the operator. They do not inherit
+the account of the person chatting with them.
 
-An agent does not become the person chatting with it. Its harness must choose
-an appropriate pool when different people share an assistant. Start with
-[Connecting agents](./connecting-agents.md), then use the
-[pool layout guide](../documentation/auth.md#organizing-an-agents-pools).
+[Connecting agents](./connecting-agents.md) explains pool addresses and
+account choices, including the Google Workspace exception.
 
-## Two ways to present the tools
+## Finding a tool and using it are separate steps
 
-The default connection gives the client six small **meta-tools**. They let
-the agent find and call the underlying service tools without loading every
-service's entire catalog into its conversation.
+First the agent finds an action and learns what information it needs.
+Then it calls that action. The default connection gives the AI app six small
+**meta-tools** to help it do this without loading every service's tools into
+the conversation.
 
-| Tool                    | Plain-language job                                               |
-| ----------------------- | ---------------------------------------------------------------- |
-| `search_tools`          | Inspect the available tools.                                     |
-| `call_tool`             | Run one known read.                                              |
-| `call_destructive_tool` | Run one known write through the host's approval policy.          |
-| `execute_code`          | Run a short program with discovery, calls, and result reduction. |
-| `authorize_connector`   | Request the permitted credential or sign-in handoff.             |
-| `skills`                | Read connector guidance.                                         |
+| Tool                    | Job                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `search_tools`          | Find available actions.                                                      |
+| `call_tool`             | Call a discovered action that reads data.                                    |
+| `call_destructive_tool` | Call a discovered action that changes data, under the app's approval policy. |
+| `execute_code`          | Combine discovery, actions, and a small answer in a program.                 |
+| `authorize_connector`   | Request the permitted account-connection handoff.                            |
+| `skills`                | Read guidance for using a connection.                                        |
 
-**Coming in 0.35.0, pending [#977](https://github.com/zackbart/connecta/pull/977):**
-a native tool surface for clients that already search their own tool catalog.
-A native pool presents its service tools directly, so the client can find
-the real operation in its own search. Code remains available by default.
+An alternative under development, **native tools**, would let apps with
+their own tool search find the service actions directly.
 
 ```mermaid
 flowchart TB
-    Meta["Default · six meta-tools<br/>Connecta helps find the operation"] --> Engine
-    Native["Planned · native tools<br/>the client finds the operation"] --> Engine
-    Engine["Same access and safety engine"] --> Service["Service tool"]
+    Meta["Default · meta-tools<br/>Connecta helps find the action"] --> Checks
+    Native["Under development · native tools<br/>the app finds the action"] --> Checks
+    Checks["Same access checks"] --> Service["Service action"]
 ```
 
-This changes how the client finds a tool. It does not grant more access or
-choose a different service account. The native proposal targets bounded
-pools; large catalogs still need separate evaluation.
-
-The [meta-tool reference](../documentation/meta-tools.md#the-six-tools)
-describes the current default surface.
+The presentation changes how an action is found, without granting more
+access. The [tool reference](../documentation/meta-tools.md#tool-presentation)
+tracks availability and supported behavior.
 
 ## Why run code inside Connecta?
 
 Suppose the agent needs a count of open tickets for each CRM account.
-It could bring every record into the conversation, then ask the model to
-join them. Instead, `execute_code` can fetch the records, match their IDs,
-and return a short table.
+Instead of returning every record to the conversation, a short JavaScript
+program can fetch the records, match their IDs, and return a small table.
 
-The agent writes JavaScript in a sandbox. It can use the tools allowed by
-its endpoint, with the same checks as individual calls. The program cannot
-create connectors, select another identity, or obtain service credentials.
-It has limits on time, calls, writes, and output.
+The program runs in a restricted environment. It can use only this endpoint's
+tools, and cannot create connections, choose another identity, or obtain
+service credentials. Limits keep it from running indefinitely or returning
+unbounded data.
 
-For read work, a single known operation uses a direct call. Discovery,
-several dependent calls, or reducing a large result belongs in a program.
-On a writable endpoint, a program may also write; the host decides whether
-to approve that program.
+One discovered read can use a direct call. Finding an unfamiliar action,
+combining several calls, or reducing a large answer belongs in a program.
+On a writable endpoint, a program may also change data. The AI app decides
+whether to ask for approval before running it.
 
-See [Operating an endpoint](../documentation/operating.md) for the workflow
-and [Code mode](../documentation/code-mode.md) for the JavaScript contract.
+The [endpoint workflow](../documentation/operating.md) and
+[code reference](../documentation/code-mode.md) explain the mechanics.
 
 ## Follow one call
 
 ```mermaid
 sequenceDiagram
-    participant A as Agent client
+    participant A as AI app
     participant C as Connecta
     participant S as Service
-    A->>C: Call a tool at this pool's endpoint
-    C->>C: Check identity, membership, and allowed tools
-    C->>C: Check read/write policy and inputs
-    C->>S: Send the request with the assigned credential
+    A->>C: Request an action through a pool
+    C->>C: Check caller, allowed tools, and read-only rules
+    C->>S: Send with the configured service credential
     S-->>C: Result or failure
-    C->>C: Redact known secrets and bound output
-    C-->>A: Result, paging handle, or recovery guidance
+    C-->>A: Bounded result with known secrets redacted
 ```
 
-Those checks also happen for calls made inside a program. A tool name the
-model guesses cannot bypass them. A read-only endpoint refuses a write
-before dispatch, even when a program asks for it.
+These checks also apply to calls inside programs. Guessing a tool name does
+not bypass them. Read-only rules refuse tools marked as writes before they
+are sent.
 
-If a dispatched write fails ambiguously, Connecta reports an unknown outcome
-and does not automatically send it again. The agent must check the service's
-state before deciding what to do next.
+For tools marked as writes, Connecta does not automatically repeat a sent
+change after an uncertain failure. Truthful tool classification matters;
+[Safety and trust](./safety-and-trust.md) explains the limit and recovery.
 
-## Why the answer may be shorter than the service response
+## Why an answer may be shorter
 
-Large responses can overwhelm a conversation. Programs can filter, count,
-join, and summarize data before returning it. Connecta also bounds output;
-oversized supported results can be stored temporarily and returned through
-a paging handle. Some provider tools trim individual fields and report it.
+Programs can filter, count, join, and summarize records before returning
+them. Connecta also limits output size. Some large results return a preview
+and a handle for retrieving more; some tools shorten fields and report it.
+A preview is not necessarily the whole answer.
 
-A preview is not necessarily the whole answer. Follow the paging guidance
-or retrieve the missing records. Never repeat a write just to recover its
-output; read its stored result or check the service instead.
-
-Redaction has a different purpose: keeping known secrets out of agent output.
-It does not make business records public or remove every piece of personal
-data. Pools and downstream account permissions still determine who should
-receive those records.
-
-Read [Safety and trust](./safety-and-trust.md) for these limits, or the
-[result reference](../documentation/meta-tools.md#result-representation)
-for exact paging and truncation behavior.
+The [result reference](../documentation/meta-tools.md#result-representation)
+explains how to retrieve more. Never repeat a change just to recover its
+output. Redaction keeps known secrets out of results; it does not make
+business records safe to share with everyone.

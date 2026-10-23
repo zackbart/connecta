@@ -24,6 +24,14 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
+## Tool presentation
+
+The supported surface is the six meta-tools below. Native tool presentation
+for clients with their own tool search is planned in
+[#977](https://github.com/zackbart/connecta/pull/977); until that work lands,
+use the six-tool contract below. Native pools are intended to reuse the same enforcement
+and keep code available by default.
+
 ## The six tools
 
 Every deployment requires an executor, so `tools/list` is exactly six. No

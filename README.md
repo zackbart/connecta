@@ -2,46 +2,53 @@
 
 **One connection between your agent and the services you choose.**
 
-Connecta puts MCP servers and HTTP APIs behind one MCP endpoint that you run
-yourself. Connect an agent once, then choose which services it can use.
+Connecta puts the services your agent needs behind one connection. It uses
+**Model Context Protocol (MCP)**, a standard that lets AI apps use tools.
+You run Connecta and choose what each agent may access.
 
 ```mermaid
 flowchart LR
-    Agents["Agents and people"] --> Pools
-    subgraph Connecta["Your Connecta deployment"]
-        Pools["Pools<br/>who can use which tools"] --> Safety["Safety engine<br/>access · reads/writes · secrets"]
+    Agents["Agent apps and people"] --> Pools
+    subgraph Connecta["Your Connecta server"]
+        Pools["Pools<br/>which tools each caller can use"] --> Checks["Access checks<br/>reads · changes · secrets"]
     end
-    Safety --> Stripe
-    Safety --> Google["Google Workspace"]
-    Safety --> Other["Other APIs and MCP servers"]
+    Checks --> Stripe
+    Checks --> Google["Google Workspace"]
+    Checks --> Other["Other services"]
 ```
 
-The agent can call one tool or run a short JavaScript program to gather,
-combine, and trim results before they enter the conversation. Service
-credentials stay inside Connecta.
+A tool is an action, such as finding a ticket or updating a record. The agent
+can call one action directly or combine several in a short program inside
+Connecta. The program can return a small answer instead of every record.
+Connecta supplies the service credentials, so the agent doesn't need them.
 
 ## What you can connect
 
 Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Overflow, Planning Center, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 
-Connect any other hosted MCP server through `remoteMcp()`, or describe an
-HTTP API through `api()`. Hosted connections discover the server's current
-tools; maintained providers wrap vendor APIs.
+You can also connect another hosted MCP tool server, or describe an API
+Connecta should call. Hosted connections use the server's current tools;
+maintained integrations come with tools built by Connecta.
 
 ## What it protects
 
-| Boundary         | What Connecta does                                                                                |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| Access           | A pool limits the tools its members can reach.                                                    |
-| Writes           | Connecta never automatically sends a dispatched write again. An uncertain outcome needs checking. |
-| Secrets          | Service credentials stay on the server; known secrets are redacted from agent output.             |
-| Read-only access | Read-only endpoints hide writes and refuse attempts to call them.                                 |
+| Boundary         | What Connecta does                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Access           | A pool limits the tools its members can reach.                                                                            |
+| Writes           | For tools marked as writes, once a change is sent, Connecta won't automatically send it again.                            |
+| Secrets          | Known secrets are redacted from agent output. Enable the credential vault to encrypt stored credentials and OAuth tokens. |
+| Read-only access | Read-only endpoints hide writes and refuse attempts to call them.                                                         |
 
-Your agent's host owns approvals. A writable pool can write without a person
-if its host permits it. [Safety and trust](./guides/safety-and-trust.md)
-explains the boundaries and limits.
+Read-only protection and single-attempt writes depend on truthful tool labels.
+The AI app using Connecta decides when to ask for approval; a writable pool
+can write unattended. [Safety and trust](./guides/safety-and-trust.md)
+explains these boundaries and their limits.
 
 ## Try it in three steps
+
+You'll need somewhere to run Connecta and permission to connect the service
+accounts you choose. Creating the project is the start of setup; account
+connections and access rules still need configuring.
 
 1. **Create a deployment.** Start with the Node template:
 
@@ -51,17 +58,20 @@ explains the boundaries and limits.
    npm install
    ```
 
-2. **Choose services and access.** Give your setup agent the
-   [operator documentation](./documentation/README.md) and tell it which
-   services, people, and agents need access. It configures connectors and
-   pools, connects credentials, and starts the server.
-3. **Connect a client.** Give the client its pool's endpoint and credential.
-   [Connecting agents](./guides/connecting-agents.md) explains the choices;
-   the [deployment guide](./documentation/deploying.md) has runnable steps.
+2. **Choose services and access.** Your operator—the person or team running
+   Connecta—can use a coding assistant as a setup agent. Give that assistant
+   the [operator documentation](./documentation/README.md). It configures
+   services, enables the credential vault, connects accounts, and starts
+   the server with the access rules you choose.
+3. **Connect your AI app.** This app is the MCP client: it uses Connecta's
+   tools on your agent's behalf. Give it the pool address and authentication
+   method supplied by your operator. [Connecting agents](./guides/connecting-agents.md)
+   explains what to ask for; the [deployment guide](./documentation/deploying.md)
+   has runnable steps.
 
 ```mermaid
 flowchart LR
-    Create["1 · Create"] --> Configure["2 · Choose services + pools"] --> Connect["3 · Connect your agent"]
+    Create["1 · Create"] --> Configure["2 · Choose services + access"] --> Connect["3 · Connect your AI app"]
 ```
 
 The package is `@zackbart/connecta` (`npm install @zackbart/connecta`). Run it
@@ -70,17 +80,12 @@ on Node, in Docker, or on Cloudflare Workers. The
 
 ## Read a little more
 
-| Guide                                               | What you'll understand                                                 |
-| --------------------------------------------------- | ---------------------------------------------------------------------- |
-| [How it works](./guides/how-it-works.md)            | Connectors, pools, people, and how a call reaches a service.           |
-| [Connecting agents](./guides/connecting-agents.md)  | Agent tokens, Vercel identity, and the Eve helper.                     |
-| [Safety and trust](./guides/safety-and-trust.md)    | Write outcomes, secrets, read-only access, and your responsibilities.  |
-| [Operator documentation](./documentation/README.md) | Exact setup steps and contracts for the agent running your deployment. |
-
-**Coming in 0.35.0:** Vercel workload identity and the separate
-`@zackbart/connecta-eve` helper are merged on main and await publication.
-Native tools for clients with their own tool search are planned for that
-release and remain pending in [#977](https://github.com/zackbart/connecta/pull/977).
+| Guide                                               | What you'll understand                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------ |
+| [How it works](./guides/how-it-works.md)            | Connectors, pools, people, and how a call reaches a service.             |
+| [Connecting agents](./guides/connecting-agents.md)  | Agent tokens, Vercel identity, and the optional Eve helper.              |
+| [Safety and trust](./guides/safety-and-trust.md)    | Uncertain changes, secrets, read-only access, and your responsibilities. |
+| [Operator documentation](./documentation/README.md) | Setup, feature availability, upgrades, and exact contracts.              |
 
 <a id="existing-client-tokens"></a>
 

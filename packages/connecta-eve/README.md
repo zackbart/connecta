@@ -82,9 +82,9 @@ Tools remain usable. Instructions do not grant access.
 ## Vercel OIDC token source
 
 This variant requires a **Connecta 0.35.0 or later** deployment with Vercel
-workload admission configured for this agent. Workload admission is planned for
-0.35.0 in [#975](https://github.com/zackbart/connecta/pull/975) and is unavailable
-in earlier releases. Use agent tokens until your deployment includes it.
+workload admission configured for this agent. Workload admission was added in
+[#975](https://github.com/zackbart/connecta/pull/975) and is available from 0.35.0.
+Earlier releases require agent tokens.
 Once configured, use Vercel's token resolver in **both** files:
 
 ```ts

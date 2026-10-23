@@ -1,181 +1,155 @@
 # Connecting an agent
 
-Giving an agent organization access means answering three questions:
-which agent is calling, which tools may it use, and whose service accounts
-will those tools use?
+Your **operator** is the person or team running the Connecta server. They
+choose which agent can connect, which tools it can use, and which service
+accounts those tools use. The model cannot grant itself more access.
 
-Connecta keeps those choices in deployment code. The model cannot grant
-itself more tools by asking for them.
-
-This guide explains the choices. Use the [operator task index](../documentation/README.md)
-for exact setup and verification steps.
+This guide explains those choices. The [operator documentation](../documentation/README.md)
+has exact setup and verification steps.
 
 ## Choose the pool first
 
 Imagine an agent named `assistant` that helps with CRM records and tickets.
-Give it a pool containing just the tools needed for that job. Its connection
-address is `/agent/assistant` when the pool is also named `assistant`.
-The agent and pool are separate names; they need not match.
+Its operator creates a pool with the actions needed for that job and adds
+the agent as a member. The pool can be read-only if updates must be impossible.
 
 ```mermaid
 flowchart LR
-    Identity["Declared agent<br/>assistant"] --> Membership["Member of<br/>assistant pool"]
-    Membership --> Tools["Allowed tools<br/>CRM + tickets"]
-    Tools --> Accounts["Assigned service accounts<br/>credentials stay in Connecta"]
+    Identity["Agent · assistant"] --> Pool["Member of pool · tickets"]
+    Pool --> Tools["Allowed CRM and ticket tools"]
+    Tools --> Accounts["Connecta uses each connection's configured account"]
 ```
 
-A pool can include every tool from a connector or only selected tools.
-Make the pool read-only if updates must be impossible. Also consider a
-read-only account or restricted credential at the service itself.
+The address uses the **pool name**, not the agent name. If `assistant` belongs
+to a pool called `tickets`, its address is `/agent/tickets` on your Connecta
+server. For a pool called `assistant`, it is `/agent/assistant`.
+Ask your operator for the complete URL, such as
+`https://connecta.example.com/agent/tickets`; the model should not guess it.
 
-For organization access, a maintainer connects the shared service accounts
-once. The agent proves its own identity to Connecta; it does not need the
-CRM's password or the ticket service's API key.
+For shared organization access, a maintainer connects the service accounts
+once. The agent proves its identity to Connecta and never needs the CRM's
+password or the ticket service's API key. The operator should enable the
+[encrypted credential vault](../documentation/auth.md#connect-a-shared-credential)
+before saving those credentials or connecting accounts.
 
-Agents do not inherit a chatting person's login. Personal-auth connectors
-are absent for agents. Google Workspace offers a separate pool-owner model
-when an agent should act as an explicitly assigned person.
+## What to ask your operator for
 
-Use [pool setup](../documentation/auth.md#pools),
-[shared credentials](../documentation/auth.md#connect-a-shared-credential),
-and [Workspace pool owners](../documentation/auth.md#pool-owners-for-google-workspace)
-for those details.
+- **The pool name and complete endpoint URL.** Confirm this agent is a member.
+- **The authentication method.** Ask how the AI app will receive the agent
+  credential privately; keep it out of prompts and source files.
+- **The tools and accounts.** Know which actions are available, whose account
+  they use, and whether changes are allowed.
+- **The approval policy.** Find out whether writes ask a person or run unattended.
+- **A safe first test.** Agree on a small read, such as listing one ticket,
+  and the result you expect.
+
+People use separate sign-in endpoints. The
+[pool reference](../documentation/auth.md#pools) owns the address and membership rules.
 
 ## Choose how the agent proves its identity
 
-| Method                   | Best fit                    | What you manage                                                     |
-| ------------------------ | --------------------------- | ------------------------------------------------------------------- |
-| Connecta agent token     | An agent running anywhere   | One `cta_` secret per declared agent, with rotation and revocation. |
-| Vercel workload identity | An agent deployed on Vercel | A binding to its team, project, and allowed environments.           |
+| Method                   | Best fit                    | What the operator provides                                     |
+| ------------------------ | --------------------------- | -------------------------------------------------------------- |
+| Connecta agent token     | An agent running anywhere   | A `cta_` secret issued for the declared agent.                 |
+| Vercel workload identity | An agent deployed on Vercel | Permission for a trusted project and its allowed environments. |
 
-**Coming in 0.35.0:** Vercel workload identity is merged on main and awaits
-publication. Agent tokens remain available for agents on any platform.
+An agent token stays in the AI app's secret store. The app presents it when
+it connects. Vercel identity uses a signed project token instead of a
+separately provisioned Connecta secret.
 
 ```mermaid
 sequenceDiagram
-    participant H as Agent host
-    participant V as Vercel
+    participant H as AI app
     participant C as Connecta
-    alt Connecta agent token
-        H->>C: Present saved cta_ token
-        C->>C: Resolve declared agent
-    else Vercel workload identity (coming in 0.35.0)
-        V-->>H: Signed project token
-        H->>C: Present current project token
-        C->>C: Verify signature and configured workload
-    end
-    C->>C: Check this agent's pool membership
-    C-->>H: Serve only the pool's permitted tools
+    H->>C: Present the configured agent credential
+    C->>C: Verify the credential and pool membership
+    C-->>H: Serve the pool's permitted tools
 ```
 
-An agent token is issued through trusted provisioning or the maintainer UI.
-Save it in the agent host's secret store. Rotation replaces the old token;
-revocation stops future requests using it. A request already admitted is
-not recalled.
+Anyone who obtains either token can act as the agent. Trust the Vercel
+project code and build steps that can obtain its tokens, and enable only
+environments that should have the pool's access.
 
-Vercel identity removes the separately provisioned Connecta secret. Connecta
-checks the signed token against the team, project, and environments declared
-for the agent. Production is the default; enabling preview or development
-extends that same access to those workloads.
+The [token management guide](../documentation/auth.md#issue-rotate-or-revoke-an-agent-token)
+and [Vercel identity guide](../documentation/auth.md#vercel-workload-credentials)
+own availability, setup, rotation, and revocation. If both methods are
+enabled, stopping one does not stop the other.
 
-The Vercel token is still a bearer credential. Anything that obtains it can
-act as the agent, including trusted project code and build steps. Bind only
-projects and environments you trust with the pool's access.
+## An optional integration for Eve
 
-Both methods can coexist for one agent. Revoking its `cta_` token leaves
-Vercel admission active; removing the workload binding leaves the agent
-token active. Removing the declared agent stops both paths.
+**Eve** is an app framework for building agents. If your agent uses Eve,
+`@zackbart/connecta-eve` can connect it to a pool and load the endpoint's
+instructions at the start of a turn. The helper runs in the Eve app; your
+Connecta server runs separately.
 
-The operator procedures are [agent token management](../documentation/auth.md#issue-rotate-or-revoke-an-agent-token)
-and [Vercel workload credentials](../documentation/auth.md#vercel-workload-credentials).
-People use the separate human endpoints and sign-in flow.
+The [helper's README](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
+owns installation, supported Node/Eve versions, environment setup, and the
+Vercel variant. The following two files illustrate its two jobs after your
+operator has configured the endpoint and credential.
 
-## The Eve helper in two files
-
-**Coming in 0.35.0:** `@zackbart/connecta-eve` is a separate helper package,
-merged on main and awaiting publication. It runs inside the Eve app; your
-Connecta server runs separately. It requires Node 24+ and currently supports
-Eve `>=0.83.0 <0.84.0`. Use matching helper and server release versions.
-
-The helper has two jobs: connect Eve to the agent's pool, and give the model
-that endpoint's instructions at the start of a turn.
-
-After your setup agent configures the pool and supplies `CONNECTA_URL` and
-`CONNECTA_ACCESS_TOKEN` in the Eve app's environment, the token-based example
-uses these two files.
-
-`agent/connections/connecta.ts`:
+`agent/connections/connecta.ts` connects to the pool:
 
 ```ts
 import { connectaConnection } from "@zackbart/connecta-eve";
 
 export default connectaConnection({
-  pool: "assistant",
+  pool: "tickets",
   description: "Shared CRM and tickets for the assistant.",
 });
 ```
 
-`agent/instructions/connecta.ts`:
+`agent/instructions/connecta.ts` supplies guidance for using it:
 
 ```ts
 import { connectaInstructions } from "@zackbart/connecta-eve";
 
-export default connectaInstructions({ pool: "assistant" });
+export default connectaInstructions({ pool: "tickets" });
 ```
 
-The connection uses app-owned credentials. It does not forward the person
-chatting with Eve. Both files must use the same endpoint and token source.
-With Vercel identity, both can use `getVercelOidcToken` through `getToken` to
-resolve a current credential for each request.
-
-Instructions help the model use the tools; they grant no access. A failed
-instruction refresh may leave older guidance or no guidance while tools
-remain usable.
-
-The [helper package guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
-owns installation, environment setup, and the complete Vercel variant.
+Both files must use the same endpoint and credential source. The helper uses
+the configured agent credential, without forwarding the chatting person's
+identity. Instructions help the model use tools; they grant no permissions.
 
 ## Decide whether writes need a person
 
-The helper defaults to Eve's `never()` approval policy: authorized writes
-run unattended. Connecting an agent does not add a human approval step.
+The helper defaults to unattended execution of authorized writes. Connecting
+an agent does not automatically add an approval step.
 
 ```mermaid
 flowchart TB
-    Call["Agent requests a write"] --> Host{"Host approval policy"}
-    Host -->|Ask a person| Decision["Approve or deny in the host"]
-    Host -->|Allow unattended| Pool{"Connecta pool read-only?"}
-    Decision -->|Approved| Pool
-    Pool -->|Yes| Refuse["Connecta refuses before sending"]
-    Pool -->|No| Send["Connecta checks and sends"]
+    Call["Agent requests a change"] --> Ask{"App asks for approval?"}
+    Ask -->|Yes| Approved{"Person approves?"}
+    Approved -->|No| Stop["Stop"]
+    Approved -->|Yes| Pool{"Connecta allows this write?"}
+    Ask -->|No| Pool
+    Pool -->|No| Refuse["Refuse before sending"]
+    Pool -->|Yes| Send["Send the change"]
 ```
 
-For an interactive agent, the helper's `gateWrites: true` asks before tools
-not marked read-only, including code on a writable pool. An explicit Eve
-approval policy takes precedence. For an agent that must never update data,
-choose a read-only pool.
+For an interactive Eve agent, `gateWrites: true` asks before tools not marked
+read-only. An explicit Eve approval policy takes precedence. If the agent
+must never update data, use a read-only pool.
 
-The gate reads the host's cached tool labels. If a tool changes from read to
-write before dispatch, Connecta uses its current classification. A writable
-pool can then write without a fresh approval; a read-only pool refuses it.
-See [Safety and trust](./safety-and-trust.md) before choosing that boundary.
+Approval may rely on an earlier tool label. A writable pool can execute a
+newly classified write without a fresh approval; a read-only pool refuses it.
+[Safety and trust](./safety-and-trust.md) explains the boundary, and the
+[helper guide](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md#approval-and-writes)
+explains the policy mechanics.
 
-Native tools for Eve's own search are planned for 0.35.0 and pending in
-[#977](https://github.com/zackbart/connecta/pull/977). The helper also works
-with the current six-tool surface; native tools are a separate pool choice.
+## When accounts or audiences differ
 
-## When one assistant serves several people
+Personal connections belong to a signed-in person and are absent for agents.
+Google Workspace has an explicit exception: an operator can assign a pool
+owner whose account the agent will use. See
+[Workspace pool owners](../documentation/auth.md#pool-owners-for-google-workspace)
+before connecting an agent to someone's account.
 
-One agent identity can belong to several pools. The harness chooses the pool
-for each conversation, based on everyone present. A group must not inherit
-one participant's private access, and the model must not choose its own tier.
+An assistant serving several people must use a pool appropriate for everyone
+in the conversation. Its app chooses that pool; the model does not choose
+its own access level. Keep private results out of broader conversations.
+The [pool layout guide](../documentation/auth.md#organizing-an-agents-pools)
+owns that policy.
 
-Begin with shared organization access. Add personal pools only when the
-harness can reliably select them and keep conversation state separated.
-The [agent pool layout](../documentation/auth.md#organizing-an-agents-pools)
-explains tier selection and personal-account boundaries.
-
-After setup, your operator should verify the intended endpoint, confirm its
-visible tools, try a bounded read, and check that an excluded pool refuses
-access. The [deployment verification guide](../documentation/deploying.md#verify-and-diagnose)
-provides the concrete checks.
+After setup, run the agreed small read with your operator. Use the
+[verification guide](../documentation/deploying.md#verify-and-diagnose)
+when the connection or access differs from what you expected.

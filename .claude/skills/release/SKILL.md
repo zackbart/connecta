@@ -48,20 +48,27 @@ the next release; time its configuration for that publish instead.
    both for a deliberate single-runtime local run and requires Node 24.
    When updating Eve, change its devDependency pin, supported peer range and
    `pnpm-workspace.yaml`'s exact `minimumReleaseAgeExclude` entry together.
-2. Commit `CHANGELOG.md` and everything under `.changes/` first. Assembly
+2. Review release-status wording in `README.md`, `guides/`, `documentation/`,
+   and `packages/connecta-eve/README.md` before publishing. Search for
+   `pending`, `coming in`, `planned`, and `awaiting publication`; check each
+   occurrence against what this release actually includes. Prefer durable
+   wording such as “available from <version>” for included features. Keep
+   unmerged work marked planned, retain historical migration instructions,
+   and leave released changelog sections unchanged.
+3. Commit `CHANGELOG.md` and everything under `.changes/` first. Assembly
    refuses untracked or modified inputs.
-3. `pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]`.
+4. `pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]`.
    It inserts `## <version> — <date>`, groups Added/Changed/Fixed/Removed/Security,
    marks breaking entries, and deletes the consumed fragments. Released
    sections stay untouched.
-4. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
-5. Review the assembled section, commit it with the deletions, then run
+5. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
+6. Review the assembled section, commit it with the deletions, then run
    `pnpm run release:check:core` on Node 22 (full `check`, browser/example/
    security checks and core package smoke), then `pnpm run release:check:eve`
    on Node 24 (helper typecheck/test/build, packed-consumer runtime/type smoke
    and its complete dependency audit).
    Open the PR and merge it like any other.
-6. After merge, tag the merge commit `v<version>` (must equal `package.json`;
+7. After merge, tag the merge commit `v<version>` (must equal `package.json`;
    publish.yml verifies) and publish a GitHub Release with the narrative.
    publish.yml reruns the two checks on their respective Node versions, then
    publishes the helper first and core second with provenance. Each step checks

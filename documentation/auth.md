@@ -373,7 +373,7 @@ including email lookup failures and admission policy refusals.
 
 ## Vercel workload credentials
 
-Coming in 0.35.0; merged on main and unavailable in earlier releases.
+Available from 0.35.0; earlier releases do not support workload admission.
 
 An agent running on Vercel can present its project's signed OIDC token instead
 of provisioning a Connecta token. Declare the binding beside its name:
