@@ -1096,7 +1096,7 @@ const six = comparisonFixture("six", 20),
     file.trials.push(extra);
   }
   if (!compare(extendedA, extendedB).includes("Decision NOT EVALUATED"))
-    throw new Error("Adding a REST task changed the registered 19-task decision scope");
+    throw new Error("Adding a REST task changed the retained comparison scope");
 }
 if (!compare(six, code).includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
 for (const trial of code.trials.filter((t) => t.task === "p5-known-read-routing").slice(0, 3))
@@ -1105,12 +1105,13 @@ if (!compare(six, code).includes("task drops require triage: p5-known-read-routi
   throw new Error("Comparison missed task-drop rule");
 const atBar = comparisonFixture("code", 20),
   aboveBar = comparisonFixture("six", 20);
-// 19 losses out of 380 is exactly five percentage points, spread over tasks
-// so no per-task drop reaches the separate three-trial veto.
+// Five percent of this retained task roster, spread across tasks so no
+// per-task drop reaches the separate three-trial veto.
+const boundaryLosses = COMPARISON_TASKS.length;
 let losses = 0;
 const byTask = new Map<string, number>();
 for (const trial of atBar.trials) {
-  if (losses === 20) break;
+  if (losses === boundaryLosses + 1) break;
   if ((byTask.get(trial.task) ?? 0) >= 2) continue;
   const task = ACTIVE_TASKS.find((t) => t.id === trial.task)!;
   if (regradeTrial(task, trial, "codex", "outcome", "code").status !== "pass") continue;
@@ -1123,10 +1124,10 @@ for (const trial of atBar.trials) {
   }
   losses++;
   byTask.set(trial.task, (byTask.get(trial.task) ?? 0) + 1);
-  if (losses === 19 && !compare(aboveBar, atBar).includes("Decision PASS"))
+  if (losses === boundaryLosses && !compare(aboveBar, atBar).includes("Decision PASS"))
     throw new Error("Comparison rejected exact five-point boundary");
 }
-if (losses !== 20 || !compare(aboveBar, atBar).includes("more than 5 percentage points"))
+if (losses !== boundaryLosses + 1 || !compare(aboveBar, atBar).includes("more than 5 percentage points"))
   throw new Error("Comparison missed rate rule");
 for (const [task, needle] of [
   ["p5-trusted-program-write", "code duplicate write"],

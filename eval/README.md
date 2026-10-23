@@ -275,11 +275,14 @@ still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
 [Planned tasks](tasks/planned.ts) is currently empty.
-The #765 paired comparison keeps its registered 19-task scope; these retained
-follow-ups do not change that experiment's acceptance rule.
+The historical #765 paired comparison registered 19 tasks. The current roster
+retains 18 of them after removing the Mixpanel bootstrap; frozen comparison
+baselines keep their original scope.
 An eval-only fetch adapter maps fresh per-world sentinel credentials to
 loopback HTTP, so Stripe keeps its fixed public origins and the
-providers retain their production host checks. Unregistered credentials and
+providers retain their production host checks. The eval sender routes kit
+requests through that same fake-credential adapter after Node installs its
+owned transport. Unregistered credentials and
 cross-vendor hosts fail before any network request. The last world to stop
 restores the original fetch function; concurrent worlds keep separate routes.
 

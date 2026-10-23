@@ -2,6 +2,7 @@
 import { serveFetch, type Served } from "../support/serve.js";
 import type { CallRecord, Ledger } from "./service.js";
 import { randomUUID } from "node:crypto";
+import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 
 export type RestVendor = "stripe" | "cloudflare" | "vercel";
 export const ACCOUNT_A = "a".repeat(32);
@@ -20,6 +21,15 @@ const HOSTS: Record<RestVendor, string[]> = {
 };
 const routes = new Map<string, { url: string; hosts: string[] }>();
 let originalFetch: typeof fetch | undefined;
+let previousKitTransport: GuardedTransport | undefined;
+let kitInstalled = false;
+
+/** listen() installs Node's sender; evals route kit calls through the fake-credential guard too. */
+export function installRestKitTransport(): void {
+  const previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  if (!kitInstalled) previousKitTransport = previous;
+  kitInstalled = true;
+}
 
 /** Keep the providers' production host guards; route only fresh fake credentials. */
 function installTransport() {
@@ -133,6 +143,9 @@ export class FakeRestService {
     if (!routes.size && originalFetch) {
       globalThis.fetch = originalFetch;
       originalFetch = undefined;
+      if (kitInstalled) configureGuardedTransport(previousKitTransport);
+      kitInstalled = false;
+      previousKitTransport = undefined;
     }
   }
   private async handle(request: Request): Promise<Response> {
