@@ -12,6 +12,8 @@ interface Session {
   mode: string;
   redeemed: string[];
   requests: Array<{ path: string; grant: string | null; credential: string | null }>;
+  refreshStarted: Promise<void>;
+  startRefresh(): void;
   released: Promise<void>;
   release(): void;
 }
@@ -27,7 +29,9 @@ export default async function setup(project: TestProject) {
         const id = crypto.randomUUID();
         let release!: () => void;
         const released = new Promise<void>((resolve) => { release = resolve; });
-        sessions.set(id, { mode: body, redeemed: [], requests: [], released, release });
+        let startRefresh!: () => void;
+        const refreshStarted = new Promise<void>((resolve) => { startRefresh = resolve; });
+        sessions.set(id, { mode: body, redeemed: [], requests: [], refreshStarted, startRefresh, released, release });
         response.end(JSON.stringify({ id }));
         return;
       }
@@ -37,6 +41,12 @@ export default async function setup(project: TestProject) {
       const operation = parts[sessionIndex + 2];
       const session = sessions.get(id!);
       if (!session) { response.writeHead(404).end(); return; }
+      // Latch receipt independently of the held token response and waiter arrival.
+      if (operation === "refresh-started") {
+        await session.refreshStarted;
+        response.end("{}");
+        return;
+      }
       if (operation === "finish") {
         session.release();
         response.end("{}");
@@ -94,6 +104,7 @@ export default async function setup(project: TestProject) {
         if (operation === "token" || operation === "token-final") {
           const form = new URLSearchParams(body);
           session.requests.push({ path: operation, grant: form.get("grant_type"), credential: form.get("refresh_token") ?? form.get("code") ?? form.get("token") });
+          if (form.get("grant_type") === "refresh_token") session.startRefresh();
           if (operation === "token" && session.mode.startsWith("sdk-redirect-")) {
             // A valid-looking body must never turn a redirect into a rotation.
             json({ access_token: "new-access", refresh_token: "old-refresh", token_type: "Bearer" }, Number(session.mode.slice("sdk-redirect-".length)), { location: `${issuer}/token-final` });
