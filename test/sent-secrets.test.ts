@@ -55,7 +55,7 @@ async function exercise(connector: Connector, options: Parameters<typeof makeReg
 }
 
 describe("call-scoped sent credentials", () => {
-  it("INV-5: copies nested error data and causes without raw, prefixed, encoded or Basic credentials", () => {
+  it("INV-5: copies nested error data and causes without raw, prefixed, encoded or Basic credentials, and withholds a header line whose name or credential prefix a private value took", () => {
     const secrets = new SentSecrets();
     secrets.header(`Basic ${btoa(`account:${SECRET}`)}`);
     const cause = new Error(diagnostic(SECRET));
@@ -80,6 +80,27 @@ describe("call-scoped sent credentials", () => {
     expect(redacted.message).toContain("Permission refused");
     expect(redacted.message).toContain("Retry after checking permissions");
     expect(error.message).toContain(SECRET);
+    // A sensitive header line in an echo is read before the echo replaces anything, so a private
+    // value that takes part of its name, its `:` or a credential prefix leaves none of its value:
+    // the whole token, every cookie pair, a short tail. A private word opening prose keeps it (#703).
+    const scrub = (pin: string, text: string) => {
+      const one = new SentSecrets();
+      one.arguments({ pin }, { type: "object", properties: { pin: { type: "string", writeOnly: true } } });
+      return one.redact(text);
+    };
+    const token = "sk_live_A7vJp9nR-2tW6qK8c-M4zX1sF5-hL3dB0uY";
+    expect(scrub("Authorization: Bearer", `Authorization: Bearer ${token}\nRetry`)).toBe("[redacted]\nRetry");
+    expect(scrub("Cookie: public=", "Cookie: public=tracking123456; session=VENDOR_HELD_0003")).toBe("[redacted]");
+    expect(scrub(`Authorization: Bearer ${token.slice(0, -7)}`, `Authorization: Bearer ${token}`)).toBe("[redacted]");
+    expect(scrub("tion: Be", `Authorization: Bearer ${token}`)).toBe("Authoriza[redacted]");
+    expect(scrub("X-Api-", "X-Api-Key: VENDOR_HELD_0002")).toBe("[redacted]Key: [redacted]");
+    expect(scrub("Auth", `X-${"a".repeat(300)}Authorization: ${token}`)).toBe(
+      `X-${"a".repeat(300)}[redacted]orization: [redacted]`,
+    );
+    expect(scrub("Auth", `Authorization${" ".repeat(80)}: ${token}`)).toBe(
+      `[redacted]orization${" ".repeat(80)}: [redacted]`,
+    );
+    expect(scrub("hunter22", "hunter22 opens this line")).toBe("[redacted] opens this line");
   });
 
   it("INV-5: ordinary diagnostics and results keep their text, and plain results their identity", () => {

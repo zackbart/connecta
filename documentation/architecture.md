@@ -1136,7 +1136,11 @@ including titles, descriptions, schemas and annotations. If a tool name would
 change, the complete catalog is refused. Rewriting a name changes dispatch;
 dropping only that tool would publish a partial catalog, against INV-8. Later
 cached reads need no credential set because the stored facts are already clean.
-Echoed sensitive header lines are also withheld. The set is never persisted
+Echoed sensitive header lines are also withheld. They are read on the text
+before the echo is replaced and merged into its spans, so a private value that
+takes part of a header's name, its `:` or a credential prefix (`Bearer `) cannot
+hide the header: the whole value goes, every cookie pair and any short tail
+with it (#703). A line that is not a sensitive header keeps its text. The set is never persisted
 or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
@@ -1415,6 +1419,52 @@ every vendor ships one reviewed table through one mechanism
    ordinary text. This boundary is independent of redaction's fail-closed
    span. Each string is scanned alone; split rich-text runs and encoded
    signing parameter names are outside this scan's threat model.
+   Sent-secret redaction runs before this step, in the provider kit's parse
+   pass, so a rule that decides on a value can read the `[redacted]`
+   placeholder where the vendor wrote what the rule matches. Every such
+   decision input fails closed through one check, `redactionAltered` in
+   `src/redaction-marker.ts`. A resource or embedded-URL type discriminator
+   that carries the placeholder applies every resource rule's paths and
+   withheld fields, never a verbatim URL. A label (`key`, `name`,
+   `target.key`) or `type` that carries it makes the record a labelled or
+   typed secret, a header, cookie, or query rule, and an environment item; an
+   environment list string that carries it is withheld like `NAME=value`. A
+   whole string whose scheme it may have taken (no whitespace, and only
+   scheme characters before the placeholder) is withheld, at a destination
+   key too. A parameter name it altered (the placeholder inside a run of name
+   characters that ends at a plain or encoded `=`, and not directly after an
+   `=`) loses its value wherever signing parameters are scanned, and in
+   reviewed text withholds the whole link, as does a placeholder opening a
+   word where a link's scheme and host would be; a fragment it altered
+   withholds the query and fragment. A key that carries it (text a result
+   hook parses after the kit redacted it whole, such as NDJSON and log
+   streams) loses its value, and its record's key-based decisions take their
+   protective outcome, route header pairs included. A placeholder can also
+   stand for a credential's public prefix (`sk_live_`, `whsec_`, or a signing
+   parameter's name and `=`) and leave its remainder, which with the prefix
+   known rebuilds the credential however short or encoded it is. Wherever
+   signing parameters are scanned, a placeholder followed by any of a value's
+   base64 or base64url characters (letters, digits, `+`, `/`, `=`, `-`, `_`)
+   or `%` escapes is withheld with them through the end of the value
+   (`splitRemainder`), so a tail of `+/` alone goes too, and a value's end
+   never splits a placeholder. In reviewed links, a query component that
+   carries the placeholder and has no readable name withholds the query. What
+   stays visible cannot complete a credential: other punctuation alone after a
+   placeholder (`.`, `,`, `;`, `!`), which no base64 value contains, and text
+   past a value's end (whitespace, a quote, an angle bracket, `&`, `#`, `)`,
+   `]`, a backtick or a backslash), which belongs to another parameter decided
+   by its own name. A signing value written as numeric character references
+   outside a reviewed link is withheld by no rule, collision or not, since the
+   signing scan ends a value at `&`; that is a separate gap in the signing
+   scan, unchanged here. Value safety's own
+   placeholders are not alterations: `@keys` map keys, a withheld value right
+   after `=`, and a withheld `#[redacted]` fragment. More is withheld only
+   when a private value occurs in a decision input, and then deliberately:
+   a placeholder inside a base64 value before its `=` padding counts as a
+   parameter name, so its link goes whole; an altered fragment withholds the
+   query and fragment; a Content-Type redaction altered on a body that is not
+   JSON leaves it unreadable (see "Contributor provider kit"); a vendor key
+   spelled with the placeholder loses its value.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in
@@ -2196,6 +2246,12 @@ Breeze's in-band failure text and Slides' raw chunks do. A private value of four
 to seven units that a vendor echoes only as an object key is therefore matched
 once, at the connector boundary; the agent boundary's envelope rules do not
 match values that short.
+
+Redacted values can still be decision inputs. `textBodies` and `binaryBodies`
+see a Content-Type that redaction altered as `application/json`, so no altered
+type routes a body around ResultSafety as one string or as bytes; a body that
+is not JSON is then unreadable. Value safety's own decisions on values fail
+closed the same way (see "Value safety for REST vendors").
 
 A vendor may declare `encodedFields`: exact dotted JSON paths with whole
 array segments (`payload.parts[*].body.data`), `encoding: "base64url"`, an
