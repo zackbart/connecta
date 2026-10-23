@@ -488,9 +488,9 @@ on the next call without redeploying; no liveness probe runs in the background.
 With this vault, 0.25.0 seals existing downstream OAuth state on first read.
 Rolling back to 0.24.x then requires reauthorizing those OAuth connectors.
 
-The shipped Notion connector uses a deployment-owned static header and echo
+The example's hosted Notion `remoteMcp()` entry uses a deployment-owned static header and echo
 needs no secret. To exercise vault controls, declare a `credential` slot on an
-`api()` connector or use a Notion connector with `auth: { type: "token" }`,
+`api()` connector or use a Stripe connector with `auth: { type: "apiKey" }`,
 which declares its own slot.
 Authorized users manage that slot inside the connection. Configuring a vault
 does not create credentials or permissions by itself.

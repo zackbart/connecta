@@ -37,18 +37,18 @@ export const OPERATOR_V2_SLOTS: { agents: AgentSlot[] } = {
 };
 
 /**
- * The member view with Notion's credential `actions` replaced. Presence is
+ * The member view with Notes's credential `actions` replaced. Presence is
  * read from `actions` alone (P6b): `save` when the member may manage it and a
  * vault exists, `clear` only when a value is stored in their own partition,
  * `test` only when one is stored and the connector can test it. The base
  * fixture lists `["save"]`, nothing stored yet; listing `clear` also marks the
  * connection ok, as a stored, working value would.
  */
-export function memberWithNotion(actions: Array<"save" | "test" | "clear">): OperatorUiContractV2 {
+export function memberWithNotes(actions: Array<"save" | "test" | "clear">): OperatorUiContractV2 {
   const contract = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
-  const notion = contract.connectors.find((connector) => connector.id === "notion")!;
-  if (notion.manage.kind !== "credential") throw new Error("Notion is a credential connector");
-  notion.manage.actions = actions;
-  if (actions.includes("clear")) notion.connection = { state: "ok" };
+  const notes = contract.connectors.find((connector) => connector.id === "notes")!;
+  if (notes.manage.kind !== "credential") throw new Error("Notes is a credential connector");
+  notes.manage.actions = actions;
+  if (actions.includes("clear")) notes.connection = { state: "ok" };
   return contract;
 }

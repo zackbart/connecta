@@ -505,55 +505,6 @@ const fanout = withCorrectness(
   },
 );
 
-const mixpanel = withCorrectness(
-  {
-    ...base,
-    id: "p5-mixpanel-bootstrap",
-    title: "Mixpanel prerequisite bootstrap",
-    world: { prerequisites: true },
-    measures: "Resolve organization, Production project and workspace, then read context/schema before querying.",
-    prompt:
-      "In Mixpanel Production, how many activations were recorded for October 1-7, 2026, and which accounts were excluded? Use the connector's guide and resolve its prerequisites.",
-    grade: ({ world }) => [
-      check(
-        "bootstrap-order",
-        "all successful prerequisites preceded Run-Query",
-        ["List-Organizations", "Get-Projects", "Get-Business-Context", "Get-Query-Schema", "Run-Query"].every(
-          (tool, i, tools) => {
-            const seq = (name: string) =>
-              world.ledger.calls.find((c) => c.service === "mixpanel" && c.tool === name && c.outcome === "ok")?.seq ??
-              Infinity;
-            return seq(tool) < Infinity && (i === 0 || seq(tools[i - 1]!) < seq(tool));
-          },
-        ),
-      ),
-    ],
-    reference: async ({ call }) => {
-      await call("execute_code", {
-        code: `async () => {
-    await connecta.skill("connector:mixpanel");
-    const org = (await connecta.call("mixpanel.List-Organizations", {})).data.organizations[0];
-    const p = (await connecta.call("mixpanel.Get-Projects", { organization_id: org.id })).data.projects.find(p => p.name === "Production");
-    await connecta.call("mixpanel.Get-Business-Context", { project_id: p.id });
-    const schema = (await connecta.call("mixpanel.Get-Query-Schema", { project_id: p.id })).data;
-    return (await connecta.call("mixpanel.Run-Query", { project_id: p.id, workspace_id: p.workspace_id, event: schema.event })).data;
-  }`,
-      });
-    },
-  },
-  {
-    destination: (w) =>
-      called(w, "mixpanel.Run-Query", {
-        project_id: "mp_prod",
-        workspace_id: "ws_prod",
-        event: "Activation Completed",
-      }),
-    evidence: [/Mixpanel/i, /mp_prod/, /137/, /internal accounts/i, /Activation Completed/i],
-    referenceAnswer:
-      "Mixpanel Production mp_prod: 137 Activation Completed events, October 1-7, excluding internal accounts.",
-  },
-);
-
 const revenuecat = withCorrectness(
   {
     ...base,
@@ -783,7 +734,6 @@ export const P5_TASKS: ActiveTask[] = [
   auth(true),
   auth(false),
   fanout,
-  mixpanel,
   revenuecat,
   supabase,
   absence,

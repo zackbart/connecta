@@ -16,8 +16,6 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "801-stripe-failed-payment": { route: [], outcome: ["reads-only", "no-guessed-search", "efficient-route"] },
   "801-stripe-guessed-parameter-recovery": { route: [], outcome: ["recovery", "reads-only"] },
   "801-stripe-idempotent-refund": { route: [], outcome: ["state", "idempotency", "only-requested-writes"] },
-  "801-notion-append-checklist": { route: [], outcome: ["state", "only-requested-writes", "efficient-route"] },
-  "801-notion-rows-past-first-page": { route: [], outcome: ["cursor-placement", "reads-only", "efficient-route"] },
   "801-cloudflare-dns-ttl": { route: [], outcome: ["state", "only-requested-writes", "efficient-route"] },
   "801-cloudflare-pin-refusal": { route: [], outcome: ["zero-writes", "no-bypass"] },
   "801-cloudflare-read-only-analytics": { route: [], outcome: ["reads-only"] },
@@ -85,7 +83,6 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "p5-auth-connect-incapable": { route: [], outcome: ["connect-visited", "host-mode", "agent-handoff", "zero-writes"] },
   // These check actual budget, prerequisite, URI and discovery behavior, not a top-level route.
   "p5-fanout-over-budget": { route: [], outcome: ["bounded-fanout", "terminal-budget", "reads-only"] },
-  "p5-mixpanel-bootstrap": { route: [], outcome: ["bootstrap-order"] },
   "p5-revenuecat-text": { route: [], outcome: ["resolved-project", "authoritative-access"] },
   "p5-supabase-project-ref": { route: [], outcome: ["no-wrong-project"] },
   "p5-absent-github": { route: [], outcome: ["no-lookalike-call", "states-absence", "structured-answer"] },

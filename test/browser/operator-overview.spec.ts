@@ -93,6 +93,6 @@ test("the overview is the maintainer's landing page, with health, attention and 
   // Read-only grants are dashed, and a tokenless agent's access is dotted.
   await expect(page.locator("svg.map-svg .map-edge.read-only")).toHaveCount(2);
   await expect(page.locator("svg.map-svg .map-edge.no-token")).toHaveCount(1);
-  await expect(mapNode(page, "connector:notion")).toHaveClass(/problem-warn/);
+  await expect(mapNode(page, "connector:notes")).toHaveClass(/problem-warn/);
   await checks(page);
 });

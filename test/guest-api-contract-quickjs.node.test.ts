@@ -149,7 +149,7 @@ describe("guest API contract (QuickJS executor)", () => {
     "pins the portable ambient-authority boundary",
     "INV-6: program errors repair fs.readFile('secret')",
     "INV-6: program errors repair callTool('reader.read')",
-    "INV-6: program errors repair mixpanel.query()",
+    "INV-6: program errors repair callTool.query()",
     "INV-6: program errors repair skills()",
     "INV-6: program errors repair await connecta.guide('usage')",
   ]);

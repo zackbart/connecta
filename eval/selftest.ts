@@ -515,10 +515,7 @@ async function play(
         ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
         ...(typeof use.input.code === "string"
           ? {
-              code: use.input.code.replace(
-                /tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|github/gi,
-                "wrong_destination",
-              ),
+              code: use.input.code.replace(/tracker|ci|assets|oauth|supabase|revenuecat|github/gi, "wrong_destination"),
             }
           : {}),
       },
@@ -779,7 +776,7 @@ if (failures) {
       }
     }
     for (const result of [
-      await session.call("skills", { name: "connector:mixpanel" }),
+      await session.call("skills", { name: "connector:revenuecat" }),
       await session.call("execute_code", { code: 'async () => await connecta.call("ci.no_such_tool", {})' }),
       await session.call("execute_code", {
         code: 'async () => await connecta.call("ci.get_run", { runId: "invalid" })',
@@ -788,7 +785,7 @@ if (failures) {
       if (hidden.test(result.text)) throw new Error("Code skill/error leaked a hidden route");
       const textValue = result.isError
         ? JSON.parse(result.text)
-        : { name: "connector:mixpanel", format: "text", text: result.text };
+        : { name: "connector:revenuecat", format: "text", text: result.text };
       if (JSON.stringify(textValue) !== JSON.stringify(result.structured))
         throw new Error("Connector skill/error text and structured guidance differ");
     }
@@ -942,20 +939,19 @@ const frozen = JSON.parse(
   await readFile(new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url), "utf8"),
 ) as AgentResultFile;
 for (const [name, expected, denominator] of [
-  ["sonnet-5-5", 30, 34],
-  ["gpt-6-luna", 36, 38],
+  ["sonnet-5-5", 28, 32],
+  ["gpt-6-luna", 34, 36],
 ] as const) {
   const file = JSON.parse(
     await readFile(new URL(`./baselines/${name}-0.29.json`, import.meta.url), "utf8"),
   ) as AgentResultFile;
-  const trials = file.trials.map((t) =>
-    regradeTrial(
-      ACTIVE_TASKS.find((task) => task.id === t.task)!,
-      t,
-      file.config.runner ?? (file.claudeVersion ? "claude" : "codex"),
-      "outcome",
-    ),
-  );
+  // Frozen baselines keep removed tasks as history; grade only the current roster.
+  const trials = file.trials.flatMap((t) => {
+    const task = ACTIVE_TASKS.find((task) => task.id === t.task);
+    return task
+      ? [regradeTrial(task, t, file.config.runner ?? (file.claudeVersion ? "claude" : "codex"), "outcome")]
+      : [];
+  });
   if (
     trials.filter((t) => t.status === "pass").length !== expected ||
     trials.filter((t) => t.status !== "skipped").length !== denominator ||
@@ -1099,7 +1095,7 @@ const six = comparisonFixture("six", 20),
     file.trials.push(extra);
   }
   if (!compare(extendedA, extendedB).includes("Decision NOT EVALUATED"))
-    throw new Error("Adding a REST task changed the registered 19-task decision scope");
+    throw new Error("Adding a REST task changed the retained comparison scope");
 }
 if (!compare(six, code).includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
 for (const trial of code.trials.filter((t) => t.task === "p5-known-read-routing").slice(0, 3))
@@ -1108,12 +1104,13 @@ if (!compare(six, code).includes("task drops require triage: p5-known-read-routi
   throw new Error("Comparison missed task-drop rule");
 const atBar = comparisonFixture("code", 20),
   aboveBar = comparisonFixture("six", 20);
-// 19 losses out of 380 is exactly five percentage points, spread over tasks
-// so no per-task drop reaches the separate three-trial veto.
+// Five percent of this retained task roster, spread across tasks so no
+// per-task drop reaches the separate three-trial veto.
+const boundaryLosses = COMPARISON_TASKS.length;
 let losses = 0;
 const byTask = new Map<string, number>();
 for (const trial of atBar.trials) {
-  if (losses === 20) break;
+  if (losses === boundaryLosses + 1) break;
   if ((byTask.get(trial.task) ?? 0) >= 2) continue;
   const task = ACTIVE_TASKS.find((t) => t.id === trial.task)!;
   if (regradeTrial(task, trial, "codex", "outcome", "code").status !== "pass") continue;
@@ -1126,10 +1123,10 @@ for (const trial of atBar.trials) {
   }
   losses++;
   byTask.set(trial.task, (byTask.get(trial.task) ?? 0) + 1);
-  if (losses === 19 && !compare(aboveBar, atBar).includes("Decision PASS"))
+  if (losses === boundaryLosses && !compare(aboveBar, atBar).includes("Decision PASS"))
     throw new Error("Comparison rejected exact five-point boundary");
 }
-if (losses !== 20 || !compare(aboveBar, atBar).includes("more than 5 percentage points"))
+if (losses !== boundaryLosses + 1 || !compare(aboveBar, atBar).includes("more than 5 percentage points"))
   throw new Error("Comparison missed rate rule");
 for (const [task, needle] of [
   ["p5-trusted-program-write", "code duplicate write"],
@@ -1404,7 +1401,7 @@ for (const mutate of [
         mutate(trial);
         const report = compare(left, right);
         if (
-          !report.includes("code 35/38") ||
+          !report.includes("code 33/36") ||
           !report.includes(`${kind} 1`) ||
           !report.includes("Decision FAIL") ||
           !report.includes("infrastructure errors")
@@ -1703,28 +1700,41 @@ for (const mutate of [
   // Matching stale protocols are still incompatible with the current grader.
   left.protocol!.harnessHash = right.protocol!.harnessHash = "stale fakes";
   expectRefusal(() => compare(left, right), "Equally stale protocols established a decision");
-  const cliArgs = [
-    "--import",
-    "tsx",
-    new URL("./compare.ts", import.meta.url).pathname,
-    "--a",
-    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
-    "--b",
-    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
-  ];
-  const refused = spawnSync(process.execPath, cliArgs, { encoding: "utf8" });
-  if (refused.status === 0 || refused.stdout.includes("Decision") || !refused.stderr.includes("Comparison refused:"))
-    throw new Error("CLI provenance mismatch did not exit nonzero without a decision");
-  const allowed = spawnSync(process.execPath, [...cliArgs, "--allow-mismatch"], { encoding: "utf8" });
-  if (
-    allowed.status !== 0 ||
-    !allowed.stdout.includes("Decision NON-COMPARABLE") ||
-    allowed.stdout.includes("Decision PASS")
-  )
-    throw new Error(`CLI mismatch override did not mark its decision: ${allowed.stderr}`);
-  console.log(
-    `ok   comparison provenance: ${controls.length} specific refusals, historical baseline, stale protocol and NON-COMPARABLE override`,
-  );
+  // Preserve archived provenance while comparing only rows that still have graders.
+  const historicalDirectory = await mkdtemp(join(tmpdir(), "connecta-eval-historical-"));
+  try {
+    const historicalPath = join(historicalDirectory, "retained.json");
+    const historical = structuredClone(frozen);
+    const currentIds = new Set(ACTIVE_TASKS.map((task) => task.id));
+    historical.trials = historical.trials.filter((trial) => currentIds.has(trial.task));
+    historical.tasks = historical.tasks.filter((task) => currentIds.has(task.id));
+    historical.config.tasks = historical.config.tasks.filter((id) => currentIds.has(id));
+    await writeFile(historicalPath, JSON.stringify(historical));
+    const cliArgs = [
+      "--import",
+      "tsx",
+      new URL("./compare.ts", import.meta.url).pathname,
+      "--a",
+      historicalPath,
+      "--b",
+      historicalPath,
+    ];
+    const refused = spawnSync(process.execPath, cliArgs, { encoding: "utf8" });
+    if (refused.status === 0 || refused.stdout.includes("Decision") || !refused.stderr.includes("Comparison refused:"))
+      throw new Error("CLI provenance mismatch did not exit nonzero without a decision");
+    const allowed = spawnSync(process.execPath, [...cliArgs, "--allow-mismatch"], { encoding: "utf8" });
+    if (
+      allowed.status !== 0 ||
+      !allowed.stdout.includes("Decision NON-COMPARABLE") ||
+      allowed.stdout.includes("Decision PASS")
+    )
+      throw new Error(`CLI mismatch override did not mark its decision: ${allowed.stderr}`);
+    console.log(
+      `ok   comparison provenance: ${controls.length} specific refusals, historical baseline, stale protocol and NON-COMPARABLE override`,
+    );
+  } finally {
+    await rm(historicalDirectory, { recursive: true, force: true });
+  }
 }
 {
   const left = comparisonFixture("six", 1),

@@ -16,8 +16,8 @@ flowchart LR
         Keys["Credentials<br/>stay on the server"]
     end
 
-    Connecta <--> Work["Linear, GitHub, Notion"]
-    Connecta <--> Business["Stripe, RevenueCat, Mixpanel"]
+    Connecta <--> Work["Linear, GitHub, Google Docs"]
+    Connecta <--> Business["Stripe, RevenueCat, Cloudflare"]
     Connecta <--> Yours["Any remote MCP server<br/>or HTTP API"]
 
     style Connecta fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
@@ -29,7 +29,7 @@ only the answer comes back.
 
 ## What you can connect
 
-Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Mixpanel, Notion, Overflow, Planning Center, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
+Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Overflow, Planning Center, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 Maintained providers wrap vendor APIs. Hosted MCP servers use generic connections
 that discover the vendor's current tools at runtime. You can also describe your
 own HTTP APIs.

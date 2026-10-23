@@ -15,7 +15,6 @@ import { CatalogService } from "../../../src/catalog-service.js";
 import { deriveContext } from "../../../src/derived-context.js";
 import { createMetaTools } from "../../../src/meta-tools.js";
 import { providerCallContext, providerFetch } from "../../../src/provider-call.js";
-import { requestTokenCache } from "../../../src/providers/_shared/request-token.js";
 import { Credentials, openRequest, operationContext, viewLease, viewServices } from "../../../src/runtime/call.js";
 import { callEntry } from "../../../src/runtime/call-entry.js";
 import { runEdge } from "../../../src/runtime/run.js";
@@ -239,26 +238,6 @@ function providerProbe(named: boolean): Entry["create"] {
   };
 }
 
-function token(name: "requestTokenCache.token" | "requestTokenCache.mint"): Entry["create"] {
-  return async (held, owner) => {
-    held.installCrypto();
-    const connector = api("tickets", { tools: [] });
-    const { ctx } = view(connector, held, owner);
-    const cache = requestTokenCache(async (source) => {
-      if (name === "requestTokenCache.token") await dependency(held, source);
-      return {
-        key: "credential-fixture",
-        mint: async (mintCtx: ConnectorContext) => {
-          held.effects.push("mint");
-          if (name === "requestTokenCache.mint") await dependency(held, mintCtx);
-          return { accessToken: "minted-fixture-token", expiresAt: Date.now() + 60_000 };
-        },
-      };
-    });
-    return direct(ctx, () => cache.token(ctx));
-  };
-}
-
 function guarded(auxiliary = false, operationCredential = false): Entry["create"] {
   return async (held) => {
     held.installCrypto();
@@ -381,8 +360,7 @@ function remote(name: RemoteName, credentialAuth = false, warm = false): Entry["
             type: "request",
             token: async (ctx) => {
               await held.at("request-token.resolve", undefined);
-              // Exact reviewer request-token callback: its storage wait is real and
-              // does not pass through requestTokenCache's own Promise boundary.
+              // The request-token callback awaits storage directly at this Promise edge.
               await ctx.storage.get("minted-token");
               return "request-token-fixture";
             },
@@ -710,16 +688,6 @@ export const ENTRIES: readonly Entry[] = [
   { name: "Grant.rejected", seams: ["closed-entry"], completions: ["resolve"], create: grantUse("rejected") },
   { name: "ctx.oauth.fetch", seams: ["storage.get", "fetch"], create: oauthFetch() },
   { name: "guardedFetch.auxiliary.oauth", seams: ["storage.get", "fetch"], create: oauthFetch(true) },
-  {
-    name: "requestTokenCache.token",
-    seams: ["request-token.resolve", "storage.get", "crypto.digest"],
-    create: token("requestTokenCache.token"),
-  },
-  {
-    name: "requestTokenCache.mint",
-    seams: ["request-token.mint", "crypto.sign"],
-    create: token("requestTokenCache.mint"),
-  },
   { name: "guardedFetch", seams: ["authenticate", "mapper", "fetch", ...HANDLER_SEAMS.slice(1)], create: guarded() },
   {
     name: "guardedFetch.cancel",

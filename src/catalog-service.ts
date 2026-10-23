@@ -44,6 +44,7 @@ const MAX_IDENTITY_CONNECTORS = 3;
 const MAX_DESCRIBE_SUGGESTIONS = 3;
 
 // Recognized service names are query vocabulary, never a deployment inventory.
+// This includes generic hosted connections such as Notion and Mixpanel.
 // Unknown/custom services use the explicit connector scope. Keep this independent
 // of provider implementations so discovery cannot pull them into root imports.
 const SERVICE_NAMES = [
