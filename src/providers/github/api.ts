@@ -97,10 +97,16 @@ export const errors: VendorErrors = {
 };
 
 export function githubConnection() {
-  const templates = kit.operations.map((operation) => {
-    const [method, path] = operation.split(" ") as [string, string];
-    return { method, path, pattern: new RegExp(`^${path.replace(/\{[^}]+\}/g, "[^/]+")}$`) };
-  });
+  // App discovery and token minting use AppAuth's private transport.
+  // Installation repository enumeration also serves the list_scopes resource.
+  const templates = kit.operations
+    .map((operation) => {
+      const [method, path] = operation.split(" ") as [string, string];
+      return { method, path, pattern: new RegExp(`^${path.replace(/\{[^}]+\}/g, "[^/]+")}$`) };
+    })
+    .filter(
+      ({ path }) => path === "/installation/repositories" || path.startsWith("/repos/") || path.startsWith("/search/"),
+    );
   const safety = resultSafety({
     reviewed: {
       resolve: (method, path) => {
