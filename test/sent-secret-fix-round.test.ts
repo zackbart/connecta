@@ -198,7 +198,7 @@ describe("redact before normalization or extraction", () => {
     expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
   });
 
-  it("INV-5: Slides redacts joined shape and table sources before trimming or flattening whitespace", async () => {
+  it("INV-5: Slides redacts joined shape and table sources before trimming or flattening whitespace, and keeps the wire and error keys a private value names", async () => {
     const value = "private-slide\tcontent\nsensitive-value\n";
     const text = {
       textElements: [{ textRun: { content: value.slice(0, 10) } }, { textRun: { content: value.slice(10) } }],
@@ -241,6 +241,28 @@ describe("redact before normalization or extraction", () => {
     );
     expect(keyed.elements).toEqual([{ objectId: "elem1", kind: MARKER, text: "Public retained text" }]);
     expect(JSON.stringify(keyed)).not.toContain("shape");
+
+    // Google's error keys keep their names too, so private values naming them leave the classification.
+    stubGoogle(() =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            message: "Rate Limit Exceeded",
+            status: "PERMISSION_DENIED",
+            errors: [{ reason: "userRateLimitExceeded", domain: "usageLimits" }],
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    const named = privateContext();
+    for (const value of ["reason", "errors", "status"])
+      requestSentSecrets(named).arguments({ private: value }, privateSchema);
+    const limited = await connector
+      .callTool("get_page", { presentationId: "deck1", pageObjectId: "s1" }, named)
+      .catch((error: unknown) => error);
+    expect(limited).toMatchObject({ code: "rate_limited", retryable: true });
   });
 
   it("INV-5: a Google 400 cannot trim the beginning off a private value before its 500-character cap", async () => {

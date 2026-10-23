@@ -257,10 +257,12 @@ export const breezeSafety: SafetyOptions = {
   },
   sensitiveFields: { names: [], choice: "drop" },
 };
-function shortText(value: unknown): string | undefined {
+function shortText(value: unknown, secrets: Context.Service.Shape<typeof RequestSecrets>): string | undefined {
   if (typeof value === "string") return value.trim() || undefined;
   if (value === undefined || value === null) return undefined;
-  const text = JSON.stringify(value);
+  // The kit redacted the answer's values and kept its keys (#703); serialized, a key is text
+  // the cut below could split, so the whole text is checked before it is cut.
+  const text = secrets.redact(JSON.stringify(value));
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
@@ -285,14 +287,11 @@ function reportedFailure(
   if (root["success"] !== false && root["errorCode"] === undefined && !hasErrors) {
     return undefined;
   }
-  // The kit redacted the answer's values; shortText cuts serialized JSON, so its keys are
-  // checked too before the cut (#703).
-  const reported = secrets.redact(root);
   const message =
-    shortText(reported["errorMessage"]) ??
-    shortText(reported["message"]) ??
-    shortText(reported["errors"]) ??
-    shortText(reported["errorCode"]) ??
+    shortText(root["errorMessage"], secrets) ??
+    shortText(root["message"], secrets) ??
+    shortText(root["errors"], secrets) ??
+    shortText(root["errorCode"], secrets) ??
     "no detail";
   // Breeze uses the same envelope for a rejected argument and a missing
   // record, so the code stays the honest generic one and the message says so.

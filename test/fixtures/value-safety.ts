@@ -580,7 +580,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       const pins = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
       const realFetch = globalThis.fetch;
       globalThis.fetch = (async () => {
-        const body = { client_secret: held, [short]: "echoed", [long]: "echoed" };
+        // A credential-named key a deployment chose itself (`crm_secret`) is found by name too.
+        const body = { client_secret: held, settings: { crm_secret: `${held}2` }, [short]: "echoed", [long]: "echoed" };
         return Response.json({ success: true, result: body, ...body });
       }) as typeof fetch;
       const clean = (out: unknown) => {

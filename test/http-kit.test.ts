@@ -1444,6 +1444,27 @@ it(
     expect(
       (await runEdge(dropped.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))))).data,
     ).toEqual({ id: "a1", nested: {} });
+    // Header names are protocol constants `Headers` must accept: a private value inside one
+    // leaves the name, and only header values are redacted.
+    const typeSecrets = new SentSecrets();
+    typeSecrets.arguments(
+      { private: "type" },
+      { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+    );
+    answers.push(() => Response.json({ id: "a1" }, { headers: { "x-echo": "type" } }));
+    let seen: Headers | undefined;
+    const headed = connect(ACME_API, guardedClient(OPTIONS), {
+      errors: VENDOR,
+      safety: plainSafety!,
+      result: (body, answer) => {
+        seen = answer.headers;
+        return Effect.succeed(body);
+      },
+    });
+    expect(
+      (await runEdge(headed.send(keys, {}).pipe(Effect.provideContext(services("read", typeSecrets))))).data,
+    ).toEqual({ id: "a1" });
+    expect([seen?.get("content-type"), seen?.get("x-echo")]).toEqual(["application/json", "[redacted]"]);
     for (const mode of ["bytes", "stop", "time", "empty", "failure", "defect", "abort"] as const) {
       let cancelled = false;
       let callbacks = 0;

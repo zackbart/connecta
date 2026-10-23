@@ -2166,10 +2166,17 @@ them, by the names the vendor gave them, so a private argument sharing part of
 a name such as `client_secret` or `paragraph` cannot hide the field from the
 rule that withholds it or erase the structure a projection reads. A result
 hook that redacts again does so the same way. Text, binary bodies and JSON
-embedded inside a string are values and retain ordinary redaction. Keys are
-checked once value safety and the projections have run: the `api()` boundary
-and the invocation apply payload rules to the connector's result and failures,
-keys included, before the agent boundary's pass.
+embedded inside a string are values and retain ordinary redaction. Response
+headers keep their names, which `Headers` must accept, and their values are
+redacted together. Keys are checked once value safety and the projections have
+run: the `api()` boundary and the invocation apply payload rules to the
+connector's result and failures, keys included, before the agent boundary's
+pass. Until then a key is the vendor's text, so a provider that serializes part
+of a body and cuts it redacts the serialized text first (`redactBeforeCut`), as
+Breeze's in-band failure text and Slides' raw chunks do. A private value of four
+to seven units that a vendor echoes only as an object key is therefore matched
+once, at the connector boundary; the agent boundary's envelope rules do not
+match values that short.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
