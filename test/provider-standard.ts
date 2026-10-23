@@ -34,7 +34,6 @@ export const PENDING = {
     "mixpanel",
     "notion",
     "overflow",
-    "planning-center",
     "sheets",
     "slides",
     "stripe",

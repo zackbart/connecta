@@ -156,6 +156,29 @@ function exactChecks(ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): void 
   }
 }
 
+/** Preserve an explicitly empty required list in a legacy output catalog. */
+export function emptyRequired<S extends Schema.Top>(schema: S): S {
+  return schema.annotate({ "connecta/emptyRequired": true }) as S;
+}
+
+function restoreRequired(node: Node, ast: SchemaAST.AST): void {
+  if (ast.annotations?.["connecta/emptyRequired"] === true) {
+    if (node["type"] !== "object" || (Array.isArray(node["required"]) && node["required"].length > 0))
+      throw new Error("emptyRequired requires an object with no required properties.");
+    node["required"] = [];
+  }
+  if (ast._tag === "Objects") {
+    const properties = node["properties"] as Node | undefined;
+    for (const property of ast.propertySignatures) {
+      const child = properties?.[String(property.name)];
+      if (child && typeof child === "object") restoreRequired(child as Node, property.type);
+    }
+  } else if (ast._tag === "Arrays") {
+    const item = node["items"];
+    if (item && typeof item === "object" && ast.rest[0]) restoreRequired(item as Node, ast.rest[0]);
+  }
+}
+
 /** Render a Schema as catalog JSON Schema. Throws on a schema that needs `$defs`, or an inexact input check. */
 export function catalogSchema(schema: Schema.Top, mode: "input" | "output"): JsonSchema {
   if (mode === "input") exactChecks(schema.ast);
@@ -163,7 +186,17 @@ export function catalogSchema(schema: Schema.Top, mode: "input" | "output"): Jso
   if (Object.keys(document.definitions).length > 0) {
     throw new Error("A catalog schema is rendered inline; remove the identifier that asked for a definition.");
   }
-  const root = normalize(document.schema) as Node;
+  restoreRequired(document.schema as Node, schema.ast);
+  let root = normalize(document.schema) as Node;
+  if (
+    mode === "input" &&
+    root["type"] === "object" &&
+    root["additionalProperties"] === false &&
+    !("properties" in root)
+  ) {
+    const { type, ...rest } = root;
+    root = { type, properties: {}, ...rest };
+  }
   if (mode === "input" && root["type"] === "object" && !("required" in root)) {
     return Object.fromEntries(
       Object.entries(root).flatMap(([key, value]) =>
