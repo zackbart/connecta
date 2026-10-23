@@ -2055,7 +2055,10 @@ arguments permissively; step 2 replaces those schemas with Effect declarations.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
-outcome.
+outcome. Gmail's auxiliary draft and reply lookups pass both `effect: "read"`
+and a construction-declared step: the guarded client's early reservation uses
+that named slot, while the ledger marks the request auxiliary. A failed lookup
+keeps its read verdict and cannot make an unsent draft write unknown.
 
 An optional `tagConnector(connector, options)` records construction facts
 about the built connector, once, before the registry can serve it. Its return
