@@ -1,11 +1,9 @@
-// The GitHub provider is composed: hosted remote MCP plus Connecta's REST
-// complement. Only the REST complement is an api() surface, so this golden
-// builds that connector directly over the provider's own App auth and scope
-// policy. App JWT installation listing, installation-token minting, and the
-// metadata-only repository resolution AppAuth performs are auxiliary.
-import { AppAuth, type GitHubApp } from "../../../src/providers/github/auth.js";
-import { restConnector } from "../../../src/providers/github/rest.js";
-import { parseScopes, ScopePolicy, type GitHubScope } from "../../../src/providers/github/scope.js";
+// The finite GitHub REST complement, over its private App authentication and
+// scope policy. Installation discovery, minting and metadata-only resolution
+// remain auxiliary; no hosted GitHub surface is captured.
+import { AppAuth, type GitHubApp } from "../../../src/providers/github/lib/auth.js";
+import { restConnector } from "../../../src/providers/github/tools.js";
+import { parseScopes, ScopePolicy, type GitHubScope } from "../../../src/providers/github/lib/scope.js";
 import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harness.js";
 
 import { PRIVATE_KEY } from "../rsa-fixture.js";

@@ -2029,6 +2029,15 @@ mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
 the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
 Reads replay once after renewal; writes are never resent.
 
+GitHub's finite REST tools use kit read/write builders and a confined
+Connection while its App authentication and scope-verification transport stays
+private. Its tokens are partitioned by App/key, installation, repository IDs,
+permissions and purpose. A resource 401, or a 403 without rate-limit evidence,
+invalidates the exact bearer even when its body cannot be read. The next call
+mints lazily; there is no inline renewal or replay and no renewable Grant.
+Only completed scalar cache data crosses requests; private signing imports
+and all transport operations remain request-owned.
+
 The optional `probe.run(connection, options)` program replaces the operation
 probe when authentication needs a different read or a private login transport.
 It is built once at provider construction outside caller contexts, using the
