@@ -41,6 +41,9 @@ const OWN_KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   number: NUMERIC,
   boolean: new Set(),
   null: new Set(),
+  // Bare object/array unions are exact too; constrained branches keep anyOf.
+  object: new Set(),
+  array: new Set(),
 };
 
 /**

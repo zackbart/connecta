@@ -668,6 +668,10 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(9)),
     ]);
     expect(catalogSchema(shared, "output")).toHaveProperty("anyOf");
+    const object = Schema.Record(Schema.String, Schema.Unknown);
+    const array = Schema.Array(Schema.Unknown);
+    expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });
+    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toHaveProperty("anyOf");
   });
 
   it("renders every bound the decoder enforces: Integer has none past finiteness, Schema.Int says its own", () => {
@@ -1958,13 +1962,22 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       params: { id: Schema.String },
       payload: Schema.Struct({ value: Schema.String }),
     });
-    const connection = connect(vendor("Typed", operation), guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }), {
-      errors: VENDOR,
-      safety: resultSafety({
-        review: "Fixture records have no secrets.",
-        sensitiveFields: { names: [], choice: "drop" },
-      }),
-    });
+    const connection = connect(
+      vendor({ name: "Typed", manifestBase: "/api/v3" }, operation),
+      guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }),
+      {
+        errors: VENDOR,
+        safety: resultSafety({
+          review: "Fixture records have no secrets.",
+          sensitiveFields: { names: [], choice: "drop" },
+        }),
+      },
+    );
+    expect(operations(vendor({ name: "Typed", manifestBase: "/api/v3" }, operation))).toEqual([
+      "POST /api/v3/items/{id}",
+    ]);
+    for (const prefix of ["relative", "/api/../v3", "/api/", "/api?query"])
+      expect(() => vendor({ name: "Invalid", manifestBase: prefix }, operation)).toThrow(/manifestBase/);
     for (const value of ["one", "changed"]) {
       sent = [];
       const tool = write(connection, {
