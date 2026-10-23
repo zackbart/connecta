@@ -2,8 +2,8 @@
 import { Effect, Schema, Stream } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
-import { Refusal, StatusFailure, type VendorErrors } from "../../http/errors.js";
-import { Credentials } from "../../http/services.js";
+import { Refusal, StatusFailure, type HttpFailure, type VendorErrors } from "../../http/errors.js";
+import { Credentials, type CallServices } from "../../http/services.js";
 import { restSafety, resultSafety } from "../../http/safety.js";
 import { connect, get, type Connection, type ConnectOptions } from "../../http/vendor.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
@@ -277,7 +277,15 @@ export function sendMixpanel(
   ingestion: Connection,
   call: RestCall,
   prefix?: { maxBytes: number },
-) {
+): Effect.Effect<
+  {
+    status: number;
+    data: unknown;
+    prefix?: { truncated: boolean; bytes: number; stopped: "end" | "bytes" | "time" | "stop" };
+  },
+  HttpFailure,
+  CallServices
+> {
   return checked(() => {
     const framing = encode(call);
     if (!["query", "app", "export", "ingestion"].includes(call.op.server ?? "query"))
