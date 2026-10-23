@@ -259,32 +259,33 @@ describe("redact before normalization or extraction", () => {
   );
 
   it("INV-5: Docs normalizes a private paragraph only after redacting its original whitespace", async () => {
-    const value = `   private   paragraph ${"sensitive ".repeat(30)}\n`;
-    stubGoogle(() => ({
-      documentId: "d1",
-      title: "Plan",
-      body: {
-        content: [
-          {
-            startIndex: 1,
-            endIndex: value.length + 1,
-            paragraph: {
-              elements: [{ textRun: { content: value } }],
-              paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+    for (const value of [`   private   paragraph ${"sensitive ".repeat(30)}\n`, "paragraph"]) {
+      stubGoogle(() => ({
+        documentId: "d1",
+        title: "Plan",
+        body: {
+          content: [
+            {
+              startIndex: 1,
+              endIndex: value.length + 1,
+              paragraph: {
+                elements: [{ textRun: { content: value } }],
+                paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+              },
             },
-          },
-        ],
-      },
-    }));
-    const connector = docs("docs", await workspaceOptions());
-    const result: any = await connector.callTool(
-      "get_document",
-      { documentId: "d1", withIndexes: true },
-      privateContext(value),
-    );
-    expect(result.tabs[0].text).toContain(MARKER);
-    expect(result.tabs[0].elements[0].text).toBe(MARKER);
-    expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
+          ],
+        },
+      }));
+      const connector = docs("docs", await workspaceOptions());
+      const result: any = await connector.callTool(
+        "get_document",
+        { documentId: "d1", withIndexes: true },
+        privateContext(value),
+      );
+      expect(result.tabs[0].text).toContain(MARKER);
+      expect(result.tabs[0].elements[0].text).toBe(MARKER);
+      expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
+    }
   });
 
   it("INV-5: Gmail strips HTML only after redacting a private source value", async () => {
