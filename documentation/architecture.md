@@ -2024,7 +2024,7 @@ options. Probes may derive their request from those options and describe a mappe
 failure (for example, an accepted key lacking account-read permission). Public
 routing/version headers remain request or constant headers, never authentication
 secrets. An optional positive `timeoutMs` retains a vendor's request and body
-deadline. An explicitly supplied empty form remains an empty form on the wire.
+deadline. A path request opting into `emptyForm: true` retains an explicitly empty form on the wire; other empty form declarations keep their previous omission.
 
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
