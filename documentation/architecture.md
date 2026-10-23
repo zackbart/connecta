@@ -2029,6 +2029,18 @@ mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
 the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
 Reads replay once after renewal; writes are never resent.
 
+A machine grant may also declare `grantRenewal` modes, with an optional
+`Grant.discard(token)` that forgets exactly that refused token and keeps any
+newer one. `replayRejection: "answer"` discards the token a replayed read was
+refused with and hands that 401 to the vendor's status table, so the message
+comes from the bounded, sent-secret-redacted body instead of `rejected`.
+`writeRenewal: "discard"` discards a write's refused token without renewing:
+no token request is sent, nothing is recorded as renewed, the write's 401 is
+answered, and `settleWrite` decides its outcome and handoff. Neither mode
+resends a write, and the defaults are unchanged. Google Workspace uses both,
+because its delegated tokens are minted per call and a refused write only
+needs the next call to mint again.
+
 The optional `probe.run(connection, options)` program replaces the operation
 probe when authentication needs a different read or a private login transport.
 It is built once at provider construction outside caller contexts, using the

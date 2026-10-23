@@ -51,6 +51,12 @@ export class Grant extends Context.Service<
     readonly refresh: (stale: string) => Effect.Effect<string, HttpFailure>;
     /** The renewed token was refused too: latch the request scope and fail with the grant's own verdict. */
     readonly rejected: Effect.Effect<never, HttpFailure>;
+    /**
+     * Forget exactly this refused token without renewing, so the next call
+     * obtains a fresh one. Only the opt-in renewal modes of
+     * {@link refreshOnce} call it; a newer token stays.
+     */
+    readonly discard?: (rejected: string) => Effect.Effect<void>;
   }
 >()("connecta/http/Grant") {}
 
@@ -90,14 +96,35 @@ export type Write401Renewal =
   | { readonly _tag: "Unchanged" }
   | { readonly _tag: "Failed"; readonly failure: unknown };
 
+/**
+ * Opt-in renewal modes for a grant whose provider answers its own 401s.
+ * `replayRejection: "answer"` discards the token a replayed read was refused
+ * with and hands that 401 to the vendor's status table, so its message comes
+ * from the redacted body rather than `rejected`. `writeRenewal: "discard"`
+ * discards a write's refused token without renewing: no token request is
+ * sent, nothing is recorded as renewed, and the write's 401 is answered as
+ * usual. Neither mode resends a write; settleWrite still decides it.
+ */
+export interface GrantRenewal {
+  readonly replayRejection?: "answer";
+  readonly writeRenewal?: "discard";
+}
+
+/** The bearer token a prepared request carried, as the grant issued it. */
+function sentToken(request: HttpClientRequest.HttpClientRequest): string {
+  return (request.headers["authorization"] ?? "").replace(/^Bearer /, "");
+}
+
 /** Wrap a guarded client whose `authenticate` is {@link bearer}. */
 export function refreshOnce(
   guarded: GuardedClient<CallServices | Grant>,
-  options?: {
+  options?: GrantRenewal & {
     readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
     readonly challengeMaxBytes?: number;
   },
 ): GuardedClient<CallServices | Grant> {
+  if (options?.writeRenewal === "discard" && options.writeUnauthorized)
+    throw new Error("A write that is not renewed has no renewal facts to map.");
   const inner = guarded.client;
   const challengeFailure = (entry: ProviderRequest | undefined): Effect.Effect<never, HttpFailure, CallServices> =>
     Effect.gen(function* () {
@@ -138,8 +165,17 @@ export function refreshOnce(
           ),
         );
       const grant = yield* Grant;
-      const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
+      const stale = sentToken(response.request);
       const entry = responseRequest(response);
+      if (!readRequest(entry ?? {}) && options?.writeRenewal === "discard") {
+        // No renewal: the next deliberate call obtains a fresh token. The
+        // write's own 401 is answered; nothing is marked renewed (Q8).
+        if (grant.discard) yield* grant.discard(stale);
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),
+        );
+      }
       if (!readRequest(entry ?? {})) {
         // Whatever renewal meets is the authorization server's, not the
         // write's. The ledger keeps only whether it succeeded, which decides
@@ -188,6 +224,11 @@ export function refreshOnce(
           ),
         );
       if (replay.status !== 401) return replay;
+      if (options?.replayRejection === "answer") {
+        // The connection reads and redacts this answer like any other.
+        if (grant.discard) yield* grant.discard(sentToken(replay.request));
+        return replay;
+      }
       yield* Effect.ignore(guarded.read(replay));
       return yield* grant.rejected;
     }).pipe(
