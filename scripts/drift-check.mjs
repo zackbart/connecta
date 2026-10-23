@@ -19,10 +19,12 @@ import {
   productOf,
   validateCheck,
   validateRecord,
+  supplementalDocument,
+  validSupplementalPin,
 } from "./drift-validate.mjs";
 import { openApiEvidence, readOpenApiSource, sha256 } from "./generate-openapi.mjs";
 import { discoverProviders } from "./providers.mjs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile, realpath } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -292,6 +294,25 @@ async function loadOperationPages(provider, base, pages) {
 }
 
 async function loadSpecification(provider, manifest, options) {
+  if (manifest.specification.pin !== undefined) {
+    const document = supplementalDocument(manifest.specification.pin);
+    if (!document) throw new EvidenceError("Supplemental pin must be a simple non-reserved evidence filename");
+    const directory = resolvePath(options.providerDirectory, provider, "evidence");
+    const ownDirectory = await realpath(directory);
+    for (const name of [manifest.specification.pin, document]) {
+      if (dirname(await realpath(resolvePath(directory, name))) !== ownDirectory)
+        throw new EvidenceError("Supplemental evidence must stay in its provider's evidence directory");
+    }
+    const pin = await loadJson(`${provider}'s supplemental pin`, resolvePath(directory, manifest.specification.pin));
+    if (!validSupplementalPin(pin))
+      throw new EvidenceError(
+        "Supplemental pin requires https url/documentation, vendored: true and a document digest",
+      );
+    const text = await readFile(resolvePath(directory, document), "utf8");
+    if (sha256(new TextEncoder().encode(text)) !== pin.digest)
+      throw new EvidenceError("Supplemental document digest does not match its pin");
+    return { source: pin.documentation, document: validateOpenApi(provider, JSON.parse(text)) };
+  }
   const source = options.specSources.get(provider) ?? manifest.specification.url;
   // A provider documented page by page reads a page base, URL or directory; a
   // `.json` override is a combined document like any other provider's.

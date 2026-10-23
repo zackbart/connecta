@@ -16,11 +16,9 @@
 //   "checks": [ … ]                     // the check types drift-check.mjs knows
 // }
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-
-/** Evidence files whose bytes `generated.evidence` pins, sorted. */
-export const HASHED_EVIDENCE = ["openapi.document.json", "openapi.json", "value-safety.json"];
+import { hashedEvidence } from "./drift-validate.mjs";
 /** `providers:check` reports a manual check verified longer ago than this; no test fails as the calendar moves. */
 export const STALE_AFTER_DAYS = 180;
 
@@ -34,7 +32,11 @@ function digest(bytes) {
  */
 export async function generatedBlock({ directory, kit }) {
   const evidence = {};
-  for (const name of HASHED_EVIDENCE) {
+  const files = await readdir(join(directory, "evidence")).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return [];
+  });
+  for (const name of hashedEvidence(files.map((name) => `evidence/${name}`))) {
     try {
       evidence[name] = digest(await readFile(join(directory, "evidence", name)));
     } catch (error) {

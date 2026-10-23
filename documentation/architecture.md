@@ -1274,6 +1274,17 @@ and lists manual checks last verified more than 180 days ago. Its offline
 record validator, `scripts/drift-validate.mjs`, also gates `providers:generate`
 and the standard suite, so a record they accept is one `providers:check` reads.
 
+Supplemental vendored contracts use a simple `<slug>.json` pin and a sibling
+`<slug>.document.json` in the provider's `evidence/` directory. An `endpoints`
+check names the pin with `specification.pin`; both files are hashed in
+`generated.evidence`. Slugs use lowercase letters, digits and hyphens, start
+with a letter, and cannot be `openapi` or `value-safety`; paths, dots and
+reserved primary evidence names are refused. The pin requires https `url`
+and `documentation`, `vendored: true`, and the exact document `digest`.
+The checker reads that document offline from this provider's evidence only,
+checks its digest, and never fetches the pin's URL. Keep dataset semantics
+that the envelope does not describe in a separate manual check.
+
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
