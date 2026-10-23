@@ -44,7 +44,7 @@
 // URL policy and exemptions are reviewed per vendor in its table (`keep`,
 // `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
 import { ConnectorCallError } from "../../../errors.js";
-import { REDACTED, redactionAltered, splitRemainder } from "../../../redaction-marker.js";
+import { characterReferenceEnd, REDACTED, redactionAltered, splitRemainder } from "../../../redaction-marker.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
@@ -761,11 +761,15 @@ function withholdLinkQueries(text: string): string {
     const whole = alteredLink(text.slice(host, end));
     if (!whole && (cut < 0 || !credentialQuery(text.slice(cut, end)))) continue;
     const from = Math.max(whole ? start : cut, copied);
+    // A reference's final semicolon belongs to the withheld query, not the surrounding prose.
+    // Search only this disjoint span, once, even when it ends in a long punctuation run.
+    const ampersand = text.slice(from, end).lastIndexOf("&");
+    const referenceEnd = ampersand < 0 ? -1 : characterReferenceEnd(text, from + ampersand);
     let keep = end;
     while (keep > from + 1 && TRAILING.test(text[keep - 1]!)) {
       // A signing pass may already have replaced the final parameter. Its
       // closing bracket belongs to the value, not the surrounding Markdown.
-      if (text.endsWith(REDACTED, keep)) break;
+      if (keep === referenceEnd || text.endsWith(REDACTED, keep)) break;
       keep--;
     }
     // A query with nothing in it.
@@ -809,10 +813,12 @@ const EQUALS = /=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d/iy;
 const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)$/i;
 const NAME_CHAR = /[\w.~-]/;
 
-/** Where a parameter's value ends: at `endsValue`, reading every placeholder in it whole (#703). */
+/** Where a parameter's value ends, reading placeholders and character references whole (#703). */
 function valueEnd(text: string, at: number): number {
   while (at < text.length) {
+    const reference = characterReferenceEnd(text, at);
     if (text.startsWith(REDACTED, at)) at += REDACTED.length;
+    else if (reference > at) at = reference;
     else if (endsValue(text, at)) break;
     else at++;
   }
@@ -824,7 +830,7 @@ function valueEnd(text: string, at: number): number {
  * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
  * `=`, and the start of its value, so a placeholder followed by any of a
  * value's base64 or base64url characters (`+`, `/`, `=`, `-`, `_` included)
- * or `%` escapes goes with them, however short. One
+ * or `%` escapes or character references goes with them, however short. One
  * inside a name ending at an encoded `=` (`&#61;`, `\u003d`) gives that
  * value's start. A placeholder right after an `=` with nothing readable after
  * it is a withheld value. Each placeholder is read once, resuming after its run.

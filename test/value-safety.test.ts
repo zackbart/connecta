@@ -401,13 +401,63 @@ describe("reviewed text policy and global admission (#846)", () => {
     });
   });
 
-  it("INV-5: removes a private suffix after an existing signing placeholder", () => {
+  it("INV-5: withholds complete signing values and private suffixes across character references", () => {
     for (const text of [
       "X-Amz-Signature=[redacted]PRIVATE",
       "/a?X-Amz-Signature=[redacted]PRIVATE",
       "https://files.example/a?X-Amz-Signature=[redacted]PRIVATE",
     ])
       expect(withholdEmbeddedUrls(text)).not.toContain("PRIVATE");
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    // References are value data even when they spell punctuation. Keep the original spelling of
+    // ordinary text and of the genuine query parameter after the signing value (#703).
+    for (const value of [
+      "&#50;&#97;PRIVATE",
+      "&#x32;&#X61;PRIVATE",
+      "raw&#50;mixed&#x61;PRIVATE",
+      "&amp;&equals;&plus;&sol;PRIVATE",
+      "&plus;&sol;&equals;",
+      "&#43;&#47;&#61;",
+      "&quot;&apos;&#32;&#41;PRIVATE",
+      "&amp;#50;&amp;#x61;PRIVATE",
+      "&#38;#50;PRIVATE",
+      "&CounterClockwiseContourIntegral;PRIVATE",
+      "&#00000000000000000000000000000050;PRIVATE",
+      "&#50&#97PRIVATE",
+    ]) {
+      for (const name of ["X-Amz-Signature", "X-Goog-Credential", "X-Amz-Security-Token"]) {
+        const input = `diagnostic ${name}=${value}&name=alice now`;
+        const expected = `diagnostic ${name}=[redacted]&name=alice now`;
+        expect(safety.redact({ description: input }, "GET", "/v1/things"), input).toEqual({ description: expected });
+        expect(withholdEmbeddedUrls(input), input).toBe(expected);
+        for (const prefix of [`${name}=[redacted]`, "[redacted]"]) {
+          const split = `diagnostic ${prefix}${value}&name=alice now`;
+          const clean = `diagnostic ${prefix}&name=alice now`;
+          expect(safety.redact({ description: split }, "GET", "/v1/things"), split).toEqual({ description: clean });
+        }
+        const link = `see https://files.example/a?${name}=${value}&name=alice now`;
+        expect(safety.redact({ message: link }, "GET", "/v1/things"), link).toEqual({
+          message: `see https://files.example/a?${name}=[redacted]&name=alice now`,
+        });
+        expect(withholdEmbeddedUrls(link), link).toBe("see https://files.example/a?[redacted] now");
+        const ending = `see [file](https://files.example/a?${name}=${value}).`;
+        expect(withholdEmbeddedUrls(ending), ending).toBe("see [file](https://files.example/a?[redacted]).");
+      }
+    }
+    for (const text of [
+      "ordinary prose &amp; &equals; &#50; stays here",
+      "see https://public.example/a?width=400&name=alice now",
+      "see https://public.example/a?width=400&amp;name=alice now",
+      "an assignment name=alice&other=bob now",
+    ]) {
+      expect(safety.redact({ description: text, message: text }, "GET", "/v1/things")).toEqual({
+        description: text,
+        message: text,
+      });
+    }
+    expect(withholdEmbeddedUrls("X-Amz-Signature=PRIVATE&amp=public&name=alice now")).toBe(
+      "X-Amz-Signature=[redacted]&amp=public&name=alice now",
+    );
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
@@ -466,7 +516,9 @@ describe("reviewed text policy and global admission (#846)", () => {
   it.each([
     "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
     "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
-    `see https://public.example/a?${"?&a&".repeat(400_000)}`,
+    `see https://public.example/a?${"?&a&".repeat(400_000)} ${"see https://files.example/a?X-Amz-Signature=&#50;&#x61;&amp;&equals;&plus;&sol;PRIVATE&name=alice now ".repeat(
+      15_000,
+    )} diagnostic X-Goog-Credential=[redacted]${"&#00000000000000000000000050;&amp;#x61;".repeat(30_000)}PRIVATE now`,
   ])(
     "INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes",
     (input) => {
