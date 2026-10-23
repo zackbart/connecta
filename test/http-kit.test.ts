@@ -1182,7 +1182,7 @@ it(
         },
       };
       const work = connection
-        .sendPath({ method: "GET", path: "/keys" }, { prefix })
+        .sendPath({ method: "GET", path: "/keys", template: "/keys" }, { prefix })
         .pipe(Effect.provideContext(Context.add(services(), Signal, controller.signal)));
       if (mode === "defect" || mode === "abort") {
         await expect(runEdge(work, { signal: controller.signal })).rejects.toThrow(

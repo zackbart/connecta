@@ -27,7 +27,14 @@ import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } fr
 import { hatch } from "./hatch.js";
 import { Grant, grantFromOAuth, refreshOnce } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
-import { Classification, Dispatches, Signal, fromConnectorContext, type CallServices } from "./services.js";
+import {
+  Classification,
+  Dispatches,
+  Signal,
+  WriteCapacity,
+  fromConnectorContext,
+  type CallServices,
+} from "./services.js";
 import { connect, operations, type Connection, type ConnectOptions, type Vendor } from "./vendor.js";
 
 type ProbeOperation = Parameters<Connection["send"]>[0];
@@ -243,6 +250,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         };
         return runEdge(
           probeProgram.pipe(
+            Effect.provideService(WriteCapacity, new Map()),
             Effect.flatMap((data) =>
               Effect.try({
                 try: () => {
