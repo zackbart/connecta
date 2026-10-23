@@ -178,6 +178,9 @@ it(
       expect("nextCursor" in page).toBe(page.hasMore);
     }
     expect(rows).toHaveLength(11);
+    // An exact path noun leads, root collection first.
+    const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
+    expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
     await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
     for (const [method, path, verdict, tool] of [

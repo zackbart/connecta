@@ -167,6 +167,34 @@ export function hatch(
       ...(authored ? { named: authored } : {}),
     };
   };
+  // 0014: exact path nouns and root collections ahead of related resources,
+  // and authored operations ahead of equal ones, over the index's own order.
+  const rank = (found: readonly Operation[], query: string): Operation[] => {
+    const terms = new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean),
+    );
+    const literal = (op: Operation) => op.path.split("/").filter((part) => part && !part.startsWith("{"));
+    const exact = (op: Operation) =>
+      literal(op).some((part) =>
+        part
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .some((word) => terms.has(word)),
+      );
+    const order = new Map(found.map((op, position) => [op, position]));
+    const lead = found
+      .filter(exact)
+      .sort(
+        (a, b) =>
+          a.path.split("/").length - b.path.split("/").length ||
+          Number(named.has(`${b.method} ${b.path}`)) - Number(named.has(`${a.method} ${a.path}`)) ||
+          order.get(a)! - order.get(b)!,
+      );
+    return [...lead, ...found.filter((op) => !exact(op))];
+  };
   const methodsWith = (wanted: (verdict: Verdict) => boolean) =>
     index.methods.filter((method) => index.ops.some((op) => op.method === method && wanted(verdictOf(op))));
   const readMethods = methodsWith((verdict) => verdict === "read");
@@ -226,7 +254,10 @@ export function hatch(
                 error: new ConnectorCallError("invalid_args", "This search cursor is not one search returned."),
               }),
             );
-          const ranked = yield* checked(() => index.search(args.query, { ...scope, limit: index.ops.length }));
+          const ranked = rank(
+            yield* checked(() => index.search(args.query, { ...scope, limit: index.ops.length })),
+            args.query,
+          );
           const operations = ranked.slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits)).map((op) => ({
             method: op.method,
             path: op.path,
