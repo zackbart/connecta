@@ -31,7 +31,7 @@
     "./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
     "./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. Reported against this baseline, not capped (#899).",
     "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
-    "./providers/github retains its initial 164,063 B gzip baseline for size comparison. C.0c removes the hosted MCP half; the entry now carries portable GitHub App signing, scoped routing and six REST tools. Reported against this baseline, not capped (#899).",
+    "./providers/github remeasures at 322,737 B gzip in C.8 step 1 (#703), Node 22 CI static at f36b60e6: the six REST tools now run on the Effect provider kit, with private GitHub App signing, scoped installation tokens and lazy rejection recovery. This replaces the historical 164,063 B baseline that included the hosted half removed by C.0c. Provider entries are reported, not capped (#899).",
     "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. Reported against this baseline, not capped (#899).",
     "./providers/infisical starts at 27,673 B gzip before its C.5 kit migration. Provider entries are reported, not capped (#899).",
     "./providers/mixpanel measures 337,658 B gzip in CI in C.6 (#703). The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. Provider entries are reported, not capped (#899); no runtime dependency was added.",
@@ -80,7 +80,7 @@
       "baselineGzip": 26161
     },
     "./providers/github": {
-      "baselineGzip": 164063
+      "baselineGzip": 322737
     },
     "./providers/gmail": {
       "baselineGzip": 27085

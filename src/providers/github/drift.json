@@ -1,18 +1,103 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "github",
+  "generated": {
+    "operations": [
+      "DELETE /repos/{owner}/{repo}/releases/{release_id}",
+      "GET /app/installations",
+      "GET /installation/repositories",
+      "GET /repos/{owner}/{repo}",
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      "GET /search/code",
+      "GET /search/issues",
+      "GET /search/repositories",
+      "PATCH /repos/{owner}/{repo}/releases/{release_id}",
+      "POST /app/installations/{installation_id}/access_tokens",
+      "POST /repos/{owner}/{repo}/releases",
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"
+    ],
+    "evidence": {}
+  },
   "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json"
+      },
+      "endpoints": [
+        {
+          "operation": "GET /app/installations",
+          "specRevision": "1.1.4",
+          "contract": "sha256:e50f233594fa359d53a4a35aa616a96a39f167e1a8c9dedaac5c59a15c84d143"
+        },
+        {
+          "operation": "POST /app/installations/{installation_id}/access_tokens",
+          "specRevision": "1.1.4",
+          "contract": "sha256:db144f727feb3141d0d0c4968f64bf8c79c5dcd513942bd9e33ade148b503621"
+        },
+        {
+          "operation": "GET /installation/repositories",
+          "specRevision": "1.1.4",
+          "contract": "sha256:058a5db8714a8105536fef84b52d0bd7a0862743858f9a277e53d6e9ce567e44"
+        },
+        {
+          "operation": "GET /repos/{owner}/{repo}",
+          "specRevision": "1.1.4",
+          "contract": "sha256:9e2ec3b4e346f648e96f4872789cc87b4017765a00858d100b0d7b8e87f807cf"
+        },
+        {
+          "operation": "GET /search/repositories",
+          "specRevision": "1.1.4",
+          "contract": "sha256:b6b5e589307c56e148244b8ce3b08094fa1647838b0457998de25d72ecec1680"
+        },
+        {
+          "operation": "GET /search/issues",
+          "specRevision": "1.1.4",
+          "contract": "sha256:b78d8141ff670ee82571b34ae0ff8b298e119e977d981865dd81d7081cb2eecf"
+        },
+        {
+          "operation": "GET /search/code",
+          "specRevision": "1.1.4",
+          "contract": "sha256:1e47148fd38cfa0f4d8c3f05c0812419f027157d09f270dfe0f2cc6017cfb25a"
+        },
+        {
+          "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+          "specRevision": "1.1.4",
+          "contract": "sha256:8116c3666b78f3f0312237c01e3a922382e9ed0bc2c5baa8e267d036c662ed7f"
+        },
+        {
+          "operation": "POST /repos/{owner}/{repo}/releases",
+          "specRevision": "1.1.4",
+          "contract": "sha256:d9852e94cdcd8366c45825e5610743f3a5141d210aa88f8296117d707d293d50"
+        },
+        {
+          "operation": "PATCH /repos/{owner}/{repo}/releases/{release_id}",
+          "specRevision": "1.1.4",
+          "contract": "sha256:634001bf7bea79ef5ace89a4a8cdcca78f1c6252999cf0160407388045b33881"
+        },
+        {
+          "operation": "DELETE /repos/{owner}/{repo}/releases/{release_id}",
+          "specRevision": "1.1.4",
+          "contract": "sha256:d9942de69e93613ea834e6169468b090cb175c8a53171750d95ae1cc82b84b6a"
+        },
+        {
+          "operation": "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
+          "specRevision": "1.1.4",
+          "contract": "sha256:043ebfbc7528a03be85b014082b4d22e4b3db3ae80c181814d8e66fcbfa2fe63"
+        }
+      ]
+    },
     {
       "type": "manual",
       "source": "https://docs.github.com/en/rest/apps/apps",
-      "rationale": "Review touched REST contracts for App installation discovery, repository_ids access-token narrowing and metadata-only name resolution, installation repositories, search, release writes, SHA-guarded PR merge with explicit workflow-write scope. Manual review remains visible; public documentation checks never mint tokens.",
       "evidence": {
-        "reviewedAt": "2026-10-07",
         "apiVersion": "2022-11-28",
         "tokenContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app",
         "repositoryListContract": "https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation",
         "jwtContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app"
-      }
+      },
+      "reason": "Review touched REST contracts for App installation discovery, repository_ids access-token narrowing and metadata-only name resolution, installation repositories, search, release writes, SHA-guarded PR merge with explicit workflow-write scope. Manual review remains visible; public documentation checks never mint tokens.",
+      "lastVerified": "2026-10-07"
     }
   ]
 }
