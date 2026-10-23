@@ -4,7 +4,7 @@
     "https://modelcontextprotocol.io/specification/2026-07-28",
     "https://modelcontextprotocol.io/extensions/overview"
   ],
-  "scope": "Current connecta behavior, not SDK capability alone. Supported means the described scope has tests; partial names its gaps. Planned includes work deferred beyond 0.29 and unimplemented optional core features. #703 decisions may be superseded by a later record.",
+  "scope": "Current connecta behavior, not SDK capability alone. Supported means the described scope has tests; partial names its gaps. Planned includes work deferred beyond 0.35.0 and unimplemented optional core features. #703 decisions may be superseded by a later record.",
   "features": [
     {
       "id": "json-rpc",
@@ -510,7 +510,7 @@
       "id": "prompts",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/prompts",
-      "notes": "Deferred for 0.29.0 by #703's Deferred row; no prompts advertised today.",
+      "notes": "Deferred for 0.35.0 by #703's Deferred row; no prompts advertised today.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -727,7 +727,7 @@
       "id": "subscriptions",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions",
-      "notes": "subscriptions/listen is deferred for 0.29.0 by #703's Deferred row.",
+      "notes": "subscriptions/listen is deferred for 0.35.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -868,7 +868,7 @@
       "id": "io.modelcontextprotocol/ui",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/apps/overview",
-      "notes": "MCP Apps is deferred for 0.29.0 by #703's Deferred row.",
+      "notes": "MCP Apps is deferred for 0.35.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -923,7 +923,7 @@
       "id": "io.modelcontextprotocol/tasks",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/tasks/overview",
-      "notes": "Tasks, including downstream task polling, are deferred for 0.29.0 by #703's Deferred row.",
+      "notes": "Tasks, including downstream task polling, are deferred for 0.35.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {

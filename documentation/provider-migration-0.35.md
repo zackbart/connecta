@@ -1,4 +1,4 @@
-# Notion, Vercel and Cloudflare migration for 0.29
+# Notion, Vercel and Cloudflare migration for 0.35
 
 Hosted selections described in this historical migration are now removed.
 For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
@@ -11,7 +11,7 @@ version changes; [integrating services](./integrating.md) covers new connectors.
 [The agent index](./README.md) routes package maintenance separately.
 
 This is the Phase 1 item 5d migration input for [Phase 5 release #709](https://github.com/zackbart/connecta/issues/709).
-Deploy it with the consolidated 0.29 release, not while the rework is in progress.
+Deploy it with the consolidated 0.35.0 release, not while the rework is in progress.
 Deployments that use Notion or Cloudflare must check their actual grants and
 connector ids in deployment configuration before that release.
 The provider audit establishes available auth modes, not production OAuth grants.
@@ -19,7 +19,7 @@ The provider audit establishes available auth modes, not production OAuth grants
 Cloudflare's part of this guide is superseded: `cloudflare()` now selects its
 implementation by `auth` and its key connector is complete on its own. Follow
 the [provider auth migration](./provider-auth-migration.md#cloudflare) for
-Cloudflare; the Cloudflare lines below record the 0.29 transition only.
+Cloudflare; the Cloudflare lines below record the transition shipped in 0.29.0 only.
 
 All three providers now default to hosted MCP. `surface: "api"` explicitly
 selects a REST complement and accepts only its API-specific options. The old
@@ -41,7 +41,7 @@ Notion has since moved to auth-selected implementations: `surface` is gone,
 and `auth: { type: "oauth" }` or `{ type: "token" }` selects hosted MCP or the
 REST connector. Upgrade with the
 [provider auth migration](./provider-auth-migration.md#notion); the rest of
-this paragraph records the 0.29 rules.
+this paragraph records the rules shipped in 0.29.0.
 Notion preserves headless/internal-integration capabilities. Add explicit
 `surface: "api"` to retain that identity and migrate old REST names to
 `integration_*`, for example `search` to `integration_search`, `create_page`
@@ -67,7 +67,7 @@ Writable endpoints may run `execute`; `readOnly` endpoints refuse it.
 
 Vercel's `surface` and ownership rules were later replaced: `auth` now selects
 the implementation. See the [provider auth migration](./provider-auth-migration.md#vercel).
-The 0.29 Vercel guidance follows for history. For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
+The Vercel guidance shipped in 0.29.0 follows for history. For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
 domain listing/adding, deployment cancellation and file uploads to live MCP
 schemas, and keep the independently authorized REST complement for value-safe
 project environment variables (including `upsert: false` create-only writes), domain verification/removal and deployment
