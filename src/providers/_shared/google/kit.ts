@@ -9,6 +9,7 @@
 
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../../connectors/api-connector.js";
+import { callClassification } from "../../../call-classification.js";
 import { deriveContext } from "../../../derived-context.js";
 import { ConnectorCallError } from "../../../errors.js";
 import {
@@ -450,15 +451,36 @@ export interface GoogleClient {
     request: GoogleRequest,
     options?: GoogleRequestOptions,
   ) => Effect.Effect<unknown, HttpFailure, CallServices>;
+  /**
+   * A reviewed binary answer, after the connection's byte ceiling, sent-secret
+   * pass, result hook and value safety. `data` is the safe binary envelope
+   * (or the product result hook's projection), never the transport's raw bytes.
+   * A product selects `googleBytes` in its vendor's `binaryBodies` review.
+   */
+  readonly bytes: (
+    request: GoogleRequest,
+    accept?: string,
+    options?: GoogleRequestOptions & { readonly maxBytes?: number },
+  ) => ReturnType<Connection["sendPath"]>;
 }
 
 export function googleClient(connection: Connection, provider: string): GoogleClient {
-  const send = (request: GoogleRequest, accept: string, options: GoogleRequestOptions | undefined) =>
+  const send = (
+    request: GoogleRequest,
+    accept: string,
+    options: (GoogleRequestOptions & { readonly maxBytes?: number }) | undefined,
+    binary = false,
+  ) =>
     Effect.gen(function* () {
-      const classification = yield* Classification;
+      const active = yield* Effect.serviceOption(Operation);
+      const callWrite = (yield* Classification) === "write";
       const dispatches = yield* Dispatches;
       const signal = yield* Signal;
-      const write = classification === "write";
+      // Match the legacy wording rule even for direct calls: their GET
+      // lookups have no served verdict. Physical write accounting stays the
+      // core's Classification; only these Google-specific words use this.
+      const served = Option.isSome(active) && active.value ? callClassification(active.value) : undefined;
+      const write = (served ?? (request.method === "GET" ? "read" : "write")) === "write";
       const operation = yield* connection.safety.resolve(request.method, request.path);
       return yield* connection
         .sendPath(
@@ -472,7 +494,15 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
             ...(request.rawBody !== undefined ? { rawBody: request.rawBody } : {}),
           },
           {
-            ...(options?.revisionGuarded ? { flags: { revisionGuarded: true } } : {}),
+            ...(options?.revisionGuarded || binary
+              ? {
+                  flags: {
+                    ...(options?.revisionGuarded ? { revisionGuarded: true as const } : {}),
+                    ...(binary ? { googleBytes: true as const } : {}),
+                  },
+                }
+              : {}),
+            ...(binary && options?.maxBytes !== undefined ? { prefix: { maxBytes: options.maxBytes } } : {}),
             ...(options?.effect ? { effect: options.effect } : {}),
             ...(options?.step ? { step: options.step } : {}),
           },
@@ -484,6 +514,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
                 failure,
                 dispatches.find((entry) => entry.failure === failure),
                 write,
+                callWrite,
                 signal,
               ),
             ),
@@ -495,6 +526,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     failure: HttpFailure,
     own: Dispatch | undefined,
     write: boolean,
+    callWrite: boolean,
     signal: AbortSignal | undefined,
   ): HttpFailure {
     // A lookup inside a write call has not sent the write. Keep the lookup's
@@ -524,7 +556,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
             ),
             at("server-error", code),
           );
-        if (write && code === 401) {
+        if (callWrite && own?.request?.auxiliary !== true && code === 401) {
           // Never sent again (INV-9); the next call mints a fresh token.
           const refusal = toConnectorCallError(failure, connection.errors, {
             classification: "write",
@@ -574,6 +606,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
 
   return {
     json: (request, options) => Effect.map(send(request, "application/json", options), (answer) => answer.data),
+    bytes: (request, accept = "*/*", options) => send(request, accept, options, true),
   };
 }
 

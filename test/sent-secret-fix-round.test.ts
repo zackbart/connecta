@@ -54,6 +54,77 @@ describe("bounded reads match original spans", () => {
     expect(result.content).toContain(MARKER);
     expect(result.content).not.toContain("private-begin");
     expect(leaks(JSON.stringify(result), privateValue)).toBe(false);
+
+    // Private values matching wire keys must leave the projection, paging
+    // and error decisions intact. The public result boundary still redacts.
+    for (const key of ["files", "nextPageToken", "incompleteSearch", "emailAddress", "trashed"]) {
+      stubGoogle(() => ({
+        files: [{ id: "f1", name: "F", owners: [{ emailAddress: "alice@example.com" }], trashed: false }],
+        nextPageToken: "next-1",
+        incompleteSearch: true,
+      }));
+      const listing: any = await connector.callTool("search_files", {}, privateContext(key));
+      expect(listing[key === "files" ? MARKER : "files"]).toEqual([
+        { id: "f1", name: "F", owners: ["alice@example.com"], [key === "trashed" ? MARKER : "trashed"]: false },
+      ]);
+      expect(listing.page.hasMore).toBe(true);
+      expect(listing.page.nextCursor).toBeTypeOf("string");
+      expect(listing[key === "incompleteSearch" ? MARKER : "incompleteSearch"]).toBe(true);
+    }
+
+    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
+      for (const key of ["parents", "rent"]) {
+        const requests: { method: string; removeParents: string | null }[] = [];
+        stubGoogle((url, init) => {
+          requests.push({ method: init.method ?? "GET", removeParents: url.searchParams.get("removeParents") });
+          return init.method === "PATCH" ? { id: "f1", parents: ["new-1"] } : { parents: ["old-1"] };
+        });
+        const moved: any = await connector.callTool(
+          "move_file",
+          { fileId: "f1", folderId: "new-1" },
+          privateContext(key),
+        );
+        expect(requests).toEqual([
+          { method: "GET", removeParents: null },
+          { method: "PATCH", removeParents: "old-1" },
+        ]);
+        expect(moved[key === "parents" ? MARKER : "pa[redacted]s"]).toEqual(["new-1"]);
+      }
+    } finally {
+      configureGuardedTransport(restore);
+    }
+
+    for (const key of ["error", "errors", "details", "reason", "status", "message"]) {
+      // Exercise both arrays and the status fallback, all with the same prose.
+      for (const reason of [
+        { errors: [{ reason: "userRateLimitExceeded" }] },
+        { details: [{ reason: "userRateLimitExceeded" }] },
+        { status: "RATE_LIMIT_EXCEEDED" },
+      ]) {
+        stubGoogle(() => Response.json({ error: { message: "Request refused.", ...reason } }, { status: 403 }));
+        await expect(connector.callTool("get_file", { fileId: "f1" }, privateContext(key))).rejects.toMatchObject({
+          code: "rate_limited",
+          retryable: true,
+        });
+      }
+      stubGoogle((url) =>
+        url.pathname.endsWith("/export")
+          ? Response.json(
+              { error: { message: "Request refused.", errors: [{ reason: "exportSizeLimitExceeded" }] } },
+              { status: 403 },
+            )
+          : { id: "d1", mimeType: "application/vnd.google-apps.document" },
+      );
+      await expect(connector.callTool("get_file_content", { fileId: "d1" }, privateContext(key))).rejects.toMatchObject(
+        {
+          code: "connector_call_failed",
+          retryable: false,
+          message:
+            "Google Drive: Request refused. The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.",
+        },
+      );
+    }
   });
 
   it("INV-5: an aligned Basic username cannot hide an unfinished encoded credential pair", () => {
@@ -203,8 +274,30 @@ describe("redact before normalization or extraction", () => {
       { presentationId: "deck1", pageObjectId: "s1" },
       privateContext(value),
     );
-    expect(result.elements.map((element: any) => element.text)).toEqual([MARKER, MARKER]);
+    // The kit redacts each source leaf before joining the two runs.
+    expect(result.elements.map((element: any) => element.text)).toEqual([`${MARKER}${MARKER}`, `${MARKER}${MARKER}`]);
     expect(leaks(JSON.stringify(result), value)).toBe(false);
+
+    // A private value matching a public wire key cannot hide the shape's
+    // text before projection. Unknown keys and echoed values stay private.
+    stubGoogle(() => ({
+      objectId: "s1",
+      revisionId: "rev-1",
+      pageElements: [
+        {
+          objectId: "elem1",
+          shape: { text: { textElements: [{ textRun: { content: "Public retained text" } }] } },
+          prefix_shape: "shape",
+        },
+      ],
+    }));
+    const keyed: any = await connector.callTool(
+      "get_page",
+      { presentationId: "deck1", pageObjectId: "s1" },
+      privateContext("shape"),
+    );
+    expect(keyed.elements).toEqual([{ objectId: "elem1", kind: MARKER, text: "Public retained text" }]);
+    expect(JSON.stringify(keyed)).not.toContain("shape");
   });
 
   it("INV-5: a Google 400 cannot trim the beginning off a private value before its 500-character cap", async () => {
@@ -237,32 +330,33 @@ describe("redact before normalization or extraction", () => {
   );
 
   it("INV-5: Docs normalizes a private paragraph only after redacting its original whitespace", async () => {
-    const value = `   private   paragraph ${"sensitive ".repeat(30)}\n`;
-    stubGoogle(() => ({
-      documentId: "d1",
-      title: "Plan",
-      body: {
-        content: [
-          {
-            startIndex: 1,
-            endIndex: value.length + 1,
-            paragraph: {
-              elements: [{ textRun: { content: value } }],
-              paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+    for (const value of [`   private   paragraph ${"sensitive ".repeat(30)}\n`, "paragraph"]) {
+      stubGoogle(() => ({
+        documentId: "d1",
+        title: "Plan",
+        body: {
+          content: [
+            {
+              startIndex: 1,
+              endIndex: value.length + 1,
+              paragraph: {
+                elements: [{ textRun: { content: value } }],
+                paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+              },
             },
-          },
-        ],
-      },
-    }));
-    const connector = docs("docs", await workspaceOptions());
-    const result: any = await connector.callTool(
-      "get_document",
-      { documentId: "d1", withIndexes: true },
-      privateContext(value),
-    );
-    expect(result.tabs[0].text).toContain(MARKER);
-    expect(result.tabs[0].elements[0].text).toBe(MARKER);
-    expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
+          ],
+        },
+      }));
+      const connector = docs("docs", await workspaceOptions());
+      const result: any = await connector.callTool(
+        "get_document",
+        { documentId: "d1", withIndexes: true },
+        privateContext(value),
+      );
+      expect(result.tabs[0].text).toContain(MARKER);
+      expect(result.tabs[0].elements[0].text).toBe(MARKER);
+      expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
+    }
   });
 
   it("INV-5: Gmail strips HTML only after redacting a private source value", async () => {

@@ -1,5 +1,5 @@
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { classifyCallError } from "../src/errors.js";
 import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
@@ -20,7 +20,8 @@ describe("native SDK refresh resolution on delayed storage", () => {
     const storage = store(true);
     const a = await adapter("remoteMcp", endpoint.issuer, storage);
     const first = a.read().catch((error: unknown) => error);
-    await vi.waitFor(async () => expect(await endpoint.sent()).toEqual([refresh]));
+    await endpoint.waitForRefresh();
+    expect(await endpoint.sent()).toEqual([refresh]);
     const outstanding = JSON.parse((await storage.get(await spentKey()))!) as { activeKey: string };
     await a.exchange();
     // Simulate storage-owned expiry after reset swept the epoch's lease.
@@ -55,7 +56,8 @@ describe("native SDK refresh resolution on delayed storage", () => {
             completed = true;
           },
         );
-        await vi.waitFor(async () => expect(await endpoint.sent()).toEqual([refresh]));
+        await endpoint.waitForRefresh();
+        expect(await endpoint.sent()).toEqual([refresh]);
         expect(completed).toBe(false);
         expect(await spent(storage)).toMatchObject({ state: "outstanding", epoch: "v3:seeded" });
         const state = await a.start();

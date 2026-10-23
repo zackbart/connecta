@@ -393,19 +393,23 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1))
         throw new Error("A read ceiling must be a whole number of bytes >= 1.");
       if (prefix && response.status >= 200 && response.status <= 299) {
-        if (!Number.isSafeInteger(prefix.maxBytes) || prefix.maxBytes < 1)
+        if (!Number.isSafeInteger(prefix.maxBytes) || prefix.maxBytes < (format === "bytes" ? 0 : 1))
           throw new Error("A success prefix needs a positive whole byte ceiling.");
         if (prefix.timeoutMs !== undefined && (!Number.isSafeInteger(prefix.timeoutMs) || prefix.timeoutMs < 1))
           throw new Error("A success prefix timeout must be a positive whole number.");
-        return readSuccessPrefix(response, {
-          ...prefix,
-          maxBytes: Math.min(limit, maxBytes ?? limit, prefix.maxBytes),
-          ...(prefix.timeoutMs === undefined
-            ? {}
-            : {
-                timeoutMs: Math.min(prefix.timeoutMs, options.timeoutMs ?? Infinity),
-              }),
-        });
+        return readSuccessPrefix(
+          response,
+          {
+            ...prefix,
+            maxBytes: Math.min(limit, maxBytes ?? limit, prefix.maxBytes),
+            ...(prefix.timeoutMs === undefined
+              ? {}
+              : {
+                  timeoutMs: Math.min(prefix.timeoutMs, options.timeoutMs ?? Infinity),
+                }),
+          },
+          format,
+        );
       }
       return readReply(provider, Math.min(responseLimit(response.status), maxBytes ?? limit), response, format);
     },
@@ -459,6 +463,7 @@ function cancel(response: Response): Effect.Effect<void> {
 function readSuccessPrefix(
   response: HttpClientResponse.HttpClientResponse,
   prefix: SuccessPrefix,
+  format?: "bytes",
 ): Effect.Effect<Reply> {
   return Effect.suspend(() => {
     const parts: Uint8Array[] = [];
@@ -518,7 +523,7 @@ function readSuccessPrefix(
           return {
             status: response.status,
             headers: new Headers(Object.entries(response.headers)),
-            text: decoder.decode(bytes),
+            ...(format === "bytes" ? { text: undefined, bytes } : { text: decoder.decode(bytes) }),
             prefix: { truncated: stopped !== "end", bytes: total, stopped },
           };
         },

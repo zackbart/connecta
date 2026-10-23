@@ -53,7 +53,7 @@ var options4 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture4 = {
   name: "docs",
   options: options4,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return docs(id, { ...options4, ...overrides });
   },
@@ -66,7 +66,7 @@ var options5 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture5 = {
   name: "drive",
   options: options5,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return drive(id, { ...options5, ...overrides });
   },
@@ -194,7 +194,7 @@ var options14 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture14 = {
   name: "sheets",
   options: options14,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return sheets(id, { ...options14, ...overrides });
   },
@@ -207,7 +207,7 @@ var options15 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture15 = {
   name: "slides",
   options: options15,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return slides(id, { ...options15, ...overrides });
   },

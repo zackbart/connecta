@@ -2052,6 +2052,13 @@ catalog bridge builds kit `read` and `write` tools that keep each legacy
 declaration's annotations and schema bytes. `api()` validates every call
 against that exact input schema before the handler runs, so the bridge decodes
 arguments permissively; step 2 replaces those schemas with Effect declarations.
+The bridge also forwards optional fixed write steps, which the kit snapshots
+at construction. Docs declares a create and its optional initial-text edit as
+separate steps, each sent at most once.
+Drive's two-request reads also declare fixed steps: `get_file_content` uses
+`metadata` and `content`, and non-root `list_folder_items` uses `folder` and
+`files`. These reads still send both GETs when deployment classification
+serves them as writes; each step can leave only once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
@@ -2059,6 +2066,20 @@ outcome. Gmail's auxiliary draft and reply lookups pass both `effect: "read"`
 and a construction-declared step: the guarded client's early reservation uses
 that named slot, while the ledger marks the request auxiliary. A failed lookup
 keeps its read verdict and cannot make an unsent draft write unknown.
+
+Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
+kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
+and create/append recovery advice. Its exact public projection and Google error
+envelope keys are reviewed in `api.ts` so a private argument equal to a key cannot
+erase its data before projection or failure classification; values and unreviewed
+keys remain protected. Its catalog and guide stay unchanged in step 1.
+
+Google's request adapter also offers a reviewed binary send. It marks the
+operation `googleBytes` for the product's `binaryBodies` selector and forwards
+an optional `maxBytes` to the success-only prefix reader. It returns the
+connection's safe answer: bytes pass the existing sent-secret encoding before
+any result hook, then value safety before the product reads them. Products
+keep charset decoding and special error-status interpretation local.
 
 An optional `tagConnector(connector, options)` records construction facts
 about the built connector, once, before the registry can serve it. Its return
@@ -2143,6 +2164,9 @@ still pass sent-secret redaction, the result hook and value safety before any
 projection. The callback runs with an empty Effect context, receives a copy of
 the chunk, and cannot transform the answer. Its defects receive the same
 withheld-text rewrap as result hooks. Invocation cancellation remains authoritative.
+Reviewed binary prefixes retain bytes through the same sent-secret encoding
+as whole binary bodies, without a text decode. Only that binary path accepts
+a zero-byte prefix, which keeps empty bytes and the ordinary prefix facts.
 
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
@@ -2189,6 +2213,10 @@ or logs. Gmail copies this metadata privately for its decoded body containers:
 text renders after redaction and before cuts, while changed binary content is
 withheld in full. Its original byte counts still govern attachment validation.
 Vendors without this declaration retain the existing parsing path.
+
+Drive declares the exact v3 keys its projections and cursor codec navigate,
+plus Google's error-envelope keys, so matching private values cannot erase a
+listing, drop `move_file`'s old parents, or change a rate-limit verdict.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
