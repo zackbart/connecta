@@ -3,11 +3,12 @@
 // secret the request sent is replaced before each cut. A cut through an echo
 // leaves a fragment that no registered form matches, which no later
 // redaction can find. SECRET is the delegated token each call sends.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
@@ -235,6 +236,14 @@ describe("Docs", () => {
 });
 
 describe("Sheets", () => {
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+
   const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
   it.each([["raw", SECRET]])(

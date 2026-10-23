@@ -2056,6 +2056,10 @@ The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
 outcome.
+Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
+kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
+and create/append recovery advice. Its catalog and guide stay unchanged in
+step 1.
 
 An optional `tagConnector(connector, options)` records construction facts
 about the built connector, once, before the registry can serve it. Its return
