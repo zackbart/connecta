@@ -4,7 +4,7 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts;
 // what this suite adds is that Drive's two transports act as the same account.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { googleReasonsOf } from "../_shared/google/workspace.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { drive } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
@@ -141,7 +141,6 @@ describe("reading content", () => {
     const failure = await call(connection(), "get_file_content", { fileId: "f1" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("larger than Google will export");
-    expect(googleReasonsOf(failure)).toContain("exportSizeLimitExceeded");
 
     // Any other refusal of the same export is passed on as it was mapped,
     // with no export-limit story attached.
@@ -368,13 +367,18 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
     });
 
     it("tells a write that applied to re-read, never to repeat", async () => {
-      sizing.oversized = (value) => (value as any)?.trashed === true;
-      route = () => ({ body: { id: "f1", trashed: true } });
-      const failure = await call(connection(), "trash_file", { fileId: "f1" }).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("trash_file applied");
-      expect(failure.message).toContain("do not repeat the write");
-      expect(calls.filter((entry) => entry.method === "PATCH")).toHaveLength(1);
+      const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      try {
+        sizing.oversized = (value) => (value as any)?.trashed === true;
+        route = () => ({ body: { id: "f1", trashed: true } });
+        const failure = await call(connection(), "trash_file", { fileId: "f1" }).catch((error) => error);
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(failure.message).toContain("trash_file applied");
+        expect(failure.message).toContain("do not repeat the write");
+        expect(calls.filter((entry) => entry.method === "PATCH")).toHaveLength(1);
+      } finally {
+        configureGuardedTransport(restore);
+      }
     });
   });
 

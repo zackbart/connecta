@@ -1404,6 +1404,53 @@ describe("Workspace served classification on unauthorized requests", () => {
       expect(apiCalls).toHaveLength(1);
       expect(tokenCalls).toHaveLength(1);
       await connecta.close();
+      if (_name === "drive") {
+        // INV-5/9: the primary and upload connections share one delegated
+        // cache. A late upload refusal must discard only its exact token,
+        // never the newer token the primary connection has already minted.
+        tokenCalls.length = 0;
+        apiCalls.length = 0;
+        const shared = drive("shared", {
+          purpose: "Files",
+          serviceAccount: account(),
+          subject: "alice@example.com",
+        });
+        const ok = () => Response.json({ id: "f1", name: "File" });
+        const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
+        const read = () => shared.callTool("get_file", { fileId: "f1" }, context(identity("alice")));
+        const upload = () =>
+          shared.callTool(
+            "update_file_content",
+            { fileId: "f1", mimeType: "text/plain", content: "Hello" },
+            context(identity("alice")),
+          );
+        apiReplies.push(ok, ok);
+        await read();
+        await upload();
+        expect(tokenCalls).toHaveLength(1);
+        expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-1"]);
+        expect(new URL(apiCalls[0]!.url).pathname).toBe("/drive/v3/files/f1");
+        expect(new URL(apiCalls[1]!.url).pathname).toBe("/upload/drive/v3/files/f1");
+
+        const held = deferred();
+        apiReplies.push(held.reply);
+        const pending = upload().catch((error) => error);
+        await vi.waitFor(() => expect(apiCalls).toHaveLength(3));
+        apiReplies.push(rejected, ok);
+        await read();
+        expect(tokenCalls).toHaveLength(2);
+        held.release(rejected());
+        expect(await pending).toMatchObject({ code: "auth_required", retryable: false });
+        // A refused write does not mint or resend, and its old-token discard
+        // leaves token-2 available to both connections on their next calls.
+        expect(tokenCalls).toHaveLength(2);
+        expect(apiCalls).toHaveLength(5);
+        apiReplies.push(ok, ok);
+        await upload();
+        await read();
+        expect(tokenCalls).toHaveLength(2);
+        expect(apiCalls.slice(-2).map((call) => call.authorization)).toEqual(["Bearer token-2", "Bearer token-2"]);
+      }
     },
   );
 });

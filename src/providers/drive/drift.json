@@ -1,6 +1,22 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "drive",
+  "generated": {
+    "operations": [
+      "DELETE /drive/v3/files/{fileId}/permissions/{permissionId}",
+      "GET /drive/v3/drives",
+      "GET /drive/v3/files",
+      "GET /drive/v3/files/{fileId}",
+      "GET /drive/v3/files/{fileId}/export",
+      "GET /drive/v3/files/{fileId}/permissions",
+      "PATCH /drive/v3/files/{fileId}",
+      "PATCH /drive/v3/files/{fileId}/permissions/{permissionId}",
+      "POST /drive/v3/files",
+      "POST /drive/v3/files/{fileId}/copy",
+      "POST /drive/v3/files/{fileId}/permissions"
+    ],
+    "evidence": {}
+  },
   "checks": [
     {
       "type": "endpoints",
@@ -8,73 +24,64 @@
         "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
         "format": "google-discovery"
       },
-      "scopes": ["https://www.googleapis.com/auth/drive"],
+      "scopes": [
+        "https://www.googleapis.com/auth/drive"
+      ],
       "endpoints": [
         {
-          "method": "GET",
-          "path": "/drive/v3/files",
           "specRevision": "20261003",
-          "contract": "sha256:05bc880957d069cd17ea543fedd5819501498eab1cd7f25052c684ec4db5ec61"
+          "contract": "sha256:05bc880957d069cd17ea543fedd5819501498eab1cd7f25052c684ec4db5ec61",
+          "operation": "GET /drive/v3/files"
         },
         {
-          "method": "POST",
-          "path": "/drive/v3/files",
           "specRevision": "20261003",
-          "contract": "sha256:1fcd4857b3682850dba107f20376ff1803872dcf044c916b467df10b67e42344"
+          "contract": "sha256:1fcd4857b3682850dba107f20376ff1803872dcf044c916b467df10b67e42344",
+          "operation": "POST /drive/v3/files"
         },
         {
-          "method": "GET",
-          "path": "/drive/v3/files/{fileId}",
           "specRevision": "20261003",
-          "contract": "sha256:a1f2d7709240d7ae4303a7b68588f172b45328e57fdd9f4a49130a16db75bbb8"
+          "contract": "sha256:a1f2d7709240d7ae4303a7b68588f172b45328e57fdd9f4a49130a16db75bbb8",
+          "operation": "GET /drive/v3/files/{fileId}"
         },
         {
-          "method": "PATCH",
-          "path": "/drive/v3/files/{fileId}",
           "specRevision": "20261003",
-          "contract": "sha256:613b9be208132083b92a5297ca9dfc4042bf0fff4e94a0c22b8f9bc7b76cfe47"
+          "contract": "sha256:613b9be208132083b92a5297ca9dfc4042bf0fff4e94a0c22b8f9bc7b76cfe47",
+          "operation": "PATCH /drive/v3/files/{fileId}"
         },
         {
-          "method": "POST",
-          "path": "/drive/v3/files/{fileId}/copy",
           "specRevision": "20261003",
-          "contract": "sha256:3a766ac7aede16a019d66a91a15b6aa8ccdbee583718a75eb5e4d7ef88c1110b"
+          "contract": "sha256:3a766ac7aede16a019d66a91a15b6aa8ccdbee583718a75eb5e4d7ef88c1110b",
+          "operation": "POST /drive/v3/files/{fileId}/copy"
         },
         {
-          "method": "GET",
-          "path": "/drive/v3/files/{fileId}/export",
           "specRevision": "20261003",
-          "contract": "sha256:209c15e394de323210fd1ed9f6da6fc5962b0f8beb7c6dca3adc48cae2bf9383"
+          "contract": "sha256:209c15e394de323210fd1ed9f6da6fc5962b0f8beb7c6dca3adc48cae2bf9383",
+          "operation": "GET /drive/v3/files/{fileId}/export"
         },
         {
-          "method": "GET",
-          "path": "/drive/v3/files/{fileId}/permissions",
           "specRevision": "20261003",
-          "contract": "sha256:adacf2992b76e75f683c390d81468176555e41bee2e85440ec9d7798566cc173"
+          "contract": "sha256:adacf2992b76e75f683c390d81468176555e41bee2e85440ec9d7798566cc173",
+          "operation": "GET /drive/v3/files/{fileId}/permissions"
         },
         {
-          "method": "POST",
-          "path": "/drive/v3/files/{fileId}/permissions",
           "specRevision": "20261003",
-          "contract": "sha256:36db968c889ddad9dca7ca061ab6260e24463d7201fe5b8b1116c80c7d6e966e"
+          "contract": "sha256:36db968c889ddad9dca7ca061ab6260e24463d7201fe5b8b1116c80c7d6e966e",
+          "operation": "POST /drive/v3/files/{fileId}/permissions"
         },
         {
-          "method": "PATCH",
-          "path": "/drive/v3/files/{fileId}/permissions/{permissionId}",
           "specRevision": "20261003",
-          "contract": "sha256:878ffdca8a190c3397ac608dfa487709002a5edd0fd534670bae9e3649405e56"
+          "contract": "sha256:878ffdca8a190c3397ac608dfa487709002a5edd0fd534670bae9e3649405e56",
+          "operation": "PATCH /drive/v3/files/{fileId}/permissions/{permissionId}"
         },
         {
-          "method": "DELETE",
-          "path": "/drive/v3/files/{fileId}/permissions/{permissionId}",
           "specRevision": "20261003",
-          "contract": "sha256:d888956d56090b61643a0ecf38947923cf449c9b7eeb4c60504ed877a9b3e5d6"
+          "contract": "sha256:d888956d56090b61643a0ecf38947923cf449c9b7eeb4c60504ed877a9b3e5d6",
+          "operation": "DELETE /drive/v3/files/{fileId}/permissions/{permissionId}"
         },
         {
-          "method": "GET",
-          "path": "/drive/v3/drives",
           "specRevision": "20261003",
-          "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442"
+          "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442",
+          "operation": "GET /drive/v3/drives"
         }
       ]
     }

@@ -133,7 +133,10 @@ describe("Drive", () => {
       );
       const connector = drive("files", await workspaceOptions());
       const result = await read(connector.callTool("get_file_content", { fileId: "f1", maxChars: 500 }, caller()));
-      expectNoFragment(result.content, form);
+      // The binary-body boundary withholds the whole content before text
+      // decoding; still prove the cut cannot expose any credential fragment.
+      expect(String(result.content)).toMatch(/^\[redacted\](?:\n|$)/);
+      expect(leaks(String(result.content), form)).toBe(false);
     },
   );
 
@@ -148,7 +151,10 @@ describe("Drive", () => {
       );
       const connector = drive("files", await workspaceOptions());
       const result = await read(connector.callTool("get_file_content", { fileId: "f1", maxChars: 500 }, caller()));
-      expectNoFragment(result.content, form);
+      // The binary-body boundary withholds the whole content before text
+      // decoding; still prove the cut cannot expose any credential fragment.
+      expect(String(result.content)).toMatch(/^\[redacted\](?:\n|$)/);
+      expect(leaks(String(result.content), form)).toBe(false);
     },
   );
 });
