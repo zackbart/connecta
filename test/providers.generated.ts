@@ -24,22 +24,22 @@ export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture
 export const providerKinds: Readonly<Record<string, string>> = {
   "breeze": "api",
   "ccb": "api",
-  "cloudflare": "dual",
+  "cloudflare": "api",
   "docs": "api",
   "drive": "api",
   "forms": "api",
-  "github": "composed",
+  "github": "api",
   "gmail": "api",
   "infisical": "api",
-  "mixpanel": "dual",
-  "notion": "dual",
+  "mixpanel": "api",
+  "notion": "api",
   "overflow": "api",
   "planning-center": "api",
   "sheets": "api",
   "slides": "api",
-  "stripe": "dual",
+  "stripe": "api",
   "tithely": "api",
-  "vercel": "dual"
+  "vercel": "api"
 };
 
 export const authoredFixtures: Readonly<Record<string, (() => Pick<Connector, "listTools">) | undefined>> = {

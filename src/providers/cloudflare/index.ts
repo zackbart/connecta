@@ -8,25 +8,16 @@ import { skill } from "./skill.generated.js";
  * `cloudflare` package in any dependency field, every import relative.
  */
 import { apiConnector } from "../../connectors/api-connector.js";
-import { reviewedCatalog } from "../../catalog-drift.js";
-import type {
-  Connector,
-  ConnectorCallAdmissionPolicy,
-  ConnectorCredentialConfig,
-  ToolClassification,
-} from "../../types.js";
+import type { Connector, ConnectorCallAdmissionPolicy, ConnectorCredentialConfig } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
+import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { CLOUDFLARE_API_BASE, cloudflareRest, type CloudflareKeyAuth, type CloudflarePin } from "./rest.js";
 import { tracksEveryRequest } from "../../provider-call.js";
 
 export { CLOUDFLARE_API_BASE } from "./rest.js";
 export type { CloudflarePin } from "./rest.js";
-
-/** Cloudflare's official whole-API hosted MCP endpoint. */
-export const CLOUDFLARE_MCP_ENDPOINT = "https://mcp.cloudflare.com/mcp";
 
 interface CloudflareCommonOptions {
   /** Human-readable display name; defaults identify the implementation. */
@@ -41,13 +32,6 @@ interface CloudflareCommonOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
-}
-
-/** Cloudflare's hosted MCP server (`search` and `execute`) over OAuth. */
-export interface CloudflareOAuthOptions extends CloudflareCommonOptions {
-  auth: { type: "oauth" };
-  /** Optional per-runtime downstream call-admission policy. */
-  callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
 interface CloudflareKeyOptions extends CloudflareCommonOptions {
@@ -87,7 +71,7 @@ export interface CloudflareGlobalApiKeyOptions extends CloudflareKeyOptions {
   unpinned?: true;
 }
 
-export type CloudflareOptions = CloudflareOAuthOptions | CloudflareApiTokenOptions | CloudflareGlobalApiKeyOptions;
+export type CloudflareOptions = CloudflareApiTokenOptions | CloudflareGlobalApiKeyOptions;
 
 /**
  * Cloudflare documents a global limit of 1,200 requests per five minutes per
@@ -138,38 +122,9 @@ const GLOBAL_API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
   ],
 };
 
-/**
- * Reviewed in #705's provider audit against https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/.
- * Classifies the hosted OAuth catalog only; the REST connector annotates
- * each tool it authors.
- */
-const CLOUDFLARE_MCP_CLASSIFICATION: ToolClassification = {
-  tools: {
-    docs: {
-      verdict: "read",
-      reason: "Searches Cloudflare documentation without executing API methods.",
-    },
-    search: {
-      verdict: "read",
-      reason: "Searches the Cloudflare OpenAPI contract without executing API methods.",
-    },
-    execute: {
-      verdict: "destructive",
-      reason: "Can mix HTTP methods across the Cloudflare API; no input schema proves a program only reads.",
-    },
-  },
-};
-
 function instructionsSection(instructions: string | undefined): string {
   const text = instructions?.trim();
   return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-function oauthUsageGuide(purpose: string, instructions: string | undefined): string {
-  const { oauth, shared, oauth_tail } = skill.fragments;
-  return `# Cloudflare usage
-
-Hosted MCP over OAuth: \`search\` and \`execute\`. Connector purpose: ${purpose}${oauth}${shared}${oauth_tail}${instructionsSection(instructions)}`;
 }
 
 function idList(ids: readonly string[] | undefined): string {
@@ -216,40 +171,27 @@ const KEY_COMMON = keys("accountId", "zoneId", "baseUrl", "maxConcurrency");
 const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
 
 /** The closed options cloudflare() accepts, selected by `auth.type`; see `assertKnownOptions`. */
-const CLOUDFLARE_OPTIONS = variants(["auth", "type"], {
-  oauth: optionsOf<CloudflareOAuthOptions>()({
-    ...COMMON,
-    callAdmission: CALL_ADMISSION,
-    auth: optionsOf<CloudflareOAuthOptions["auth"]>()(keys("type")),
-  }).shape,
-  apiToken: optionsOf<CloudflareApiTokenOptions>()({
-    ...COMMON,
-    ...KEY_COMMON,
-    pin: PIN,
-    auth: optionsOf<CloudflareApiTokenOptions["auth"]>()(keys("type")),
-  }).shape,
-  globalApiKey: optionsOf<CloudflareGlobalApiKeyOptions>()({
-    ...COMMON,
-    ...KEY_COMMON,
-    ...keys("unpinned"),
-    pin: PIN,
-    auth: optionsOf<CloudflareGlobalApiKeyOptions["auth"]>()(keys("type")),
-  }).shape,
-});
-
-function cloudflareOAuth(id: string, options: Readonly<CloudflareOAuthOptions>, provider: ProviderContext): Connector {
-  return hostedOAuth(id, provider, {
-    url: CLOUDFLARE_MCP_ENDPOINT,
-    title: options.title ?? "Cloudflare (MCP)",
-    description: `Cloudflare's official whole-API MCP interface: ${options.purpose.trim()}`,
-    ...(options.callAdmission !== undefined ? { callAdmission: options.callAdmission } : {}),
-    usageGuide: {
-      content: oauthUsageGuide(options.purpose.trim(), options.instructions),
-      summary: "Hosted MCP over OAuth. Search the OpenAPI document; execute programs always classify as writes.",
-      required: true,
-    },
-  });
-}
+const CLOUDFLARE_OPTIONS = variants(
+  ["auth", "type"],
+  {
+    oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
+    apiToken: optionsOf<CloudflareApiTokenOptions>()({
+      ...COMMON,
+      ...KEY_COMMON,
+      pin: PIN,
+      auth: optionsOf<CloudflareApiTokenOptions["auth"]>()(keys("type")),
+    }).shape,
+    globalApiKey: optionsOf<CloudflareGlobalApiKeyOptions>()({
+      ...COMMON,
+      ...KEY_COMMON,
+      ...keys("unpinned"),
+      pin: PIN,
+      auth: optionsOf<CloudflareGlobalApiKeyOptions["auth"]>()(keys("type")),
+    }).shape,
+  },
+  undefined,
+  ["oauth"],
+);
 
 function idsOf(id: string, value: unknown, path: string): string[] | undefined {
   if (value === undefined) return undefined;
@@ -350,32 +292,21 @@ function cloudflareKey(
   };
 }
 
-/**
- * A maintained Cloudflare connection. `auth` selects the implementation:
- * OAuth reaches Cloudflare's hosted MCP server; an API token or a Global API
- * Key reaches Connecta's REST connector to the v4 API.
- */
+/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
 export const cloudflare = defineProvider<CloudflareOptions>({
   name: "cloudflare",
   title: "Cloudflare",
-  kind: "dual",
+  kind: "api",
   readme: "Cloudflare",
   bundle: {
     baselineGzip: 334055,
-    note: "./providers/cloudflare remeasures at 334,055 B gzip (#801), from 151,186 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before its former cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table adds about 12 KB. The value-safety consolidation (#801) moved the spec-derived candidate record out of the index and grew the table by 259 verdicts, a net +3,646 B (337,701 B), inside its former cap. Reported against this baseline, not capped (#899).",
+    note: "./providers/cloudflare was measured at 334,055 B gzip (#801), from 151,186 B on main: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before its former cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table adds about 12 KB. The value-safety consolidation (#801) moved the spec-derived candidate record out of the index and grew the table by 259 verdicts, a net +3,646 B (337,701 B), inside its former cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,
-  classify: CLOUDFLARE_MCP_CLASSIFICATION,
   create: byAuth<CloudflareOptions>({
-    oauth: cloudflareOAuth,
+    oauth: removedHostedMcp,
     apiToken: cloudflareKey("apiToken"),
     globalApiKey: cloudflareKey("globalApiKey"),
   }),
 });
-
-/** @deprecated Read `cloudflare.definition.classify` instead. Kept for existing imports. */
-export const CLOUDFLARE_MCP_VETTED_CATALOG = reviewedCatalog(
-  cloudflare.definition.classify!,
-  'defineProvider("cloudflare")',
-);

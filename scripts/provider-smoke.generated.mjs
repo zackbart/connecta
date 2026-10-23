@@ -31,10 +31,9 @@ var options3 = { "purpose": "Audit fixture", "auth": { "type": "apiToken" } };
 var fixture3 = {
   name: "cloudflare",
   options: options3,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "pinned", "options": { "accountId": "acct-fixture", "pin": { "accountIds": ["acct-fixture"] } } }, { "label": "global-key", "options": { "auth": { "type": "globalApiKey" }, "pin": { "zoneIds": ["zone-fixture"] } } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "pinned", "options": { "accountId": "acct-fixture", "pin": { "accountIds": ["acct-fixture"] } } }, { "label": "global-key", "options": { "auth": { "type": "globalApiKey" }, "pin": { "zoneIds": ["zone-fixture"] } } }],
   create(id = "fixture", overrides = {}) {
-    const base = overrides.auth?.type === "oauth" ? { purpose: options3.purpose } : options3;
-    return cloudflare(id, { ...base, ...overrides });
+    return cloudflare(id, { ...options3, ...overrides });
   },
   conventions: { "verbs": ["verify", "list", "graphql", "cloudflare"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
@@ -104,8 +103,7 @@ var fixture7 = {
   create(id = "fixture", overrides = {}) {
     return github(id, { ...options7, ...overrides });
   },
-  // Hosted schemas require installation auth. Provider-local fixtures cover
-  // both hosted and REST conventions without network access.
+  // Scope-aware REST conventions are covered by provider-local fixtures.
   conventions: void 0
 };
 
@@ -144,13 +142,7 @@ var options10 = { purpose: "Audit fixture", via: "api", auth: { type: "credentia
 var fixture10 = {
   name: "mixpanel",
   options: options10,
-  cases: [
-    { label: "padded-purpose", options: { purpose: "  Audit fixture  " } },
-    { label: "default", options: {} },
-    { label: "mcp", options: { via: "mcp", auth: { type: "oauth" } } },
-    { label: "eu", options: { region: "eu" } },
-    { label: "in", options: { region: "in" } }
-  ],
+  cases: [{ label: "padded-purpose", options: { purpose: "  Audit fixture  " } }, { label: "default", options: {} }, { label: "eu", options: { region: "eu" } }, { label: "in", options: { region: "in" } }],
   create(id = "fixture", overrides = {}) {
     return mixpanel(id, { ...options10, ...overrides });
   },
@@ -163,7 +155,7 @@ var options11 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
 var fixture11 = {
   name: "notion",
   options: options11,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }, { "label": "business-admission", "options": { "callAdmission": { "rules": [{ "budget": { "kind": "rolling-window", "maxCalls": 600, "windowMs": 6e4 } }] } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "business-admission", "options": { "callAdmission": { "rules": [{ "budget": { "kind": "rolling-window", "maxCalls": 600, "windowMs": 6e4 } }] } } }],
   create(id = "fixture", overrides = {}) {
     return notion(id, { ...options11, ...overrides });
   },
@@ -228,10 +220,9 @@ var options16 = { "purpose": "Audit fixture", "auth": { "type": "apiKey" }, "mod
 var fixture16 = {
   name: "stripe",
   options: options16,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production" } }, { "label": "connect", "options": { "mode": "production", "connectedAccount": "acct_fixture" } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production" } }, { "label": "connect", "options": { "mode": "production", "connectedAccount": "acct_fixture" } }],
   create(id = "fixture", overrides = {}) {
-    const base = overrides.auth?.type === "oauth" ? { purpose: options16.purpose } : options16;
-    return stripe(id, { ...base, ...overrides });
+    return stripe(id, { ...options16, ...overrides });
   },
   conventions: { "verbs": ["get", "stripe"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
@@ -255,10 +246,9 @@ var options18 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
 var fixture18 = {
   name: "vercel",
   options: options18,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "team", "options": { "teamId": "team_fixture" } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "team", "options": { "teamId": "team_fixture" } }],
   create(id = "fixture", overrides = {}) {
-    const base = overrides.auth?.type === "oauth" ? { purpose: options18.purpose } : options18;
-    return vercel(id, { ...base, ...overrides });
+    return vercel(id, { ...options18, ...overrides });
   },
   conventions: { "verbs": ["list", "get", "upsert", "update", "delete", "vercel"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };

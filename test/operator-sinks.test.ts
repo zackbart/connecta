@@ -717,56 +717,6 @@ describe("the operator page's catalog", () => {
   });
 });
 
-describe("a forwarded catalog drift report", () => {
-  const drifting = (observedAt: string): Connector => ({
-    id: "svc",
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      return {};
-    },
-    // Exercise the forwarded seam without manufacturing a new listing report.
-    async status() {
-      return { state: "ok" };
-    },
-    catalogDrift: () => ({
-      observedAt,
-      unclassifiedTools: 1,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    }),
-  });
-
-  it.each([
-    ["header text after a timestamp", `2026-08-12T00:00:00.000Z\nAuthorization: Bearer ${planted("drift")}`],
-    ["a timestamp-shaped prefix of text", `2026-08-12T00:00${planted("drift")}`],
-  ])("INV-6: puts no %s on health, status, or the operator page", async (_, observedAt) => {
-    const { logger, lines } = capturingLogger();
-    const connecta = createTestConnecta({
-      connectors: [drifting(observedAt)],
-      auth: machineAuth("t"),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger,
-    });
-    const health = await (await connecta.fetch(new Request(`${BASE}/health`))).text();
-    const page = await (
-      await connecta.fetch(
-        new Request(`${BASE}/ui/connectors/svc`, {
-          headers: { Authorization: "Bearer t" },
-        }),
-      )
-    ).text();
-    const status = JSON.stringify(await connecta.registry.statusFor("svc", BASE));
-    for (const text of [health, page, status, ...lines, ...consoleLines]) {
-      expect(text).not.toMatch(ANY_PLANTED);
-    }
-    expect(status).not.toContain("catalogDrift");
-  });
-});
-
 describe("control-character tool names at catalog intake", () => {
   it("INV-6: drops names from a fresh listing without leaking into discovery, calls, or operator sinks", async () => {
     const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
@@ -796,7 +746,6 @@ describe("control-character tool names at catalog intake", () => {
     const connector = () =>
       remoteMcp("svc", {
         url: MCP_URL,
-        classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) },
       });
     const registry = new Registry([connector()], {
       storage,
@@ -811,7 +760,6 @@ describe("control-character tool names at catalog intake", () => {
     expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
     expect(JSON.stringify(search)).not.toContain("x\u0085y");
     expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
-    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
     for (const name of rejected) {
       const result = await mt.callTool({ address: `svc.${name}` });
       expect(result.isError).toBe(true);
@@ -882,7 +830,6 @@ describe("control-character tool names at catalog intake", () => {
       },
     ]);
     expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(["x y", "x~y", "x\u00a0y", "读取"]);
-    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(65);
   });
 });
 
@@ -897,7 +844,6 @@ describe("catalog intake finding lifecycle", () => {
         {
           id: "svc",
           authScope: "personal",
-          classification: { tools: {} },
           async listTools() {
             return [{ name: "x\u0085planted-7f3a9c" }];
           },
@@ -913,7 +859,6 @@ describe("catalog intake finding lifecycle", () => {
       subjectKey: "private-subject",
     });
     expect(await scoped.getTools("svc", BASE)).toEqual([]);
-    expect((await scoped.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(1);
     const body = await (await app.fetch(new Request(`${BASE}/health`))).text();
     expect(JSON.parse(body)).not.toHaveProperty("catalogDrift");
     for (const text of [body, ...lines, ...consoleLines]) {

@@ -1,6 +1,6 @@
 import type { ConnectaConfigDescription } from "../describe-config.js";
+import type { CatalogAccessObservation, ResourceTemplateRefusalCode } from "../types.js";
 import type { OperatorConnectorOverlay, OperatorTool } from "./contract.js";
-import type { CatalogAccessObservation, CatalogDriftReport, ResourceTemplateRefusalCode } from "../types.js";
 
 /** Tool verdicts, independent of whether the selected pool is read-only. */
 export type UiToolSafety = "runs_in_programs" | "needs_approval";
@@ -100,7 +100,6 @@ export interface UiConnector {
    * drifted — which is why the UI renders that as its own state rather than as
    * a clean one.
    */
-  catalogDrift?: CatalogDriftReport;
   /** Last agent-facing catalog read in this runtime; never persisted. */
   catalogAccess?: CatalogAccessObservation;
   resourceTemplateRefusals?: ResourceTemplateRefusalCode[];

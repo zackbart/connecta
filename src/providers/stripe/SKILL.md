@@ -7,50 +7,15 @@
 ---
 
 <!-- fragment: setup -->
-## Choose OAuth or an API key
+## Use an API key
 
-Import `stripe` from `@zackbart/connecta/providers/stripe`. Choose one of two setup paths:
-
-```ts
-// OAuth: Stripe's hosted MCP. Authorize the connection with Stripe.
-stripe("billing", { purpose: "Payments", auth: { type: "oauth" } });
-stripe("billing", { purpose: "Revenue reports", auth: { type: "oauth" }, readOnly: true });
-
-// API key: Connecta's REST connector. Paste the key into this connection in the operator UI.
-stripe("billing", { purpose: "Payments", auth: { type: "apiKey" }, mode: "production" });
-stripe("billing", { purpose: "Revenue reports", auth: { type: "apiKey" }, mode: "production", readOnly: true });
-```
-
-For an API key, set `mode` to `"production"` or `"sandbox"` to match the key.
-Use a secret (`sk_`) or restricted (`rk_`) key. For read-only access, prefer a
-restricted `rk_` key configured with only read permissions: Stripe enforces
-those permissions too. Connecta's `readOnly: true` omits non-read tools and
-refuses their calls on every endpoint. Omit it for the default writable connector;
-endpoint restrictions still apply. OAuth needs no `mode` and can reach both live
-and sandbox accounts through Stripe's account selectors.
+Import `stripe` from `@zackbart/connecta/providers/stripe` and set
+`auth: { type: "apiKey" }` with `mode: "production"` or `"sandbox"`.
+Prefer a restricted key with only the required permissions. Hosted MCP uses
+`remoteMcp()` separately; see the installed hosted MCP migration guide.
 
 <!-- endfragment -->
 
-<!-- fragment: oauth -->
-
-
-This OAuth session may expose both live and sandbox Stripe accounts. Discover the live account-selection tools, select the intended account and mode, then carry exact context fields such as `stripe_context` and `livemode` wherever the schema requires them. A live-mode write moves real money; a sandbox write changes test data. Never infer the account or mode from connector metadata.
-
-- Discover account and mode with the live account-selection tools before every account-scoped read or write. The reviewed hosted catalog exposes `list_available_accounts_or_orgs` to return `stripe_context` and `livemode`, and `manage_stripe_accounts` to return a Dashboard URL for managing session access; discover what this session actually exposes. Select the intended result and carry the exact context fields required by the live schema unchanged. If the account, mode, or supported selector is ambiguous, stop and ask; never guess.
-- Organization accounts are not Stripe Connect connected accounts. A Connect call requires a separate API-key connector whose `connectedAccount` sends Stripe's documented `Stripe-Account` header; OAuth does not support that path.
-- Four generic tools reach any Stripe API method. Find the method with `stripe_api_search`, read its parameters with `stripe_api_details`, then call `stripe_api_read` (GET) or `stripe_api_write` (POST/PATCH/PUT/DELETE). Never guess a path or a parameter name — `stripe_api_details` is cheaper than a rejected write.
-- Prefer a dedicated tool when one covers the task: `get_balance_summary` for balances and `stripe_analytics` for Sigma or Metrics reporting. Use `stripe_api_search` for everything else instead of assuming a retired dedicated tool still exists.
-- `stripe_implementation_planner` and the query-execution intents of `stripe_analytics` create provider-side planning or query-run state. Connecta therefore classifies both as writes, which a read-only endpoint refuses; their retrieval paths stay behind the same tool boundary.
-- `convert_currency`, `send_money`, and `transfer_money` move funds. Before dispatch, confirm the intended account and its exact `stripe_context`/`livemode` pair, the source and destination or recipient, the currency, and the amount in minor units. `livemode: true` affects real balances; never switch modes to get past a refusal. `setup_recipient` creates a recipient for outbound payments and is also reviewed as destructive, matching Stripe's hint.
-- Money-movement tools can require Stripe human confirmation. Make the host-approved initial call without `human_confirmation.approval_token`. If Stripe returns an approval request and URL, present that URL as a clickable link and wait for the human to confirm approval. Only then call the same tool with the exact original arguments plus the supplied `human_confirmation.approval_token`; never invent a token, change the amount or recipient, or automatically retry an ambiguous money movement. This Stripe confirmation is separate from the host's tool approval.
-- `atlas_company_formation` creates or advances an Atlas formation application. Its `list` and `retrieve` actions share the same destructive tool boundary as `create` and `advance`; obtain host approval and preserve the selected `stripe_context` and `livemode` for every action.
-- `send_stripe_feedback` submits feedback to Stripe and is a write. Discover that name rather than the retired `send_stripe_mcp_feedback`.
-- `stripe_api_write` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; a read-only endpoint refuses it.
-- Any `stripe_api_read` list or `stripe_api_search` that returns full objects belongs inside `execute_code`, projected to the fields the question needs before `return`. Neither `limit` nor `expand` substitutes for that: an unprojected list of customers or invoices truncates long before it answers, and a projected one keeps the customer's name, email, and address out of the transcript.
-- Find an object with `stripe_api_search` (or a list endpoint through `stripe_api_read`) and carry the `id` it returned into the write.
-- This connection's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
-- Send an `Idempotency-Key` on every write you might retry, if the tool accepts it, and reuse the same key for the retry. A retry with a fresh key is a second charge, not a second attempt.
-<!-- endfragment -->
 
 <!-- fragment: key -->
 
@@ -81,11 +46,6 @@ This OAuth session may expose both live and sandbox Stripe accounts. Discover th
 - Treat every create, update, delete, refund, and report run as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
 <!-- endfragment -->
 
-<!-- fragment: oauth_limits -->
-- Stripe answers a rate limit with `429` and a `Stripe-Rate-Limited-Reason` header; back off on that rather than retrying immediately. Stripe documents an account ceiling of 100 requests per second in live mode and 25 in sandbox mode, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
-- Use `search_stripe_documentation` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
-- An `auth_required` failure means this connector's Stripe authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
-<!-- endfragment -->
 
 <!-- fragment: key_limits -->
 - Stripe answers a rate limit with `429` and a `Stripe-Rate-Limited-Reason` header; back off on that rather than retrying immediately. Stripe documents an account ceiling of <!-- endfragment -->

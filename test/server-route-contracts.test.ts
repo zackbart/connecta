@@ -247,13 +247,6 @@ describe("server route contracts", () => {
         {
           ...testConnector("private_connector_id"),
           callAdmission: { rules: [{ maxConcurrency: 1 }] },
-          catalogDrift: () => ({
-            observedAt: "2026-09-16T00:00:00.000Z",
-            unclassifiedTools: 2,
-            unservedTools: 1,
-            annotationConflicts: 0,
-            schemaChanges: 3,
-          }),
         },
       ],
       auth: machineAuth(TOKEN),

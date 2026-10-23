@@ -172,10 +172,9 @@ describe("provider migration enforcement cannot be bypassed by metadata", () => 
     );
   });
 
-  it("rejects empty authored fixtures and accepts hosted-only absence", async () => {
+  it("rejects empty authored fixtures", async () => {
     await expect(
       authoredTools("api", { name: "acme", createAuthored: () => ({ listTools: async () => [] }) }, context),
     ).rejects.toThrow("not an empty catalog");
-    expect(await authoredTools("mcp", { name: "acme" }, context)).toBeUndefined();
   });
 });

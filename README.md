@@ -30,7 +30,9 @@ only the answer comes back.
 ## What you can connect
 
 Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Mixpanel, Notion, Overflow, Planning Center, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
-Plus any remote MCP server or HTTP API you describe.
+Maintained providers wrap vendor APIs. Hosted MCP servers use generic connections
+that discover the vendor's current tools at runtime. You can also describe your
+own HTTP APIs.
 
 ## Who can use it
 

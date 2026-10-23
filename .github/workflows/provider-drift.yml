@@ -44,7 +44,7 @@ jobs:
             // everything else is new or changed against the reviewed evidence.
             const lines = [];
             const standing = [];
-            for (const mode of ['specs', 'docs', 'manual', 'records'])
+            for (const mode of ['specs', 'manual', 'records'])
               for (const row of report[mode]) {
                 for (const finding of row.findings)
                   (finding.kind === 'manual-required' ? standing : lines).push(`${row.provider} (${mode}): ${finding.kind} ${finding.detail}`);
@@ -54,7 +54,7 @@ jobs:
             const list = (items) => !items.length ? 'None.\n' : items.slice(0, 50).map((item) => `- ${item.replace(/\s+/g, ' ')}\n`).join('') + (items.length > 50 ? `- …and ${items.length - 50} more in the attached JSON\n` : '');
             summary += `### ${lines.length} new or changed finding(s)\n\nContract changes, unavailable references, and invalid records against the reviewed evidence.\n\n${list(lines)}\n`;
             summary += `### ${standing.length} standing manual review(s)\n\nVendors without a machine-readable contract; repeated every run.\n\n${list(standing)}\n`;
-            for (const mode of ['specs', 'docs', 'manual', 'records']) summary += `- ${mode}: ${report[mode].length} checks\n`;
+            for (const mode of ['specs', 'manual', 'records']) summary += `- ${mode}: ${report[mode].length} checks\n`;
           } catch {
             summary += `No complete JSON report was produced. Report step outcome: ${outcome || 'not run'}. See the job log and attached stderr.\n`;
           }

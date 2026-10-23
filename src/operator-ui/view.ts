@@ -1,8 +1,7 @@
-import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
-import type { CatalogDriftReport } from "../types.js";
-import type { UiConnector, UiData, UiProblem } from "./model.js";
-import type { FixPromptKind } from "./fix-prompts.js";
 import type { AgentSlot } from "./agents.js";
+import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
+import type { FixPromptKind } from "./fix-prompts.js";
+import type { UiConnector, UiData, UiProblem } from "./model.js";
 
 /**
  * Everything the operator app knows, and every rule for changing it, with no
@@ -712,88 +711,6 @@ export function connectorVerdict(
     return { tone, label: connectorStatusLabel(live.status), action: tone === "warn" ? "Connect" : "Inspect" };
   }
   return { tone: "ok", label: "Connected", action: null };
-}
-
-/**
- * Hosted-provider catalog drift, as an operator reads it
- * ([#343](https://github.com/zackbart/connecta/issues/343)).
- *
- * - `unavailable` — no refresh has been observed in this runtime, so there is
- *   nothing to report. Deliberately not `clean`: "we have not looked" and "we
- *   looked and it matches" are different answers, and only one of them is a
- *   reason to stop worrying.
- * - `clean` — a refresh happened and every category counted zero.
- * - `warning` — a refresh happened and at least one category did not.
- */
-export type DriftState = "clean" | "warning" | "unavailable";
-
-/**
- * The categories, in the order an operator should read them: what the
- * deployment refuses to call, what it can no longer call, what contradicts a
- * vetted verdict, and what changed shape underneath a reviewed schema. Counts
- * only — a name or a schema on this path would be the payload leak the whole
- * drift model exists to avoid.
- */
-const DRIFT_CATEGORIES: ReadonlyArray<{
-  key: keyof Omit<CatalogDriftReport, "observedAt" | "reviewedBaseline" | "verification" | "schemaCoverage">;
-  label: string;
-}> = [
-  { key: "unclassifiedTools", label: "Unclassified" },
-  { key: "unservedTools", label: "Unserved" },
-  { key: "annotationConflicts", label: "Annotation conflicts" },
-  { key: "schemaChanges", label: "Schema changes" },
-  { key: "droppedTools", label: "Dropped tool names" },
-];
-
-function driftTotal(drift?: CatalogDriftReport): number {
-  if (!drift) return 0;
-  return DRIFT_CATEGORIES.reduce((sum, { key }) => sum + (drift[key] || 0), 0);
-}
-
-export function driftState(drift?: CatalogDriftReport): DriftState {
-  if (!drift) return "unavailable";
-  if (driftTotal(drift) > 0) return "warning";
-  if (
-    drift.reviewedBaseline !== true ||
-    drift.verification !== "complete" ||
-    !drift.schemaCoverage ||
-    drift.schemaCoverage.unpinned > 0 ||
-    drift.schemaCoverage.pinned === 0
-  )
-    return "unavailable";
-  return "clean";
-}
-
-/** Every category with its count, so a clean report still shows its zeros. */
-export function driftCounts(drift?: CatalogDriftReport): Array<{ key: string; label: string; count: number }> {
-  if (!drift) return [];
-  return DRIFT_CATEGORIES.filter(({ key }) => key !== "droppedTools" || drift.droppedTools !== undefined).map(
-    ({ key, label }) => ({
-      key,
-      label,
-      count: drift[key] || 0,
-    }),
-  );
-}
-
-/** One line naming the state and when it was observed. Never what drifted. */
-export function driftSummary(drift?: CatalogDriftReport): string {
-  if (!drift) return "No catalog refresh yet.";
-  const observed = formatDate(drift.observedAt);
-  const when = observed ? ` · observed ${observed}` : "";
-  const total = driftTotal(drift);
-  const difference = total
-    ? `${total} difference${total === 1 ? "" : "s"}${drift.reviewedBaseline === false ? "" : " from the reviewed manifest"} · `
-    : "";
-  if (drift.reviewedBaseline === false) return `${difference}No reviewed baseline${when}`;
-  if (drift.verification === "unavailable") return `${difference}Schema verification unavailable${when}`;
-  const coverage = drift.schemaCoverage;
-  if (!coverage || coverage.pinned === 0) return `${difference}Schemas not pinned${when}`;
-  if (coverage.unpinned > 0)
-    return `${difference}Partial schema coverage (${coverage.pinned} pinned, ${coverage.unpinned} not pinned)${when}`;
-  if (driftState(drift) === "clean") return `Matches the reviewed manifest${when}`;
-  if (!total) return `Schema verification unavailable${when}`;
-  return `${difference.replace(/ · $/, "")}${when}`;
 }
 
 /**
