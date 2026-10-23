@@ -165,8 +165,8 @@ export const tithely = defineApiProvider<TithelyOptions>({
   title: "Tithe.ly",
   readme: "Tithe.ly",
   bundle: {
-    baselineGzip: 320935,
-    note: "./providers/tithely remeasures at 320,935 B gzip in B.5 (decision 0010), Node 22 CI static at 0b919ab7: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http), from 83,800 B for the guarded-fetch provider on the same local measure. Over the root it adds about 170 KB, which a deployment pays once for its first kit provider. Reported against this baseline, not capped (#899).",
+    baselineGzip: 330156,
+    note: "./providers/tithely remeasures at 330,156 B gzip in its decision 0011 step 2, from 323,147 B on main at 94d925cc (Node 26 local, system zlib): the standard hatch over an index derived from request contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: TITHELY_OPTIONS,
