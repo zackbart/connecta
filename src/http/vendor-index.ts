@@ -9,7 +9,7 @@
 import {
   OperationIndex,
   type OpenApiData,
-  type Operation,
+  type OperationField,
   type SchemaNode,
 } from "../providers/_shared/rest/operation-index.js";
 import { manifest, type Vendor } from "./vendor.js";
@@ -59,23 +59,6 @@ function node(schema: unknown, components: Json, seen: ReadonlySet<string> = new
   return out;
 }
 
-/** A property an operation's request body or success response declares, as a dot path (`data[].widget_id`). */
-export interface OperationField {
-  readonly in: "body" | "response";
-  readonly path: string;
-}
-
-const FIELDS = new WeakMap<OperationIndex, ReadonlyMap<number, readonly OperationField[]>>();
-
-/**
- * The request and response properties an index's operation declares, so
- * search can find an operation by a field it returns. Indexes without them,
- * such as the REST family's compiled pins, answer none.
- */
-export function operationFields(index: OperationIndex, op: Operation): readonly OperationField[] {
-  return FIELDS.get(index)?.get(op.row) ?? [];
-}
-
 /** Every property path a schema declares, local references resolved once each. */
 function propertyPaths(
   schema: unknown,
@@ -106,7 +89,7 @@ function propertyPaths(
  * An operation index over a kit vendor's own declarations: every operation's
  * method, path, `operationId`, `Summary`, path and query parameters, and
  * request body with its content type, plus the request and response
- * properties `operationFields` answers. `prefix` names the hatch tools in
+ * properties `OperationIndex.fields` answers. `prefix` names the hatch tools in
  * refusals; `revision` identifies the declared API version.
  */
 export function vendorIndex(
@@ -117,7 +100,7 @@ export function vendorIndex(
   const components = record(record(document["components"])["schemas"]);
   const ops: Array<[string, string, string, string, number]> = [];
   const details: Array<0 | [unknown[], unknown]> = [];
-  const fields = new Map<number, readonly OperationField[]>();
+  const fields: (readonly OperationField[])[] = [];
   for (const [path, item] of Object.entries(record(document["paths"]))) {
     for (const method of METHODS) {
       const operation = record(record(item)[method]);
@@ -150,7 +133,7 @@ export function vendorIndex(
       const success = Object.entries(record(operation["responses"])).find(([status]) => status.startsWith("2"))?.[1];
       const paths = (where: OperationField["in"], schema: unknown) =>
         [...new Set(propertyPaths(schema, components))].map((path) => ({ in: where, path }));
-      fields.set(ops.length - 1, [
+      fields.push([
         ...paths("response", record(record(record(success)["content"])["application/json"])["schema"]),
         ...paths("body", record(media)["schema"]),
       ]);
@@ -165,8 +148,7 @@ export function vendorIndex(
     tags: [""],
     ops,
     details: JSON.stringify({ d: [], o: details }),
+    fields,
   };
-  const index = new OperationIndex(data, { vendor: names.prefix, title: names.title });
-  FIELDS.set(index, fields);
-  return index;
+  return new OperationIndex(data, { vendor: names.prefix, title: names.title });
 }

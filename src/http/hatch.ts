@@ -14,15 +14,15 @@ import { ConnectorCallError } from "../errors.js";
 import {
   type Operation,
   type OperationContract,
+  type OperationField,
   type OperationIndex,
   type RestMethod,
 } from "../providers/_shared/rest/operation-index.js";
 import { refuseWithheldLinks } from "../providers/_shared/rest/value-safety.js";
 import { Refusal } from "./errors.js";
-import { dataKeys, fieldsInput, fieldsProblem, selectFields } from "./fields.js";
+import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
 import { boundCursor, StandardPage } from "./paging.js";
-import { operationFields, type OperationField } from "./vendor-index.js";
 import { read, write } from "./tools.js";
 import type { Connection } from "./vendor.js";
 import type { Parameters, WriteRequest } from "./write-request.js";
@@ -212,9 +212,9 @@ export function hatch(
     const leaf = (field: OperationField) => words(field.path.split(".").at(-1)!);
     // Commonness counts the record's own properties, not those of records embedded in it.
     const carries = (op: Operation, term: string) =>
-      operationFields(index, op).some(
-        (field) => field.path.split(".").length <= 2 && leaf(field).some((word) => same(term, word)),
-      );
+      index
+        .fields(op)
+        .some((field) => field.path.split(".").length <= 2 && leaf(field).some((word) => same(term, word)));
     const weights = new Map(
       [...new Set(words(query))].flatMap((term) => {
         const share = candidates.filter((op) => carries(op, term)).length;
@@ -228,7 +228,8 @@ export function hatch(
     return candidates
       .filter((op) => !found.has(op))
       .flatMap((op) => {
-        const best = operationFields(index, op)
+        const best = index
+          .fields(op)
           .map((field) => ({
             field,
             score: [...weights].reduce(
@@ -422,6 +423,14 @@ export function hatch(
         invalid(`A ${method} operation takes query, not body.`);
       if (kind === "write") refuseWithheldLinks({ path: args.path, query, body: args.body }, name);
       index.check(op, query, args.body);
+      // S5: a bad first segment is refused before anything is sent, against the
+      // declared success contract, never against whatever one answer happens to hold.
+      if (args.fields?.length) {
+        const roots = index.responseRoots(op);
+        if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
+        const problem = fieldsProblem(args.fields, roots, "data");
+        if (problem) throw problem;
+      }
       return {
         method,
         path: args.path,
@@ -435,14 +444,11 @@ export function hatch(
       };
     }).pipe(
       Effect.flatMap((request) => connection.sendPath(request)),
-      Effect.flatMap((answer) =>
-        checked(() => {
-          const data = answer.data === undefined ? null : answer.data;
-          const problem = fieldsProblem(args.fields, dataKeys(data), "data");
-          if (problem) throw problem;
-          return { status: answer.status, data: selectFields(data, args.fields) };
-        }),
-      ),
+      // Selection narrows the answer value safety and the privacy projection already made.
+      Effect.map((answer) => ({
+        status: answer.status,
+        data: selectFields(answer.data === undefined ? null : answer.data, args.fields),
+      })),
     );
 
   const note = (sentence: string | undefined) => (sentence ? ` ${sentence}` : "");

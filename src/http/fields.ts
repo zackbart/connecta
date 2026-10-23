@@ -22,9 +22,9 @@ function record(value: unknown): value is Record<string, unknown> {
 
 /**
  * The refusal for a path whose first segment is not a property the result can
- * carry, if any. Named tools pass their output Schema's property names, so a
- * bad path fails before anything is sent; a hatch passes the names its answer
- * actually has.
+ * carry, if any. Named tools pass their output Schema's property names and
+ * the hatch its operation's declared response roots, so a bad path fails
+ * before anything is sent.
  */
 export function fieldsProblem(
   fields: readonly string[] | undefined,
@@ -58,10 +58,4 @@ export function selectFields(data: unknown, fields: readonly string[] | undefine
     );
   };
   return pick(data, fields);
-}
-
-/** Every key the data's records carry, item by item for a list. */
-export function dataKeys(data: unknown): Set<string> {
-  const rows = Array.isArray(data) ? data : [data];
-  return new Set(rows.flatMap((row) => (record(row) ? Object.keys(row) : [])));
 }

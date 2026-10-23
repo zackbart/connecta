@@ -76,6 +76,18 @@ const DATA: OpenApiData = {
       0,
     ],
   }),
+  // Declared success responses: /items records (or a list of them) and the created item.
+  fields: [
+    ["id", "email", "token", "label", "nested", "nested.id", "nested.email"].map((path) => ({
+      in: "response" as const,
+      path,
+    })),
+    [],
+    [],
+    [],
+    [],
+    [{ in: "response", path: "id" }],
+  ],
 };
 const VERDICTS = {
   "GET /items": "read",
@@ -340,6 +352,13 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     { kind: "read", args: { path: "/items", query: { link: { nested: true } } }, message: "link" },
     { kind: "read", args: { path: "/items", body: {} }, message: "takes query" },
     { kind: "write", args: { method: "POST", path: "/items", body: {} }, message: "name" },
+    // A write never leaves with a projection its declared response cannot satisfy.
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "alice" }, fields: ["nope"] },
+      message: "property of data: one of id",
+    },
+    { kind: "write", args: { method: "DELETE", path: "/items/i1", fields: ["id"] }, message: "declares no response" },
     { kind: "write", args: { method: "POST", path: "/upload", body: {} }, message: "multipart" },
     { kind: "read", args: { path: "/elsewhere" }, message: "different server" },
     { kind: "read", args: { method: "HEAD", path: "/items/i1" }, data: null },
@@ -393,7 +412,10 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       data: [{ id: "i1", email: "private", label: "credential-123456789", token: "stored-secret" }],
       expected: [{ id: "i1", label: "[redacted]", token: "[redacted]" }],
     },
-    { args: { path: "/items", fields: ["email"] }, data: { id: "i1", email: "private" }, message: "property of data" },
+    // A declared field the privacy projection dropped narrows to nothing; an empty list accepts valid fields.
+    { args: { path: "/items", fields: ["email", "id"] }, data: { id: "i1", email: "private" }, expected: { id: "i1" } },
+    { args: { path: "/items", fields: ["id"] }, data: [], expected: [] },
+    { args: { path: "/items", fields: ["nope"] }, message: "property of data", sends: 0, auth: 0 },
     { args: { path: "/items" }, status: 403, data: { error: "stored-secret" }, message: "Vendor text withheld" },
     { args: { method: "GET", path: "/touch" }, kind: "write", status: 503, message: "", sends: 1 },
   ]) {
