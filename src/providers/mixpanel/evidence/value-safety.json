@@ -1,6 +1,6 @@
 {
   "format": 5,
-  "digest": "sha256:d9bbbbfa67f0a31f900b325932462b9cd541d287e55357d28e201df69a35e677",
+  "digest": "sha256:87a73df5e89eafefe3291c0c9609410ff970ba76e6583f375d471cc03a613e33",
   "options": {},
   "candidates": {
     "GET /api/query/insights": {
