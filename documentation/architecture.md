@@ -1136,10 +1136,11 @@ including titles, descriptions, schemas and annotations. If a tool name would
 change, the complete catalog is refused. Rewriting a name changes dispatch;
 dropping only that tool would publish a partial catalog, against INV-8. Later
 cached reads need no credential set because the stored facts are already clean.
-Echoed sensitive header lines are also withheld, and so is a line whose
-name a private value altered, or whose name, `:` and credential prefix one
-took with at least eight credential characters after it (#703); a line that
-only opens with a private word keeps its text. The set is never persisted
+Echoed sensitive header lines are also withheld. A line whose header name a
+private value altered loses its value, and when a placeholder in a header name
+is followed by at least eight credential characters (a private value took the
+name, its `:` and a credential prefix), that remainder is withheld too (#703).
+A line that only opens with a private word keeps its text. The set is never persisted
 or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).

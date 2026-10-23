@@ -702,8 +702,15 @@ function replace(text: string, spans: number[]): string {
 }
 
 /** A line's leading run of header-name characters and placeholders, and what follows it. */
-/** A character of a header line's name, as `headerLine` reads one. */
-const HEADER_NAME = /[a-z0-9-]/i;
+/** A unit of a header line's name, as `headerLine` reads one. */
+function headerNameUnit(code: number): boolean {
+  return (
+    (code >= 0x61 && code <= 0x7a) || (code >= 0x41 && code <= 0x5a) || (code >= 0x30 && code <= 0x39) || code === 0x2d
+  );
+}
+
+/** The longest header name read around a placeholder; real names are far shorter. */
+const MAX_HEADER_NAME = 256;
 
 /**
  * Header lines whose name redaction altered (#703). A name holding a placeholder before its `:`
@@ -722,18 +729,19 @@ function splitHeaderLines(text: string): string {
     while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") lineEnd++;
     // The name runs back from the placeholder to the line's start, after any indentation.
     let name = at;
-    while (name > 0) {
+    while (name > 0 && at - name <= MAX_HEADER_NAME) {
       if (text.endsWith(REDACTED, name)) name -= REDACTED.length;
-      else if (HEADER_NAME.test(text[name - 1]!)) name--;
+      else if (headerNameUnit(text.charCodeAt(name - 1))) name--;
       else break;
     }
     let indent = name;
     while (indent > 0 && (text[indent - 1] === " " || text[indent - 1] === "\t")) indent--;
-    if (indent === 0 || text[indent - 1] === "\n" || text[indent - 1] === "\r") {
+    const opens = indent === 0 || text[indent - 1] === "\n" || text[indent - 1] === "\r";
+    if (opens && at - name <= MAX_HEADER_NAME) {
       let end = at;
-      while (end < lineEnd) {
+      while (end < lineEnd && end - name <= MAX_HEADER_NAME) {
         if (text.startsWith(REDACTED, end)) end += REDACTED.length;
-        else if (HEADER_NAME.test(text[end]!)) end++;
+        else if (headerNameUnit(text.charCodeAt(end))) end++;
         else break;
       }
       const colon = /^[\t ]*:[\t ]*/.exec(text.slice(end, Math.min(lineEnd, end + 64)));
