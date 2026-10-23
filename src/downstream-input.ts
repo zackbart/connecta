@@ -55,6 +55,7 @@ export interface DownstreamRequestState {
   address: string;
   target: string;
   tool: "call_tool" | "call_destructive_tool";
+  wireTool: string;
   digest: string;
   round: number;
   expiresAt: number;
@@ -261,6 +262,7 @@ export class DownstreamElicitation {
       typeof state.target !== "string" ||
       !state.target.startsWith(`${state.connector}.`) ||
       !["call_tool", "call_destructive_tool"].includes(String(state.tool)) ||
+      typeof state.wireTool !== "string" ||
       typeof state.digest !== "string" ||
       !/^[a-f0-9]{64}$/.test(state.digest) ||
       !Number.isSafeInteger(state.expiresAt) ||
@@ -288,7 +290,7 @@ export class DownstreamElicitation {
           (binding.mode === "url" || binding.mode === "form"),
       ) ||
       context.mcpReq.method !== "tools/call" ||
-      context.http?.req?.headers.get("Mcp-Name") !== state.tool
+      context.http?.req?.headers.get("Mcp-Name") !== state.wireTool
     )
       return invalidRequestState();
     return state as unknown as DownstreamRequestState;
@@ -301,7 +303,12 @@ export class DownstreamElicitation {
     context: ServerContext,
     operation: () => Promise<ToolResult>,
   ): Promise<ToolResult | InputRequiredResult> {
-    if (state.tool !== tool || state.address !== args.address || state.digest !== (await requestDigest(tool, args)))
+    if (
+      state.wireTool !== context.http?.req?.headers.get("Mcp-Name") ||
+      state.tool !== tool ||
+      state.address !== args.address ||
+      state.digest !== (await requestDigest(tool, args))
+    )
       return failure("invalid_request_state", "Invalid or expired requestState");
     const responses: Record<string, unknown> = Object.create(null);
     const elicitation = downstreamInputCapabilities(this.options.requestScope).elicitation;
@@ -432,6 +439,7 @@ export class DownstreamElicitation {
       address: String(args.address),
       target: pending.address,
       tool: tool as DownstreamRequestState["tool"],
+      wireTool: context.http?.req?.headers.get("Mcp-Name") ?? tool,
       digest: await requestDigest(tool, args),
       round: (previous?.round ?? 0) + 1,
       expiresAt: previous?.expiresAt ?? Date.now() + REQUEST_STATE_TTL_MS,

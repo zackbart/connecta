@@ -18,6 +18,7 @@ afterEach(async () => {
 
 function setup(
   options: {
+    native?: boolean;
     credential?: boolean;
     namedCredential?: boolean;
     uiPath?: string;
@@ -66,6 +67,7 @@ function setup(
         tools: ["service"],
         members: [{ namespace: "https://clerk.example.test", id: "alice" }],
         readOnly: false,
+        ...(options.native ? { surface: "native" as const } : {}),
       },
     },
     executor: {
@@ -91,6 +93,10 @@ function setup(
       pool?: string;
     } = {},
   ) => {
+    if (options.native && (name === "call_tool" || name === "call_destructive_tool")) {
+      name = String(args.address).replace(".", "__");
+      args = args.args as Record<string, unknown>;
+    }
     const params = {
       name,
       arguments: args,
@@ -110,7 +116,8 @@ function setup(
     request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
     if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
-    const target = opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request;
+    const pool = opts.pool ?? (options.native ? "trusted" : undefined);
+    const target = pool ? new Request(`${BASE}/mcp/${pool}`, request) : request;
     return readJsonRpc(await app.fetch(target));
   };
   const browser = async (url: string) => {
@@ -140,6 +147,33 @@ function setup(
 }
 
 describe("auth URL elicitation", () => {
+  it("INV-4: native auth binds the wire name, canonical target and arguments through accept, decline and cancel", async () => {
+    for (const action of ["accept", "decline", "cancel"]) {
+      const flow = setup({ native: true });
+      const first = (await flow.rpc()).result;
+      expect(first.resultType).toBe("input_required");
+      for (const [name, args] of [
+        ["service__write", { id: 1 }],
+        ["service__read", { id: 2 }],
+      ] as const) {
+        const changed = await flow.rpc(name, args, { state: first.requestState, action });
+        expect(changed.error || changed.result?.structuredContent?.error).toBeTruthy();
+      }
+      expect(flow.call).toHaveBeenCalledOnce();
+      flow.connect();
+      const retry = (await flow.rpc(undefined, undefined, { state: first.requestState, action })).result;
+      if (action === "accept") {
+        expect(retry.content[0].text).toBe('{"done":true}');
+        expect(flow.call).toHaveBeenCalledTimes(2);
+      } else {
+        expect(retry.structuredContent.error.code).toBe(action === "decline" ? "auth_declined" : "auth_cancelled");
+        expect(flow.call).toHaveBeenCalledOnce();
+      }
+      const replay = await flow.rpc(undefined, undefined, { state: first.requestState, action });
+      expect(replay.result.structuredContent.error.code).toBe("invalid_request_state");
+    }
+  });
+
   it("INV-4 INV-5 INV-6: asks capable hosts through a fixed same-origin URL elicitation", async () => {
     const flow = setup();
     const sign = vi.spyOn(flow.vault, "signOAuthHandoff");
