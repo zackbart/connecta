@@ -188,7 +188,11 @@ export function workspaceConnector<C extends object>(connection: WorkspaceConnec
  * The Workspace address this call acts as, resolved from config and the
  * admitted caller only. Throws before any network call when there is none.
  */
-async function subjectFor(provider: string, subject: GoogleWorkspaceSubject, ctx: ConnectorContext): Promise<string> {
+export async function subjectFor(
+  provider: string,
+  subject: GoogleWorkspaceSubject,
+  ctx: ConnectorContext,
+): Promise<string> {
   if (typeof subject === "string") return subject;
   const caller = callerOf(ctx);
   if (!caller) {

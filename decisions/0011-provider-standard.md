@@ -593,6 +593,11 @@ separate worktrees.
 | 7   | 0009 C.8: GitHub                                                                                                                                                                                                                                                                 | REST complement on the kit; C.0c already removed the hosted half and `composed`                         | surface                                                | batch 6                                            |
 | S.2 | Cleanup: delete `asProviderFactory`, the fragment parser, `ProviderSkill.fragments`, `PENDING` and this record's transitional skill text                                                                                                                                         | —                                                                                                       | —                                                      | the last step 2                                    |
 
+C.7's step 1 keeps each Google product's legacy JSON Schema bytes through a
+catalog bridge whose decoder is permissive, because `api()` already validates
+every call against those exact schemas; each product's step 2 replaces them
+with Effect declarations.
+
 0012 deleted the former batch 2 (the five hosted-only providers). C.0 never
 touches the kit, and C.6 and C.8 change only in that their hosted setup moved
 to C.0c. Which APIs stay vendored or gain coverage is not decided here.

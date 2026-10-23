@@ -28,6 +28,7 @@ import {
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
@@ -1262,6 +1263,15 @@ describe("the in-memory token cache", () => {
 });
 
 describe("Workspace served classification on unauthorized requests", () => {
+  // Kit-built Workspace writes go through the Node owned transport that listen() installs.
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+
   it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", NODE, async () => {
     apiReplies.push(
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
@@ -1365,6 +1375,35 @@ describe("Workspace served classification on unauthorized requests", () => {
       });
       expect(apiCalls).toHaveLength(1);
       expect(tokenCalls).toHaveLength(1);
+      // A program's call meets the same catalog schema before any handler:
+      // an undeclared argument is refused and nothing is minted or sent.
+      const connecta = createTestConnecta({
+        connectors: [
+          provider("workspace", { purpose: "Files", serviceAccount: account(), subject: "alice@example.com" }),
+        ],
+        auth: machineAuth("service-secret"),
+        executor: scriptedExecutor(async (fns) =>
+          fns.call!(`workspace.${tool}`, { ...args, undeclared: true }).catch((error) =>
+            String((error as { code?: string }).code ?? error),
+          ),
+        ),
+        logger: silentLogger,
+      });
+      const program = (
+        await readJsonRpc(
+          await connecta.fetch(
+            mcpRpc(
+              "tools/call",
+              { name: "execute_code", arguments: { code: "async () => null" } },
+              { token: "service-secret" },
+            ),
+          ),
+        )
+      ).result;
+      expect(JSON.stringify(program.structuredContent)).toContain("invalid_args");
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+      await connecta.close();
     },
   );
 });
