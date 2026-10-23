@@ -39,6 +39,6 @@ A superseded record points to its replacement issue, PR, or record in its prose.
 provider's step 2: a coverage hatch, curated tools and optional generated
 per-operation catalogs.
 
-[0015](./0015-native-tools-and-agent-identity.md) proposes native tools for
-clients with tool search, an Eve adapter package, and optional Vercel workload
-identity alongside agent tokens.
+[0015](./0015-native-tools-and-agent-identity.md) records the accepted native
+pool surface for clients with tool search, the separate Eve workspace package,
+and optional Vercel workload identity alongside agent tokens.

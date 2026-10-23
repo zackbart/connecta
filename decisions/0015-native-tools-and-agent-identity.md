@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-23
 issues: [703]
 supersedes: []
@@ -13,11 +13,11 @@ also does not pass MCP server instructions to the model, requiring a separate
 instructions fetch. Agent access currently needs a `cta_` secret to provision,
 store and rotate.
 
-The owner approved validating a simpler path: org access through a declared
+The owner accepted a simpler path: org access through a declared
 agent and its pool, native tools for clients that search themselves, and
 optional workload identity. Per-user auth, identity forwarding and downstream
-user sign-in are outside this work. This proposal records the evidence and
-recommendations for [#703](https://github.com/zackbart/connecta/issues/703);
+user sign-in are outside this work. This decision records the accepted choices
+and evidence for [#703](https://github.com/zackbart/connecta/issues/703);
 [the native prototype](https://github.com/zackbart/connecta/pull/977) and
 [the identity prototype](https://github.com/zackbart/connecta/pull/975) remain
 separate implementation PRs. Their behavior is not yet shipped on main.
@@ -31,7 +31,9 @@ headers, query parameters or client negotiation: a client's cached catalog
 must describe the endpoint it will call.
 
 A native pool lists each visible downstream tool, `skills`, and by default
-`execute_code`. Recommend retaining code for joins, pagination and reduction.
+`execute_code`. Native with code is the recommended configuration for bounded
+Eve pools, supporting joins, pagination and reduction. Large pools stay on meta
+pending the large-catalog eval.
 `executeCode: false` replaces it with `read_result`, which pages the same
 bound result handles; that option is invalid on meta pools. Native endpoints
 do not list `search_tools`, either call wrapper, or `authorize_connector`.
@@ -83,8 +85,8 @@ the existing agent-token environment variable; permit a `getToken` callback
 for Vercel's `getVercelOidcToken()` or another token source. Do not automatically
 switch credential types or forward a user's identity.
 
-Keep approval at `never()` by default for unattended org agents. Offer an
-explicit host policy or `gateWrites` to ask before tools not annotated read-only,
+**Approval defaults to `never()`** for unattended org agents. An explicit host
+policy or opt-in `gateWrites` asks before tools not annotated read-only,
 including `execute_code` on writable pools. This default permits authorized
 writes without a person; a read-only pool is the enforcement choice when
 writes must be impossible. At turn start, inject the endpoint's instructions,
@@ -92,18 +94,21 @@ using discovery with initialize fallback and a ten-minute success cache.
 Instruction-fetch failure may keep the prior copy or omit guidance; tools
 remain usable. Instructions cannot grant access.
 
-**Recommend a separate `@zackbart/connecta-eve` package with a declared Eve
-peer.** The prototype's `@zackbart/connecta/eve` subpath stays outside the root
-graph, but deliberately leaves Eve undeclared. Declaring even an optional peer
-resolved Eve's Node 24 framework, Nitro beta and AI peer into the prototype's
-pnpm install, while Connecta supports Node 22. The undeclared subpath avoids
-that cost but hides the compatibility contract; ambient declarations can drift
-even when core CI passes. A separate package can declare its supported Eve
-range, use real types, and test emitted declarations and runtime behavior on
-Node 24 without imposing that stack on core consumers. It adds a release unit
-and changes the proposed import path; prefer that explicit cost before release.
-Keep Eve outside Connecta's root graph and preserve the real-Eve drift check
-while the prototype subpath exists. Packaging remains follow-up work.
+**Ship `@zackbart/connecta-eve` as a separate workspace package in this
+repository.** Publish it in lockstep with `@zackbart/connecta`. It declares a
+real supported `eve` peer range, has no dependency on `@zackbart/connecta`, and
+runs its own Node 24 CI job using real Eve types, including emitted-declaration
+and runtime checks. Keep Eve outside Connecta's root graph and its Node 22
+core CI. The `@zackbart/connecta/eve` subpath is not shipped.
+
+The prototype's undeclared subpath avoided resolving Eve's Node 24 framework,
+Nitro beta and AI peer into core's pnpm install, which happened even with an
+optional peer. Leaving Eve undeclared hides the compatibility contract, and
+ambient declarations can drift while core CI passes. The workspace package
+makes that contract explicit without imposing Eve on core consumers. It adds
+a package to build and publish while keeping versioning and releases unified.
+Remove the prototype subpath before release and retain the real-Eve drift
+check through the transition. The package implementation remains follow-up work.
 
 **Agent tokens remain; Vercel OIDC is optional.** Bind an immutable `team_...`
 ID, project and allowed environments in deployment code to a declared agent.
@@ -118,7 +123,7 @@ Verify RS256 against Vercel's fixed trusted JWKS, exact issuer/audience/subject
 consistency, configured workload claims and token times; reject external-user
 tokens. Bound parsing, key size, cache lifetime, refresh frequency and network
 work. Follow no redirects, use no expired cached keys, and cancel request I/O
-with the request. Key-fetch saturation should return retryable 503 rather
+with the request. Key-fetch saturation returns retryable 503 rather
 than a credential rejection. Credentials and raw failures stay out of records.
 
 The project's token is a bearer credential: anything holding it can act as
@@ -186,10 +191,13 @@ project-token end-to-end check has been performed.
 
 ## Consequences
 
-Recommend native with code for bounded Eve pools after implementation review;
-retain meta for clients without tool search and for unmeasured large pools.
+Native with code is the recommended setup for bounded Eve pools after
+implementation review; large pools stay on meta pending the large-catalog eval.
+Meta remains the default for clients without tool search.
 Client-native listing changes presentation, not the vendored API tool shapes
 chosen in [0014](./0014-api-tool-shape.md).
+
+The owner accepted these follow-ups:
 
 - **Workers parity:** require native list/call, modern and legacy dispatch,
   schemas, classification changes, write-once behavior and paging on workerd
@@ -220,7 +228,7 @@ chosen in [0014](./0014-api-tool-shape.md).
   every turn or treat a guide as an access grant.
 
 These follow-ups and package publication are not implemented by this record.
-Reconsider the recommendations if held-out catalogs lose discovery quality,
+Reconsider these choices if held-out catalogs lose discovery quality,
 approval staleness becomes unacceptable, or the workload bearer trust boundary
 does not match an operator's needs. Operator contracts belong in shipped
 documentation alongside the implementing changes.
