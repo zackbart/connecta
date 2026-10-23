@@ -169,6 +169,17 @@ The layout applies only to vendored API implementations (0012).
 | `evidence/pages/`                | `recording.json` (`retrievedAt`, `pages: [{ file, url, sha256 }]`) and the recorded public pages  | a recording script              |
 | `evidence/review.md`             | contributor narrative: verdict reasons, gaps, documentation-derived facts                         | a reviewer                      |
 
+Supplemental vendored contracts use a simple `<slug>.json` pin and a sibling
+`<slug>.document.json` in the provider's `evidence/` directory. An `endpoints`
+check names the pin with `specification.pin`; both files are hashed in
+`generated.evidence`. Slugs use lowercase letters, digits and hyphens, start
+with a letter, and cannot be `openapi` or `value-safety`; paths, dots and
+reserved primary evidence names are refused. The pin requires https `url`
+and `documentation`, `vendored: true`, and the exact document `digest`.
+The checker reads that document offline from this provider's evidence only,
+checks its digest, and never fetches the pin's URL. Keep dataset semantics
+that the envelope does not describe in a separate manual check.
+
 - **E1.** `evidence/` holds only these names.
 - **E2.** No hosted MCP catalog or documentation evidence is captured or
   required (0012), including the former observation-only Google baselines.

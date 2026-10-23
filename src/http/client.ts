@@ -18,7 +18,7 @@ import { guardedTransport } from "../guarded-transport.js";
 // effect/http is annotated unstable in 4.0.5. Only client.ts, oauth.ts and
 // vendor.ts import the HTTP area modules; providers never do.
 
-import { Effect, Stream } from "effect";
+import { Context, Effect, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -84,6 +84,21 @@ interface Reply {
   readonly text: string | undefined;
   /** Present only for a reviewed binary read, still under the same byte ceiling. */
   readonly bytes?: Uint8Array;
+  readonly prefix?: PrefixResult;
+}
+
+/** Opt-in success-only prefix; invocation cancellation still owns the read. */
+export interface SuccessPrefix {
+  readonly maxBytes: number;
+  readonly timeoutMs?: number;
+  /** Inspect a chunk only to decide whether to stop; never transform the answer. */
+  readonly stop?: (chunk: Uint8Array) => boolean;
+}
+
+export interface PrefixResult {
+  readonly truncated: boolean;
+  readonly bytes: number;
+  readonly stopped: "end" | "bytes" | "time" | "stop";
 }
 
 export interface GuardedClient<R = CallServices> {
@@ -95,6 +110,7 @@ export interface GuardedClient<R = CallServices> {
     response: HttpClientResponse.HttpClientResponse,
     maxBytes?: number,
     format?: "bytes",
+    prefix?: SuccessPrefix,
   ) => Effect.Effect<Reply, HttpFailure>;
 }
 
@@ -349,7 +365,12 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         }
         const declared = Number(response.headers.get("content-length"));
         const ceiling = responseLimit(response.status);
-        if (Number.isFinite(declared) && declared > ceiling && request.method !== "HEAD") {
+        if (
+          Number.isFinite(declared) &&
+          declared > ceiling &&
+          request.method !== "HEAD" &&
+          !(facts.successPrefix && response.ok)
+        ) {
           yield* cancel(response);
           return yield* refused(tooLarge(provider, ceiling, `a declared ${declared} bytes`));
         }
@@ -368,9 +389,24 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   return {
     provider,
     client: HttpClient.makeWith(postprocess, preprocess),
-    read: (response, maxBytes, format) => {
+    read: (response, maxBytes, format, prefix) => {
       if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1))
         throw new Error("A read ceiling must be a whole number of bytes >= 1.");
+      if (prefix && response.status >= 200 && response.status <= 299) {
+        if (!Number.isSafeInteger(prefix.maxBytes) || prefix.maxBytes < 1)
+          throw new Error("A success prefix needs a positive whole byte ceiling.");
+        if (prefix.timeoutMs !== undefined && (!Number.isSafeInteger(prefix.timeoutMs) || prefix.timeoutMs < 1))
+          throw new Error("A success prefix timeout must be a positive whole number.");
+        return readSuccessPrefix(response, {
+          ...prefix,
+          maxBytes: Math.min(limit, maxBytes ?? limit, prefix.maxBytes),
+          ...(prefix.timeoutMs === undefined
+            ? {}
+            : {
+                timeoutMs: Math.min(prefix.timeoutMs, options.timeoutMs ?? Infinity),
+              }),
+        });
+      }
       return readReply(provider, Math.min(responseLimit(response.status), maxBytes ?? limit), response, format);
     },
   };
@@ -417,6 +453,78 @@ function tooLarge(provider: string, limit: number, detail: string): ResponseTooL
 
 function cancel(response: Response): Effect.Effect<void> {
   return Effect.promise(() => response.body?.cancel().catch(() => {}) ?? Promise.resolve());
+}
+
+/** Stream finalization cancels the unread body on every early stop or interruption. */
+function readSuccessPrefix(
+  response: HttpClientResponse.HttpClientResponse,
+  prefix: SuccessPrefix,
+): Effect.Effect<Reply> {
+  return Effect.suspend(() => {
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    let stopped: PrefixResult["stopped"] = "end";
+    const source = response.stream.pipe(
+      Stream.catch((error) =>
+        error.reason._tag === "EmptyBodyError"
+          ? Stream.fromEffect(response.arrayBuffer.pipe(Effect.map((buffer) => new Uint8Array(buffer))))
+          : Stream.fail(error),
+      ),
+    );
+    const consume = Stream.runForEachWhile(source, (chunk) => {
+      const kept = chunk.subarray(0, Math.max(0, prefix.maxBytes - total));
+      parts.push(kept);
+      total += kept.byteLength;
+      if (kept.byteLength < chunk.byteLength) {
+        stopped = "bytes";
+        return Effect.succeed(false);
+      }
+      // A callback closes over no Effect services from the invoking request.
+      return Effect.sync(() => prefix.stop?.(kept.slice()) === true).pipe(
+        Effect.setContext(Context.empty()),
+        Effect.map((stop) => {
+          if (stop) stopped = "stop";
+          return !stop;
+        }),
+      );
+    });
+    const timed =
+      prefix.timeoutMs === undefined
+        ? consume
+        : Effect.raceFirst(
+            consume,
+            Effect.sleep(prefix.timeoutMs).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  stopped = "time";
+                }),
+              ),
+            ),
+          );
+    return timed.pipe(
+      Effect.match({
+        onFailure: () => ({
+          status: response.status,
+          headers: new Headers(Object.entries(response.headers)),
+          text: undefined,
+        }),
+        onSuccess: () => {
+          const bytes = new Uint8Array(total);
+          let offset = 0;
+          for (const part of parts) {
+            bytes.set(part, offset);
+            offset += part.byteLength;
+          }
+          return {
+            status: response.status,
+            headers: new Headers(Object.entries(response.headers)),
+            text: decoder.decode(bytes),
+            prefix: { truncated: stopped !== "end", bytes: total, stopped },
+          };
+        },
+      }),
+    );
+  });
 }
 
 /**

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { contractDigest } from "../scripts/drift-contract.mjs";
-import { checkView } from "../scripts/drift-validate.mjs";
+import { checkView, supplementalDocument } from "../scripts/drift-validate.mjs";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
 const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.url));
 async function driftRecord(provider: string, directory = providerDirectory): Promise<any> {
@@ -819,6 +819,52 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
   });
 
   it("keys endpoint rows by operation, records them in that spelling, and reports a manifest operation no row covers", async () => {
+    // Supplemental contracts are pinned offline; a second endpoints check still records every operation.
+    const supplemental = JSON.stringify({
+      openapi: "3.1.0",
+      info: { version: "1" },
+      paths: { "/query": { post: operation("query") } },
+    });
+    const pin = {
+      url: "https://vendor.example/schema",
+      documentation: "https://vendor.example/reference",
+      vendored: true,
+      digest: `sha256:${createHash("sha256").update(supplemental).digest("hex")}`,
+    };
+    const supplementCheck = {
+      type: "endpoints",
+      specification: { url: pin.url, pin: "query.json" },
+      endpoints: [{ operation: "POST /query", page: pin.documentation, specRevision: "1" }],
+    };
+    const supplementalRoot = await recordWorkspace({
+      vendor: v2([supplementCheck], { generated: { operations: ["POST /query"], evidence: {} } }),
+    });
+    const evidencePath = join(supplementalRoot, "vendor", "evidence");
+    await mkdir(evidencePath, { recursive: true });
+    await writeFile(join(evidencePath, "query.document.json"), supplemental);
+    await writeFile(join(evidencePath, "query.json"), JSON.stringify(pin));
+    const recordedSupplement = reportFor(supplementalRoot, ["--specs", "--record", "--provider", "vendor"]);
+    expect(JSON.parse(recordedSupplement.output).specs).toEqual([expect.objectContaining({ findings: [] })]);
+    expect((await driftRecord("vendor", supplementalRoot)).checks[0].endpoints[0].contract).toMatch(/^sha256:/);
+    for (const bad of [
+      "../query.json",
+      "sub/query.json",
+      "a..b.json",
+      "openapi.json",
+      "openapi.document.json",
+      "value-safety.json",
+    ])
+      expect(supplementalDocument(bad)).toBeUndefined();
+    for (const bad of [
+      { ...pin, digest: `sha256:${"0".repeat(64)}` },
+      { ...pin, documentation: "http://vendor.example/reference" },
+      { ...pin, vendored: false },
+    ]) {
+      await writeFile(join(evidencePath, "query.json"), JSON.stringify(bad));
+      expect(evidenceInvalid(JSON.parse(reportFor(supplementalRoot, ["--specs"]).output))).toContainEqual(
+        expect.objectContaining({ kind: "evidence-invalid" }),
+      );
+    }
     const pages = await mkdtemp(join(tmpdir(), "connecta-drift-pages-"));
     temporary.push(pages);
     const page = (method: string, path: string, marker = path) =>

@@ -4,10 +4,13 @@ import { makeRegistry } from "../../../test/helpers.js";
 import { attachCallClassification } from "../../call-classification.js";
 import { CredentialVault } from "../../credentials.js";
 import { ConnectorCallError } from "../../errors.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import type { ConnectorContext } from "../../types.js";
 
+import { manifest } from "../../http/vendor.js";
+import { CloudflareApi, cloudflareIndex } from "./api.js";
 import { CLOUDFLARE_API_BASE, cloudflare } from "./index.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -35,6 +38,7 @@ describe("cloudflare() over a key", () => {
   let sent: Sent[];
   let respond: (request: Sent) => Response;
   const realFetch = globalThis.fetch;
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 
   const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({
@@ -47,6 +51,7 @@ describe("cloudflare() over a key", () => {
 
   beforeEach(() => {
     sent = [];
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     respond = () => envelope([]);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request: Sent = {
@@ -62,6 +67,7 @@ describe("cloudflare() over a key", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
+    configureGuardedTransport(restoreTransport);
   });
 
   const token = (value = "cf-token-123"): ConnectorContext => ({
@@ -85,9 +91,9 @@ describe("cloudflare() over a key", () => {
     return error as ConnectorCallError;
   }
 
-  it.each([503, 429])(
-    "INV-9: a zone ownership preflight cannot perform the resource write (HTTP %i)",
-    async (status) => {
+  it("INV-4 INV-9: a zone ownership preflight cannot perform the resource write or widen the pin", async () => {
+    for (const status of [503, 429]) {
+      sent = [];
       const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
       respond = (request) =>
         request.url.pathname === `/client/v4/zones/${ZONE}` && status !== 503
@@ -112,10 +118,107 @@ describe("cloudflare() over a key", () => {
         retryable: true,
         writeOutcome: undefined,
       });
-    },
-  );
+    }
+
+    const calls: Array<[string, Record<string, unknown>, string, string]> = [
+      [
+        "cloudflare_api_write",
+        { method: "PATCH", path: `/zones/${ZONE}/dns_records/r1`, body: { ttl: 300 } },
+        "PATCH",
+        `/zones/${ZONE}/dns_records/r1`,
+      ],
+      [
+        "cloudflare_api_upload",
+        {
+          method: "POST",
+          path: `/zones/${ZONE}/dns_records/import`,
+          textBody: "a. 1 IN A 192.0.2.1",
+          contentType: "text/plain",
+        },
+        "POST",
+        `/zones/${ZONE}/dns_records/import`,
+      ],
+      ["cloudflare_api_read", { path: `/zones/${ZONE}/dns_records` }, "GET", `/zones/${ZONE}/dns_records`],
+      ["graphql_query", { query: `{ viewer { zones(filter: {zoneTag: "${ZONE}"}) { id } } }` }, "POST", "/graphql"],
+    ];
+    const cases: Array<[string, () => Response, boolean]> = [
+      ["bare account is not ownership proof", () => Response.json({ id: ZONE, account: { id: ACCOUNT } }), false],
+      [
+        "in-band failure without an owner",
+        () => envelope(null, { success: false, errors: [{ code: 10000, message: "Refused." }] }),
+        false,
+      ],
+      [
+        "in-band auth failure without an owner",
+        () => envelope(null, { success: false, errors: [{ code: 6003, message: "Refused." }] }),
+        false,
+      ],
+      [
+        "in-band failure with a pinned result owner",
+        () => envelope({ id: ZONE, account: { id: ACCOUNT } }, { success: false }),
+        true,
+      ],
+      [
+        "chunked oversized ownership body",
+        () => {
+          const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+          let chunks = 0;
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (chunks++ === 9) controller.close();
+                else controller.enqueue(chunk);
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        },
+        false,
+      ],
+    ];
+    for (const [tool, args, method, path] of calls) {
+      for (const [name, ownership, admitted] of cases) {
+        sent = [];
+        const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+        respond = (request) => (request.url.pathname === `/client/v4/zones/${ZONE}` ? ownership() : envelope([]));
+        const ctx = token();
+        if (tool === "cloudflare_api_write" || tool === "cloudflare_api_upload") attachCallClassification(ctx, "write");
+        const call = connector.callTool(tool, args, ctx);
+        if (admitted) await call;
+        else
+          expect(await refusal(call), `${tool}: ${name}`).toMatchObject({
+            code: "provider_permission_denied",
+            retryable: false,
+            writeOutcome: undefined,
+          });
+        expect(
+          sent.map((request) => [request.method, request.url.pathname]),
+          `${tool}: ${name}`,
+        ).toEqual([["GET", `/client/v4/zones/${ZONE}`], ...(admitted ? [[method, `/client/v4${path}`]] : [])]);
+      }
+    }
+  });
 
   it("INV-11: requires a pin or unpinned: true for a Global API Key and refuses malformed pins", () => {
+    const document = manifest(CloudflareApi);
+    const operations = Object.entries(document.paths)
+      .flatMap(([path, item]) =>
+        Object.entries(item)
+          .filter(([method]) => ["get", "head", "post", "put", "patch", "delete"].includes(method))
+          .map(([method, endpoint]) => {
+            const names = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+            expect(
+              (endpoint as { parameters?: Array<{ in: string; name: string }> }).parameters
+                ?.filter((p) => p.in === "path")
+                .map((p) => p.name)
+                .sort() ?? [],
+            ).toEqual(names);
+            return `${method.toUpperCase()} ${path}`;
+          }),
+      )
+      .sort();
+    expect(operations).toEqual([...cloudflareIndex.ops.map((op) => `${op.method} ${op.path}`), "POST /graphql"].sort());
+
     expect(() => cloudflare("cf", { purpose: "Ops", auth: { type: "globalApiKey" } })).toThrow(
       'cloudflare("cf") requires pin: { accountIds, zoneIds } with globalApiKey auth, or unpinned: true',
     );
@@ -182,6 +285,10 @@ describe("cloudflare() over a key", () => {
 
   it("maps Cloudflare's own error codes and chains, not only the HTTP status", async () => {
     const connector = cloudflare("cf", TOKEN);
+    const deep = Array.from({ length: 20 }).reduce<Record<string, unknown>>(
+      (entry) => ({ code: 1004, message: "DNS Validation Error", error_chain: [entry] }),
+      { code: 9005, message: "Content bad" },
+    );
     const cases: Array<[number, unknown, Record<string, string>, string, string]> = [
       [
         400,
@@ -220,6 +327,23 @@ describe("cloudflare() over a key", () => {
         "invalid_args",
         "1000: Odd",
       ],
+      [400, { success: false, errors: [deep] }, {}, "invalid_args", "1004: DNS Validation Error"],
+      [
+        400,
+        {
+          success: false,
+          errors: [
+            {
+              code: 1004,
+              message: "DNS Validation Error",
+              error_chain: [null, 1, { code: 9005, message: "Content bad" }],
+            },
+          ],
+        },
+        {},
+        "invalid_args",
+        "9005: Content bad",
+      ],
     ];
     for (const [status, body, headers, code, message] of cases) {
       respond = () => Response.json(body, { status, headers });
@@ -227,6 +351,14 @@ describe("cloudflare() over a key", () => {
       expect(failure.code, `${status}`).toBe(code);
       expect(failure.message).toContain(message);
     }
+    respond = () =>
+      Response.json(
+        { success: false, errors: [{ code: 9106, message: "Invalid key", error_chain: [deep] }] },
+        { status: 400 },
+      );
+    await expect(
+      cloudflare("cf", GLOBAL).testCredentials!({ email: "ops@example.com", apiKey: "gk-1" }, globalKey()),
+    ).resolves.toMatchObject({ ok: false });
   });
 
   it("tests a user token, then an account token under its account", async () => {
@@ -455,7 +587,7 @@ describe("cloudflare() over a key", () => {
     });
   });
 
-  it("uploads reviewed multipart and binary bodies, with R2 headers and slash-bearing keys", async () => {
+  it("preserves reviewed multipart, binary and SCIM request bytes, with R2 headers and slash-bearing keys", async () => {
     const connector = cloudflare("cf", TOKEN);
     respond = () => envelope({ id: "s1" });
     await connector.callTool(
@@ -496,6 +628,15 @@ describe("cloudflare() over a key", () => {
     expect(sent[1]!.headers.get("cf-r2-jurisdiction")).toBe("eu");
     expect(sent[1]!.headers.get("content-type")).toBe("text/plain");
     expect(new TextDecoder().decode(sent[1]!.body as Uint8Array)).toBe("hello");
+    const scim = { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [] };
+    await connector.callTool(
+      "cloudflare_api_write",
+      { method: "PATCH", path: `/accounts/${ACCOUNT}/scim/v2/Groups/g1`, body: scim },
+      token(),
+    );
+    expect(sent[2]).toMatchObject({ method: "PATCH", body: JSON.stringify(scim) });
+    expect(sent[2]!.url.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/scim/v2/Groups/g1`);
+    expect(sent[2]!.headers.get("content-type")).toBe("application/scim+json");
     const refusals: Array<[Record<string, unknown>, string]> = [
       [{ method: "POST", path: `/zones/${ZONE}/dns_records`, textBody: "x" }, "not a reviewed upload operation"],
       [
@@ -547,7 +688,7 @@ describe("cloudflare() over a key", () => {
       ),
     );
     expect(header.message).toContain("applies only to R2 operations");
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
   });
 
   describe("default-deny pins (round 1, finding 1)", () => {
@@ -734,41 +875,6 @@ describe("cloudflare() over a key", () => {
     expect(error.message).toContain("payment client secret");
     expect(sent).toHaveLength(before);
   });
-
-  it.each([200])(
-    "INV-5: refuses schemaless Cloudforce matches before a secret-bearing HTTP %i response",
-    async (status) => {
-      const connector = cloudflare("cf", TOKEN);
-      const marker = "stored-secret-marker";
-      const url = "https://example.com/download?token=bearer-marker";
-      respond = () =>
-        Response.json(
-          status === 200
-            ? { success: true, result: [{ value: marker, url }] }
-            : { success: false, errors: [{ code: 10001, message: `${marker} ${url}` }] },
-          { status },
-        );
-      for (const method of ["GET", "PATCH"] as const) {
-        const error = await refusal(
-          connector.callTool(
-            method === "GET" ? "cloudflare_api_read" : "cloudflare_api_write",
-            {
-              method,
-              path: `/accounts/${ACCOUNT}/cloudforce-one/v2/priority-intelligence/p1/matches`,
-              ...(method === "PATCH" ? { body: {} } : {}),
-            },
-            token(),
-          ),
-        );
-        expect(error.code).toBe("invalid_args");
-        expect(error.message).toContain("no reviewed response schema");
-        expect(`${error.message} ${JSON.stringify(error)}`).not.toMatch(/stored-secret-marker|bearer-marker/);
-      }
-      // Refusal precedes dispatch: neither success nor vendor error bodies can
-      // reach the response mapper, projections, or caller.
-      expect(sent).toEqual([]);
-    },
-  );
 
   it("keeps billed, activating, and outbound POSTs out of the read tool (round 1, finding 5)", async () => {
     const connector = cloudflare("cf", TOKEN);

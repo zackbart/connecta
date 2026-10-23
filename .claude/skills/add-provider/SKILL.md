@@ -98,6 +98,17 @@ must never silently select an API credential.
 | `evidence/pages/`                | `recording.json` and the public pages a drift parser reads offline                     |
 | `evidence/review.md`             | Contributor narrative: verdict reasons, gaps, documentation-derived facts              |
 
+Supplemental vendored contracts use a simple `<slug>.json` pin and a sibling
+`<slug>.document.json` in the provider's `evidence/` directory. An `endpoints`
+check names the pin with `specification.pin`; both files are hashed in
+`generated.evidence`. Slugs use lowercase letters, digits and hyphens, start
+with a letter, and cannot be `openapi` or `value-safety`; paths, dots and
+reserved primary evidence names are refused. The pin requires https `url`
+and `documentation`, `vendored: true`, and the exact document `digest`.
+The checker reads that document offline from this provider's evidence only,
+checks its digest, and never fetches the pin's URL. Keep dataset semantics
+that the envelope does not describe in a separate manual check.
+
 Nothing else goes in `evidence/`. Never fetch credentials or call operational
 tools to capture evidence.
 

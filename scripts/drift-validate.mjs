@@ -11,6 +11,52 @@ export const OPERATION = /^(GET|HEAD|POST|PUT|PATCH|DELETE) (\/\S*)$/;
 /** Evidence that is malformed before any vendor is read. */
 export class EvidenceError extends Error {}
 
+/** A supplemental pin names a sibling document, never a path or primary evidence. */
+export function supplementalDocument(pin) {
+  return typeof pin === "string" &&
+    /^[a-z][a-z0-9-]*\.json$/.test(pin) &&
+    !["openapi.json", "value-safety.json"].includes(pin)
+    ? pin.replace(/\.json$/, ".document.json")
+    : undefined;
+}
+
+/** The exact evidence inventory the generator hashes and offline rules expect. */
+export function hashedEvidence(files) {
+  return files
+    .filter((file) => {
+      const name = file.startsWith("evidence/") ? file.slice(9) : "";
+      return (
+        ["openapi.json", "openapi.document.json", "value-safety.json"].includes(name) ||
+        supplementalDocument(name) !== undefined ||
+        (name.endsWith(".document.json") && supplementalDocument(name.replace(/\.document\.json$/, ".json")) === name)
+      );
+    })
+    .map((file) => file.slice(9))
+    .sort();
+}
+
+function httpsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !!url.hostname;
+  } catch {
+    return false;
+  }
+}
+
+export function validSupplementalPin(pin) {
+  return (
+    pin &&
+    pin.vendored === true &&
+    typeof pin.url === "string" &&
+    httpsUrl(pin.url) &&
+    typeof pin.documentation === "string" &&
+    httpsUrl(pin.documentation) &&
+    typeof pin.digest === "string" &&
+    /^sha256:[0-9a-f]{64}$/.test(pin.digest)
+  );
+}
+
 /** `{ method, path }` of an operation key, or undefined when it is not one. */
 export function parseOperation(key) {
   const match = typeof key === "string" ? OPERATION.exec(key) : null;
@@ -48,7 +94,6 @@ export function generatedProblems(recordValue, { files } = {}) {
   const sortedUnique = (value) =>
     Array.isArray(value) && value.every((item, i) => typeof item === "string" && (i === 0 || value[i - 1] < item));
   const SHA256 = /^sha256:[0-9a-f]{64}$/;
-  const HASHED_EVIDENCE = ["openapi.json", "openapi.document.json", "value-safety.json"];
   const generated = recordValue.generated;
   if (!record(generated) || Object.keys(generated).some((key) => !["operations", "evidence"].includes(key))) {
     found.push("D2: drift.json needs a generated block of operations and evidence only");
@@ -58,7 +103,7 @@ export function generatedProblems(recordValue, { files } = {}) {
       found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
     }
     const evidence = generated["evidence"];
-    const expected = files && HASHED_EVIDENCE.filter((name) => files.includes(`evidence/${name}`));
+    const expected = files && hashedEvidence(files);
     if (
       !record(evidence) ||
       (expected && JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expected.sort())) ||
@@ -182,6 +227,10 @@ export function validateCheck(check, recording, version = 1) {
       typeof endpoint.deprecated === "boolean", `invalid deprecation evidence: ${key}`);
   }
   if (check.type === "endpoints") {
+    if (check.specification?.pin !== undefined)
+      require(supplementalDocument(
+        check.specification.pin,
+      ), "supplemental pin must be a simple non-reserved evidence filename");
     require(nonempty(check.specification?.url), "endpoint check requires specification URL");
     require(check.specification.contractAlgorithm === undefined ||
       check.specification.contractAlgorithm === "ref-graph-v1", "unknown contract digest algorithm");
