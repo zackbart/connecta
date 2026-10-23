@@ -1126,13 +1126,15 @@ function unrebuildable(payload: JsonRecord): string[] {
   const found: string[] = [];
   const visit = (part: JsonRecord, depth: number) => {
     const mime = mimeOf(part);
-    // A disposition the request's redaction rewrote can no longer prove the part is not carried.
+    // A disposition the request's redaction rewrote can no longer prove the part is not carried,
+    // nor can a header whose name it rewrote: that header may be the Content-Disposition or Content-ID.
     const disposition = header(part, "Content-Disposition");
     if (
       isAttachment(part) ||
       header(part, "Content-ID") ||
       (mime && !REBUILDABLE.has(mime)) ||
-      disposition?.includes("[redacted]")
+      disposition?.includes("[redacted]") ||
+      (asArray(part["headers"]) as Header[]).some((entry) => text(entry?.name)?.includes("[redacted]"))
     ) {
       found.push(text(part["filename"]) ?? (mime || "an unnamed part"));
       return;

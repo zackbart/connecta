@@ -297,20 +297,39 @@ describe("writing drafts", () => {
     expect(failure.message).toContain("nested more than 20 levels");
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
 
-    // Redaction must not hide an unnamed text attachment and allow its deletion.
-    for (const privateValue of ["attachment", "attach", "tachm", "ment"]) {
+    // Redaction must not hide an attachment or a kept header and allow its deletion.
+    const keptHeaders = [
+      { name: "Subject", value: "Kept subject" },
+      { name: "References", value: "<m1@mail.example>" },
+      { name: "In-Reply-To", value: "<m1@mail.example>" },
+    ];
+    const keptNames = ["Subject", "References", "In-Reply-To", "Reply"];
+    for (const privateValue of [
+      "attachment",
+      "attach",
+      "tachm",
+      "ment",
+      "Content-Disposition",
+      "Disposition",
+      "Dispo",
+      "sition",
+      "Content",
+      ...keptNames,
+    ]) {
       calls.length = 0;
       route = () => ({
         body: existingDraft(
-          [],
-          [
-            { mimeType: "text/plain", body: { data: b64url("Body") } },
-            {
-              mimeType: "text/plain",
-              headers: [{ name: "Content-Disposition", value: "attachment" }],
-              body: { data: b64url("Attached notes") },
-            },
-          ],
+          keptNames.includes(privateValue) ? keptHeaders : [],
+          keptNames.includes(privateValue)
+            ? undefined
+            : [
+                { mimeType: "text/plain", body: { data: b64url("Body") } },
+                {
+                  mimeType: "text/plain",
+                  headers: [{ name: "Content-Disposition", value: "attachment" }],
+                  body: { data: b64url("Attached notes") },
+                },
+              ],
         ),
       });
       const ctx = context();

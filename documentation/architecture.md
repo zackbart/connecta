@@ -2227,8 +2227,9 @@ or logs. Gmail copies this metadata privately for its decoded body containers:
 text renders after redaction and before cuts, while changed binary content is
 withheld in full. Its original byte counts still govern attachment validation.
 Vendors without this declaration retain the existing parsing path.
-Gmail refuses to update a draft whose Content-Disposition was redacted,
-because it cannot prove that rebuilding the message would retain its attachments.
+Gmail refuses to update a draft whose Content-Disposition or any header name
+was redacted, because it cannot prove that rebuilding the message would retain
+its headers and attachments.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
