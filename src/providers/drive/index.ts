@@ -88,8 +88,8 @@ export const drive = defineApiProvider<DriveOptions>({
   title: "Google Drive",
   readme: "Google Drive",
   bundle: {
-    baselineGzip: 336180,
-    note: "./providers/drive remeasures at 336,180 B gzip in C.7 (#703), on a local Node 26 measure with system zlib: the Google Workspace provider kit replaces the historical 28,955 B api() provider. API and upload transports stay separately confined, sharing one delegated grant, with reviewed bounded binary reads. A deployment pays the Effect kit once. Reported against this baseline, not capped (#899).",
+    baselineGzip: 336209,
+    note: "./providers/drive remeasures at 336,209 B gzip in C.7 (#703), on a local Node 26 measure with system zlib: the Google Workspace provider kit replaces the historical 28,955 B api() provider. API and upload transports stay separately confined, sharing one delegated grant, with reviewed bounded binary reads. A deployment pays the Effect kit once. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
