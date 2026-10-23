@@ -2405,20 +2405,23 @@ describe("the shared client reads bytes and text for the products that need them
       it("neither refreshes nor replays a 401 once the caller has left, and keeps the 401", NODE, async () => {
         // Abort during body reading, with JSON and non-JSON headers. The
         // caller's reason wins while the ledger retains Google's 401.
-        for (const reply of [
-          () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-          () => new Response(null, { status: 401 }),
-        ]) {
-          tokenCalls.length = 0;
-          apiCalls.length = 0;
-          const ctx = cancelledOnAnswer(reply);
-          const drive = client(1024);
-          const failure = await failing(drive.json(write, ctx));
-          expect(ctx.signal!.aborted).toBe(true);
-          expect(failure).toBe(ctx.signal!.reason);
-          expect(drive.dispatches).toMatchObject([{ status: 401, request: { dispatched: true, status: 401 } }]);
-          expect(tokenCalls).toHaveLength(1);
-          expect(apiCalls).toHaveLength(1);
+        for (const request of [write, read]) {
+          for (const reply of [
+            () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+            () => new Response(null, { status: 401 }),
+          ]) {
+            tokenCalls.length = 0;
+            apiCalls.length = 0;
+            const ctx = cancelledOnAnswer(reply);
+            const drive = client(1024);
+            const failure = await failing(drive.json(request, ctx));
+            expect(ctx.signal!.aborted).toBe(true);
+            expect(failure).toBe(ctx.signal!.reason);
+            expect(drive.dispatches).toMatchObject([{ status: 401, request: { dispatched: true, status: 401 } }]);
+            expect(tokenCalls).toHaveLength(1);
+            expect(apiCalls).toHaveLength(1);
+            expect(apiCalls[0]!.method).toBe(request.method);
+          }
         }
       });
     });
@@ -2546,7 +2549,7 @@ describe("the shared client reads bytes and text for the products that need them
       for (const maxBytes of [-1, 1.5, Number.NaN]) {
         await expect(
           client().bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes }),
-        ).rejects.toThrow("A success prefix needs a positive whole byte ceiling.");
+        ).rejects.toThrow("A success prefix needs a whole byte ceiling >= 0 for bytes or >= 1 for text.");
       }
       expect(apiCalls).toHaveLength(3);
       expect(tokenCalls).toHaveLength(3);

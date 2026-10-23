@@ -55,9 +55,7 @@ import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
-import { tagWorkspaceSubject } from "../../../workspace-subject.js";
-import { parseServiceAccount, type ServiceAccountKey } from "./service-account.js";
-import type { GoogleServiceAccount } from "./service-account.js";
+import { parseServiceAccount, type GoogleServiceAccount, type ServiceAccountKey } from "./service-account.js";
 
 export type { GoogleServiceAccount } from "./service-account.js";
 
@@ -152,15 +150,6 @@ export function workspaceConnection(factory: string, options: GoogleWorkspaceOpt
     );
   }
   return { purpose, account, subject };
-}
-
-/**
- * Tag a built Workspace connector with whose account it acts as, so the
- * operator matrix can say "humans act as themselves, agents as the pool
- * owner" for a mapping, or name a fixed subject (#837). Returns it unchanged.
- */
-export function workspaceConnector<C extends object>(connection: WorkspaceConnection, connector: C): C {
-  return tagWorkspaceSubject(connector, connection.subject);
 }
 
 /**

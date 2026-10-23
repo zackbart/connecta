@@ -824,8 +824,8 @@ function media(args: JsonRecord):
 }
 /**
  * One `multipart/related` body: the metadata as JSON, then the media. Built
- * whole as bytes, never a stream: the shared client refuses a body it could
- * not send twice, though it never resends an upload, which is a write.
+ * whole as bytes, never a stream: GoogleRequest.rawBody admits only strings
+ * and byte arrays. An upload is a write and is never resent.
  */
 function multipart(
   metadata: JsonRecord,
