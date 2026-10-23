@@ -1711,9 +1711,12 @@ outside any caller context and returns a service-building Effect; each send
 provides that Effect's Grant to the existing `bearer` and `refreshOnce`. The
 optional `writeUnauthorized` reuses the same renewal facts as the static bridge,
 including `Unchanged`, without either token. `settleWrite` remains final.
-An alternative `probe.run(options)` program supports a private login-only
+An optional `probe.run(connection, options)` program supports a private login-only
 credential test without seeding the operational cache or dispatching a resource
-request. Existing operation-based probes keep their path unchanged.
+request. The program is constructed outside caller contexts. Its defects and
+hook defects use the generic withheld notice unconditionally, since private
+transports need not leave a kit ledger entry. Existing operation-based probes
+keep their path unchanged.
 
 The Infisical adapter retains the private Universal Auth exchange and the
 shared `requestTokenCache`, rather than passing token responses through the

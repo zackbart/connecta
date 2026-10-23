@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 import { defined as compact, type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal } from "../../http/errors.js";
+import { Dispatches } from "../../http/services.js";
 import { Integer, isMinChars } from "../../http/json-schema.js";
 import { read, write } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
@@ -559,12 +560,15 @@ export function infisicalTools({ connection }: { connection: Connection }): ApiT
         Effect.catchTag("UnreadableBody", (failure) =>
           request.method !== "GET" ? Effect.succeed(undefined) : Effect.fail(failure),
         ),
-        Effect.catchTag("ResponseTooLarge", () =>
-          Effect.fail(
-            new Refusal({
+        Effect.catchTag("ResponseTooLarge", (failure) =>
+          Effect.gen(function* () {
+            const refusal = new Refusal({
               error: new ConnectorCallError("connector_call_failed", RESPONSE_CEILING_MESSAGE, { retryable: false }),
-            }),
-          ),
+            });
+            // Keep the oversized answer's own ledger provenance (as refreshOnce's challengeFailure does).
+            for (const dispatch of yield* Dispatches) if (dispatch.failure === failure) dispatch.failure = refusal;
+            return yield* Effect.fail(refusal);
+          }),
         ),
       );
   return [

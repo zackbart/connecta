@@ -292,7 +292,7 @@ describe("maintained Infisical contract", () => {
     expect(requestOf(fetch, 0).init.redirect).toBe("manual");
   });
 
-  it("cancels oversized streaming bodies before parsing and gives narrowing advice", async () => {
+  it("INV-9: an oversized streamed 403 remains a known refusal after one POST", async () => {
     const cancel = vi.fn();
     let chunks = 0;
     const body = new ReadableStream<Uint8Array>(
@@ -305,18 +305,21 @@ describe("maintained Infisical contract", () => {
       },
       { highWaterMark: 0 },
     );
-    mockFetch(login(), new Response(body));
-    await expect(connector.callTool("list_secrets", args, context())).rejects.toMatchObject({ code: "invalid_args" });
-    // An independently valid call must reach the capped stream.
-    await expect(
-      connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, context()),
-    ).rejects.toMatchObject({
+    const fetch = mockFetch(login(), new Response(body, { status: 403 }));
+    const error = await connector
+      .callTool("create_secret", { ...args, secretValue: "private" }, context())
+      .catch((error: unknown) => error);
+    expect(error).toMatchObject({
       code: "connector_call_failed",
       retryable: false,
       message: expect.stringContaining("Narrow secretPath"),
+      writeOutcome: undefined,
     });
+    const resources = fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"));
+    expect(resources).toHaveLength(1);
+    expect(resources[0]![1]?.method).toBe("POST");
     expect(cancel).toHaveBeenCalledOnce();
-    expect(chunks).toBeLessThanOrEqual(9);
+    expect(chunks).toBe(9);
   });
 
   it.each([400, 401, 403, 404, 409, 422])(

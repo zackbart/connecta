@@ -15,7 +15,7 @@ import {
 import { Grant, type Write401Renewal } from "../../http/oauth.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import { Signal } from "../../http/services.js";
-import { del, get, patch, post, vendor } from "../../http/vendor.js";
+import { del, get, patch, post, vendor, type Connection } from "../../http/vendor.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../../types.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { requestTokenCache } from "../_shared/request-token.js";
@@ -34,10 +34,11 @@ export function baseUrl(options: Readonly<InfisicalOptions>): string {
     throw new Error("baseUrl must be a non-empty absolute HTTPS URL including /api.");
   return options.baseUrl?.trim() ?? INFISICAL_API_BASE_URL;
 }
+const login = post("login", LOGIN, { success: Schema.Unknown });
 export const InfisicalApi = {
   ...vendor(
     { name: "Infisical", manifestBase: "/api" },
-    post("login", LOGIN, { success: Schema.Unknown }),
+    login,
     get("listProjects", "/v1/projects", { success: Schema.Unknown }),
     get("listFolders", "/v2/folders", { success: Schema.Unknown }),
     post("createFolder", "/v2/folders", { success: Schema.Unknown }),
@@ -197,11 +198,13 @@ export const credential = {
   ],
 };
 export const probe = {
+  operation: login,
+  request: {},
   check: (values: ConnectorCredentialValues) =>
     !values["clientId"]?.trim() || !values["clientSecret"]?.trim()
       ? "Client ID and client secret are both required."
       : undefined,
-  run: (options: Readonly<InfisicalOptions>) => {
+  run: (_connection: Connection, options: Readonly<InfisicalOptions>) => {
     const exchange = loginExchange(options);
     return Effect.gen(function* () {
       const op = yield* Effect.serviceOption(Operation);

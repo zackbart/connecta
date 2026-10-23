@@ -502,9 +502,8 @@ async function jsonResult(read: () => Promise<unknown>): Promise<{ value: unknow
 const answeredRequests = new WeakMap<object, ProviderRequest>();
 
 /**
- * The ledger entry of the request `response` answered, so a provider that
- * renews its credential after a 401 can name exactly that request
- * (`renewedAfterUnauthorized`). Undefined for anything else.
+ * Test-only legacy response lookup for renewal-provenance fixtures outside
+ * the kit. Production renewal uses the kit ledger. Undefined for other objects.
  */
 export function answeredRequest(response: object): ProviderRequest | undefined {
   return answeredRequests.get(response);
