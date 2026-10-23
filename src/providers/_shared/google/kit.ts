@@ -1,9 +1,8 @@
 // Google Workspace on the provider kit (decision 0010; C.7 step 1 under 0011).
 // Shared by every Workspace product; never its own export. `workspace.ts`
-// keeps the options and subject rule, plus a legacy Promise client retained
-// only by delegation tests; all maintained products use this kit.
-// `service-account.ts` keeps the private
-// token exchange. This module adds what a kit product needs: the Google error
+// keeps shared options, connection parsing and subject resolution;
+// `service-account.ts` keeps the private token exchange and cache.
+// This module adds what every product needs: the Google error
 // table, the delegated machine grant, a value-safety resolver over the
 // product's own operations, a request adapter that keeps the legacy request
 // bytes and write wording, and the step-1 catalog bridge.

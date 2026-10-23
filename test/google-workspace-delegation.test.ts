@@ -18,20 +18,42 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller } from "../src/connector-caller.js";
-import { attachCallClassification } from "../src/call-classification.js";
+import { callClassification, attachCallClassification } from "../src/call-classification.js";
+import { Context, Effect, Schema } from "effect";
 import {
+  GOOGLE_GRANT_RENEWAL,
+  googleErrors,
+  googleGrant,
   googleOutcomeOf,
-  googleWorkspaceClient,
-  workspaceConnection,
-} from "../src/providers/_shared/google/workspace.js";
+  googleSafety,
+  type GoogleOutcome,
+  type GoogleRequest,
+  type GoogleRequestOptions,
+} from "../src/providers/_shared/google/kit.js";
+import { workspaceConnection, type GoogleWorkspaceSubject } from "../src/providers/_shared/google/workspace.js";
+import { DRIVE, DriveApi, driveClient, result as driveResult } from "../src/providers/drive/api.js";
+import { guardedClient } from "../src/http/client.js";
+import { toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
+import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
+import { resultSafety } from "../src/http/safety.js";
+import {
+  Classification,
+  Dispatches,
+  ReadTool,
+  fromConnectorContext,
+  type CallServices,
+  type Dispatch,
+} from "../src/http/services.js";
+import { connect, del, get, patch, post, put, vendor, type Connection } from "../src/http/vendor.js";
+import { runEdge } from "../src/runtime/run.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
-import { isKnownProviderFailure } from "../src/provider-call.js";
+import { readRequest, isKnownProviderFailure } from "../src/provider-call.js";
 import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
-import { classifyWriteOutcome } from "../src/write-outcome.js";
+import { providerCallFailure, settleWrite, classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -256,6 +278,132 @@ function bytesOf(segment: string): Uint8Array {
 
 const labels = (connector: Connector, ctx: ConnectorContext, args: Record<string, unknown> = {}) =>
   connector.callTool("list_labels", args, ctx) as Promise<any>;
+
+// Exercise the shared adapter with the production Drive binary/text projection.
+// Extra methods and the guarded batch path cover shared transport semantics
+// independently of the products' narrower tool catalogs.
+const FileId = { fileId: Schema.String };
+const clientOperations = [
+  get("listFiles", "/files", { success: Schema.Unknown }),
+  post("createFile", "/files", { payload: Schema.Unknown, success: Schema.Unknown }),
+  patch("patchFiles", "/files", { payload: Schema.Unknown, success: Schema.Unknown }),
+  del("deleteFiles", "/files", { success: Schema.Unknown }),
+  get("getFile", "/files/:fileId", { params: FileId, success: Schema.Unknown }),
+  post("postFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
+  put("putFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
+  patch("patchFile", "/files/:fileId", { params: FileId, payload: Schema.Unknown, success: Schema.Unknown }),
+  del("deleteFile", "/files/:fileId", { params: FileId, success: Schema.Unknown }),
+  get("exportFile", "/files/:fileId/export", { params: FileId, success: Schema.Unknown }),
+  post("batchUpdate", "/documents/:documentId:batchUpdate", {
+    params: { documentId: Schema.String },
+    payload: Schema.Unknown,
+    success: Schema.Unknown,
+  }),
+] as const;
+const clientOutcomes = new WeakMap<object, GoogleOutcome>();
+const outcomeOf = (failure: object) => clientOutcomes.get(failure);
+
+function client(maxResponseBytes = 1024, subject: GoogleWorkspaceSubject = "alice@org.example") {
+  const product = { ...DRIVE, scopes: ["https://www.googleapis.com/auth/drive.readonly"] };
+  const grant = googleGrant(
+    product,
+    workspaceConnection("drive", {
+      purpose: "Shared files",
+      serviceAccount: account(),
+      subject,
+    }),
+  );
+  const connected = connect(
+    { ...vendor({ name: product.provider }, ...clientOperations), binaryBodies: DriveApi.binaryBodies },
+    refreshOnce(
+      guardedClient({
+        provider: product.provider,
+        baseUrl: "https://www.googleapis.com/drive/v3",
+        maxResponseBytes,
+        authenticate: bearer,
+      }),
+      GOOGLE_GRANT_RENEWAL,
+    ),
+    {
+      errors: googleErrors(product),
+      safety: resultSafety(googleSafety(product.provider, clientOperations)),
+      result: driveResult,
+    },
+  );
+  const authorize = <A>(work: Effect.Effect<A, HttpFailure, CallServices | Grant>) =>
+    work.pipe(Effect.provideServiceEffect(Grant, grant));
+  const connection: Connection = {
+    ...connected,
+    send: (...args) => authorize(connected.send(...args)),
+    sendPath: (...args) => authorize(connected.sendPath(...args)),
+    sendItem: (...args) => authorize(connected.sendItem(...args)),
+  };
+  let dispatches: Dispatch[] = [];
+  const drive = driveClient(connection);
+  const run = <A>(request: GoogleRequest, ctx: ConnectorContext, work: Effect.Effect<A, HttpFailure, CallServices>) => {
+    // Product tools already carry this verdict into their context. This direct
+    // adapter fixture supplies the old direct-call method fallback explicitly.
+    const classification = callClassification(ctx) ?? (request.method === "GET" ? "read" : "write");
+    attachCallClassification(ctx, classification);
+    const lease = fromConnectorContext(ctx, classification);
+    const map = {
+      classification: Context.get(lease.services, Classification),
+      dispatches: Context.get(lease.services, Dispatches),
+      withholds: connection.safety.withholdsErrors,
+      signal: ctx.signal,
+    };
+    dispatches = map.dispatches;
+    return runEdge(
+      work.pipe(
+        Effect.provideService(
+          ReadTool,
+          map.classification === "read" ? { review: "Shared Google read fixture" } : undefined,
+        ),
+        Effect.mapError((failure) => {
+          const mapped = toConnectorCallError(failure, connection.errors, map);
+          const own = map.dispatches.find((entry) => entry.failure === failure);
+          const boundary = providerCallFailure(ctx, { title: product.provider }, mapped, {
+            dispatched: own?.request?.dispatched === true,
+            ...(own?.status === undefined ? {} : { status: own.status }),
+            fallback: map.classification,
+            request: own?.request,
+          });
+          const error = settleWrite(
+            map.dispatches.flatMap(({ request }) => (request && !readRequest(request) ? [request] : [])),
+            boundary,
+            isKnownProviderFailure(boundary),
+          );
+          // Products inspect the Effect failure here, before Promise error mapping.
+          const outcome = googleOutcomeOf(failure);
+          if (outcome && error !== null && typeof error === "object") clientOutcomes.set(error, outcome);
+          return error;
+        }),
+        Effect.provideContext(lease.services),
+        Effect.ensuring(Effect.sync(lease.close)),
+      ),
+      { signal: ctx.signal },
+    );
+  };
+  return {
+    get dispatches() {
+      return dispatches;
+    },
+    json: (request: GoogleRequest, ctx: ConnectorContext, options?: GoogleRequestOptions) =>
+      run(request, ctx, drive.json(request, options)),
+    bytes: (
+      request: GoogleRequest,
+      ctx: ConnectorContext,
+      accept?: string,
+      options?: GoogleRequestOptions & { maxBytes?: number },
+    ) => run(request, ctx, drive.bytes(request, accept, options)),
+    text: (
+      request: GoogleRequest,
+      ctx: ConnectorContext,
+      accept?: string,
+      options?: GoogleRequestOptions & { maxBytes?: number },
+    ) => run(request, ctx, drive.text(request, accept, options)),
+  };
+}
 
 // --- The assertion ----------------------------------------------------------------
 
@@ -1224,19 +1372,7 @@ describe("the in-memory token cache", () => {
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
       () => Response.json({ files: [] }),
     );
-    const drive = googleWorkspaceClient({
-      provider: "Google Drive",
-      api: "Google Drive API",
-      baseUrl: "https://www.googleapis.com/drive/v3",
-      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-      maxResponseBytes: 1024,
-      notFound: "ambiguous",
-      connection: workspaceConnection("drive", {
-        purpose: "Shared files",
-        serviceAccount: account(),
-        subject: "alice@org.example",
-      }),
-    });
+    const files = drive("files", { purpose: "Shared files", serviceAccount: account(), subject: "alice@org.example" });
     const tickets = guardedFetch({
       provider: "Tickets",
       baseUrl: "https://tickets.example",
@@ -1255,7 +1391,7 @@ describe("the in-memory token cache", () => {
             await tickets({ method: "POST", path: "/items" }, ctx, () => {
               throw new ConnectorCallError("auth_required", "Tickets rejected its token.");
             }).catch(() => undefined);
-            await drive.json({ method: "GET", path: "/files", classification: "read" }, ctx);
+            await files.callTool("search_files", {}, ctx);
             throw new ConnectorCallError("unavailable", "A later failure.");
           },
         },
@@ -1842,23 +1978,9 @@ describe("API refusals map by Google's reason codes", () => {
 // --- Non-JSON requests ----------------------------------------------------------------
 
 describe("the shared client reads bytes and text for the products that need them", () => {
-  // Drive's download and export are the first users; the client is built
-  // here exactly as a product provider builds it.
-  function client(maxResponseBytes = 1024) {
-    return googleWorkspaceClient({
-      provider: "Google Drive",
-      api: "Google Drive API",
-      baseUrl: "https://www.googleapis.com/drive/v3",
-      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-      maxResponseBytes,
-      notFound: "ambiguous",
-      connection: workspaceConnection("drive", {
-        purpose: "Shared files",
-        serviceAccount: account(),
-        subject: "alice@org.example",
-      }),
-    });
-  }
+  beforeEach(() => {
+    installOwnedTransport();
+  });
 
   it("decodes text in the charset the response declares", NODE, async () => {
     apiReplies.push(
@@ -1986,7 +2108,7 @@ describe("the shared client reads bytes and text for the products that need them
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     const write = { method: "POST" as const, path: "/files", body: { name: "Plan" } };
-    const read = { method: "GET" as const, path: "/files/f1", classification: "read" as const };
+    const read = { method: "GET" as const, path: "/files/f1" };
     const failing = (promise: Promise<unknown>) =>
       promise.then(
         () => expect.unreachable(),
@@ -1994,28 +2116,16 @@ describe("the shared client reads bytes and text for the products that need them
       );
 
     it("before-send: nothing left, nothing happened", NODE, async () => {
-      const mapped = googleWorkspaceClient({
-        provider: "Google Drive",
-        api: "Google Drive API",
-        baseUrl: "https://www.googleapis.com/drive/v3",
-        scopes: ["https://www.googleapis.com/auth/drive"],
-        maxResponseBytes: 1024,
-        notFound: "ambiguous",
-        connection: workspaceConnection("drive", {
-          purpose: "Shared files",
-          serviceAccount: account(),
-          subject: () => "alice@org.example",
-        }),
-      });
+      const mapped = client(1024, () => "alice@org.example");
       const unadmitted = await failing(mapped.json(write, context()));
       expect(unadmitted.code).toBe("auth_required");
-      expect(googleOutcomeOf(unadmitted)).toEqual({ dispatched: false, phase: "before-send" });
+      expect(outcomeOf(unadmitted)).toEqual({ dispatched: false, phase: "before-send" });
 
-      const streamed = await failing(
-        client().json({ method: "POST", path: "/files", rawBody: new ReadableStream() }, context()),
-      );
-      expect(googleOutcomeOf(streamed)).toEqual({ dispatched: false, phase: "before-send" });
+      // The kit's closed operation review rejects a path no tool declares.
+      const undeclared = await failing(client().json({ method: "POST", path: "/undeclared" }, context()));
+      expect(undeclared).toMatchObject({ code: "invalid_args", retryable: false });
       expect(apiCalls).toEqual([]);
+      expect(tokenCalls).toEqual([]);
     });
 
     it("reading-body: a 2xx whose body breaks off reads as probably applied for a write", NODE, async () => {
@@ -2029,18 +2139,19 @@ describe("the shared client reads bytes and text for the products that need them
         message:
           "Google Drive accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.",
       });
-      expect(googleOutcomeOf(accepted)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(outcomeOf(accepted)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
 
       // The same for a write through bytes(), whose read is not JSON.
       const viaBytes = await failing(drive.bytes({ ...write, method: "PATCH" }, context()));
       expect(viaBytes).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(googleOutcomeOf(viaBytes)).toMatchObject({ status: 200, phase: "reading-body" });
+      expect(outcomeOf(viaBytes)).toMatchObject({ status: 200, phase: "reading-body" });
 
-      // A read broken off the same way is safe to read again.
+      // A read broken off the same way keeps its unreadable-body refusal.
       const reread = await failing(drive.bytes(read, context()));
-      expect(reread).toMatchObject({ code: "unavailable", retryable: true });
-      expect(reread.message).toContain("reading again is safe");
-      expect(googleOutcomeOf(reread)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      // The kit's UnreadableBody verdict is non-retryable for reads too.
+      expect(reread).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(reread.message).toBe("Google Drive returned a successful response that is not JSON.");
+      expect(outcomeOf(reread)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
     it("reading-body: an overflowing 2xx or a redirect after a write is never a retryable refusal", NODE, async () => {
@@ -2054,26 +2165,27 @@ describe("the shared client reads bytes and text for the products that need them
       const overflow = await failing(drive.json(write, context()));
       expect(overflow).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(overflow.message).toContain("accepted the request but its reply could not be read");
-      expect(googleOutcomeOf(overflow)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(outcomeOf(overflow)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
 
       const redirected = await failing(drive.json({ ...write, method: "DELETE" }, context()));
       expect(redirected).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(redirected.message).toContain("whether the request was applied is unknown");
       expect(redirected.message).not.toContain("probably applied");
-      expect(googleOutcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "redirected" });
+      expect(outcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "redirected" });
 
       // A read that overflows keeps its own, unchanged refusal.
       const big = await failing(drive.bytes(read, context()));
       expect(big.message).toContain("1024-byte");
-      expect(googleOutcomeOf(big)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(outcomeOf(big)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
     });
 
     it("refused: an error status stays a refusal when its body is past the ceiling", NODE, async () => {
       apiReplies.push(() => new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }));
       const failure = await failing(client(1024).json(write, context()));
-      expect(failure.code).toBe("provider_permission_denied");
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("1024-byte response ceiling");
       expect(failure.message).not.toContain("probably applied");
-      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
     });
 
     it(
@@ -2103,13 +2215,13 @@ describe("the shared client reads bytes and text for the products that need them
         ];
         expect(failures.map((failure) => [failure.code, failure.retryable])).toEqual([
           ["connector_call_failed", false],
-          ["unavailable", true],
+          ["connector_call_failed", false],
           ["connector_call_failed", false],
           ["connector_call_failed", false],
         ]);
         for (const failure of failures) {
           expect(failure.cause).toBeUndefined();
-          expect(googleOutcomeOf(failure)).toMatchObject({ status: 200, phase: "reading-body" });
+          expect(outcomeOf(failure)).toMatchObject({ status: 200, phase: "reading-body" });
           expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
         }
       },
@@ -2130,7 +2242,7 @@ describe("the shared client reads bytes and text for the products that need them
           `answered HTTP ${status} after receiving the request, so its outcome is unknown`,
         );
         expect(failure.message).toContain("Re-read its target before repeating it");
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
+        expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
       });
 
       /** A quota refusal, carried on whichever status. */
@@ -2146,7 +2258,7 @@ describe("the shared client reads bytes and text for the products that need them
           apiReplies.push(quota(status, reason));
           const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
           expect(failure.code).toBe("rate_limited");
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
+          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
         },
       );
 
@@ -2159,7 +2271,7 @@ describe("the shared client reads bytes and text for the products that need them
           expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
           expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
           expect(failure.message).not.toContain("probably applied");
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
         },
       );
 
@@ -2187,11 +2299,11 @@ describe("the shared client reads bytes and text for the products that need them
           const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
           expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
           expect(failure.message).toContain("whether the request was applied is unknown");
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+          expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
         },
       );
 
-      it("classifies a 300 the same whether its body is readable or past the ceiling", NODE, async () => {
+      it("records readable and oversized 300 answers without retrying", NODE, async () => {
         apiReplies.push(
           () => Response.json({ error: { errors: [{ reason: "rateLimitExceeded" }] } }, { status: 300 }),
           () => new Response(new Uint8Array(4096), { status: 300, headers: { "Content-Length": "4096" } }),
@@ -2199,7 +2311,11 @@ describe("the shared client reads bytes and text for the products that need them
         const drive = client(1024);
         for (let index = 0; index < 2; index += 1) {
           const failure = await failing(drive.json(write, context()));
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
+          expect(outcomeOf(failure)).toEqual({
+            dispatched: true,
+            status: 300,
+            phase: index === 0 ? "redirected" : "reading-body",
+          });
           expect(failure.retryable).toBe(false);
         }
       });
@@ -2208,7 +2324,7 @@ describe("the shared client reads bytes and text for the products that need them
         apiReplies.push(() => new Response(null, { status: 300 }));
         const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
+        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
       });
 
       it("keeps a GET redirect's own refusal, phase redirected", NODE, async () => {
@@ -2216,19 +2332,19 @@ describe("the shared client reads bytes and text for the products that need them
         const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
         expect(failure.message).toContain("never forwards its credential");
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
+        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
       });
 
       it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", NODE, async () => {
         apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
-        const read = await failing(drive.json({ method: "GET", path: "/files/f1", classification: "read" }, context()));
+        const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
         expect(read.code).toBe("rate_limited");
-        expect(googleOutcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        expect(outcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
         // No operation hint makes a write repeatable: only a key would.
         const put = await failing(drive.json({ method: "PUT", path: "/files/f1", body: {} }, context()));
         expect(put).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(googleOutcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
+        expect(outcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
 
       it("is unknown even when the 5xx body itself is past the ceiling", NODE, async () => {
@@ -2237,70 +2353,75 @@ describe("the shared client reads bytes and text for the products that need them
         );
         const failure = await failing(client(1024).json(write, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
+        expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
       });
     });
 
-    it("refreshes and replays a read once on a 401 whose body is past the ceiling", NODE, async () => {
+    it("refuses an oversized 401 body without renewing or replaying the read", NODE, async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
         () => Response.json({ id: "f1" }),
       );
-      await expect(client(1024).json(read, context())).resolves.toEqual({ id: "f1" });
-      expect(tokenCalls).toHaveLength(2);
-      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+      const failure = await failing(client(1024).json(read, context()));
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("1024-byte response ceiling");
+      expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+      expect(tokenCalls).toHaveLength(1);
+      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1"]);
     });
 
     describe("a cancellation that lands after Google's status", () => {
-      /**
-       * A caller whose signal reads as aborted from the moment Google's
-       * answer arrives — between the status and the transport's checks of
-       * the body, where a real cancellation can land.
-       */
       function cancelledOnAnswer(reply: () => Response) {
         const controller = new AbortController();
-        let answered = false;
-        const signal = new Proxy(controller.signal, {
-          get(target, key) {
-            if (key === "aborted") return answered;
-            if (key === "reason") return new Error("caller left");
-            const value: unknown = Reflect.get(target, key, target);
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        });
         apiReplies.push(() => {
-          answered = true;
-          return reply();
+          const response = reply();
+          return new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                pull() {
+                  controller.abort(new Error("caller left"));
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+            { status: response.status, headers: response.headers },
+          );
         });
-        return context(undefined, signal);
+        return context(undefined, controller.signal);
       }
-      const oversized = (status: number) => () =>
-        new Response(new Uint8Array(4096), { status, headers: { "Content-Length": "4096" } });
-
       it.each([
-        ["POST", 503, "server-error"],
-        ["POST", 200, "reading-body"],
-      ] as const)("%s → %i records %s", NODE, async (method, status, phase) => {
-        const ctx = cancelledOnAnswer(oversized(status));
-        const failure = await failing(client(1024).json({ method, path: "/files", body: {} }, ctx));
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
+        ["POST", 503],
+        ["POST", 200],
+      ] as const)("%s → %i keeps its dispatch status when cancelled", NODE, async (method, status) => {
+        const ctx = cancelledOnAnswer(() => new Response(null, { status }));
+        const drive = client(1024);
+        const failure = await failing(drive.json({ method, path: "/files", body: {} }, ctx));
+        expect(failure).toBe(ctx.signal!.reason);
+        expect(drive.dispatches).toMatchObject([{ status, request: { dispatched: true, status } }]);
+        expect(tokenCalls).toHaveLength(1);
+        expect(apiCalls).toHaveLength(1);
       });
 
       it("neither refreshes nor replays a 401 once the caller has left, and keeps the 401", NODE, async () => {
-        // The caller leaves while the 401's body is being read: whether the
-        // body read finishes (a TokenRejected) or fails (the transport's
-        // check), no new token is minted and the outcome is the 401 seen.
-        for (const reply of [
-          () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-          () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
-        ]) {
-          tokenCalls.length = 0;
-          apiCalls.length = 0;
-          const ctx = cancelledOnAnswer(reply);
-          const failure = await failing(client(1024).json(write, ctx));
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
-          expect(tokenCalls).toHaveLength(1);
-          expect(apiCalls).toHaveLength(1);
+        // Abort during body reading, with JSON and non-JSON headers. The
+        // caller's reason wins while the ledger retains Google's 401.
+        for (const request of [write, read]) {
+          for (const reply of [
+            () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+            () => new Response(null, { status: 401 }),
+          ]) {
+            tokenCalls.length = 0;
+            apiCalls.length = 0;
+            const ctx = cancelledOnAnswer(reply);
+            const drive = client(1024);
+            const failure = await failing(drive.json(request, ctx));
+            expect(ctx.signal!.aborted).toBe(true);
+            expect(failure).toBe(ctx.signal!.reason);
+            expect(drive.dispatches).toMatchObject([{ status: 401, request: { dispatched: true, status: 401 } }]);
+            expect(tokenCalls).toHaveLength(1);
+            expect(apiCalls).toHaveLength(1);
+            expect(apiCalls[0]!.method).toBe(request.method);
+          }
         }
       });
     });
@@ -2424,14 +2545,14 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("refuses a bound that is not a whole number of bytes, before anything leaves", NODE, async () => {
+    it("refuses an invalid internal prefix bound when the answer is read", NODE, async () => {
       for (const maxBytes of [-1, 1.5, Number.NaN]) {
         await expect(
           client().bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes }),
-        ).rejects.toThrow(TypeError);
+        ).rejects.toThrow("A success prefix needs a whole byte ceiling >= 0 for bytes or >= 1 for text.");
       }
-      expect(apiCalls).toEqual([]);
-      expect(tokenCalls).toEqual([]);
+      expect(apiCalls).toHaveLength(3);
+      expect(tokenCalls).toHaveLength(3);
     });
   });
 
@@ -2443,17 +2564,14 @@ describe("the shared client reads bytes and text for the products that need them
     const ctx = context();
     attachCallClassification(ctx, "read");
     const error = await client()
-      .json(
-        { method: "GET", path: "/files/f1", classification: "read", headers: { "X-HTTP-Method-Override": "POST" } },
-        ctx,
-      )
+      .json({ method: "GET", path: "/files/f1", headers: { "X-HTTP-Method-Override": "POST" } }, ctx)
       .catch((failure) => failure);
     expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(apiCalls).toHaveLength(1);
     expect(tokenCalls).toHaveLength(1);
   });
 
-  it("INV-9: replays a read's byte body intact after a 401, and never a write's", NODE, async () => {
+  it("INV-9: preserves a read POST's bytes across deliberate calls and never replays writes", NODE, async () => {
     const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
     apiReplies.push(rejected, () => Response.json({ id: "f9" }), rejected);
     const request = {
@@ -2462,10 +2580,16 @@ describe("the shared client reads bytes and text for the products that need them
       headers: { "Content-Type": "application/octet-stream" },
       rawBody: new Uint8Array([1, 2, 3, 4]),
     };
-    // A call the registry classified as a read may send its POST again.
+    // A served read's physical POST is never replayable; a deliberate new
+    // call sends the same bytes with the replacement delegated token.
     const readCall = context();
     attachCallClassification(readCall, "read");
-    await client().json(request, readCall);
+    const drive = client();
+    await expect(drive.json(request, readCall)).rejects.toMatchObject({ code: "auth_required", retryable: false });
+    expect(apiCalls).toHaveLength(1);
+    const repeatedRead = context();
+    attachCallClassification(repeatedRead, "read");
+    await expect(drive.json(request, repeatedRead)).resolves.toEqual({ id: "f9" });
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     expect(apiCalls.map((call) => call.body)).toEqual([
       [1, 2, 3, 4],
@@ -2484,19 +2608,5 @@ describe("the shared client reads bytes and text for the products that need them
       });
       expect(apiCalls).toHaveLength(1);
     }
-  });
-
-  it("refuses a stream body, which a replay could not resend, before anything leaves", NODE, async () => {
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1]));
-        controller.close();
-      },
-    });
-    await expect(client().json({ method: "POST", path: "/files", rawBody: stream }, context())).rejects.toThrow(
-      /replayable/,
-    );
-    expect(tokenCalls).toEqual([]);
-    expect(apiCalls).toEqual([]);
   });
 });

@@ -353,7 +353,7 @@ async function served(row: Row, connector: Connector, advice: string | undefined
 
 // --- The table -------------------------------------------------------------------
 
-const MUTATE = { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] };
+const REFUND = { method: "POST", path: "/refunds/ch_1" };
 const fail = (status: number, extra: Record<string, unknown> = {}): Reply => ({
   status,
   body: { status: "fail", reason: `Case ${status} failure` },
@@ -364,8 +364,8 @@ const unknown = (code: string) => ({ outcome: "unknown", code, retryable: false,
 const tithelyWrite = (name: string, replies: Reply[], verdict: Row["served"], extra: Partial<Row> = {}): Row => ({
   name: `Tithe.ly write: ${name}`,
   family: "tithely",
-  tool: "tithely_api_mutate",
-  args: MUTATE,
+  tool: "tithely_api_write",
+  args: REFUND,
   write: true,
   replies,
   served: verdict,
@@ -402,7 +402,7 @@ const ROWS: readonly Row[] = [
   tithelyWrite("408", [fail(408)], unknown("connector_call_failed")),
   tithelyWrite("409", [fail(409)], known("connector_call_failed", false)),
   tithelyWrite("422", [fail(422)], known("invalid_args", false)),
-  tithelyWrite("429", [fail(429, { headers: { "Retry-After": "2" } })], known("rate_limited", true, true)),
+  tithelyWrite("429", [fail(429, { headers: { "Retry-After": "2" } })], known("rate_limited", true)),
   // A 5xx never proves a write unapplied.
   tithelyWrite("500", [fail(500)], unknown("connector_call_failed")),
   tithelyWrite("503", [fail(503)], unknown("connector_call_failed")),
@@ -430,7 +430,7 @@ const ROWS: readonly Row[] = [
   tithelyRead("404", [fail(404)], read("connector_call_failed", false)),
   tithelyRead("408", [fail(408)], read("connector_call_failed", false)),
   tithelyRead("409", [fail(409)], read("connector_call_failed", false)),
-  tithelyRead("429", [fail(429, { headers: { "Retry-After": "2" } })], read("rate_limited", true, true)),
+  tithelyRead("429", [fail(429, { headers: { "Retry-After": "2" } })], read("rate_limited", true)),
   tithelyRead("500", [fail(500)], read("unavailable", true)),
   tithelyRead("network error", ["network"], read("unavailable", true)),
   tithelyRead("timeout", ["timeout"], read("unavailable", true)),

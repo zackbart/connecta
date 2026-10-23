@@ -285,16 +285,6 @@ export function readRequest(
   );
 }
 
-// A guarded send's identity, for its transport to identify the one request
-// whose credential it renews (Google). Never reuse this entry for a new send.
-const requestInits = new WeakMap<RequestInit, ProviderRequest>();
-export function bindProviderRequest(init: RequestInit, request: ProviderRequest): void {
-  requestInits.set(init, request);
-}
-export function boundProviderRequest(init: RequestInit): ProviderRequest | undefined {
-  return requestInits.get(init);
-}
-
 export function providerFetch(
   ctx: ConnectorContext,
   provider: string,

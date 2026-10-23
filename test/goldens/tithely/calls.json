@@ -1,15 +1,141 @@
 [
   {
-    "label": "tithely_api_get",
-    "tool": "tithely_api_get",
+    "label": "tithely_api_search",
+    "tool": "tithely_api_search",
+    "args": {
+      "query": "refund charge"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "POST",
+            "path": "/refunds/{charge_id}",
+            "operationId": "refundCharge",
+            "summary": "Refund a charge",
+            "tool": "tithely_api_write"
+          },
+          {
+            "method": "DELETE",
+            "path": "/recurring/{recurring_id}",
+            "operationId": "cancelRecurring",
+            "summary": "Cancel a recurring charge's future charges; refunds nothing",
+            "tool": "tithely_api_write"
+          },
+          {
+            "method": "GET",
+            "path": "/charges/{charge_id}",
+            "operationId": "getCharge",
+            "summary": "Retrieve a charge",
+            "tool": "tithely_api_read",
+            "matched": "response field charge_id"
+          },
+          {
+            "method": "GET",
+            "path": "/charges-list",
+            "operationId": "listCharges",
+            "summary": "List charges (gifts) for an organization or donor",
+            "tool": "tithely_api_read",
+            "matched": "response field data[].charge_id"
+          },
+          {
+            "method": "POST",
+            "path": "/charges",
+            "operationId": "createCharge",
+            "summary": "Create a charge (gift) on a donor's stored payment method",
+            "tool": "tithely_api_write",
+            "matched": "response field charge_id"
+          },
+          {
+            "method": "POST",
+            "path": "/charge-once",
+            "operationId": "chargeOnce",
+            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
+            "tool": "tithely_api_write",
+            "matched": "response field charge_id"
+          }
+        ],
+        "revision": "v1",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "tithely_api_details",
+    "tool": "tithely_api_details",
+    "args": {
+      "method": "POST",
+      "path": "/charges"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "POST",
+        "path": "/charges",
+        "operationId": "createCharge",
+        "summary": "Create a charge (gift) on a donor's stored payment method",
+        "parameters": [],
+        "body": {
+          "contentType": "application/x-www-form-urlencoded",
+          "required": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "account_id": {
+                "type": "string",
+                "description": "Donor account (user_…)."
+              },
+              "pm_id": {
+                "type": "string",
+                "description": "Payment method (pm_…) to charge."
+              },
+              "organization_id": {
+                "type": "string",
+                "description": "Organization (org_…) to give to."
+              },
+              "amount": {
+                "type": "number",
+                "description": "Amount in integer cents, e.g. 2555 for $25.55."
+              },
+              "giving_type": {
+                "type": "string",
+                "description": "Giving type (fund) name, e.g. General Fund."
+              },
+              "memo": {
+                "type": "string",
+                "description": "A memo or note for the gift."
+              }
+            },
+            "required": [
+              "account_id",
+              "pm_id",
+              "organization_id",
+              "amount",
+              "giving_type"
+            ]
+          }
+        },
+        "verdict": "destructive",
+        "tool": "tithely_api_write",
+        "revision": "v1"
+      }
+    }
+  },
+  {
+    "label": "tithely_api_read",
+    "tool": "tithely_api_read",
     "args": {
       "path": "/payment-methods/pm_9",
-      "query": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        }
-      ]
+      "query": {
+        "account_id": "user_jane"
+      }
     },
     "steps": [
       [
@@ -28,7 +154,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "status": "success",
           "pm_id": "pm_9",
           "type": "Payment Method",
@@ -44,33 +171,56 @@
     }
   },
   {
-    "label": "tithely_api_mutate",
-    "tool": "tithely_api_mutate",
+    "label": "tithely_api_read organization",
+    "tool": "tithely_api_read",
+    "args": {
+      "path": "/organizations/org_1",
+      "fields": [
+        "object.name",
+        "object.widget_id",
+        "object.bank"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/organizations/org_1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "object": {
+            "name": "Grace Church",
+            "widget_id": "999"
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "tithely_api_write",
+    "tool": "tithely_api_write",
     "args": {
       "method": "POST",
       "path": "/charges",
-      "form": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        },
-        {
-          "name": "pm_id",
-          "value": "pm_9"
-        },
-        {
-          "name": "organization_id",
-          "value": "org_1"
-        },
-        {
-          "name": "amount",
-          "value": 2555
-        },
-        {
-          "name": "giving_type",
-          "value": "Tithe"
-        }
-      ]
+      "body": {
+        "account_id": "user_jane",
+        "pm_id": "pm_9",
+        "organization_id": "org_1",
+        "amount": 2555,
+        "giving_type": "Tithe"
+      }
     },
     "steps": [
       [
@@ -114,7 +264,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "status": "success",
           "charge_id": "ch_new",
           "type": "Charge",
@@ -195,17 +346,14 @@
     }
   },
   {
-    "label": "tithely_api_mutate DELETE",
-    "tool": "tithely_api_mutate",
+    "label": "tithely_api_write DELETE",
+    "tool": "tithely_api_write",
     "args": {
       "method": "DELETE",
       "path": "/payment-methods/pm_9",
-      "query": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        }
-      ]
+      "query": {
+        "account_id": "user_jane"
+      }
     },
     "steps": [
       [
@@ -224,7 +372,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "status": "success",
           "note": "Payment method removed."
         }
@@ -254,10 +403,11 @@
       "ok": true,
       "format": "json",
       "value": {
-        "organizations": [
+        "items": [
           {
             "organizationId": "org_1",
             "name": "Grace Church",
+            "widgetId": "999",
             "ownerAccountId": "user_owner",
             "website": "https://grace.example",
             "phoneNumber": "5551231234",
@@ -290,66 +440,8 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
-      }
-    }
-  },
-  {
-    "label": "get_organization",
-    "tool": "get_organization",
-    "args": {
-      "organizationId": "org_1"
-    },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://tithe.ly/api/v1/organizations/org_1",
-          "headers": {
-            "accept": "application/json",
-            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
-          }
-        }
-      ]
-    ],
-    "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "organizationId": "org_1",
-        "name": "Grace Church",
-        "ownerAccountId": "user_owner",
-        "website": "https://grace.example",
-        "phoneNumber": "5551231234",
-        "address": {
-          "streetAddress": "1 Main St",
-          "city": "Nashville",
-          "state": "TN",
-          "postal": "37209",
-          "country": "US"
-        },
-        "payoutCurrency": "USD",
-        "createdAt": "2017-05-04T20:13:57.000Z",
-        "funds": [
-          {
-            "id": "10",
-            "name": "Tithe",
-            "status": "active"
-          },
-          {
-            "id": "11",
-            "name": "Missions",
-            "status": "hidden"
-          },
-          {
-            "id": "12",
-            "name": "Building",
-            "status": "archived"
-          }
-        ]
       }
     }
   },
@@ -374,7 +466,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "accounts": [
+        "items": [
           {
             "accountId": "user_jane",
             "firstName": "Jane",
@@ -384,47 +476,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
-        }
-      }
-    }
-  },
-  {
-    "label": "get_account",
-    "tool": "get_account",
-    "args": {
-      "accountId": "user_jane"
-    },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://tithe.ly/api/v1/accounts/user_jane",
-          "headers": {
-            "accept": "application/json",
-            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
-          }
-        }
-      ]
-    ],
-    "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "accountId": "user_jane",
-        "firstName": "Jane",
-        "lastName": "Doe",
-        "email": "jane@example.com",
-        "createdAt": "2017-02-22T19:47:11.000Z",
-        "phoneNumber": "5555551234",
-        "address": {
-          "streetAddress": "2 Elm",
-          "city": "Nashville",
-          "state": "TN",
-          "postal": "37209",
-          "country": "US"
+          "hasMore": false
         }
       }
     }
@@ -454,7 +506,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "charges": [
+        "items": [
           {
             "chargeId": "ch_1",
             "status": "charged",
@@ -494,7 +546,12 @@
     "label": "get_charge",
     "tool": "get_charge",
     "args": {
-      "chargeId": "ch_1"
+      "chargeId": "ch_1",
+      "fields": [
+        "chargeId",
+        "amountCents",
+        "donor.email"
+      ]
     },
     "steps": [
       [
@@ -514,29 +571,9 @@
       "format": "json",
       "value": {
         "chargeId": "ch_1",
-        "status": "charged",
         "amountCents": 2500,
-        "netAmountCents": 2397,
-        "feesCents": 103,
-        "currency": "USD",
-        "fund": "Tithe",
-        "chargedAt": "2017-06-16T18:34:50.000Z",
-        "depositedAt": "pending",
-        "recurring": false,
-        "feesCovered": true,
-        "organizationId": "org_1",
-        "organizationName": "Grace Church",
-        "accountId": "user_jane",
         "donor": {
-          "firstName": "Jane",
-          "lastName": "Doe",
           "email": "jane@example.com"
-        },
-        "paymentMethodId": "pm_9",
-        "paymentMethod": {
-          "type": "card",
-          "brand": "Visa",
-          "last4": "4242"
         }
       }
     }
@@ -564,7 +601,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "recurringCharges": [
+        "items": [
           {
             "recurringId": "rc_1",
             "amountCents": 1000,
@@ -583,8 +620,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -633,7 +669,12 @@
     "label": "list_payment_methods",
     "tool": "list_payment_methods",
     "args": {
-      "accountId": "user_jane"
+      "accountId": "user_jane",
+      "limit": 1,
+      "fields": [
+        "paymentMethodId",
+        "last4"
+      ]
     },
     "steps": [
       [
@@ -652,29 +693,27 @@
       "ok": true,
       "format": "json",
       "value": {
-        "paymentMethods": [
+        "items": [
           {
             "paymentMethodId": "pm_9",
-            "accountId": "user_jane",
-            "type": "card",
-            "brand": "Visa",
             "last4": "4242"
           }
-        ]
+        ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoxLCJkIjoiYmUwN2I0N2I5ZjQ2OTU3YjA4YjJjZTMxM2VkMGEyM2UiLCJjIjoiMSJ9"
+        }
       }
     }
   },
   {
-    "label": "tithely_api_get echoes sent secrets",
-    "tool": "tithely_api_get",
+    "label": "tithely_api_read echoes sent secrets",
+    "tool": "tithely_api_read",
     "args": {
       "path": "/payment-methods/pm_9",
-      "query": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        }
-      ]
+      "query": {
+        "account_id": "user_jane"
+      }
     },
     "steps": [
       [
@@ -693,7 +732,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "status": "success",
           "pm_id": "pm_9",
           "type": "Payment Method",

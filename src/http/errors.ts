@@ -221,6 +221,19 @@ export interface VendorErrors<F extends Facts = Facts> {
    * refusal, and a 5xx never proves a write unapplied.
    */
   readonly authBeforeExecution?: AuthBeforeExecution<F>;
+  /**
+   * What this vendor's failures mean for an agent, declared by review for the
+   * generated Conventions (decision 0011): the code an unknown id fails with,
+   * whether that code proves absence (only the vendor's documentation can
+   * say so), and each documented source of `conflict`, one line each, such
+   * as "HTTP 409 when the record changed since it was read". Never inferred
+   * from the status table or the rules.
+   */
+  readonly meanings?: {
+    readonly unknownId: ConnectorCallErrorCode;
+    readonly provesAbsence: boolean;
+    readonly conflicts: readonly string[];
+  };
 }
 
 /** A trusted per-vendor declaration: the reviewer verifies the cited documentation and the narrow raw-fact predicate. */
@@ -619,6 +632,32 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
     operation: failure.operation,
     withheld,
   };
+}
+
+/** The reviewed meanings a vendor declares for the generated Conventions; see `VendorErrors.meanings`. */
+export type ErrorMeanings = NonNullable<VendorErrors["meanings"]>;
+
+/**
+ * A frozen copy of a vendor's declared meanings, refused when inconsistent
+ * (INV-11): `not_found` exactly when the vendor tells absence from a
+ * permission gap, and each conflict source a one-line documented fact.
+ */
+export function errorMeanings(vendor: VendorErrors<any>): ErrorMeanings | undefined {
+  const declared = vendor.meanings;
+  if (declared === undefined) return undefined;
+  const { unknownId, provesAbsence, conflicts } = declared;
+  if (
+    typeof unknownId !== "string" ||
+    typeof provesAbsence !== "boolean" ||
+    (unknownId === "not_found") !== provesAbsence ||
+    !Array.isArray(conflicts) ||
+    conflicts.some((fact) => typeof fact !== "string" || !fact.trim() || /[\r\n]/.test(fact))
+  ) {
+    throw new Error(
+      `${vendor.provider} error meanings need unknownId "not_found" exactly when provesAbsence is true, and one-line conflict facts.`,
+    );
+  }
+  return Object.freeze({ unknownId, provesAbsence, conflicts: Object.freeze([...conflicts]) });
 }
 
 function classified(input: Classified, vendor: VendorErrors<any>): Verdict {

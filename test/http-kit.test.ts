@@ -1205,6 +1205,41 @@ describe("kit construction (decision 0010, B.4)", () => {
         [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
       ] as const)
         expect(build().annotations).toEqual(annotations);
+      // A fields selection renders sparse: only `required` keywords go, never a property named "required".
+      const Row = Schema.Struct({
+        id: Schema.String,
+        required: Schema.Boolean,
+        nested: Schema.Struct({ required: Schema.String, keep: Schema.String }),
+      });
+      const sparse = {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          required: { type: "boolean" },
+          nested: { type: "object", properties: { required: { type: "string" }, keep: { type: "string" } } },
+        },
+      };
+      const record = { id: "x", required: true, nested: { required: "yes", keep: "ok" } };
+      const selected = read(connection, { ...spec, fields: true, output: Row, run: () => Effect.succeed(record) });
+      const rows = list(connection, {
+        name: "list_records",
+        description: "Records",
+        filters: {},
+        row: Row,
+        limit: { default: 2, max: 5, description: "Rows" },
+        page: () => Effect.succeed({ rows: [record], page: { hasMore: false, nextCursor: null } }),
+      });
+      expect(selected.outputSchema).toEqual(sparse);
+      expect((rows.outputSchema as { properties: { items: { items: unknown } } }).properties.items.items).toEqual(
+        sparse,
+      );
+      expect(
+        await apiConnector("acme", { tools: [selected] }).callTool(
+          "sample",
+          { fields: ["required", "nested.required"] },
+          context(),
+        ),
+      ).toEqual({ required: true, nested: { required: "yes" } });
       for (const review of [undefined, "A documented read-only POST."]) {
         const tool = read(connection, {
           ...spec,
