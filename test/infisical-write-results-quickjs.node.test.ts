@@ -1,6 +1,7 @@
 // Node-only: runs Infisical identifier, explicit-read and sequential-program regressions in the real QuickJS child-process executor.
-import { afterAll, afterEach, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, it, vi } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import {
   checkInfisicalResult,
   checkInfisicalRecovery,
@@ -14,7 +15,11 @@ const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
 afterAll(async () => {
   await executor.close?.();
 });
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
