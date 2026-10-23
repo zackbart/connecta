@@ -4,8 +4,9 @@
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
+import { Integer } from "../../http/json-schema.js";
 import { Credentials } from "../../http/services.js";
-import { get, post, patch, del, vendor } from "../../http/vendor.js";
+import { get, post, patch, del, vendor, type Vendor } from "../../http/vendor.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import type { ConnectorCredentialConfig } from "../../types.js";
 export const DEFAULT_PAGE_SIZE = 25;
@@ -18,18 +19,18 @@ const Envelope = Schema.Struct({
 });
 export const getContributions = get("getContributions", "/contributions", {
   query: {
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "minimumInitiatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumInitiatedDate": Schema.optionalKey(Schema.Unknown),
-    "statusBucket[]": Schema.optionalKey(Schema.Unknown),
-    "campaignId": Schema.optionalKey(Schema.Unknown),
-    "subcampaignId": Schema.optionalKey(Schema.Unknown),
-    "locationIds[]": Schema.optionalKey(Schema.Unknown),
-    "givingLinkId": Schema.optionalKey(Schema.Unknown),
-    "pledgeId": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "minimumInitiatedDate": Schema.optionalKey(Schema.String),
+    "maximumInitiatedDate": Schema.optionalKey(Schema.String),
+    "statusBucket[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "campaignId": Schema.optionalKey(Schema.String),
+    "subcampaignId": Schema.optionalKey(Schema.String),
+    "locationIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "givingLinkId": Schema.optionalKey(Schema.String),
+    "pledgeId": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -44,16 +45,16 @@ export const initiateRefund = post("initiateRefund", "/contributions/:contributi
 });
 export const getDeposits = get("getDeposits", "/deposits", {
   query: {
-    "startDate": Schema.optionalKey(Schema.Unknown),
-    "endDate": Schema.optionalKey(Schema.Unknown),
-    "types[]": Schema.optionalKey(Schema.Unknown),
-    "reconciled": Schema.optionalKey(Schema.Unknown),
-    "minimumEstimatedValueInCents": Schema.optionalKey(Schema.Unknown),
-    "maximumEstimatedValueInCents": Schema.optionalKey(Schema.Unknown),
-    "search": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "startDate": Schema.optionalKey(Schema.String),
+    "endDate": Schema.optionalKey(Schema.String),
+    "types[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "reconciled": Schema.optionalKey(Schema.Boolean),
+    "minimumEstimatedValueInCents": Schema.optionalKey(Integer),
+    "maximumEstimatedValueInCents": Schema.optionalKey(Integer),
+    "search": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -67,12 +68,12 @@ export const getDepositSummary = get("getDepositSummary", "/deposits/:depositId/
 });
 export const getRefunds = get("getRefunds", "/refunds", {
   query: {
-    "contributionId": Schema.optionalKey(Schema.Unknown),
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "contributionId": Schema.optionalKey(Schema.String),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -82,12 +83,12 @@ export const getRefundById = get("getRefundById", "/refunds/:refundId", {
 });
 export const getChargebacks = get("getChargebacks", "/chargebacks", {
   query: {
-    "contributionId": Schema.optionalKey(Schema.Unknown),
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "contributionId": Schema.optionalKey(Schema.String),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -97,10 +98,10 @@ export const getChargebackById = get("getChargebackById", "/chargebacks/:chargeb
 });
 export const getWebhooks = get("getWebhooks", "/webhooks", {
   query: {
-    "status": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "status": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -111,23 +112,23 @@ export const getWebhookById = get("getWebhookById", "/webhooks/:webhookId", {
 export const getWebhookEventLogs = get("getWebhookEventLogs", "/webhooks/:webhookId/event-logs", {
   params: { webhookId: Schema.String },
   query: {
-    "status": Schema.optionalKey(Schema.Unknown),
-    "webhookEventName": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "cursor": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "status": Schema.optionalKey(Schema.String),
+    "webhookEventName": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "cursor": Schema.optionalKey(Schema.String),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
 export const getDonorProfiles = get("getDonorProfiles", "/donors", {
   query: {
-    "locationIds[]": Schema.optionalKey(Schema.Unknown),
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "locationIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -147,27 +148,27 @@ export const createSubscription = post("createSubscription", "/subscriptions/:do
 export const getSubscriptionsByDonorProfile = get("getSubscriptionsByDonorProfile", "/subscriptions/:donorId", {
   params: { donorId: Schema.String },
   query: {
-    "status[]": Schema.optionalKey(Schema.Unknown),
-    "locationIds[]": Schema.optionalKey(Schema.Unknown),
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "status[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "locationIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
 export const getSubscriptions = get("getSubscriptions", "/subscriptions", {
   query: {
-    "status[]": Schema.optionalKey(Schema.Unknown),
-    "locationIds[]": Schema.optionalKey(Schema.Unknown),
-    "minimumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "maximumUpdatedDate": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "status[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "locationIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "minimumUpdatedDate": Schema.optionalKey(Schema.String),
+    "maximumUpdatedDate": Schema.optionalKey(Schema.String),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -185,20 +186,20 @@ export const cancelSubscription = del("cancelSubscription", "/subscriptions/:don
 });
 export const getPaymentMethods = get("getPaymentMethods", "/payment-methods/:donorId", {
   params: { donorId: Schema.String },
-  query: { "showExpired": Schema.optionalKey(Schema.Unknown) },
+  query: { "showExpired": Schema.optionalKey(Schema.Boolean) },
   success: Envelope,
 });
 export const getCampaigns = get("getCampaigns", "/campaigns", {
   query: {
-    "isSubcampaign": Schema.optionalKey(Schema.Unknown),
-    "parentCampaignId": Schema.optionalKey(Schema.Unknown),
-    "search": Schema.optionalKey(Schema.Unknown),
-    "includeArchived": Schema.optionalKey(Schema.Unknown),
-    "excludeInactive": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "isSubcampaign": Schema.optionalKey(Schema.String),
+    "parentCampaignId": Schema.optionalKey(Schema.String),
+    "search": Schema.optionalKey(Schema.String),
+    "includeArchived": Schema.optionalKey(Schema.Boolean),
+    "excludeInactive": Schema.optionalKey(Schema.Boolean),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -208,11 +209,11 @@ export const getCampaignById = get("getCampaignById", "/campaigns/:campaignId", 
 });
 export const getLocations = get("getLocations", "/locations", {
   query: {
-    "includeArchived": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "includeArchived": Schema.optionalKey(Schema.Boolean),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
@@ -223,13 +224,13 @@ export const getLocationById = get("getLocationById", "/locations/:locationId", 
 export const authorizePayment = post("authorizePayment", "/payments/authorize", { success: Envelope });
 export const getDestinations = get("getDestinations", "/tap/destinations", {
   query: {
-    "limit": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "search": Schema.optionalKey(Schema.Unknown),
-    "destinationType": Schema.optionalKey(Schema.Unknown),
-    "includeArchived": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
+    "limit": Schema.optionalKey(Integer),
+    "page": Schema.optionalKey(Integer),
+    "search": Schema.optionalKey(Schema.String),
+    "destinationType": Schema.optionalKey(Schema.String),
+    "includeArchived": Schema.optionalKey(Schema.Boolean),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
   },
   success: Envelope,
 });
@@ -239,14 +240,14 @@ export const getDestinationById = get("getDestinationById", "/tap/destinations/:
 });
 export const getDevices = get("getDevices", "/tap/devices", {
   query: {
-    "limit": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "search": Schema.optionalKey(Schema.Unknown),
-    "groupId": Schema.optionalKey(Schema.Unknown),
-    "deviceType": Schema.optionalKey(Schema.Unknown),
-    "includeArchived": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
+    "limit": Schema.optionalKey(Integer),
+    "page": Schema.optionalKey(Integer),
+    "search": Schema.optionalKey(Schema.String),
+    "groupId": Schema.optionalKey(Schema.String),
+    "deviceType": Schema.optionalKey(Schema.String),
+    "includeArchived": Schema.optionalKey(Schema.Boolean),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
   },
   success: Envelope,
 });
@@ -256,25 +257,25 @@ export const getDeviceById = get("getDeviceById", "/tap/devices/:deviceId", {
 });
 export const getEvents = get("getEvents", "/tap/events", {
   query: {
-    "startDate": Schema.optionalKey(Schema.Unknown),
-    "endDate": Schema.optionalKey(Schema.Unknown),
-    "groupIds[]": Schema.optionalKey(Schema.Unknown),
-    "destinationIds[]": Schema.optionalKey(Schema.Unknown),
-    "deviceIds[]": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "limit": Schema.optionalKey(Schema.Unknown),
+    "startDate": Schema.optionalKey(Schema.String),
+    "endDate": Schema.optionalKey(Schema.String),
+    "groupIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "destinationIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "deviceIds[]": Schema.optionalKey(Schema.Array(Schema.String)),
+    "sortDirection": Schema.optionalKey(Schema.String),
+    "page": Schema.optionalKey(Integer),
+    "limit": Schema.optionalKey(Integer),
   },
   success: Envelope,
 });
 export const getGroups = get("getGroups", "/tap/groups", {
   query: {
-    "limit": Schema.optionalKey(Schema.Unknown),
-    "page": Schema.optionalKey(Schema.Unknown),
-    "search": Schema.optionalKey(Schema.Unknown),
-    "includeArchived": Schema.optionalKey(Schema.Unknown),
-    "sortBy": Schema.optionalKey(Schema.Unknown),
-    "sortDirection": Schema.optionalKey(Schema.Unknown),
+    "limit": Schema.optionalKey(Integer),
+    "page": Schema.optionalKey(Integer),
+    "search": Schema.optionalKey(Schema.String),
+    "includeArchived": Schema.optionalKey(Schema.Boolean),
+    "sortBy": Schema.optionalKey(Schema.String),
+    "sortDirection": Schema.optionalKey(Schema.String),
   },
   success: Envelope,
 });
@@ -283,47 +284,55 @@ export const getGroupById = get("getGroupById", "/tap/groups/:groupId", {
   success: Envelope,
 });
 export const health = get("health", "/health", { success: Schema.String });
-export const OverflowApi = vendor(
-  { name: "Overflow", manifestBase: "/api/v3" },
-  getContributions,
-  chargeCashPaymentMethod,
-  getContributionById,
-  initiateRefund,
-  getDeposits,
-  getDepositById,
-  getDepositSummary,
-  getRefunds,
-  getRefundById,
-  getChargebacks,
-  getChargebackById,
-  getWebhooks,
-  getWebhookById,
-  getWebhookEventLogs,
-  getDonorProfiles,
-  createDonorProfile,
-  getDonorProfile,
-  updateDonorProfile,
-  createSubscription,
-  getSubscriptionsByDonorProfile,
-  getSubscriptions,
-  getSubscriptionById,
-  updateSubscriptionById,
-  cancelSubscription,
-  getPaymentMethods,
-  getCampaigns,
-  getCampaignById,
-  getLocations,
-  getLocationById,
-  authorizePayment,
-  getDestinations,
-  getDestinationById,
-  getDevices,
-  getDeviceById,
-  getEvents,
-  getGroups,
-  getGroupById,
-  health,
-);
+export const OverflowApi: Vendor = {
+  ...vendor(
+    { name: "Overflow", manifestBase: "/api/v3" },
+    getContributions,
+    chargeCashPaymentMethod,
+    getContributionById,
+    initiateRefund,
+    getDeposits,
+    getDepositById,
+    getDepositSummary,
+    getRefunds,
+    getRefundById,
+    getChargebacks,
+    getChargebackById,
+    getWebhooks,
+    getWebhookById,
+    getWebhookEventLogs,
+    getDonorProfiles,
+    createDonorProfile,
+    getDonorProfile,
+    updateDonorProfile,
+    createSubscription,
+    getSubscriptionsByDonorProfile,
+    getSubscriptions,
+    getSubscriptionById,
+    updateSubscriptionById,
+    cancelSubscription,
+    getPaymentMethods,
+    getCampaigns,
+    getCampaignById,
+    getLocations,
+    getLocationById,
+    authorizePayment,
+    getDestinations,
+    getDestinationById,
+    getDevices,
+    getDeviceById,
+    getEvents,
+    getGroups,
+    getGroupById,
+    health,
+  ),
+  textBodies: {
+    review:
+      "Overflow v3 errors may be plain text or JSON. Legacy hatches also return non-JSON successes (notably /health's ok); named reads and the credential probe still require JSON.",
+    forResponse: (status, operation) =>
+      status < 200 || status > 299 || operation.flags?.["raw"] === true ? "json-or-text" : undefined,
+  },
+};
 export const API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
   label: "Overflow API credentials",
   description:
@@ -438,7 +447,7 @@ export const errors: VendorErrors = {
 /** Raw hatches accept text (including /health's `ok`); named reads and the credential probe stay strict. */
 export const result = (
   body: unknown,
-  answer: { operation: { flags?: Readonly<Record<string, true>> } },
+  answer: { bodyFormat: "json" | "text" | "empty"; operation: { flags?: Readonly<Record<string, true>> } },
 ): Effect.Effect<unknown, HttpFailure> =>
   typeof body === "string" && !answer.operation.flags?.["raw"]
     ? Effect.fail(
@@ -450,7 +459,7 @@ export const result = (
           ),
         }),
       )
-    : Effect.succeed(body);
+    : Effect.succeed(answer.bodyFormat === "text" && typeof body === "string" && !body.trim() ? undefined : body);
 /**
  * Global legacy review: Overflow's v3 API does not mint API credentials or
  * login/download bearer URLs. Webhook delivery logs and donor records are

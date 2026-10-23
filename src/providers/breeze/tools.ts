@@ -494,7 +494,7 @@ function legacyCatalog(tool: ApiTool): ApiTool {
     const value = properties.query.items.properties.value;
     // All five union branches are disjoint and have no branch-specific constraints.
     properties.query.items.properties.value = {
-      type: value.anyOf.map((branch: { type: string }) => branch.type),
+      type: value.type ?? value.anyOf.map((branch: { type: string }) => branch.type),
       description: value.description,
     };
   }

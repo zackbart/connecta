@@ -601,7 +601,7 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
     Effect.gen(function* () {
       const page = spec.args["page"] ?? 1;
       const limit = spec.args["limit"] ?? pageSize;
-      const payload = yield* strict(spec.fetch({ ...spec.query, page, limit }));
+      const payload = yield* strict(spec.fetch(compact({ ...spec.query, page, limit })));
       const rows = asArray(asRecord(payload)["data"]);
       return {
         [spec.key]: projectRows(rows, spec.args["raw"], spec.project),
@@ -1179,7 +1179,7 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
           const payload = yield* strict(
             connection.send(api.getPaymentMethods, {
               params: { donorId: args.donorId },
-              query: { showExpired: args.showExpired },
+              query: compact({ showExpired: args.showExpired }),
             }),
           );
           const rows = asArray(asRecord(payload)["data"]);
@@ -1435,13 +1435,13 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
             yield* strict(
               connection.send(api.getWebhookEventLogs, {
                 params: { webhookId: args.webhookId },
-                query: {
+                query: compact({
                   status: args["status"],
                   webhookEventName: args["webhookEventName"],
                   sortDirection: args["sortDirection"],
                   cursor: args["cursor"],
                   limit: args["limit"] ?? DEFAULT_EVENT_LOG_PAGE_SIZE,
-                },
+                }),
               }),
             ),
           );
@@ -1454,7 +1454,7 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
           });
         }),
     }),
-  ];
+  ].map(legacyInputOrder);
 }
 // Step 1 keeps raw's historical lean output schema. All projected rows remain typed;
 // this one escape preserves raw's intentionally wider vendor records.
@@ -1463,4 +1463,20 @@ function projectValue<Row>(value: unknown, raw: boolean | undefined, project: (v
 }
 function projectRows<Row>(values: unknown[], raw: boolean | undefined, project: (value: unknown) => Row): Row[] {
   return values.map((value) => projectValue(value, raw, project));
+}
+
+/** Step-1 byte shim: these legacy filter arrays wrote descriptions after items.
+ * Keep Schemas as the sole contract/decoder source; delete this ordering adapter in step 2. */
+function legacyInputOrder(tool: ApiTool): ApiTool {
+  const order = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(order);
+    if (!value || typeof value !== "object") return value;
+    const node = Object.fromEntries(Object.entries(value).map(([key, child]) => [key, order(child)]));
+    if (node["type"] === "array" && node["minItems"] !== undefined && node["description"] !== undefined) {
+      const { description, ...rest } = node;
+      return { ...rest, description };
+    }
+    return node;
+  };
+  return { ...tool, inputSchema: order(tool.inputSchema) as NonNullable<ApiTool["inputSchema"]> };
 }

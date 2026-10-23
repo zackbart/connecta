@@ -147,5 +147,6 @@ export const overflow = defineApiProvider<OverflowOptions>({
     summary: `Overflow ${environmentOf(options)}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
     required: true,
   }),
+  defaultCallAdmission: OVERFLOW_ADMISSION,
   tools: overflowTools,
 });
