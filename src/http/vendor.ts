@@ -131,8 +131,11 @@ function encodedPath(path: string): EncodedPath {
 }
 
 function decodedBase64url(value: string): Uint8Array | undefined {
-  if (!/^(?:[A-Za-z0-9_+/-]{4})*(?:[A-Za-z0-9_+/-]{2}(?:==)?|[A-Za-z0-9_+/-]{3}=?|)$/.test(value)) return undefined;
   try {
+    // Linear checks: a repeated-group pattern overflows the regex stack on multi-MiB fields.
+    const units = value.replace(/={1,2}$/, "");
+    if (!/^[A-Za-z0-9_+/-]*$/.test(units) || units.length % 4 === 1) return undefined;
+    if (units.length !== value.length && value.length % 4 !== 0) return undefined;
     const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
