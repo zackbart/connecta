@@ -1,15 +1,17 @@
-// The Tithe.ly giving connection on the provider kit. Request shapes,
-// projections, and status mapping live in the characterization goldens, which
-// build one live, dropping connection; these tests pin key-pair admission and
-// the credential probe, the guide in every other mode, the bank and legal
-// boundary, the vendor shapes that once parsed wrong, and the catalog and
-// decoder agreeing on every input.
+// The Tithe.ly giving connection on the provider kit, on decision 0011's
+// standard surface. Request shapes, projections, the hatch's discovery and
+// status mapping live in the goldens, which build one live, dropping
+// connection; these tests pin key-pair admission and the credential probe, the
+// guide and catalog in every other mode, the bank and legal boundary and that
+// no argument widens it, the vendor shapes that once parsed wrong, and the
+// catalog and decoder agreeing on every input.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { configureGuardedTransport } from "../../guarded-transport.js";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
-import { errors } from "./api.js";
+import { hatch } from "../../http/hatch.js";
+import { errors, TITHELY_INDEX, TITHELY_NAMED, TITHELY_VERDICTS } from "./api.js";
 import { tithely } from "./index.js";
 import { tithelyTools } from "./tools.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -145,27 +147,42 @@ const FULL_CHARGE = {
 };
 
 describe("named reads (H9, H10)", () => {
-  it("INV-4: raw rows and hatch replies drop bank and legal details unless deployment code returns them", async () => {
+  it("INV-4: named reads and hatch replies drop bank and legal details unless deployment code returns them", async () => {
     const organization = { status: "success", organization_id: "org_1", type: "Organization", object: ORGANIZATION };
-    const reads: Array<[string, Record<string, unknown>, StubResponse]> = [
-      ["get_organization", { organizationId: "org_1", raw: true }, { body: organization }],
-      ["list_organizations", { raw: true }, { body: { status: "success", type: "List", data: [ORGANIZATION] } }],
-      ["get_charge", { chargeId: "ch_1", raw: true }, { body: { status: "success", object: FULL_CHARGE } }],
-      ["tithely_api_get", { path: "/organizations/org_1" }, { body: organization }],
+    const reads: Array<[string, Record<string, unknown>, StubResponse, boolean]> = [
+      ["list_organizations", {}, { body: { status: "success", type: "List", data: [ORGANIZATION] } }, false],
+      ["get_charge", { chargeId: "ch_1" }, { body: { status: "success", object: FULL_CHARGE } }, false],
+      ["tithely_api_read", { path: "/organizations/org_1" }, { body: organization }, true],
+      [
+        "tithely_api_write",
+        { method: "POST", path: "/accounts/user_jane", body: { first_name: "Jane" } },
+        { body: organization },
+        true,
+      ],
     ];
-    for (const [tool, args, response] of reads) {
+    for (const [tool, args, response, hatch] of reads) {
       queue(response);
       const text = JSON.stringify(await call(connection(), tool, args));
       for (const secret of ["6789", "TEST BANK", "1985", "Rogers", '"bank"', '"legal"']) {
         expect(text, `${tool} ${secret}`).not.toContain(secret);
       }
-      // An argument cannot widen it; only the deployment's option can.
+      // Only the deployment's option widens the hatch; the named projections never carry them.
       queue(response);
-      expect(JSON.stringify(await call(connection({ sensitiveFields: "return" }), tool, args))).toContain("6789");
+      const returned = JSON.stringify(await call(connection({ sensitiveFields: "return" }), tool, args));
+      expect(returned.includes("6789"), tool).toBe(hatch);
     }
-    queue({ body: { status: "success", object: ORGANIZATION } });
-    const written = await call(connection(), "tithely_api_mutate", { method: "POST", path: "/organizations/org_1" });
-    expect(JSON.stringify(written)).not.toContain("6789");
+    // No argument widens it, and fields can only narrow: both are refused before any request.
+    calls.length = 0;
+    for (const [tool, args] of [
+      ["list_organizations", { raw: true }],
+      ["get_charge", { chargeId: "ch_1", fields: ["bank"] }],
+      ["list_charges", { organizationId: "org_1", fields: ["legal.date_of_birth"] }],
+    ] as const) {
+      await expect(call(connection({ sensitiveFields: "return" }), tool, args), tool).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    }
+    expect(calls).toEqual([]);
     expect(() => connection({ sensitiveFields: "raw" })).toThrow(/sensitiveFields/);
   });
 
@@ -173,7 +190,7 @@ describe("named reads (H9, H10)", () => {
     const { giving_types_full: _omit, ...older } = ORGANIZATION;
     queue({ body: { status: "success", type: "List", data: [older] } });
     const result = await call(connection(), "list_organizations");
-    expect(result.organizations[0].funds).toEqual([{ name: "Tithe" }, { name: "Missions" }, { name: "Building" }]);
+    expect(result.items[0].funds).toEqual([{ name: "Tithe" }, { name: "Missions" }, { name: "Building" }]);
   });
 
   it("reads an offsetless ISO date-time as UTC whatever the runtime's timezone", async () => {
@@ -234,8 +251,8 @@ describe("keys and writes", () => {
     ) as unknown as typeof fetch;
     const pending = call(
       connection(),
-      "tithely_api_mutate",
-      { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] },
+      "tithely_api_write",
+      { method: "POST", path: "/refunds/ch_1" },
       context(KEYS, controller.signal),
     ).catch((caught: unknown) => caught);
     await reached;
@@ -283,8 +300,9 @@ describe("connection modes the goldens do not build", () => {
     expect(stored.credential!.getAll).not.toHaveBeenCalled();
   });
 
-  it("renders the guide, title and description in every environment, sensitive-field choice and instruction mode", () => {
+  it("renders the guide, catalog, title and description in every environment, sensitive-field choice and mode", async () => {
     const purpose = "Weekly giving reports for Grace Church";
+    const dropped = "This connection withholds organizations' payout bank and legal-contact details from every result.";
     for (const environment of ["live", "test"] as const) {
       for (const sensitiveFields of ["drop", "return"] as const) {
         for (const instructions of [undefined, "  Reduce to weekly totals.  "]) {
@@ -298,8 +316,8 @@ describe("connection modes the goldens do not build", () => {
             );
           if (sensitiveFields === "return")
             content = content.replace(
-              "  Every result, `raw: true` and the hatches included, leaves them out.\n",
-              "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n",
+              dropped,
+              "This connection returns organizations' payout bank and legal-contact details through tithely_api_read; the named reads still omit them.",
             );
           if (instructions) content += "\n## Account instructions\n\nReduce to weekly totals.\n";
           const connector = connection({ environment, sensitiveFields, ...(instructions ? { instructions } : {}) });
@@ -313,31 +331,50 @@ describe("connection modes the goldens do not build", () => {
               ? ["Tithe.ly Giving", `Tithe.ly giving — live donors and real money — ${purpose}`]
               : ["Tithe.ly Giving (test)", `Tithe.ly giving (test environment, no real money) — ${purpose}`],
           );
+          // The catalog says what this connection's mode returns.
+          const tools = await connector.listTools(context());
+          const description = (name: string) => tools.find((tool) => tool.name === name)!.description;
+          expect(description("tithely_api_read")).toContain(
+            sensitiveFields === "return" ? "details are returned." : "details are dropped.",
+          );
+          expect(description("list_organizations")).toContain(
+            sensitiveFields === "return" ? "tithely_api_read returns them" : "withheld from every result",
+          );
         }
       }
     }
+    // Read-only and an overridden page size are connection context, and the catalog follows.
+    const narrowed = connection({ readOnly: true, defaultPageSize: 10 });
+    expect((narrowed.usageGuide as { content: string }).content).toContain(
+      `${dropped}\n\nThis connection is read-only: every write is refused.\n\nList tools return 10 rows by default on this connection.\n\n## Giving data`,
+    );
+    const charges = (await narrowed.listTools(context())).find((tool) => tool.name === "list_charges")!;
+    expect((charges.inputSchema as any).properties.limit).toMatchObject({ default: 10, maximum: 99 });
   });
 });
 
 describe("the catalog and the kit's decoder (decision 0010)", () => {
   it("INV-1: every tool accepts and refuses the same boundary values in both renderings", () => {
-    // Includes the cases that found each drift: createdAfter past 2^53 and a mutate path of "/" and 300 emoji.
+    // Includes the cases that found each drift: createdAfter past 2^53 and a hatch path of "/" and 300 emoji.
     const bases: Record<string, Record<string, unknown>> = {
       list_charges: {},
       get_charge: { chargeId: "ch_1" },
-      tithely_api_mutate: { method: "POST", path: "/charges" },
-      tithely_api_get: { path: "/charges" },
-      get_organization: { organizationId: "org_1" },
-      get_account: { accountId: "user_1" },
       get_recurring_charge: { recurringId: "rc_1" },
       list_payment_methods: { accountId: "user_1" },
+      tithely_api_search: { query: "charges" },
+      tithely_api_details: { method: "GET", path: "/charges-list" },
+      tithely_api_read: { path: "/charges-list" },
+      tithely_api_write: { method: "POST", path: "/charges" },
     };
     // Building reads only the failure table and the value-safety boundary; nothing is sent.
     const connection = {
       errors,
       safety: resultSafety({ review: "Built for its schemas only.", sensitiveFields: { names: [], choice: "drop" } }),
     } as unknown as Connection;
-    const tools = tithelyTools({ connection, pageSize: 25 });
+    const tools = [
+      ...tithelyTools({ connection, pageSize: 25, options: {} }),
+      ...hatch({ name: "tithely", index: TITHELY_INDEX, verdicts: TITHELY_VERDICTS, named: TITHELY_NAMED, connection }),
+    ];
     expect(tools).toHaveLength(11);
     for (const tool of tools) expect(kitInputDisagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
   });

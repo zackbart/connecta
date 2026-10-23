@@ -35,7 +35,7 @@ const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
   "github.list_scopes",
-  ...["cloudflare", "mixpanel", "notion", "stripe", "vercel"].flatMap((name) => [
+  ...["cloudflare", "mixpanel", "notion", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -737,9 +737,9 @@ describe("round-5 whole-call failure sweep", () => {
     const requests = googleFetch(() => Response.json({ error: "Unknown or inaccessible" }, { status: 404 }));
     const result = await invoke(
       provider("tithely"),
-      "tithely_api_mutate",
+      "tithely_api_write",
       "write",
-      argumentsTable.tithely!["tithely_api_mutate"]!,
+      argumentsTable.tithely!["tithely_api_write"]!,
     );
     expect(requests).toHaveLength(1);
     expect(result).toMatchObject({ ok: false, error: { code: "connector_call_failed", retryable: false } });
