@@ -1,12 +1,11 @@
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { attachCallClassification } from "../../call-classification.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorContext } from "../../types.js";
 
 import { memoryStorage } from "../../storage/memory.js";
 import { infisical } from "./index.js";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
-
-const SECRET_ID = "33333333-3333-4333-8333-333333333333";
 
 const connector = infisical("infisical", { purpose: "test org" });
 
@@ -46,7 +45,12 @@ function requestOf(fetch: ReturnType<typeof mockFetch>, index: number) {
   return { url: new URL(String(input)), init: init ?? {} };
 }
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -115,7 +119,7 @@ describe("Infisical connector", () => {
     expect(logins).toBe(2);
   });
 
-  it("INV-9: the served classification decides 401 replay before the Infisical request method", async () => {
+  it("INV-9: a served write and a physical POST each refuse a 401 replay", async () => {
     let fetch = mockFetch(login(), json({}, 401), login("tok-2"), json({ projects: [] }));
     const write = context();
     attachCallClassification(write, "write");
@@ -141,66 +145,10 @@ describe("Infisical connector", () => {
         },
         read,
       ),
-    ).resolves.toMatchObject({ secret: { key: "API_KEY" } });
+    ).rejects.toMatchObject({ code: "auth_required" });
     const posts = fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"));
-    expect(posts).toHaveLength(2);
+    expect(posts).toHaveLength(1);
     expect(posts[0]![1]?.method).toBe("POST");
-    expect(posts[1]![1]?.body).toEqual(posts[0]![1]?.body);
-  });
-
-  it("omits secret values from lists unless asked", async () => {
-    const secret = {
-      id: SECRET_ID,
-      secretKey: "API_KEY",
-      secretValue: "hunter2",
-      secretPath: "/",
-      environment: "prod",
-      version: 3,
-      tags: [{ slug: "web" }],
-    };
-    const fetch = mockFetch(login(), json({ secrets: [secret], imports: [] }));
-    const ctx = context();
-    const result = await connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, ctx);
-
-    expect(result).toEqual({
-      secrets: [
-        {
-          id: SECRET_ID,
-          key: "API_KEY",
-          environment: "prod",
-          path: "/",
-          version: 3,
-          tags: ["web"],
-        },
-      ],
-    });
-    const query = requestOf(fetch, 1).url.searchParams;
-    expect(query.get("viewSecretValue")).toBe("false");
-    expect(query.get("expandSecretReferences")).toBe("false");
-    expect(query.get("secretPath")).toBe("/");
-
-    mockFetch(json({ secrets: [secret] }));
-    const withValues = await connector.callTool(
-      "list_secrets",
-      { projectId: PROJECT_ID, environment: "prod", includeValues: true },
-      ctx,
-    );
-    expect(withValues).toMatchObject({ secrets: [{ key: "API_KEY", value: "hunter2" }] });
-  });
-
-  it("never returns an unrecognized write response", async () => {
-    mockFetch(login(), json({ secretValue: "leak" }));
-    const result = await connector.callTool(
-      "create_secret",
-      {
-        projectId: PROJECT_ID,
-        environment: "prod",
-        secretName: "API_KEY",
-        secretValue: "leak",
-      },
-      context(),
-    );
-    expect(result).toEqual({ ok: true, metadataOmitted: true });
   });
 });
 
@@ -291,6 +239,49 @@ describe("maintained Infisical contract", () => {
     expect(signal.aborted).toBe(true);
   });
 
+  it("INV-7: a closed call cannot submit a login after its credential read completes", async () => {
+    let finish!: (values: Record<string, string>) => void;
+    const fetch = mockFetch();
+    const controller = new AbortController();
+    const ctx = context();
+    ctx.credential!.getAll = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const pending = connector.callTool("list_projects", {}, { ...ctx, signal: controller.signal });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    controller.abort(new Error("left before submission"));
+    await expect(pending).rejects.toThrow("left before submission");
+    finish({ clientId: "late-client", clientSecret: "late-secret" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["malformed", "broken-stream"])(
+    "INV-9: a write accepts a %s success body without resending",
+    async (kind) => {
+      const response =
+        kind === "malformed"
+          ? new Response("not JSON")
+          : new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.error(new Error("private stream failure"));
+                },
+              }),
+            );
+      const fetch = mockFetch(login(), response);
+      await expect(
+        connector.callTool(
+          "create_secret",
+          { projectId: PROJECT_ID, environment: "prod", secretName: "API_KEY", secretValue: "private" },
+          context(),
+        ),
+      ).resolves.toEqual({ ok: true, metadataOmitted: true });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it.each([301, 302, 303, 307, 308])("refuses credential-bearing login redirect %i (INV-5)", async (status) => {
     const fetch = mockFetch(new Response(null, { status, headers: { location: "https://attacker.example/api" } }));
     await expect(connector.callTool("list_projects", {}, context())).rejects.toMatchObject({
@@ -338,20 +329,6 @@ describe("maintained Infisical contract", () => {
     },
   );
 
-  it.each([400, 403, 404, 409, 422, 429, 500, 503])(
-    "never relays error body values on HTTP %i (INV-5)",
-    async (status) => {
-      mockFetch(login(), json({ message: "submitted-secret-value operator-secret" }, status));
-      try {
-        await connector.callTool("create_secret", { ...args, secretValue: "submitted-secret-value" }, context());
-        throw new Error("expected refusal");
-      } catch (error) {
-        expect(String(error)).not.toContain("submitted-secret-value");
-        expect(String(error)).not.toContain("operator-secret");
-      }
-    },
-  );
-
   it.each(["missing", "negative", "nan", "empty", "unsafe-header", "overflow"])(
     "refuses malformed login: %s",
     async (shape) => {
@@ -371,27 +348,6 @@ describe("maintained Infisical contract", () => {
       });
     },
   );
-
-  it("keeps imported secret values out of metadata lists", async () => {
-    const secret = { secretKey: "KEY", secretValue: "private", secretValueHidden: false };
-    mockFetch(
-      login(),
-      json({ secrets: [secret], imports: [{ environment: "prod", secretPath: "/shared", secrets: [secret] }] }),
-    );
-    const ctx = context();
-    const result = await connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, ctx);
-    expect(JSON.stringify(result)).not.toContain("private");
-    mockFetch(json({ secrets: [], imports: [{ secrets: [secret] }] }));
-    expect(
-      JSON.stringify(
-        await connector.callTool(
-          "list_secrets",
-          { projectId: PROJECT_ID, environment: "prod", includeValues: true },
-          ctx,
-        ),
-      ),
-    ).toContain("private");
-  });
 
   it("rejects dot-segment keys and relative paths before sending", async () => {
     const fetch = mockFetch();

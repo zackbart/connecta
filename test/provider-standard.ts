@@ -28,7 +28,6 @@ export const PENDING = {
     "forms",
     "github",
     "gmail",
-    "infisical",
     "mixpanel",
     "notion",
     "sheets",

@@ -25,7 +25,7 @@ import type {
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
-import { Grant, grantFromOAuth, refreshOnce } from "./oauth.js";
+import { Grant, grantFromOAuth, refreshOnce, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import { Classification, Dispatches, Signal, fromConnectorContext, type CallServices } from "./services.js";
 import { connect, operations, type Connection, type ConnectOptions, type Vendor } from "./vendor.js";
@@ -51,17 +51,24 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
+  /** Renewable machine login, constructed outside every caller context. Exclusive with static OAuth. */
+  readonly grant?: (
+    options: Readonly<O>,
+  ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
+  /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
+  readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly probe: {
-    readonly operation: ProbeOperation;
-    readonly request: unknown;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
-  };
+  } & (
+    | { readonly operation: ProbeOperation; readonly request: unknown }
+    | { readonly run: (options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices> }
+  );
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
@@ -103,6 +110,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     credential,
     oauth,
     oauthWrite401,
+    grant,
+    writeUnauthorized,
     authenticate,
     errors,
     safety,
@@ -117,6 +126,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
+  if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
+  if (writeUnauthorized && !grant) throw new Error("writeUnauthorized requires a machine grant declaration.");
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new Error(`${metadata.title} maxResponseBytes must be a whole number of bytes >= 1.`);
   }
@@ -156,6 +167,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       }
       const configured = transport?.(options);
+      const machineGrant = grant?.(options);
       const guarded = guardedClient({
         provider: errors.provider,
         baseUrl: baseUrl(options),
@@ -168,7 +180,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       });
       const connected = connect(
         vendor,
-        oauth
+        oauth || machineGrant
           ? refreshOnce(
               guarded,
               oauthWrite401
@@ -188,7 +200,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                         "downstream_oauth_required",
                       ),
                   }
-                : undefined,
+                : writeUnauthorized
+                  ? { writeUnauthorized }
+                  : undefined,
             )
           : guarded,
         {
@@ -200,7 +214,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const authorize = <A>(
         work: Effect.Effect<A, HttpFailure, CallServices | Grant>,
       ): Effect.Effect<A, HttpFailure, CallServices> =>
-        work.pipe(Effect.provideServiceEffect(Grant, oauth ? callGrant : Effect.succeed(missingGrant)));
+        work.pipe(
+          Effect.provideServiceEffect(Grant, machineGrant ?? (oauth ? callGrant : Effect.succeed(missingGrant))),
+        );
       const connection: Connection = {
         ...connected,
         send: (...args) => authorize(connected.send(...args)),
@@ -221,8 +237,13 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           signal,
         };
         return runEdge(
-          connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
-            Effect.flatMap(({ data }) =>
+          ("run" in probe
+            ? probe.run(options)
+            : connection
+                .send(probe.operation, probe.request as Parameters<Connection["send"]>[1])
+                .pipe(Effect.map(({ data }) => data))
+          ).pipe(
+            Effect.flatMap((data) =>
               Effect.try({
                 try: () => {
                   const described = probe.describe(data, options);

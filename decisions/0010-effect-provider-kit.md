@@ -1693,6 +1693,28 @@ oversized challenge, and default guarded clients are unchanged.
 Broken challenge streams retain their 401 and continue to renewal, matching
 the static facade; they are not surfaced challenge refusals.
 
+Infisical's C.5 migration adds an opt-in `grant(options)` factory for renewable
+machine logins, exclusive with static OAuth. It runs at connection construction
+outside any caller context and returns a service-building Effect; each send
+provides that Effect's Grant to the existing `bearer` and `refreshOnce`. The
+optional `writeUnauthorized` reuses the same renewal facts as the static bridge,
+including `Unchanged`, without either token. `settleWrite` remains final.
+An alternative `probe.run(options)` program supports a private login-only
+credential test without seeding the operational cache or dispatching a resource
+request. Existing operation-based probes keep their path unchanged.
+
+The Infisical adapter retains the private Universal Auth exchange and the
+shared `requestTokenCache`, rather than passing token responses through the
+resource result boundary. Credential resolution and each wait are call-owned.
+After synchronous flight submission, login is request-local with its own
+15-second deadline; the last departing waiter or request closure aborts it.
+No in-flight Promise or request-owned fiber is shared across requests. Only
+bounded token/expiry records cross requests, keyed by both trimmed credentials
+and scoped to the constructed connection and origin. A request retains its one
+recovery result (failure included), so later 401s cannot start a login loop.
+The Grant reads current bridge services on use; cached Effects are built
+outside caller contexts, like `vendor.ts`'s empty-context client.
+
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write
 never left (provenance (a)). It also sets the definition's `kit`, decision

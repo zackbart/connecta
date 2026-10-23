@@ -19,7 +19,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// The full case matrices run in-process in src/providers/infisical/security.test.ts;
+// The full case matrices run in-process in src/providers/infisical/provider.security.test.ts;
 // here one case per family proves the same omission through a real QuickJS program.
 it.each(
   infisicalRecoveryCases.filter((testCase) =>
