@@ -135,6 +135,7 @@ jobs:
       # The integration test runs the in-repo agent endpoint, so install core too.
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @zackbart/connecta-eve run check
+      - run: pnpm run check:eve-package
 
   browser:
     needs: static
@@ -179,6 +180,7 @@ jobs:
         with:
           node-version: 22
       - run: pnpm --config.verify-deps-before-run=false run check:security
+      - run: pnpm --config.verify-deps-before-run=false run check:security:eve
 
   # Branch protection requires this name. Core jobs and classification must
   # succeed; browser/audit/Eve may skip only when explicitly inapplicable.

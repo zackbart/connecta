@@ -127,8 +127,10 @@ async function instructionRequest(options: ConnectaInstructionsOptions, method: 
 }
 
 async function fetchConnectaInstructions(options: ConnectaInstructionsOptions): Promise<string | null> {
-  const discovered = await instructionRequest(options, "server/discover").catch(() => null);
-  return discovered ?? instructionRequest(options, "initialize").catch(() => null);
+  // Only a completed discovery response can justify legacy negotiation.
+  // Network failures and timeouts propagate to the resolver's fail-open path.
+  const discovered = await instructionRequest(options, "server/discover");
+  return discovered ?? instructionRequest(options, "initialize");
 }
 
 /**
@@ -140,10 +142,13 @@ async function fetchConnectaInstructions(options: ConnectaInstructionsOptions): 
 export function connectaInstructions(options: ConnectaInstructionsOptions = {}) {
   const ttlMs = options.ttlMs ?? 600_000;
   let cached: { at: number; content: string } | undefined;
+  let retryAfter = 0;
   const current = async (): Promise<string | null> => {
     if (cached && Date.now() - cached.at <= ttlMs) return cached.content;
+    if (Date.now() < retryAfter) return cached?.content ?? null;
     const fresh = await fetchConnectaInstructions(options).catch(() => null);
     if (fresh) cached = { at: Date.now(), content: fresh };
+    retryAfter = fresh ? 0 : Date.now() + 30_000;
     return fresh ?? cached?.content ?? null;
   };
   return defineDynamic({

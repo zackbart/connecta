@@ -136,10 +136,44 @@ it("discovers instructions, falls back to initialize/SSE, caches successes and f
   vi.setSystemTime(Date.now() + 600_001);
   state = "failed";
   expect(await turn(instructions)).toEqual(legacy);
+  const failedRequests = requests.length;
+  expect(await turn(instructions)).toEqual(legacy);
+  expect(requests).toHaveLength(failedRequests);
   expect(
     await turn(connectaInstructions({ url: "https://connecta.example.com", getToken: () => token, fetch: fetcher })),
   ).toBeNull();
 });
+
+it.each(["network", "timeout"])(
+  "does not initialize after a discovery %s failure and waits before retrying",
+  async (kind) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const methods: string[] = [];
+    let fail = true;
+    const fetcher: typeof fetch = async (_url, init) => {
+      methods.push((JSON.parse(String(init?.body)) as { method: string }).method);
+      if (fail) {
+        throw kind === "timeout" ? new DOMException("Timed out", "TimeoutError") : new TypeError("Network unavailable");
+      }
+      return Response.json({ result: { instructions: "Recovered guidance" } });
+    };
+    const instructions = connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta_agent",
+      fetch: fetcher,
+    });
+    expect(await turn(instructions)).toBeNull();
+    expect(await turn(instructions)).toBeNull();
+    expect(methods).toEqual(["server/discover"]);
+    fail = false;
+    vi.setSystemTime(Date.now() + 29_999);
+    expect(await turn(instructions)).toBeNull();
+    expect(methods).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 1);
+    expect(await turn(instructions)).toMatchObject({ content: "Connecta guidance:\nRecovered guidance" });
+    expect(methods).toEqual(["server/discover", "server/discover"]);
+  },
+);
 
 it("loads scoped instructions from a real local Connecta agent endpoint", async () => {
   const storage = memoryStorage();

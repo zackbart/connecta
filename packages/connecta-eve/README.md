@@ -12,7 +12,7 @@ choose the helper version matching your server release.
 ## Install and add two files
 
 ```sh
-pnpm add @zackbart/connecta-eve eve@0.83.0
+npm install @zackbart/connecta-eve eve@0.83.0
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -71,16 +71,21 @@ execute the write without a fresh approval. A read-only pool refuses it.
 ## Endpoint instructions
 
 Instructions use `server/discover` (MCP 2026-07-28), falling back to legacy
-`initialize` if guidance is unavailable. Both JSON and SSE replies are accepted.
-Each request has a five-second timeout. Successful guidance is cached for ten
-minutes per resolver; `ttlMs` overrides that duration. Refresh failure keeps
-the last copy, or adds nothing if no fetch has succeeded. Tools remain usable.
-Instructions do not grant access.
+`initialize` when discovery returns a response without guidance, including a
+non-OK status or an unsupported-method response. Network errors and timeouts
+never trigger initialize. Both JSON and SSE replies are accepted. Each request
+has a five-second timeout. Successful guidance is cached for ten minutes per
+resolver; `ttlMs` overrides that duration. A failed refresh keeps the last copy,
+or adds nothing if no fetch has succeeded, and waits 30 seconds before retrying.
+Tools remain usable. Instructions do not grant access.
 
 ## Vercel OIDC token source
 
-When the server is configured to admit the Vercel workload as this agent, use
-Vercel's token resolver in **both** files:
+This variant requires a **Connecta 0.35.0 or later** deployment with Vercel
+workload admission configured for this agent. Workload admission is planned for
+0.35.0 in [#975](https://github.com/zackbart/connecta/pull/975) and is unavailable
+in earlier releases. Use agent tokens until your deployment includes it.
+Once configured, use Vercel's token resolver in **both** files:
 
 ```ts
 import { getVercelOidcToken } from "@vercel/oidc";
@@ -101,6 +106,4 @@ export default connectaInstructions({ pool: "assistant", getToken: getVercelOidc
 ```
 
 Install `@vercel/oidc` in the Eve app when using this variant. The helper has no
-dependency on it and never switches credential types automatically. Workload
-admission must be supported and configured by your server; otherwise keep the
-agent token configuration above.
+dependency on it and never switches credential types automatically.

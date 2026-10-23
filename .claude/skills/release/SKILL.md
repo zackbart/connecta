@@ -20,6 +20,22 @@ go-ahead for this release.
   breaks, and what deployments can ignore. The 0.35.0 draft is
   [release-notes/0.35.0.md](../../../release-notes/0.35.0.md).
 
+## First helper publish: owner action at Phase 5
+
+Do this only at release time, after Phase 5 and the owner's explicit release
+go-ahead. A brand-new package cannot have a trusted publisher until it exists
+on npm. The owner must first publish `@zackbart/connecta-eve` manually using
+npm login and 2FA; a placeholder such as `0.0.0`, deprecated afterwards, avoids
+consuming the intended joint release version. Then add its trusted publisher
+for `zackbart/connecta`, workflow filename `publish.yml`, no more than two days
+before its first workflow publish. npm requires a new configuration's first
+successful publish within two days; see [trusted publisher setup and expiry](https://docs.npmjs.com/trusted-publishers/).
+Confirm core's trusted publisher is configured for that workflow too.
+
+If the manual bootstrap publishes the intended release version itself, the
+workflow skips it. The helper's trusted publisher will first be exercised at
+the next release; time its configuration for that publish instead.
+
 ## Steps
 
 1. Branch from current `origin/main`. Bump the version in `package.json` with
@@ -27,7 +43,11 @@ go-ahead for this release.
    `packages/connecta-eve/package.json` with
    `pnpm --filter @zackbart/connecta-eve version <version> --no-git-tag-version`.
    The helper and core share every release tag and version; retain both lockfiles.
-   Use Node 24 for `release:check` and publishing.
+   Validate core with `release:check:core` on Node 22 and the helper with
+   `release:check:eve` on Node 24, matching publish.yml. `release:check` composes
+   both for a deliberate single-runtime local run and requires Node 24.
+   When updating Eve, change its devDependency pin, supported peer range and
+   `pnpm-workspace.yaml`'s exact `minimumReleaseAgeExclude` entry together.
 2. Commit `CHANGELOG.md` and everything under `.changes/` first. Assembly
    refuses untracked or modified inputs.
 3. `pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]`.
@@ -36,18 +56,18 @@ go-ahead for this release.
    sections stay untouched.
 4. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
 5. Review the assembled section, commit it with the deletions, then run
-   `pnpm run release:check` (full `check`, browser/example/security checks,
-   core package smoke, and the Eve helper's typecheck/test/build and packed
-   consumer smoke with real Eve).
+   `pnpm run release:check:core` on Node 22 (full `check`, browser/example/
+   security checks and core package smoke), then `pnpm run release:check:eve`
+   on Node 24 (helper typecheck/test/build, packed-consumer runtime/type smoke
+   and its complete dependency audit).
    Open the PR and merge it like any other.
 6. After merge, tag the merge commit `v<version>` (must equal `package.json`;
    publish.yml verifies) and publish a GitHub Release with the narrative.
-   publish.yml reruns `release:check` once and runs `npm publish --ignore-scripts`
-   with provenance for both validated `dist/` trees. Configure npm trusted
-   publishing for **both** `@zackbart/connecta` and `@zackbart/connecta-eve`
-   against this repository's `publish.yml` before the first joint release.
-   A rerun after a partial publish needs the already published version handled
-   explicitly; never bump one package independently.
+   publish.yml reruns the two checks on their respective Node versions, then
+   publishes the helper first and core second with provenance. Each step checks
+   `npm view "$name@$version" version` and skips versions already on npm, so a
+   `workflow_dispatch` rerun with the same tag completes a half release. Never
+   bump one package independently.
 
 If a Chromium install fails in publish.yml, see the `triage-ci` skill; rerun
 the workflow with `workflow_dispatch` and the existing tag instead of retagging.

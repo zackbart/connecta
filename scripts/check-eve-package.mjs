@@ -39,7 +39,10 @@ try {
     }),
   );
   // Only this exact, real Eve release is admitted in the isolated consumer.
-  await writeFile(join(work, "pnpm-workspace.yaml"), "minimumReleaseAgeExclude:\n  - eve@0.83.0\n");
+  await writeFile(
+    join(work, "pnpm-workspace.yaml"),
+    `minimumReleaseAgeExclude:\n  - eve@${manifest.devDependencies.eve}\n`,
+  );
   run(pnpm, ["install", "--ignore-scripts"], work);
   await writeFile(
     join(work, "smoke.mjs"),
