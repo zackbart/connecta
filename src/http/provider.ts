@@ -16,6 +16,7 @@ import { unsentAfterUnauthorized } from "../write-outcome.js";
 import { Operation } from "../runtime/call.js";
 import { runEdge } from "../runtime/run.js";
 import type {
+  Connector,
   ConnectorContext,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
@@ -89,6 +90,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
+  /**
+   * Record construction facts about the built connector, such as whose
+   * Workspace account it acts as. Runs once, before anything can serve it;
+   * its return value is ignored, so it can neither replace nor wrap it.
+   */
+  readonly tagConnector?: (connector: Connector, options: Readonly<O>) => void;
 }
 
 /** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
@@ -138,6 +145,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     guide,
     hatch: declaredHatch,
     tools,
+    tagConnector,
     ...metadata
   } = definition;
   if (credential !== undefined && oauth !== undefined) {
@@ -315,7 +323,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         },
       });
       const usageGuide = guide(options);
-      return tracksEveryRequest(
+      const connector = tracksEveryRequest(
         api(id, {
           ...(defaultCallAdmission
             ? {
@@ -339,6 +347,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           tools: [...builtTools, ...(hatchOptions ? hatch({ ...hatchOptions, connection }) : [])],
         }),
       );
+      tagConnector?.(connector, options);
+      return connector;
     },
   });
 }

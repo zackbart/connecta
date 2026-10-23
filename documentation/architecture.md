@@ -2041,6 +2041,12 @@ resends a write, and the defaults are unchanged. Google Workspace uses both,
 because its delegated tokens are minted per call and a refused write only
 needs the next call to mint again.
 
+An optional `tagConnector(connector, options)` records construction facts
+about the built connector, once, before the registry can serve it. Its return
+value is ignored, so it cannot replace or wrap the connector. Google Workspace
+uses it to tag whose account the connector acts as, which the registry reads to
+hide a mapping-subject connector from agents in a pool without an owner.
+
 The optional `probe.run(connection, options)` program replaces the operation
 probe when authentication needs a different read or a private login transport.
 It is built once at provider construction outside caller contexts, using the
