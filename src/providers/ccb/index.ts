@@ -1,3 +1,4 @@
+import { CCB_ENVIRONMENTS, CCB_MEDIA_TYPE } from "./lib/constants.js";
 import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
@@ -7,9 +8,7 @@ import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   getMe,
   authenticate,
-  CCB_ENVIRONMENTS,
   CCB_MAX_RESPONSE_BYTES,
-  CCB_MEDIA_TYPE,
   CCB_ADMISSION,
   CcbApi,
   ccbSafety,
@@ -20,7 +19,13 @@ import {
 } from "./api.js";
 import { ccbTools } from "./tools.js";
 import { routingLine, usageGuide } from "./lib/guide.js";
-export { CCB_ENVIRONMENTS, CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, CCB_SENSITIVE_FIELDS } from "./api.js";
+export {
+  CCB_ENVIRONMENTS,
+  CCB_MEDIA_TYPE,
+  CCB_READ_SCOPES,
+  CCB_WRITE_SCOPES,
+  CCB_SENSITIVE_FIELDS,
+} from "./lib/constants.js";
 /** How the grant acts: for the whole church, or as one signed-in person. */
 export type CcbMode = "system" | "identity";
 
