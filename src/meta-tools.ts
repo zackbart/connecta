@@ -3,7 +3,7 @@ import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import { z } from "zod";
+import * as z from "zod";
 import type { ActivityCallSource, ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
 import {
