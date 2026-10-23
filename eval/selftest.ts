@@ -1700,28 +1700,41 @@ for (const mutate of [
   // Matching stale protocols are still incompatible with the current grader.
   left.protocol!.harnessHash = right.protocol!.harnessHash = "stale fakes";
   expectRefusal(() => compare(left, right), "Equally stale protocols established a decision");
-  const cliArgs = [
-    "--import",
-    "tsx",
-    new URL("./compare.ts", import.meta.url).pathname,
-    "--a",
-    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
-    "--b",
-    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
-  ];
-  const refused = spawnSync(process.execPath, cliArgs, { encoding: "utf8" });
-  if (refused.status === 0 || refused.stdout.includes("Decision") || !refused.stderr.includes("Comparison refused:"))
-    throw new Error("CLI provenance mismatch did not exit nonzero without a decision");
-  const allowed = spawnSync(process.execPath, [...cliArgs, "--allow-mismatch"], { encoding: "utf8" });
-  if (
-    allowed.status !== 0 ||
-    !allowed.stdout.includes("Decision NON-COMPARABLE") ||
-    allowed.stdout.includes("Decision PASS")
-  )
-    throw new Error(`CLI mismatch override did not mark its decision: ${allowed.stderr}`);
-  console.log(
-    `ok   comparison provenance: ${controls.length} specific refusals, historical baseline, stale protocol and NON-COMPARABLE override`,
-  );
+  // Preserve archived provenance while comparing only rows that still have graders.
+  const historicalDirectory = await mkdtemp(join(tmpdir(), "connecta-eval-historical-"));
+  try {
+    const historicalPath = join(historicalDirectory, "retained.json");
+    const historical = structuredClone(frozen);
+    const currentIds = new Set(ACTIVE_TASKS.map((task) => task.id));
+    historical.trials = historical.trials.filter((trial) => currentIds.has(trial.task));
+    historical.tasks = historical.tasks.filter((task) => currentIds.has(task.id));
+    historical.config.tasks = historical.config.tasks.filter((id) => currentIds.has(id));
+    await writeFile(historicalPath, JSON.stringify(historical));
+    const cliArgs = [
+      "--import",
+      "tsx",
+      new URL("./compare.ts", import.meta.url).pathname,
+      "--a",
+      historicalPath,
+      "--b",
+      historicalPath,
+    ];
+    const refused = spawnSync(process.execPath, cliArgs, { encoding: "utf8" });
+    if (refused.status === 0 || refused.stdout.includes("Decision") || !refused.stderr.includes("Comparison refused:"))
+      throw new Error("CLI provenance mismatch did not exit nonzero without a decision");
+    const allowed = spawnSync(process.execPath, [...cliArgs, "--allow-mismatch"], { encoding: "utf8" });
+    if (
+      allowed.status !== 0 ||
+      !allowed.stdout.includes("Decision NON-COMPARABLE") ||
+      allowed.stdout.includes("Decision PASS")
+    )
+      throw new Error(`CLI mismatch override did not mark its decision: ${allowed.stderr}`);
+    console.log(
+      `ok   comparison provenance: ${controls.length} specific refusals, historical baseline, stale protocol and NON-COMPARABLE override`,
+    );
+  } finally {
+    await rm(historicalDirectory, { recursive: true, force: true });
+  }
 }
 {
   const left = comparisonFixture("six", 1),
