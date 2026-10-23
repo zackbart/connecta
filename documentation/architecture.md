@@ -2083,11 +2083,17 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 `src/http/tools.ts` for list, get, read, write and action builders.
 `src/http/provider.ts` composes them with `defineProvider`; it returns the
 ordinary Promise-based Connector factory. The kit stays outside the root
-graph and its Effect types are internal. No live provider migrates in B.4;
-the complete Tithe.ly reference remains separate until B.5 proves its goldens.
-The helper derives connection metadata and probe messages from validated
-options and accepts complete legacy usage guides. Candidate checks can refuse
-before authentication while preserving the provider's exact diagnostic.
+graph and its Effect types are internal. Tithe.ly is the first provider on
+it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
+are unchanged. The helper derives connection metadata and probe messages from
+validated options and accepts complete legacy usage guides, which providers in
+`PENDING.step2` keep. Candidate checks can refuse before authentication while
+preserving the provider's exact diagnostic. On Node, kit writes go through the
+owned transport `listen` installs, so suites that call one without `listen`
+configure it themselves, as the goldens harness does. Anything a connection
+caches across calls, such as its typed HttpApi client, is built with no
+services, because Effect constructors close over the context they run in and a
+cached value would otherwise keep its first caller's request alive (INV-7).
 
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection

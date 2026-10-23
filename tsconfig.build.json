@@ -14,7 +14,6 @@
     "src/operator-ui/app",
     "src/providers/**/*.test.ts",
     "src/providers/*/fixtures.ts",
-    "src/http",
     "src/providers/*/kit-prototype.ts"
   ]
 }

@@ -38,7 +38,6 @@ export const PENDING = {
     "sheets",
     "slides",
     "stripe",
-    "tithely",
     "vercel",
   ]),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */

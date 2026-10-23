@@ -19,6 +19,7 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
   const modules = await Promise.all([
     import("../../src/catalog-service.js"),
     import("../../src/credentials.js"),
+    import("../../src/guarded-transport.js"),
     import("../../src/invocation.js"),
     import("../../src/registry.js"),
     import("../../src/skills.js"),
@@ -29,6 +30,7 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
   [
     { CatalogService },
     { CredentialVault },
+    { configureGuardedTransport },
     { InvocationService },
     { Registry },
     { connectorGuide, connectorGuideSummary },
@@ -36,6 +38,10 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
     { classifyTool },
     { CONNECTA_VERSION },
   ] = modules;
+  // A Node deployment serves through listen(), which owns the kit's write
+  // transport; here the fake network stands in for it. Workers send natively.
+  if (typeof WebSocketPair === "undefined")
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   if (loadSpec) return loadSpec();
   const load = import.meta.glob<() => Promise<{ default: GoldenSpec }>>("./*/spec.ts")[`./${spec.provider}/spec.ts`];
   if (!load) return spec; // Inline harness probes also use the load-time dispatchers.
@@ -57,6 +63,7 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
 }
 let CatalogService: typeof import("../../src/catalog-service.js").CatalogService;
 let CredentialVault: typeof import("../../src/credentials.js").CredentialVault;
+let configureGuardedTransport: typeof import("../../src/guarded-transport.js").configureGuardedTransport;
 let InvocationService: typeof import("../../src/invocation.js").InvocationService;
 let Registry: typeof import("../../src/registry.js").Registry;
 let connectorGuide: typeof import("../../src/skills.js").connectorGuide;

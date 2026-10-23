@@ -1,11 +1,12 @@
 import { configureGuardedTransport } from "../src/guarded-transport.js";
-// Decision 0010's shared case table: the provider kit prototype and today's
-// api() core run the same cases, served by the invocation and called
-// directly, and must reach the same verdict on every row: the write's outcome
+// Decision 0010's shared case table: the provider kit and today's api() core
+// run the same cases, served by the invocation and called directly, and must
+// reach the same verdict on every row: the write's outcome
 // (`classifyWriteOutcome`), `retryable`, `code`, and whether advice to send
 // the call again reaches the agent. The kit records provenance in the core
 // ledger and the api() boundary decides, so there is one verdict table: the
-// core's (src/write-outcome.ts).
+// core's (src/write-outcome.ts). Tithe.ly is on the kit since B.5; its rows
+// hold the live provider to the verdicts its hand-written core reached.
 //
 // The row marked Q8, a write answered 401, holds both sides to the same
 // verdict as every other: unknown, keeping its auth code and handoff, unless
@@ -27,8 +28,7 @@ import { InvocationService, type InvocationOutcome } from "../src/invocation.js"
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { stripeErrors } from "../src/providers/stripe/kit-prototype.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { TITHELY_API_BASE_URLS, tithely } from "../src/providers/tithely/index.js";
-import { kitTools } from "../src/providers/tithely/kit-prototype.js";
+import { tithely } from "../src/providers/tithely/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -50,14 +50,12 @@ afterEach(() => {
 // --- The two sides of each family ------------------------------------------------
 
 interface Family {
-  /** Today's api() core. */
-  readonly core: () => Connector;
-  /** The same tool names on the kit prototype, inside a tracked api() boundary. */
+  /** Today's api() core; absent once the family is on the kit, whose rows then state the core's verdicts. */
+  readonly core?: () => Connector;
+  /** The same tool names on the kit, inside a tracked api() boundary. */
   readonly kit: () => Connector;
   readonly credential?: Record<string, string>;
 }
-
-const tithelyCore = () => tithely("giving", { purpose: "Weekly giving reports", environment: "live" });
 
 /** Stripe's failure mapper on the kit (stripeErrors), sending one form write as the REST hatch does. */
 function stripeKit(): Connector {
@@ -199,17 +197,7 @@ function acmeKit(): Connector {
 
 const FAMILIES = {
   tithely: {
-    core: tithelyCore,
-    kit: () => {
-      const core = tithelyCore();
-      return tracksEveryRequest(
-        api("giving", {
-          title: "Tithe.ly Giving",
-          ...(core.credential ? { credential: core.credential } : {}),
-          tools: kitTools(TITHELY_API_BASE_URLS.live, 25, "drop"),
-        }),
-      );
-    },
+    kit: () => tithely("giving", { purpose: "Weekly giving reports", environment: "live" }),
     credential: { publicKey: "pub_case_table", privateKey: "pri_case_table" },
   },
   stripe: {
@@ -530,9 +518,9 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
     { ...NODE, timeout: 30_000 },
     async (_name, row) => {
       const family: Family = FAMILIES[row.family];
-      const sides = { core: family.core(), kit: family.kit() };
-      const seen = {} as Record<keyof typeof sides, { direct: Verdict; served?: Verdict; sent: string[] }>;
-      for (const [side, connector] of Object.entries(sides) as Array<[keyof typeof sides, Connector]>) {
+      const sides = { kit: family.kit(), ...(family.core ? { core: family.core() } : {}) };
+      const seen = {} as Record<"core" | "kit", { direct: Verdict; served?: Verdict; sent: string[] }>;
+      for (const [side, connector] of Object.entries(sides) as Array<["core" | "kit", Connector]>) {
         const call = await direct(row, connector);
         // A served call's cancellation is the invocation's own, the same for any connector.
         seen[side] = {
@@ -542,9 +530,11 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
         };
       }
       // The same requests leave on both sides.
-      expect(seen.kit.sent, "requests").toEqual(seen.core.sent);
-      expect(seen.kit.direct, "direct").toEqual(seen.core.direct);
-      expect(seen.kit.served, "served").toEqual(seen.core.served);
+      if (seen.core) {
+        expect(seen.kit.sent, "requests").toEqual(seen.core.sent);
+        expect(seen.kit.direct, "direct").toEqual(seen.core.direct);
+        expect(seen.kit.served, "served").toEqual(seen.core.served);
+      }
       expect(seen.kit.direct).toMatchObject(row.direct ?? row.served);
       if (!row.abort) expect(seen.kit.served).toMatchObject(row.served);
       if (row.recovery) {

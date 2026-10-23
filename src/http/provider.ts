@@ -1,4 +1,4 @@
-// Internal provider kit (decision 0010, B.4). Not published until B.5.
+// Internal provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
 import type { ApiHandlerContext, ApiOAuthConfig, ApiTool } from "../connectors/api-connector.js";

@@ -17,7 +17,7 @@
 // vendor's `result` hook, then the connection's ResultSafety. A provider
 // cannot reach a body earlier.
 
-import { Effect, type Schema } from "effect";
+import { Context, Effect, type Schema } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -150,7 +150,10 @@ export interface Connection<R = CallServices> {
 
 type Method<R> = (request: unknown) => Effect.Effect<HttpClientResponse.HttpClientResponse, unknown, R>;
 
-/** Bind a vendor to one connection's guarded client. The typed client is built once, on first use. */
+/**
+ * Bind a vendor to one connection's guarded client. The typed client is built
+ * once, on first use, and lives as long as the connection.
+ */
 export function connect<R>(
   vendor: Vendor,
   guarded: GuardedClient<R>,
@@ -158,12 +161,17 @@ export function connect<R>(
 ): Connection<R | CallServices> {
   validateVendorErrors(options.errors);
   let built: Record<string, Method<R>> | undefined;
+  // HttpApiClient closes over the services it is built in (its middleware
+  // lookup), and the client outlives every call. Build it with none, so it
+  // holds no caller's context, signal, credentials or request scope (INV-7);
+  // its endpoints read each call's services when they run.
+  const construct = HttpApiClient.makeWith(vendor.api, { httpClient: guarded.client }).pipe(
+    Effect.setContext(Context.empty()),
+  );
   const client = Effect.suspend(() =>
     built
       ? Effect.succeed(built)
-      : HttpApiClient.makeWith(vendor.api, { httpClient: guarded.client }).pipe(
-          Effect.map((made) => (built = made as unknown as Record<string, Method<R>>)),
-        ),
+      : construct.pipe(Effect.map((made) => (built = made as unknown as Record<string, Method<R>>))),
   );
 
   const settle = (

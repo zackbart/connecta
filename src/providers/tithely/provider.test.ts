@@ -1,12 +1,21 @@
-// The Tithe.ly giving connection is hand-written fetch. Request shapes,
-// projections, and status mapping live in the characterization goldens; these
-// tests pin the environment choice, key-pair admission, the hatch confinement,
-// the bank and legal boundary, and the vendor shapes that once parsed wrong.
+// The Tithe.ly giving connection on the provider kit. Request shapes,
+// projections, and status mapping live in the characterization goldens, which
+// build one live, dropping connection; these tests pin key-pair admission and
+// the credential probe, the guide in every other mode, the bank and legal
+// boundary, the vendor shapes that once parsed wrong, and the catalog and
+// decoder agreeing on every input.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
+import { resultSafety } from "../../http/safety.js";
+import type { Connection } from "../../http/vendor.js";
+import { errors } from "./api.js";
 import { tithely } from "./index.js";
+import { tithelyTools } from "./tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
+import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import goldenCatalog from "../../../test/goldens/tithely/catalog.json";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
@@ -32,6 +41,8 @@ function queue(...items: StubResponse[]): void {
 }
 
 beforeEach(() => {
+  // listen() from the Node entry owns the write transport; here it is the stubbed fetch.
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -51,16 +62,18 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 
 const KEYS = { publicKey: "pub_abc123", privateKey: "pri_def456" };
 
-function context(values: Record<string, string> | null = KEYS): ConnectorContext {
+function context(values: Record<string, string> | null = KEYS, signal?: AbortSignal): ConnectorContext {
   return {
     storage: memoryStorage(),
     logger: silentLogger,
     baseUrl: "https://connecta.example",
+    ...(signal ? { signal } : {}),
     credential: {
       get: async (field?: string) => (field ? (values?.[field] ?? null) : null),
       getAll: async () => values,
@@ -194,5 +207,138 @@ describe("named reads (H9, H10)", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(error.message).toContain("There was a problem using that payment method.");
+  });
+});
+
+describe("keys and writes", () => {
+  it("INV-5: refuses a missing or swapped key pair before any request leaves", async () => {
+    for (const values of [null, { publicKey: "pri_x", privateKey: "pub_y" }]) {
+      const error = await call(connection(), "get_charge", { chargeId: "ch_1" }, context(values)).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toMatchObject({ code: "auth_required" });
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it("INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets its auth code and unknown outcome", async () => {
+    const controller = new AbortController();
+    let reading!: () => void;
+    const reached = new Promise<void>((resolve) => (reading = resolve));
+    globalThis.fetch = vi.fn(
+      async () =>
+        // The status is in; the body is pulled only once read, and never finishes.
+        new Response(new ReadableStream({ pull: () => (reading(), new Promise(() => {})) }, { highWaterMark: 0 }), {
+          status: 401,
+        }),
+    ) as unknown as typeof fetch;
+    const pending = call(
+      connection(),
+      "tithely_api_mutate",
+      { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] },
+      context(KEYS, controller.signal),
+    ).catch((caught: unknown) => caught);
+    await reached;
+    controller.abort(new Error("caller left"));
+    const error = await pending;
+    expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect((error as Error).message).toContain("whether it took effect is unknown");
+  });
+});
+
+describe("connection modes the goldens do not build", () => {
+  it("INV-5: the probe tests the candidate keys, refusing a missing, swapped or empty pair before any request", async () => {
+    const stored = context({ publicKey: "pub_stored", privateKey: "pri_stored" });
+    stored.credential!.getAll = vi.fn(stored.credential!.getAll);
+    for (const [values, message] of [
+      [{}, "Both the Tithe.ly public key and private key are required."],
+      [{ publicKey: " ", privateKey: "pri_def456" }, "Both the Tithe.ly public key and private key are required."],
+      [
+        { publicKey: "pri_def456", privateKey: "pub_abc123" },
+        "The Tithe.ly keys are swapped: the pub_ key belongs in the public-key field and the pri_ key in the private-key field.",
+      ],
+    ] as const) {
+      expect(await connection().testCredentials!(values, stored)).toEqual({ ok: false, message });
+    }
+    expect(calls).toEqual([]);
+    for (const [environment, host] of [
+      ["live", "tithe.ly"],
+      ["test", "tithelydev.com"],
+    ] as const) {
+      calls.length = 0;
+      queue({ body: { status: "success", type: "List", data: [ORGANIZATION] } });
+      expect(await connection({ environment }).testCredentials!(KEYS, stored)).toEqual({
+        ok: true,
+        message: `Keys accepted by Tithe.ly (${environment}); first organization reached: Grace Church (org_1).`,
+      });
+      expect(calls).toEqual([
+        {
+          url: `https://${host}/api/v1/organizations-list?limit=1`,
+          method: "GET",
+          headers: { accept: "application/json", authorization: `Basic ${btoa("pub_abc123:pri_def456")}` },
+          body: undefined,
+        },
+      ]);
+    }
+    expect(stored.credential!.getAll).not.toHaveBeenCalled();
+  });
+
+  it("renders the guide, title and description in every environment, sensitive-field choice and instruction mode", () => {
+    const purpose = "Weekly giving reports for Grace Church";
+    for (const environment of ["live", "test"] as const) {
+      for (const sensitiveFields of ["drop", "return"] as const) {
+        for (const instructions of [undefined, "  Reduce to weekly totals.  "]) {
+          const live = environment === "live";
+          // The golden is the live, dropping guide without instructions; each mode changes one line of it.
+          let content = goldenCatalog.guide.content;
+          if (!live)
+            content = content.replace(
+              "Live Tithe.ly (tithe.ly): real donors and real money.",
+              "Test Tithe.ly (tithelydev.com): a test account; no real money moves.",
+            );
+          if (sensitiveFields === "return")
+            content = content.replace(
+              "  Every result, `raw: true` and the hatches included, leaves them out.\n",
+              "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n",
+            );
+          if (instructions) content += "\n## Account instructions\n\nReduce to weekly totals.\n";
+          const connector = connection({ environment, sensitiveFields, ...(instructions ? { instructions } : {}) });
+          expect(connector.usageGuide).toEqual({
+            content,
+            summary: goldenCatalog.guide.summary.replace("Live", live ? "Live" : "Test"),
+            required: true,
+          });
+          expect([connector.title, connector.description]).toEqual(
+            live
+              ? ["Tithe.ly Giving", `Tithe.ly giving — live donors and real money — ${purpose}`]
+              : ["Tithe.ly Giving (test)", `Tithe.ly giving (test environment, no real money) — ${purpose}`],
+          );
+        }
+      }
+    }
+  });
+});
+
+describe("the catalog and the kit's decoder (decision 0010)", () => {
+  it("INV-1: every tool accepts and refuses the same boundary values in both renderings", () => {
+    // Includes the cases that found each drift: createdAfter past 2^53 and a mutate path of "/" and 300 emoji.
+    const bases: Record<string, Record<string, unknown>> = {
+      list_charges: {},
+      get_charge: { chargeId: "ch_1" },
+      tithely_api_mutate: { method: "POST", path: "/charges" },
+      tithely_api_get: { path: "/charges" },
+      get_organization: { organizationId: "org_1" },
+      get_account: { accountId: "user_1" },
+      get_recurring_charge: { recurringId: "rc_1" },
+      list_payment_methods: { accountId: "user_1" },
+    };
+    // Building reads only the failure table and the value-safety boundary; nothing is sent.
+    const connection = {
+      errors,
+      safety: resultSafety({ review: "Built for its schemas only.", sensitiveFields: { names: [], choice: "drop" } }),
+    } as unknown as Connection;
+    const tools = tithelyTools({ connection, pageSize: 25 });
+    expect(tools).toHaveLength(11);
+    for (const tool of tools) expect(kitInputDisagreements(tool, bases[tool.name] ?? {}), tool.name).toEqual([]);
   });
 });

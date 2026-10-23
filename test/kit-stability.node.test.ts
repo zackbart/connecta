@@ -126,7 +126,7 @@ describe("Effect stability in the provider kit (decision 0010, Q7)", { timeout: 
     for (const name of ["Schema", "Effect", "Context", "Data", "Stream", "HttpClient", "HttpApiEndpoint"]) {
       expect(namespaces.has(name), name).toBe(true);
     }
-    expect(found.some((use) => use.file.endsWith("tithely/kit-prototype.ts"))).toBe(true);
+    expect(found.some((use) => use.file.endsWith("tithely/tools.ts"))).toBe(true);
     // And it reads the tags: the confined HTTP members are the unstable ones it sees.
     expect(found.some((use) => use.stability === "unstable" && UNSTABLE_AREAS.test(use.declaredIn))).toBe(true);
     const unstable = found.filter((use) => use.stability !== "stable" && !UNSTABLE_AREAS.test(use.declaredIn));

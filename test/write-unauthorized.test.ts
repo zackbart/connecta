@@ -4,13 +4,14 @@
 // transport declares reviewed vendor evidence that the vendor authenticates
 // first (`authBeforeExecution`). Decided once, in `src/write-outcome.ts`, from
 // the status the ledger recorded, before any key or untracked exception.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { answeredRequest, guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
 import { infisical } from "../src/providers/infisical/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -26,7 +27,13 @@ const SENTENCE =
   "The write was sent before Tickets rejected its credential, so whether it took effect is unknown: check the target before repeating it.";
 const RECONCILE = "re-read the target of the write that failed to check whether it took effect before any fresh call";
 
+// Kit providers (Tithe.ly) send writes through the owned transport listen() installs on Node.
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -411,9 +418,12 @@ describe("a write answered 401 is decided before every other exception", () => {
       writeOutcome: "unknown",
       reconciliationRequired: true,
       nextAction: { tool: "authorize_connector", arguments: { connector: "giving" } },
+      // On the kit the 401 is mapped by Tithe.ly's status table even past the ceiling (B.3), so its words stay.
       message:
-        "Tithe.ly answered this write with HTTP 401. The write was sent before Tithe.ly rejected its credential, " +
-        "so whether it took effect is unknown: check the target before repeating it.",
+        "Tithe.ly returned HTTP 401. Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the " +
+        "other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix " +
+        "the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took " +
+        "effect is unknown: check the target before repeating it.",
     });
     expect(error.instructions).toContain(RECONCILE);
   });

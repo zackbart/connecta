@@ -1,7 +1,7 @@
 // The catalog is the inventory: adding an API provider or tool requires a
 // dispatchable example here, and every dispatched failure must use core's
 // decision. Argument examples come from the independent #900 fixtures.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callClassification } from "../src/call-classification.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
@@ -9,6 +9,7 @@ import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { deriveContext } from "../src/derived-context.js";
 import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { providerRequests, readRequest, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
@@ -78,7 +79,13 @@ function credential(name: string): Record<string, string> {
   };
 }
 
+// Kit providers (Tithe.ly) send writes through the owned transport listen() installs on Node.
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
