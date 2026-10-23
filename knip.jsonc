@@ -58,6 +58,5 @@
     // examples/worker/wrangler.jsonc — is in the same position:
     // test/d1-storage.node.test.ts imports it, and losing that import
     // brings its exemption back.
-
   ]
 }

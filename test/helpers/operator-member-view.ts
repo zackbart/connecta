@@ -45,7 +45,9 @@ const MANAGE_ACTIONS = {
 
 /** The trusted projection a member response must match, value for value. */
 export interface MemberViewExpectation {
-  pools: Array<Pick<OperatorPoolV2, "name" | "humanPath" | "agentPath" | "readOnly" | "tools">>;
+  pools: Array<
+    Pick<OperatorPoolV2, "name" | "humanPath" | "agentPath" | "readOnly" | "surface" | "executeCode" | "tools">
+  >;
   connectors: OperatorMemberConnector[];
 }
 
@@ -127,11 +129,13 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
     ];
   });
   return {
-    pools: pools.map(({ name, humanPath, agentPath, readOnly, tools }) => ({
+    pools: pools.map(({ name, humanPath, agentPath, readOnly, surface, executeCode, tools }) => ({
       name,
       humanPath,
       agentPath,
       readOnly,
+      surface,
+      executeCode,
       tools,
     })),
     connectors,
@@ -291,12 +295,16 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
       "humanPath",
       "agentPath",
       "readOnly",
+      "surface",
+      "executeCode",
       "owner",
       "tools",
       "members",
     ]);
     expect(pool.owner, `pools[${i}].owner`).toBeNull();
     expect(pool.members, `pools[${i}].members`).toEqual([]);
+    oneOf(pool.surface, ["meta", "native"], `pools[${i}].surface`);
+    oneOf(pool.executeCode, [true, false], `pools[${i}].executeCode`);
     oneOf(pool.readOnly, [true, false], `pools[${i}].readOnly`);
     for (const key of ["name", "humanPath", "agentPath"]) text(pool[key], `pools[${i}].${key}`);
     const grants = list(pool.tools, `pools[${i}].tools`);
@@ -329,11 +337,13 @@ const sortBy = <T>(values: readonly T[], key: (value: T) => string) =>
 function canonicalPools(value: unknown): unknown {
   // Owner and members were checked null and empty above; the rest is the projection.
   return sortBy(value as MemberViewExpectation["pools"], (p) => p.name).map(
-    ({ name, humanPath, agentPath, readOnly, tools }) => ({
+    ({ name, humanPath, agentPath, readOnly, surface, executeCode, tools }) => ({
       name,
       humanPath,
       agentPath,
       readOnly,
+      surface,
+      executeCode,
       tools: sortBy(tools, (g) => g.connectorId).map((grant) => ({
         ...grant,
         tools: grant.tools === "all" ? "all" : sortBy(grant.tools, (t) => t.name),

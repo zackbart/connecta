@@ -4,10 +4,12 @@
 // default; its own suites cover it unchanged.
 
 import { describe, expect, it } from "vitest";
+import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
 import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
 import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
+import type { JsonSchema } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
@@ -18,6 +20,7 @@ const BASE = "https://connecta.test";
 function deployment(options: { classification?: Record<string, Record<string, "read" | "write">> } = {}) {
   const storage = memoryStorage();
   const sent: string[] = [];
+  const events: ToolCallActivityEvent[] = [];
   const crm = api("crm", {
     description: "CRM",
     tools: [
@@ -57,13 +60,22 @@ function deployment(options: { classification?: Record<string, Record<string, "r
   return {
     storage,
     sent,
+    events,
     connecta: createTestConnecta({
       connectors: [crm],
+      activity: activityHistory({
+        store: {
+          record: async (event) => {
+            events.push(event);
+          },
+        },
+      }),
       agents: ["assistant"],
       pools: {
         meta: member,
         native: { ...member, surface: "native", description: "Team tier." },
         nocode: { ...member, surface: "native", executeCode: false },
+        other: { ...member, surface: "native", executeCode: false },
         reads: { ...member, surface: "native", readOnly: true },
       },
       ...(options.classification ? { classification: options.classification } : {}),
@@ -168,7 +180,7 @@ describe("native tool surface", () => {
   });
 
   it("INV-2: runs reads and writes through the existing call paths and their result shapes", async () => {
-    const { connecta, token, sent } = await admitted();
+    const { connecta, token, sent, events } = await admitted();
     for (const modern of [true, false]) {
       const read = await rpc(
         connecta,
@@ -192,6 +204,12 @@ describe("native tool surface", () => {
       expect(write.result.content).toEqual([{ type: "text", text: '{"id":"p2","name":"Bob"}' }]);
     }
     expect(sent).toEqual(["get_person", "create_person", "get_person", "create_person"]);
+    expect(events.map((event) => [event.source, event.address, event.classification])).toEqual([
+      ["native", "crm.get_person", "read"],
+      ["native", "crm.create_person", "write"],
+      ["native", "crm.get_person", "read"],
+      ["native", "crm.create_person", "write"],
+    ]);
   });
 
   it("INV-2: a read-only native pool omits write tools and refuses a write call before dispatch", async () => {
@@ -212,22 +230,74 @@ describe("native tool surface", () => {
     expect(sent).toEqual([]);
   });
 
+  it("INV-1 INV-2 INV-9: routes a changed verdict as a write and never repeats an unknown outcome", async () => {
+    for (const modern of [true, false]) {
+      const storage = memoryStorage();
+      let write = false;
+      let calls = 0;
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: "crm",
+            listTools: async () => [
+              { name: "get", inputSchema: { type: "object" }, annotations: { readOnlyHint: !write } },
+            ],
+            callTool: async () => {
+              calls++;
+              throw new Error("PRIVATE_FAILURE");
+            },
+          },
+        ],
+        agents: ["assistant"],
+        pools: {
+          native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" },
+          reads: { tools: ["crm"], members: ["agent:assistant"], surface: "native", readOnly: true },
+        },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listing = await rpc(app, token, "native", "tools/list", {}, modern);
+        expect(
+          listing.result.tools.find((tool: { name: string }) => tool.name === "crm__get").annotations.readOnlyHint,
+        ).toBe(true);
+        write = true;
+        const result = await rpc(app, token, "native", "tools/call", { name: "crm__get", arguments: {} }, modern);
+        expect(envelope(result.result).error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+
+        const refused = await rpc(app, token, "reads", "tools/call", { name: "crm__get", arguments: {} }, modern);
+        expect(envelope(refused.result).error.code).toBe("read_only_endpoint");
+        expect(calls).toBe(1);
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
   it("returns invocation's own envelopes for invalid arguments and unknown tools", async () => {
     const { connecta, token, sent } = await admitted();
-    const invalid = await rpc(connecta, token, "native", "tools/call", { name: "crm__get_person", arguments: {} });
-    expect(invalid.result.isError).toBe(true);
-    expect(envelope(invalid.result).error).toMatchObject({
-      code: "invalid_args",
-      validation: { issues: [{ path: "/id", code: "required" }] },
-    });
-    for (const modern of [true, false]) {
-      for (const name of ["crm__nope", "crm__wrong__get_person", "crm__export_all", "crm__export.all"]) {
-        const unknown = await rpc(connecta, token, "native", "tools/call", { name, arguments: { id: "p1" } }, modern);
-        // Illegal names are rejected by the SDK; legal misses are bounded tool failures.
-        expect(unknown.error || unknown.result.isError).toBeTruthy();
-        if (unknown.result)
-          expect(envelope(unknown.result).error).toMatchObject({ code: "unknown_tool", retryable: false });
+    for (const pool of ["native", "nocode"]) {
+      const invalid = await rpc(connecta, token, pool, "tools/call", { name: "crm__get_person", arguments: {} });
+      expect(invalid.result.isError).toBe(true);
+      expect(envelope(invalid.result).error).toMatchObject({
+        code: "invalid_args",
+        validation: { issues: [{ path: "/id", code: "required" }] },
+      });
+      for (const modern of [true, false]) {
+        for (const name of ["crm__nope", "crm__wrong__get_person", "crm__export_all", "crm__export.all"]) {
+          const unknown = await rpc(connecta, token, "native", "tools/call", { name, arguments: { id: "p1" } }, modern);
+          // Illegal names are rejected by the SDK; legal misses are bounded tool failures.
+          expect(unknown.error || unknown.result.isError).toBeTruthy();
+          if (unknown.result)
+            expect(envelope(unknown.result).error).toMatchObject({ code: "unknown_tool", retryable: false });
+        }
       }
+      expect(JSON.stringify(invalid.result)).not.toMatch(
+        /search_tools|call_tool|call_destructive_tool|authorize_connector/,
+      );
+      expect(envelope(invalid.result).error.nextAction).toMatchObject({ host: "search" });
     }
     expect(sent).toEqual([]);
   });
@@ -252,6 +322,12 @@ describe("native tool surface", () => {
       arguments: notice.nextAction.arguments,
     });
     expect(page.result.structuredContent).toMatchObject({ offset: 24_000, bytes: 24_000, hasMore: true });
+    const denied = await rpc(connecta, token, "other", "tools/call", {
+      name: "read_result",
+      arguments: notice.nextAction.arguments,
+    });
+    expect(denied.result.isError).toBe(true);
+    expect(denied.result.content[0].text).toContain("Unknown or expired result id");
   });
 
   it("serves the native instructions, with the pool description, in place of the meta routing text", async () => {
@@ -347,7 +423,7 @@ describe("native tool surface", () => {
   });
 
   it("preserves object constraints, local references and compositions, and refuses non-object schemas", async () => {
-    const object = {
+    const object: JsonSchema = {
       type: "object",
       properties: { id: { type: "string" } },
       required: ["id"],
@@ -407,7 +483,7 @@ describe("native tool surface", () => {
     }
   });
 
-  it("INV-11: refuses executeCode without the native surface, and an unknown surface", () => {
+  it("INV-11: refuses executeCode without the native surface, and an unknown surface", { tags: ["node"] }, () => {
     const storage = memoryStorage();
     const make = (pool: Record<string, unknown>) => () =>
       createTestConnecta({
@@ -425,7 +501,7 @@ describe("native tool surface", () => {
 });
 
 describe("native tool names", () => {
-  it("are <connector>__<tool> when exact, and a stable hashed head otherwise", async () => {
+  it("are <connector>__<tool> when exact, and a stable hashed head otherwise", { tags: ["node"] }, async () => {
     expect(await nativeToolName("crm", "get_person")).toBe("crm__get_person");
     expect(await nativeToolName("crm", "get-person2")).toBe("crm__get-person2");
     // Lossy, a nested separator, a leading underscore, or overlong: head + six hex.

@@ -120,6 +120,8 @@ export interface ConnectaConfigDescription {
     tools: string[];
     members: DescribedMember[];
     readOnly: boolean;
+    surface: "meta" | "native";
+    executeCode: boolean;
     owner: string | null;
     description: string | null;
   }>;
@@ -441,6 +443,8 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     agents: [...config.agents],
     pools: Object.entries(config.pools ?? {}).map(([name, pool]) => ({
       readOnly: pool.readOnly ?? config.readOnly,
+      surface: pool.surface ?? "meta",
+      executeCode: pool.executeCode !== false,
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),

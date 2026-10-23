@@ -35,6 +35,8 @@ export interface EndpointRow {
   /** The pool's agentPath, only when an agent is a member. */
   agentPath: string | null;
   readOnly: boolean;
+  surface: "meta" | "native";
+  executeCode: boolean;
   toolCount: number;
   groups: EndpointGroup[];
   /** Who can use it: root.maintainers for /mcp, the pool's members otherwise. */
@@ -166,6 +168,8 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
       path: contract.root.path,
       agentPath: null,
       readOnly: contract.root.readOnly,
+      surface: "meta",
+      executeCode: true,
       toolCount: toolCount(groups),
       groups,
       access: accessChips(contract.root.maintainers),
@@ -179,6 +183,8 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
       path: pool.humanPath,
       agentPath: pool.members.some((member) => member.kind === "agent") ? pool.agentPath : null,
       readOnly: pool.readOnly,
+      surface: pool.surface,
+      executeCode: pool.executeCode,
       toolCount: toolCount(groups),
       groups,
       access: accessChips(pool.members),

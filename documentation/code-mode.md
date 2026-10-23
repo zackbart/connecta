@@ -33,10 +33,10 @@ new behavior.
 
 ## Deploy-time capability
 
-The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
-six — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
+The `executor` passed to `createConnecta()` is required. On meta endpoints,
+`tools/list` is exactly six — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
 `authorize_connector` and `skills`. Construction fails when the
-executor is missing, and the removed `surface` option is rejected rather than
+executor is missing, and the removed deployment-level `surface` option is rejected rather than
 ignored ([#273](https://github.com/zackbart/connecta/issues/273)), as are the
 pause-only `execute.resumableWrites` and `execute.pausedRunTtlSeconds`
 ([#672](https://github.com/zackbart/connecta/issues/672)).
@@ -1107,7 +1107,10 @@ omit write tools from `search_tools`, `connecta.search`, and
 `connecta.describe`, and refuse every write call through `call_tool`,
 `call_destructive_tool`, and programs with `read_only_endpoint` before
 validation or dispatch. Guides and skills are documentation and may still name
-those tools. `tools/list` is the same six tools on both. Approval belongs to the client.
+those tools. Meta endpoints list the same six tools in both modes.
+[Native pools](./meta-tools.md#native-tool-surface) list individual downstream
+tools and omit writes when read-only. They retain `execute_code` by default;
+`executeCode: false` replaces it with `read_result`. Approval belongs to the client.
 `readOnly` grants no tool or connector access and cannot be set by guest code,
 request arguments, or a downstream catalog. `execute.approval`,
 `Connector.approval`, per-tool approval exemptions, and pool `trust` are

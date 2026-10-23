@@ -1,6 +1,6 @@
-// The native tool surface (prototype, #703): a pool with `surface: "native"`
+// The native tool surface (#703): a pool with `surface: "native"`
 // lists each downstream tool directly, for clients that run their own tool
-// search, instead of the six meta-tools. Nothing here enforces anything. A
+// search, instead of the six meta-tools. This layer resolves tool identity; a
 // native call is translated into the exact call_tool or call_destructive_tool
 // call and runs through the same handler, so classification, read-only
 // refusal, validation, admission, redaction, write settlement and result
@@ -14,6 +14,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { classifyCallError, type CallErrorDetails } from "./errors.js";
+import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { failureRecord, logFailure } from "./operator-record.js";
@@ -124,7 +125,7 @@ function nativeInputSchema(schema: JsonSchema): Record<string, unknown> {
   if (!supportsObject(schema))
     throw new ProtocolError(
       -32603,
-      "A native tool input schema cannot be represented as object arguments. Use the meta surface or ask the operator to fix the schema.",
+      "Native input schema cannot be represented as object arguments. Use meta or fix the schema.",
     );
   return schema.type === "object" ? schema : { ...schema, type: "object" };
 }
@@ -164,6 +165,7 @@ export interface NativeSurfaceOptions {
   executeCode: boolean;
   route: NativeCallRoute;
   bind: (request: ServerContext) => void;
+  catalogErrors: string[];
   logger: Logger;
   requestScope: object;
   requestSignal?: AbortSignal | undefined;
@@ -199,46 +201,47 @@ export class NativeSurface {
    * whole, never partially, with an operator warning; two tools claiming one
    * name are both omitted and stay reachable by address in execute_code.
    */
-  async list(): Promise<NativeTool[]> {
-    const loaded = await this.catalog.listCatalogs(true);
-    const byName = new Map<string, NativeTool[]>();
+  private async claims(connectors = this.registry.listConnectors()) {
+    const loaded = await this.catalog.listCatalogs(true, connectors);
+    const byName = new Map<string, NativeTool | null>();
     for (const entry of loaded) {
-      if ("error" in entry) {
-        logFailure(
-          this.options.logger,
-          "native tools/list omitted an unavailable connector",
-          failureRecord({ connector: entry.connector.id }, entry.error),
-        );
-        continue;
-      }
+      if (!("tools" in entry)) continue;
       for (const tool of entry.tools) {
         const name = await nativeToolName(entry.connector.id, tool.name);
-        byName.set(name, [...(byName.get(name) ?? []), { name, connector: entry.connector, tool }]);
+        if (byName.has(name)) {
+          byName.set(name, null);
+          logFailure(
+            this.options.logger,
+            "native name collision",
+            failureRecord({ connector: entry.connector.id, tool }),
+          );
+        } else byName.set(name, { name, connector: entry.connector, tool });
       }
     }
-    const tools: NativeTool[] = [];
-    for (const claimants of byName.values()) {
-      if (claimants.length === 1) {
-        const entry = claimants[0]!;
-        if (!(this.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read")
-          tools.push(entry);
-        continue;
-      }
-      for (const claimant of claimants) {
-        logFailure(
-          this.options.logger,
-          "native tools/list omitted a tool whose native name another tool shares",
-          failureRecord({ connector: claimant.connector.id, tool: claimant.tool }),
-        );
-      }
+    return { loaded, byName };
+  }
+
+  private async list(): Promise<NativeTool[]> {
+    const { loaded, byName } = await this.claims();
+    for (const entry of loaded) {
+      if (!("error" in entry)) continue;
+      this.options.catalogErrors.push(entry.connector.id);
+      logFailure(
+        this.options.logger,
+        "native catalog unavailable",
+        failureRecord({ connector: entry.connector.id }, entry.error),
+      );
     }
-    return tools;
+    return [...byName.values()].filter(
+      (entry): entry is NativeTool =>
+        entry !== null &&
+        (!(this.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read"),
+    );
   }
 
   /**
    * The downstream tool behind a native name, from the catalogs whose
-   * connector prefix the name carries (every visible catalog when none
-   * does, as for a name whose connector half was cut). Resolution sees
+   * connector prefix the name could carry, including truncated prefixes. Resolution sees
    * writes on a read-only endpoint, so invocation refuses them by code.
    */
   private async resolve(
@@ -248,63 +251,46 @@ export class NativeSurface {
     | { kind: "ambiguous" }
     | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
   > {
-    const connectors = this.registry.listConnectors();
-    const prefixed = connectors.filter((connector) => {
+    const prefixed = this.registry.listConnectors().filter((connector) => {
       const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
       // A hashed name can truncate even the connector prefix, and strips
       // trailing underscores from its head. Include every possible claimant.
       const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
       return name.startsWith(prefix) || name.startsWith(`${head}_`);
     });
-    const found: NativeTool[] = [];
-    let failed: { connector: Connector; cause: unknown } | undefined;
-    for (const connector of prefixed.length > 0 ? prefixed : connectors) {
-      let tools: ToolDef[];
-      try {
-        tools = await this.catalog.loadConnector(connector.id);
-      } catch (cause) {
-        failed ??= { connector, cause };
-        continue;
-      }
-      for (const tool of tools) {
-        if ((await nativeToolName(connector.id, tool.name)) === name) found.push({ name, connector, tool });
-      }
-    }
-    if (found.length === 1) return { kind: "found", entry: found[0]! };
-    if (found.length > 1) return { kind: "ambiguous" };
-    return { kind: "missing", ...(failed ? { failure: failed } : {}) };
+    const { loaded, byName } = await this.claims(prefixed);
+    const found = byName.get(name);
+    if (found === null) return { kind: "ambiguous" };
+    // An unavailable possible claimant cannot prove uniqueness.
+    for (const entry of loaded)
+      if ("error" in entry) return { kind: "missing", failure: { connector: entry.connector, cause: entry.error } };
+    return found ? { kind: "found", entry: found } : { kind: "missing" };
   }
 
   /** A native call: the existing route its current verdict selects. */
   private async call(name: string, args: Record<string, unknown>, request: ServerContext): Promise<unknown> {
     this.options.bind(request);
     const target = await this.resolve(name);
-    if (target.kind === "ambiguous") {
-      const result: ToolResult = jsonResult({
-        ok: false,
-        error: {
-          code: "unknown_tool",
-          message: `More than one tool on this endpoint is named "${name}", so none is called by that name. Call it by address inside execute_code.`,
-          retryable: false,
-        },
-      });
-      result.isError = true;
-      return result;
-    }
-    if (target.kind === "missing") {
-      // A failed catalog may supply an auth handoff, but a name that has not
-      // matched a definition never supplies an address to invocation.
-      const error: CallErrorDetails = target.failure
+    if (target.kind !== "found") {
+      const failure = target.kind === "missing" ? target.failure : undefined;
+      const error: CallErrorDetails = failure
         ? {
-            ...classifyCallError(target.failure.cause, "catalog_lookup_failed"),
-            connector: target.failure.connector.id,
-            message: `Connector "${target.failure.connector.id}" catalog lookup failed.`,
+            ...classifyCallError(failure.cause, "catalog_lookup_failed"),
+            connector: failure.connector.id,
+            message: `Connector "${failure.connector.id}" catalog lookup failed.`,
           }
-        : { code: "unknown_tool", message: `Unknown native tool "${name}".`, retryable: false };
-      if (target.failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+        : {
+            code: "unknown_tool",
+            message:
+              target.kind === "ambiguous"
+                ? `Ambiguous native name "${name}". Ask the operator to rename a claimant.`
+                : `Unknown native tool "${name}".`,
+            retryable: false,
+          };
+      if (failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
         error.nextAction = {
           tool: "authorize_connector",
-          arguments: { connector: target.failure.connector.id },
+          arguments: { connector: failure.connector.id },
           operatorHandoff: "Give the returned handoff to the operator.",
         };
       }
@@ -330,7 +316,8 @@ export class NativeSurface {
         ...(entry ? { annotations: annotationsFor(entry.tool) } : {}),
         ...(entry ? { _meta: { "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}` } } : {}),
       },
-      ((args: Record<string, unknown>, request: ServerContext) => this.call(name, args ?? {}, request)) as never,
+      (async (args: Record<string, unknown>, request: ServerContext) =>
+        nativeRecovery(await this.call(name, args ?? {}, request), this.options.executeCode, name)) as never,
     );
   }
 

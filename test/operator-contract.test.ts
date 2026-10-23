@@ -95,7 +95,12 @@ describe("operator config contract", () => {
   it("INV-5: serves pool owner addresses only to an authenticated maintainer, never to an open deployment's anonymous caller", async () => {
     const pools = {
       mine: { tools: ["shared"], owner: "alice@example.com", members: [{ namespace: "directory", id: "alice" }] },
-      group: { tools: ["shared"], members: [{ namespace: "directory", id: "bob" }] },
+      group: {
+        surface: "native" as const,
+        executeCode: false as const,
+        tools: ["shared"],
+        members: [{ namespace: "directory", id: "bob" }],
+      },
     };
     const open = deployment({
       connectors: [connector("shared")],
@@ -115,6 +120,14 @@ describe("operator config contract", () => {
       ["group", null],
     ]);
     expect(JSON.stringify(anonymous)).not.toContain("alice@example.com");
+    expect(anonymous.config.pools.map((pool) => [pool.surface, pool.executeCode])).toEqual([
+      ["meta", true],
+      ["native", false],
+    ]);
+    expect(anonymous.pools.map((pool) => [pool.surface, pool.executeCode])).toEqual([
+      ["meta", true],
+      ["native", false],
+    ]);
     // The local snapshot is the deployment's own and stays whole.
     expect(open.describeConfig().pools[0]?.owner).toBe("alice@example.com");
 

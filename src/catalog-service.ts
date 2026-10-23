@@ -794,8 +794,8 @@ export class CatalogService {
    */
   listCatalogs(
     includeWrites = false,
+    connectors = this.registry.listConnectors(),
   ): Promise<Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>> {
-    const connectors = this.registry.listConnectors();
     return settleOnClose({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       runEdge(
         Effect.map(

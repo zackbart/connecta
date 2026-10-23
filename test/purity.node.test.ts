@@ -111,7 +111,7 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
     expect(graph.has(nodeAdapter)).toBe(false);
     for (const file of graph)
       expect(readFileSync(file, "utf8")).not.toMatch(
-        /(?:from|import\()\s*["\'](?:eve(?:\/|["\'])|@zackbart\/connecta-eve)/,
+        /(?:from|import\()\s*["'](?:eve(?:\/|["'])|@zackbart\/connecta-eve)/,
       );
     const nodeTransport = join(SRC, "http", "node-transport.ts");
     expect(graph.has(nodeTransport)).toBe(false);

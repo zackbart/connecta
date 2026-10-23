@@ -395,6 +395,9 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       {endpoint.pool === null ? <span className="meta">{endpoint.label}</span> : null}
                     </button>
                     {endpoint.readOnly ? <Pill status="info">read-only</Pill> : null}
+                    <span className="meta">
+                      {endpoint.surface} · code {endpoint.executeCode ? "on" : "off"}
+                    </span>
                   </div>
                   <div className="endpoint-urls">
                     <EndpointLine

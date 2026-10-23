@@ -19,6 +19,7 @@ afterEach(async () => {
 function setup(
   options: {
     native?: boolean;
+    catalogAuth?: boolean;
     credential?: boolean;
     namedCredential?: boolean;
     uiPath?: string;
@@ -34,11 +35,14 @@ function setup(
   const connector: Connector = {
     id: "service",
     kind: "api",
-    listTools: async () => [
-      { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
-      { name: "write", inputSchema: { type: "object" } },
-      { name: "needs_auth", inputSchema: { type: "object" } },
-    ],
+    listTools: async () => {
+      if (options.catalogAuth && !connected) throw new ConnectorCallError("auth_required", "PRIVATE_CATALOG_AUTH");
+      return [
+        { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        { name: "write", inputSchema: { type: "object" } },
+        { name: "needs_auth", inputSchema: { type: "object" } },
+      ];
+    },
     callTool: call,
     status: async () => ({ state: connected ? "ok" : "auth_required" }),
     startAuth: vi.fn(async () => ({
@@ -146,7 +150,7 @@ function setup(
   };
 }
 
-describe("auth URL elicitation", () => {
+describe("native auth URL elicitation", { tags: ["workers"] }, () => {
   it("INV-4: native auth binds the wire name, canonical target and arguments through accept, decline and cancel", async () => {
     for (const action of ["accept", "decline", "cancel"]) {
       const flow = setup({ native: true });
@@ -173,7 +177,23 @@ describe("auth URL elicitation", () => {
       expect(replay.result.structuredContent.error.code).toBe("invalid_request_state");
     }
   });
+  it("INV-4 INV-5: native catalog misses retain an authorization handoff without dispatch or absent tools", async () => {
+    const flow = setup({ native: true, catalogAuth: true });
+    const result = (await flow.rpc()).result;
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: "auth_required",
+      authorizationUrl: expect.stringContaining("/connect/service"),
+    });
+    expect(result.structuredContent.error.nextAction).toMatchObject({
+      url: result.structuredContent.error.authorizationUrl,
+    });
+    expect(JSON.stringify(result)).not.toMatch(/authorize_connector|search_tools|call_tool|PRIVATE_CATALOG_AUTH/);
+    expect(flow.call).not.toHaveBeenCalled();
+  });
+});
 
+describe("auth URL elicitation", { tags: ["node"] }, () => {
   it("INV-4 INV-5 INV-6: asks capable hosts through a fixed same-origin URL elicitation", async () => {
     const flow = setup();
     const sign = vi.spyOn(flow.vault, "signOAuthHandoff");

@@ -33,19 +33,9 @@ export function endpointInstructions(description?: string, native?: { executeCod
   return description === undefined ? instructions : `${instructions} This endpoint: ${description}`;
 }
 
-const NATIVE_LEAD =
-  "Each tool here is one downstream operation, named <connector>__<tool>; its annotations say whether it reads (readOnlyHint) or writes (destructiveHint).";
-const NATIVE_TAIL =
-  "On a read-only endpoint, write tools are absent and every write call is refused. Never repeat a write to recover its output. When an auth error includes a handoff, give it to the user or operator.";
-
-/**
- * The instructions of a native pool (`surface: "native"`), which lists each
- * downstream tool directly instead of the six meta-tools.
- */
+/** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean): string {
-  return executeCode
-    ? `${NATIVE_LEAD} Call one known operation directly. For several, dependent, or reduced calls, or to filter a large read, write one execute_code program that calls each operation with connecta.call and the program address its tool description names. ${NATIVE_TAIL} Page a truncated result with connecta.result inside execute_code, following its nextAction. Fetch skills({ name: "usage" }) only for missing guidance or program repair.`
-    : `${NATIVE_LEAD} Call operations directly. ${NATIVE_TAIL} Page a truncated result with read_result, following its nextAction. skills lists on-demand guidance.`;
+  return `Each tool here is one operation; annotations classify reads and writes. Call known operations directly. ${executeCode ? "Use execute_code for combined work: connecta.call takes the program address in each tool description." : "Use your host's tool search to find operations."} Read-only endpoints omit and refuse writes. Never repeat a write to recover output. Give auth handoffs to the user or operator. Page results with ${executeCode ? "connecta.result inside execute_code" : "read_result"}, following nextAction. skills lists on-demand guidance.`;
 }
 
 export { USAGE_SKILL } from "./usage-guide.js";

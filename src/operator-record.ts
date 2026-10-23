@@ -113,6 +113,7 @@ export const OAUTH_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 
 const SOURCES: ReadonlySet<string> = new Set([
+  "native",
   "call_tool",
   "call_destructive_tool",
   "batch_call",
@@ -520,8 +521,8 @@ export type FailureEvent =
   | "operator status"
   | "operator agent slots read failed"
   | "result paging unavailable"
-  | "native tools/list omitted an unavailable connector"
-  | "native tools/list omitted a tool whose native name another tool shares"
+  | "native catalog unavailable"
+  | "native name collision"
   | "native tools/list refused a pool over the 1,000-tool native cap"
   | "request failed"
   | "Clerk request denied"

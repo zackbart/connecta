@@ -626,3 +626,7 @@ serve the authenticated shell and data. The browser lives in
 and [browser flows](https://github.com/zackbart/connecta/blob/main/test/browser/operator-ui.spec.ts)
 defend filtering and behavior. Use [Operator UI tests](./operator-tests.md)
 for the browser state matrix and Linux snapshot procedure.
+
+Pool endpoint rows show the effective surface (`meta` or `native`) and whether
+code is on. These are read-only facts from deployment configuration; change
+`surface` and `executeCode` in deployment code.

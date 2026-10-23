@@ -472,8 +472,9 @@ function serveMcp(
       probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
       ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
     });
+    const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
     const nativeRoute = registerMetaTools(server, registry, {
-      native,
+      native: diagnostics,
       authElicitation,
       client,
       baseUrl,
@@ -513,6 +514,7 @@ function serveMcp(
         executeCode: native.executeCode,
         route: nativeRoute,
         bind: (context) => authElicitation.bind(context),
+        catalogErrors: diagnostics!.catalogErrors,
         logger: opts.config.logger,
         requestScope,
         requestSignal,

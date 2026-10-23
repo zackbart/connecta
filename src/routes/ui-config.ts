@@ -530,6 +530,8 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
       humanPath: `/mcp/${name}`,
       agentPath: `/agent/${name}`,
       readOnly: pool.readOnly,
+      surface: pool.native ? "native" : "meta",
+      executeCode: pool.native?.executeCode !== false,
       owner: ownersVisible ? (pool.owner ?? null) : null,
       tools: grants(pool.access, allIds),
       members: pool.members.map((member) =>
@@ -733,6 +735,8 @@ function memberRead(
         humanPath: `/mcp/${name}`,
         agentPath: `/agent/${name}`,
         readOnly: pool.readOnly,
+        surface: pool.native ? "native" : "meta",
+        executeCode: pool.native?.executeCode !== false,
         owner: null,
         tools: grants(pool.access, allIds),
         members: [],

@@ -318,34 +318,102 @@ describe("connecta doctor --config", () => {
     expect(executed).toBe(0);
   });
 
-  it("INV-4: --pool checks /agent/<pool> for a pool that lists its agent, and an agent token needs one", async () => {
-    const storage = memoryStorage();
-    const app = createConnecta({
-      readOnly: false,
-      storage,
-      connectors: [
-        api("echo", {
-          tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => null }],
-        }),
-      ],
-      executor: customExecutor({ execute: async () => ({ result: 42 }) }, { lifecycle: "self-managed" }),
-      agents: ["bot"],
-      accessTokens: accessTokens(storage),
-      pools: { bots: { tools: ["echo"], members: ["agent:bot"] } },
-      logger: "silent",
-    });
-    const token = await issueAgentToken(storage, "bot");
-    const url = await deploymentUrl(app);
-    const env = { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" };
-    const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "bots"], { env });
-    expect(stdout).toContain("Connecta doctor passed");
-    await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow(
-      "An agent token reaches only /agent/<pool>",
-    );
-    await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "Bad/Name"], { env })).rejects.toThrow(
-      "--pool must be a pool name",
-    );
-  });
+  it(
+    "INV-4: --pool checks /agent/<pool> for a pool that lists its agent, and an agent token needs one",
+    { timeout: 20_000 },
+    async () => {
+      const storage = memoryStorage();
+      let dispatched = 0;
+      let executions = 0;
+      const app = createConnecta({
+        readOnly: false,
+        storage,
+        connectors: [
+          api("echo", {
+            tools: [
+              {
+                name: "read",
+                description: "Read",
+                annotations: { readOnlyHint: true },
+                handler: () => {
+                  dispatched++;
+                  return null;
+                },
+              },
+            ],
+          }),
+          {
+            id: "failed",
+            listTools: async () => {
+              throw new Error("PRIVATE_CATALOG_ERROR");
+            },
+            callTool: async () => {
+              dispatched++;
+              return {};
+            },
+          },
+          {
+            id: "bulk",
+            listTools: async () =>
+              Array.from({ length: 1001 }, (_, i) => ({
+                name: `get_${i}`,
+                inputSchema: { type: "object" },
+                annotations: { readOnlyHint: true },
+              })),
+            callTool: async () => {
+              dispatched++;
+              return {};
+            },
+          },
+        ],
+        executor: customExecutor(
+          {
+            execute: async () => {
+              executions++;
+              return { result: 42 };
+            },
+          },
+          { lifecycle: "self-managed" },
+        ),
+        agents: ["bot"],
+        accessTokens: accessTokens(storage),
+        pools: {
+          failed: { tools: ["failed", "echo"], members: ["agent:bot"], surface: "native" },
+          bulk: { tools: ["bulk"], members: ["agent:bot"], surface: "native" },
+          bots: { tools: ["echo"], members: ["agent:bot"] },
+          native: { tools: ["echo"], members: ["agent:bot"], surface: "native" },
+          nocode: { tools: ["echo"], members: ["agent:bot"], surface: "native", executeCode: false },
+        },
+        logger: "silent",
+      });
+      const token = await issueAgentToken(storage, "bot");
+      const url = await deploymentUrl(app);
+      const env = { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" };
+      const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "bots"], { env });
+      expect(stdout).toContain("Connecta doctor passed");
+      for (const pool of ["native", "nocode"]) {
+        const native = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", pool], { env });
+        expect(native.stdout).toContain("native tool surface");
+        expect(native.stdout).toContain(pool === "nocode" ? "code disabled" : "code executed");
+      }
+      for (const [pool, message] of [
+        ["failed", "Native catalogs unavailable: failed"],
+        ["bulk", "native listing cap"],
+      ]) {
+        await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", pool!], { env })).rejects.toThrow(
+          message,
+        );
+      }
+      expect(dispatched).toBe(0);
+      expect(executions).toBe(2);
+      await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow(
+        "An agent token reaches only /agent/<pool>",
+      );
+      await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "Bad/Name"], { env })).rejects.toThrow(
+        "--pool must be a pool name",
+      );
+    },
+  );
 
   it("INV-5 INV-6: refuses config redirects and withholds an authentication failure body", async () => {
     for (const status of [302, 403]) {

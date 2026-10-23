@@ -755,6 +755,7 @@ function metaToolsForRequest(
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
     pagingTool?: "read_result" | undefined;
+    activitySource?: "native" | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -817,6 +818,7 @@ function metaToolsForRequest(
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
     const outcome = await invocation.invoke<ProcessedCallResult>(call.address, call.args ?? {}, {
       source,
+      activitySource: opts.activitySource,
       sentSecrets,
       readOnly: opts.readOnly,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -1398,11 +1400,12 @@ export function registerMetaTools(
      * A native pool: register only `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
      */
-    native?: { executeCode: boolean } | undefined;
+    native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
   },
 ): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
+    ...(ctx.native ? { activitySource: "native" as const } : {}),
     downstreamInput: Boolean(ctx.authElicitation),
     requestScope: ctx.requestScope,
     readOnly: ctx.readOnly,
@@ -1427,6 +1430,7 @@ export function registerMetaTools(
     "skills",
     {
       description: describedFor(registry, SKILLS_DESC, "skills"),
+      ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
       outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,

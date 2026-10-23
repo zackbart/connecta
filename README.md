@@ -9,7 +9,7 @@ yourself. Connect your agent once; decide in code who can reach what.
 
 ```mermaid
 flowchart LR
-    Agent["Your agent"] <-->|"One connection<br/>six small tools"| Connecta
+    Agent["Your agent"] <-->|"One connection<br/>programs or native tools"| Connecta
 
     subgraph Connecta["Your Connecta deployment"]
         Sandbox["Sandbox<br/>runs the agent's short programs"]
@@ -23,9 +23,10 @@ flowchart LR
     style Connecta fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
 ```
 
-The agent doesn't load every service's tools into the conversation. It writes
-a short program that gathers, joins, and trims results inside Connecta, so
-only the answer comes back.
+By default, the agent writes a short program that gathers, joins, and trims
+results inside Connecta, so only the answer comes back. Clients with their own
+tool search can use a native pool that lists each operation directly, with
+programs available for combined work.
 
 ## What you can connect
 

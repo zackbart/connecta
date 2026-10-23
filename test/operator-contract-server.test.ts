@@ -233,6 +233,8 @@ function describedPools(app: ReturnType<typeof createTestConnecta>): OperatorPoo
     humanPath: pool.path,
     agentPath: `/agent/${pool.name}`,
     readOnly: pool.readOnly,
+    surface: pool.surface,
+    executeCode: pool.executeCode,
     owner: pool.owner,
     tools: poolGrants(pool.tools),
     members: (pool.members ?? []).map(member),
@@ -354,6 +356,8 @@ describe("operator contract v2 server", () => {
         humanPath: "/mcp/team",
         agentPath: "/agent/team",
         readOnly: false,
+        surface: "meta",
+        executeCode: true,
         owner: "team@example.com",
         tools: [
           { connectorId: "wiki", tools: [{ name: "read", requireReadOnly: false }] },
@@ -373,6 +377,8 @@ describe("operator contract v2 server", () => {
         humanPath: "/mcp/ops",
         agentPath: "/agent/ops",
         readOnly: false,
+        surface: "meta",
+        executeCode: true,
         owner: null,
         tools: [
           { connectorId: "wiki", tools: "all" },

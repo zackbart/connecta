@@ -1,3 +1,4 @@
+import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
@@ -1761,7 +1762,7 @@ const executeDescription = (
   maxWrites: number,
   readOnly: boolean,
   native = false,
-) => `${native ? `One known operation: call its own tool. Everything else: execute_code, calling each operation by the program address its tool description names. ${readOnly ? "Read-only endpoint: write tools are absent, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+) => `${native ? `Call one operation directly; use execute_code for combined work, with the program addresses in tool descriptions. ${readOnly ? "Read-only endpoint: write tools are absent, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -1881,7 +1882,7 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    (args, extra) => {
+    async (args, extra) => {
       if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
       const run = () =>
         underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
@@ -1889,7 +1890,8 @@ export function registerExecuteTool(
             signal,
           }),
         );
-      return ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run();
+      const result = await (ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run());
+      return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
     },
   );
 }

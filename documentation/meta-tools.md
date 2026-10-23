@@ -6,7 +6,7 @@ stored classification, `execute_code` runs programs on a writable or read-only e
 pages bounded results.
 
 A pool may instead list each downstream tool directly, for clients that run
-their own tool search; see [native tool surface](#native-tool-surface-prototype).
+their own tool search; see [native tool surface](#native-tool-surface).
 
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
 those tools imply belongs to [code mode](./code-mode.md); inbound identity and
@@ -25,7 +25,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                              |
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
-| List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface-prototype), [Eve agents](#eve-agents)                                                            |
+| List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                      |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
 ## The six tools
@@ -33,7 +33,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 Every deployment requires an executor, so a meta endpoint's `tools/list` is
 exactly six. Meta is every endpoint's default; only a pool's
 `surface: "native"` replaces the six with the
-[native tool surface](#native-tool-surface-prototype). No other configuration
+[native tool surface](#native-tool-surface). No other configuration
 adds a seventh or removes one, so a client's cached tool list never depends on
 the storage behind the deployment. There was an eighth,
 `resume_execution`, while programs paused at writes; it left with pausing
@@ -523,7 +523,7 @@ no paging route.
 
 ### Paging with connecta.result
 
-Paging is a guest operation, never another top-level tool. Program calls also
+Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
 `connecta.result(handle, { page: 0 })` accepts those handles alongside direct
 result IDs. Numbered pages are zero-based and mutually exclusive with offset.
@@ -1129,13 +1129,12 @@ SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
 name, or URL never changes the verdict. JSON-RPC `ProtocolError.data` is dropped
 at the downstream boundary, even when the agent may see the error's message.
 
-## Native tool surface (prototype)
+## Native tool surface
 
 A pool set to `surface: "native"` lists each downstream tool as its own MCP
 tool instead of the six meta-tools, for clients that already defer tools behind
-their own search (Eve, Claude Code with tool search). It is a prototype under
-the [#703 rework](https://github.com/zackbart/connecta/issues/703); the meta
-surface stays the default everywhere, and plain `/mcp` is always meta.
+their own search (Eve, Claude Code with tool search). The meta surface stays
+the default everywhere, and plain `/mcp` is always meta.
 
 ```ts
 pools: {
@@ -1151,7 +1150,7 @@ pool's surface.
 
 | A native pool lists          | Shape                                                                                                                                                             |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Each visible downstream tool | Named `<connector>__<tool>`; downstream `inputSchema` verbatim; no `outputSchema`; `_meta["dev.connecta/address"]` is its address                                 |
+| Each visible downstream tool | Named `<connector>__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address           |
 | `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes           |
 | `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks |
 | `skills`                     | Always                                                                                                                                                            |
@@ -1182,10 +1181,10 @@ leaves write tools out of the list, by the same rule search and describe use.
 `call_destructive_tool` call when it is a write, run by the same handler. So
 classification, `read_only_endpoint` refusal, argument validation and repair,
 admission, redaction, single-attempt writes, auth elicitation, downstream input,
-result caps, and activity are unchanged. Activity records the call under
-`call_tool` or `call_destructive_tool`. A name the list does not contain fails
-as that address would through `call_tool`: `unknown_tool`, `unknown_address`, or
-the connector's catalog failure with its handoff. Success results are
+result caps, and activity use the same enforcement. Activity records source
+`native` with the canonical address and served classification. A name must
+exactly match the definition's native name before dispatch. Unknown or ambiguous
+names fail with `unknown_tool`; catalog failures retain their handoff. Success results are
 `call_tool`'s default mode: native `content`, never `structuredContent`, which
 is why no `outputSchema` is advertised. A truncated result's notice pages with
 `connecta.result` inside `execute_code`, or with `read_result` on a pool without
@@ -1198,7 +1197,8 @@ changes its classification), the call runs under Connecta's current verdict:
 on the `call_destructive_tool` route, refused on a read-only endpoint, and never
 resent, although the host approved what it saw as a read. To narrow that
 window, a native `tools/list` carries a 300-second private cache hint, against
-an hour on meta endpoints.
+an hour on meta endpoints. This hint does not guarantee that a host refreshes
+its cached annotations; the stale-approval race is accepted on writable pools.
 
 **Listing.** `tools/list` is one page with no cursor (Eve 0.83 reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
@@ -1214,10 +1214,31 @@ reduced calls; write tools are absent and refused on a read-only endpoint;
 never repeat a write; page a truncated result as its notice says. A pool
 `description` is appended as on meta endpoints.
 
-Known gaps of the prototype: recovery `nextAction`s on unknown-address and
-invalid-argument errors still name `search_tools` (the `validation` and
-`repair` fields carry the fix); `connecta doctor` expects the six tools; and
-the operator UI and `describeConfig()` do not show a pool's surface yet.
+**Recovery.** Repair and validation fields retain the exact constraint details.
+Discovery `nextAction` points to the host's tool search (`host: "search"`). Retry actions name the native tool,
+never a meta wrapper. Auth actions carry `authorizationUrl` or `operatorUrl`;
+give the returned URL and instructions to the user or operator. Capable modern
+clients may resume native auth and downstream form/URL input with the same
+wire name, arguments and returned `requestState`. Changed names, targets or
+arguments, expired state and spent retry nonces are refused. Never resend a
+write to recover output.
+
+**Schemas.** Ordinary `type: "object"` schemas are byte-identical. Object
+constraints without a top-level type, composed object schemas and local
+`$defs`/`$ref` keep their constraints with `type: "object"` at the root. A schema
+that cannot be represented as object arguments fails listing explicitly;
+use the meta surface or correct the connector schema.
+
+**Diagnostics.** `connecta doctor --pool assistant` recognizes the configured
+surface and code setting from the local `skills` tool's
+`_meta["dev.connecta/surface"]`. It checks the required local tools, reports
+unavailable connector catalogs and listing-cap errors, and runs only a constant
+program when code is enabled. It never dispatches a downstream tool. The
+operator UI and `describeConfig()` show every pool's effective `surface` and
+`executeCode` as facts from deployment code. Change these settings in code.
+
+Keep native pools bounded. Comparisons so far used 40 synthetic tools;
+large production catalogs near the cap have not been evaluated.
 
 ### Eve agents
 
