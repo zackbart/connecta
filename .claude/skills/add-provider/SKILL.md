@@ -193,8 +193,8 @@ guide text. The guide leads with the routing fact, keeps its summary within
 definition: results (`fields`, `truncated`) for an `api` surface, the
 withheld-value rule when the folder has `safety.ts`, paging from
 `kit.pageSize`, the hatch's tools, approval and refused operations from
-`kit.hatch` and the write-once rule. The error and idempotency-key conventions arrive with the kit's
-`VendorErrors` and write declarations (B.4).
+`kit.hatch`, the write-once rule with `kit.idempotencyKey`, and the Errors
+line from `kit.errors` (what the vendor's status table makes of 404 and 409).
 
 ## The agent-facing surface (S)
 
@@ -202,7 +202,11 @@ withheld-value rule when the folder has `safety.ts`, paging from
   `_api_details`, and `_api_read`, plus `_api_write` and `_api_upload` where
   the index has those verdicts. `_api_write` is always destructive. A data
   search is a named `search_<object>` read. Never `_api_get` or
-  `_api_mutate`.
+  `_api_mutate`. Declare it through `defineApiProvider`'s `hatch` (the kit's
+  `src/http/hatch.ts`, with 0014's discovery budgets); a vendor without a
+  pinned OpenAPI document derives its index with `vendorIndex`, declaring
+  request contracts with `form()`, `Summary` annotations and lenient success
+  schemas. Name the authored tool serving an operation in `named`.
 - **S2 paging:** a paged `list_*` or `search_*` takes `limit` and `cursor`; a
   page is `{ hasMore, nextCursor?, total? }`. Never `page`, `perPage`,
   `page_size`, `offset`, `start_cursor`, or `maxRows`.

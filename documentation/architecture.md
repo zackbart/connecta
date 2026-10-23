@@ -2007,7 +2007,27 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. Tithe.ly is the first provider on
 it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
-are unchanged. The helper derives connection metadata and probe messages from
+are unchanged.
+
+Decision 0011's standard surface (Tithe.ly's step 2) adds four kit pieces.
+A `list` without the legacy `key` returns `{ items, page }`, with
+`page.nextCursor` only while `hasMore`, and the kit appends `limit` (the
+declared default and maximum), `cursor` and `fields` to the tool's filters;
+`read` and `get` take `fields: true`. `src/http/fields.ts` narrows after every
+projection and refuses an unknown first segment before dispatch.
+`src/http/hatch.ts` is the standard hatch (`_api_search`, `_api_details`,
+`_api_read`, `_api_write`) over an `OperationIndex` with explicit verdicts. It
+keeps the REST family's argument and envelope names, returns at most eight
+compact search entries within 16 KiB and details within 32 KiB (optional parts
+cut into `truncated`, required ones never), ranks exact path nouns, root
+collections and authored operations first, then operations found by a field
+they return or take, and points at the authored tool that serves an operation.
+`src/http/vendor-index.ts` derives that index from a kit vendor's own
+declarations when the vendor has no pinned OpenAPI document: `form()` request
+contracts, `Summary` annotations and lenient success schemas become the
+index's parameters, bodies, summaries and searchable fields. Kit facts add
+the vendor status table's absence and conflict meanings and
+`idempotencyKey`, which the generated Conventions state. The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. Its optional `authScope(options)`
