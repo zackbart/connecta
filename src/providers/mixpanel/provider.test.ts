@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { responses } from "./fixtures.js";
 import { mixpanel, type MixpanelApiOptions } from "./index.js";
@@ -23,7 +24,9 @@ const api = (overrides: Partial<MixpanelApiOptions> = {}) => mixpanel("raw", { .
 const call = (name: string, args: Record<string, unknown> = {}, overrides: Partial<MixpanelApiOptions> = {}) =>
   api(overrides).callTool(name, args, ctx());
 
+let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 beforeEach(() => {
+  restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   calls.length = 0;
   reply = () => Response.json(responses.account);
   vi.stubGlobal(
@@ -34,7 +37,10 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  configureGuardedTransport(restoreTransport);
+  vi.unstubAllGlobals();
+});
 
 describe("Mixpanel service-account REST", () => {
   it.each(["eu", "in"] as const)(
@@ -119,6 +125,10 @@ describe("Mixpanel service-account REST", () => {
       }),
     ).toMatchObject({ data: { truncated: true } });
     expect(calls[1]?.url.searchParams.get("project_id")).toBe("99");
+    await call("mixpanel_api_read", { path: "/api/2.0/export", query: range });
+    expect(calls[2]?.url.href).toBe(
+      "https://data.mixpanel.com/api/2.0/export?from_date=2020-09-01&to_date=2020-09-30&limit=1000&project_id=42",
+    );
     reply = () => new Response("broken json\n");
     await expect(call("export_events", range)).rejects.toMatchObject({ code: "connector_call_failed" });
   });
