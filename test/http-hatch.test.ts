@@ -210,6 +210,20 @@ it(
     }
     Object.assign(verdicts, { "GET /items": "write" });
     expect(await call("details", { method: "GET", path: "/items" })).toMatchObject({ verdict: "read" });
+    // `method` is omitted only when GET is the one read method; enums follow the verdicts.
+    const readMethod = (table: Parameters<typeof hatch>[0]["verdicts"]) => {
+      const schema = hatch({ name: "items", index, connection, verdicts: table }).find(
+        (tool) => tool.name === "items_api_read",
+      )!.inputSchema as { properties: Record<string, any>; required: string[] };
+      return { method: schema.properties["method"]?.enum, required: schema.required.includes("method") };
+    };
+    expect(readMethod({ "GET /items": "read" })).toEqual({ method: undefined, required: false });
+    expect(readMethod({ "POST /query": "read" })).toEqual({ method: ["POST"], required: false });
+    expect(readMethod({ "HEAD /items/{item}": "read" })).toEqual({ method: ["HEAD"], required: false });
+    expect(readMethod({ "POST /query": "read", "HEAD /items/{item}": "read" })).toEqual({
+      method: ["HEAD", "POST"],
+      required: true,
+    });
     expect(hatch({ name: "items", index, connection, verdicts: {} }).map((tool) => tool.name)).toEqual([
       "items_api_search",
       "items_api_details",
@@ -410,7 +424,24 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     body?: string;
     url?: string;
     data?: unknown;
+    verdicts?: Parameters<typeof hatch>[0]["verdicts"];
+    method?: string;
   }> = [
+    // A sole reviewed read method other than GET is the default, POST and HEAD alike.
+    {
+      kind: "read",
+      verdicts: { "POST /query": "read" },
+      args: { path: "/query", body: { filter: "open" } },
+      method: "POST",
+      body: '{"filter":"open"}',
+    },
+    {
+      kind: "read",
+      verdicts: { "HEAD /items/{item}": "read" },
+      args: { path: "/items/i1" },
+      method: "HEAD",
+      data: null,
+    },
     { kind: "read", args: { path: "/items", query: { tag: ["b", "a"], limit: 2 } }, url: "/items?tag=b&tag=a&limit=2" },
     { kind: "read", args: { method: "POST", path: "/query", body: { filter: "open" } }, body: '{"filter":"open"}' },
     { kind: "write", args: { method: "GET", path: "/touch" } },
@@ -457,7 +488,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     },
   ];
   for (const entry of cases) {
-    const { call, sendPath, authenticate } = setup();
+    const { call, sendPath, authenticate } = setup(entry.verdicts ? { verdicts: entry.verdicts } : {});
     sent = [];
     if (entry.message) {
       await expect(call(entry.kind, entry.args), JSON.stringify(entry.args)).rejects.toMatchObject({
@@ -473,7 +504,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
         data: entry.data === undefined ? { id: "i1" } : entry.data,
       });
       expect(sendPath).toHaveBeenCalledTimes(1);
-      expect(sendPath.mock.calls[0]?.[0]).toMatchObject({ method: entry.args["method"] ?? "GET" });
+      expect(sendPath.mock.calls[0]?.[0]).toMatchObject({ method: entry.method ?? entry.args["method"] ?? "GET" });
       expect(sent).toHaveLength(1);
       expect(sent[0]?.url).toBe(`https://api.example/v1${entry.url ?? entry.args["path"]}`);
       expect(sent[0]?.body).toBe(entry.body);

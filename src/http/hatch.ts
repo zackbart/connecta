@@ -84,6 +84,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** A method enum; a single method renders as a plain enum, not a one-branch anyOf. */
+function methodEnum(methods: readonly RestMethod[]) {
+  return methods.length === 1 ? Schema.Literal(methods[0]!) : Schema.Literals(methods);
+}
+
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 /** The binding carries ordered string pairs, preserving scalar arrays as repeated parameters. */
@@ -261,8 +266,9 @@ export function hatch(
   const methodsWith = (wanted: (verdict: Verdict) => boolean) =>
     index.methods.filter((method) => index.ops.some((op) => op.method === method && wanted(verdictOf(op))));
   const readMethods = methodsWith((verdict) => verdict === "read");
+  const defaultRead: RestMethod = readMethods.includes("GET") || readMethods.length !== 1 ? "GET" : readMethods[0]!;
   const writeMethods = methodsWith((verdict) => verdict === "write" || verdict === "destructive");
-  const Method = Schema.Literals(index.methods);
+  const Method = methodEnum(index.methods);
   const Path = text(2, 2048).annotate({
     description: `Concrete path from search with ids filled in${options.pathExample ? `, e.g. ${options.pathExample}` : ""}. No query string.`,
   });
@@ -575,7 +581,7 @@ export function hatch(
 
   const run = (kind: "read" | "write", args: CallArgs) =>
     checked((): WriteRequest => {
-      const method = args.method ?? "GET";
+      const method = args.method ?? defaultRead;
       const { op } = index.resolve(method, args.path);
       const verdict = verdictOf(op);
       if (verdict === "refuse") invalid(`Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`);
@@ -632,12 +638,19 @@ export function hatch(
   const nonGetReads = readMethods.filter((method) => method !== "GET" && method !== "HEAD");
   // Field order follows the REST hatch: path, method, body, query, then fields.
   const readFields: Record<string, Schema.Top & { readonly DecodingServices: never }> = { path: Path };
-  if (readMethods.length > 1)
-    readFields["method"] = Schema.optionalKey(
-      Schema.Literals(readMethods).annotate({
-        description: "GET by default; another method only for an operation search routes here.",
-      }),
-    );
+  // `method` is omitted only when GET is the one reviewed read method; a sole other method is the
+  // default, and several non-GET read methods must be named.
+  if (readMethods.length > 0 && !(readMethods.length === 1 && readMethods[0] === "GET")) {
+    const methods = methodEnum(readMethods);
+    readFields["method"] =
+      readMethods.includes("GET") || readMethods.length === 1
+        ? Schema.optionalKey(
+            methods.annotate({
+              description: `${defaultRead} by default; another method only for an operation search routes here.`,
+            }),
+          )
+        : methods.annotate({ description: "The reviewed read method of the operation search routes here." });
+  }
   if (nonGetReads.length)
     readFields["body"] = Schema.optionalKey(
       ObjectValue.annotate({ description: "Body for a reviewed read-only POST." }),
@@ -661,7 +674,7 @@ export function hatch(
         name: tool("write"),
         description: `Call a reviewed ${title} API write; method and path are stated for approval, and the operation index checks arguments first.${note(options.notes?.write)}`,
         input: Schema.Struct({
-          method: Schema.Literals(writeMethods).annotate({ description: "The operation's HTTP method." }),
+          method: methodEnum(writeMethods).annotate({ description: "The operation's HTTP method." }),
           path: Path,
           query: Schema.optionalKey(Query),
           body: Schema.optionalKey(
