@@ -278,7 +278,7 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
 });
 
 it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close retained capabilities", NODE, async () => {
-  for (const mode of ["single", "named"] as const) {
+  for (const mode of ["single", "named", "program"] as const) {
     let retained!: Context.Context<Caller | Credentials | Budget | Classification | Signal>;
     const authenticate = Effect.context<Caller | Credentials | Budget | Classification | Signal>().pipe(
       Effect.tap((services) =>
@@ -293,6 +293,12 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
       authenticate,
       probe: {
         ...definition.probe,
+        ...(mode === "program"
+          ? {
+              run: (connection: import("../src/http/vendor.js").Connection) =>
+                connection.send(who, {}).pipe(Effect.map(({ data }) => data)),
+            }
+          : {}),
         check: (values, options) => {
           expect(options.purpose).toBe("Support");
           return Object.values(values).includes("invalid") ? "Replace this candidate." : undefined;

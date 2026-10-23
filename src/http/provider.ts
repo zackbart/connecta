@@ -63,6 +63,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly probe: {
     readonly operation: ProbeOperation;
     readonly request: unknown | ((options: Readonly<O>) => unknown);
+    /** Auth-dependent read-only probe programs use the same candidate services and failure edge. */
+    readonly run?: (connection: Connection, options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices>;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
@@ -215,6 +217,17 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         sendPath: (...args) => authorize(connected.sendPath(...args)),
         sendItem: (...args) => authorize(connected.sendItem(...args)),
       };
+      // Construct programs outside every caller context; only execution receives candidate services.
+      const probeProgram = probe.run
+        ? probe.run(connection, options)
+        : connection
+            .send(
+              probe.operation,
+              (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
+                Connection["send"]
+              >[1],
+            )
+            .pipe(Effect.map(({ data }) => data));
       const test = (values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> => {
         const problem = probe.check?.(values, options);
         if (problem !== undefined) return Promise.resolve({ ok: false, message: problem });
@@ -229,36 +242,38 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           signal,
         };
         return runEdge(
-          connection
-            .send(
-              probe.operation,
-              (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
-                Connection["send"]
-              >[1],
-            )
-            .pipe(
-              Effect.flatMap(({ data }) =>
-                Effect.try({
-                  try: () => {
-                    const described = probe.describe(data, options);
-                    return typeof described === "string" ? { ok: true, message: described } : described;
-                  },
-                  catch: (error) => error,
-                }).pipe(
-                  Effect.catch((error) =>
-                    error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
-                  ),
+          probeProgram.pipe(
+            Effect.flatMap((data) =>
+              Effect.try({
+                try: () => {
+                  const described = probe.describe(data, options);
+                  return typeof described === "string" ? { ok: true, message: described } : described;
+                },
+                catch: (error) => error,
+              }).pipe(
+                Effect.catch((error) =>
+                  error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
                 ),
               ),
-              Effect.catch((failure) =>
-                Effect.sync(() => {
-                  const error = toConnectorCallError(failure, errors, map);
-                  return probe.failure?.(error, options) ?? { ok: false, message: error.message };
-                }),
-              ),
-              Effect.provideContext(lease.services),
-              Effect.ensuring(Effect.sync(lease.close)),
             ),
+            Effect.catch((failure) =>
+              Effect.sync(() => {
+                const error = toConnectorCallError(failure, errors, map);
+                return probe.failure?.(error, options) ?? { ok: false, message: error.message };
+              }),
+            ),
+            Effect.catchDefect((defect) => {
+              try {
+                if (!map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
+                  return Effect.die(defect);
+              } catch {
+                // A broken visibility hook cannot authorize exposing a defect's text.
+              }
+              return Effect.die(new Error("A provider hook withholding vendor text failed."));
+            }),
+            Effect.provideContext(lease.services),
+            Effect.ensuring(Effect.sync(lease.close)),
+          ),
           { signal: ctx.signal },
         );
       };

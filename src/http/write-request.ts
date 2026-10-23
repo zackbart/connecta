@@ -77,6 +77,8 @@ function jsonContent(text: string, allowed: readonly string[] = []): unknown {
 
 /** Canonical ordered multimaps, including JSON structure and paths; no credentials. */
 export function writeRequestKey(request: WriteRequest): string {
+  if ("rawBody" in request && request.rawBody !== undefined)
+    throw new Error("A bulk write item cannot declare a raw body.");
   if (request.form !== undefined && request.json !== undefined)
     throw new Error("A write item declares one body encoding.");
   return JSON.stringify([

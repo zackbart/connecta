@@ -152,7 +152,12 @@ type Send<R = CallServices> = <Op extends Operation>(
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
 /** A request addressed by its actual method and path; safety resolves the canonical operation. */
-type PathRequest = WriteRequest & { readonly headers?: Readonly<Record<string, string>>; readonly emptyForm?: true };
+type PathRequest = WriteRequest & {
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly emptyForm?: true;
+  /** Pre-framed bodies are for single requests, never bulk identifying content. */
+  readonly rawBody?: string | Uint8Array<ArrayBuffer> | FormData;
+};
 
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
@@ -373,6 +378,16 @@ export function connect<R>(
       }),
     sendPath: (request, sendOptions) => {
       const { method, path } = request;
+      if (
+        request.rawBody !== undefined &&
+        (sendOptions?.item !== undefined ||
+          request.json !== undefined ||
+          request.form !== undefined ||
+          request.emptyForm)
+      )
+        return Effect.fail(
+          new RequestRefused({ message: "A raw body cannot accompany a bulk item or another body encoding." }),
+        );
       return Effect.flatMap(options.safety.resolve(method, path), (operation) =>
         settle(
           { ...operation, ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}) },
@@ -390,6 +405,17 @@ export function connect<R>(
               );
             }
             if (request.json !== undefined) built = HttpClientRequest.bodyText(built, request.json, "application/json");
+            if (request.rawBody !== undefined) {
+              const type = new Headers(request.headers).get("content-type") ?? undefined;
+              built =
+                typeof request.rawBody === "string"
+                  ? HttpClientRequest.bodyText(built, request.rawBody, type)
+                  : request.rawBody instanceof Uint8Array
+                    ? HttpClientRequest.bodyUint8Array(built, request.rawBody, type)
+                    : HttpClientRequest.bodyFormData(built, request.rawBody);
+              // Body combinators supply defaults; an explicit reviewed media type wins.
+              if (type !== undefined) built = HttpClientRequest.setHeader(built, "content-type", type);
+            }
             return guarded.client.execute(built);
           }),
           sendOptions,

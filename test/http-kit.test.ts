@@ -1251,6 +1251,36 @@ it(
     );
     expect(body).toBe("");
     expect(type).toBe("application/x-www-form-urlencoded");
+    const multipart = new FormData();
+    multipart.append("metadata", "{}");
+    for (const rawBody of ["SELECT 1", new Uint8Array([0, 255]), multipart]) {
+      const headers = rawBody === multipart ? {} : { "Content-Type": "application/x-reviewed" };
+      await runEdge(
+        connection.sendPath({ ...POST_ITEMS, rawBody, headers }).pipe(Effect.provideContext(services("write"))),
+      );
+      expect(body).toEqual(rawBody);
+      expect(type).toBe(rawBody === multipart ? null : "application/x-reviewed");
+    }
+    for (const request of [
+      { ...POST_ITEMS, rawBody: "x", json: "{}" },
+      { ...POST_ITEMS, rawBody: "x", form: {} },
+      { ...POST_ITEMS, rawBody: "x", emptyForm: true as const },
+    ]) {
+      const outcome = await runEdge(
+        connection.sendPath(request).pipe(Effect.result, Effect.provideContext(services("write"))),
+      );
+      expect(outcome).toMatchObject({ _tag: "Failure", failure: { _tag: "RequestRefused" } });
+    }
+    expect(
+      await runEdge(
+        connection
+          .sendPath({ ...POST_ITEMS, rawBody: "x" }, { item: "row" })
+          .pipe(Effect.result, Effect.provideContext(services("write"))),
+      ),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "RequestRefused" } });
+    expect(() => writeRequestKey({ ...POST_ITEMS, rawBody: "x" } as typeof POST_ITEMS)).toThrow(
+      "cannot declare a raw body",
+    );
     globalThis.fetch = (async (_url, init) =>
       new Promise((_resolve, reject) => {
         const signal = init!.signal!;
