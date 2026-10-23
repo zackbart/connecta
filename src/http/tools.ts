@@ -327,17 +327,28 @@ function standardList(
 
 /** What a `fields` selection may return: the declared shape with no property required, at any depth. */
 function sparse(schema: JsonSchema): JsonSchema {
-  const strip = (node: unknown): unknown =>
-    Array.isArray(node)
-      ? node.map(strip)
-      : node !== null && typeof node === "object"
-        ? Object.fromEntries(
-            Object.entries(node)
-              .filter(([key]) => key !== "required")
-              .map(([key, value]) => [key, strip(value)]),
-          )
-        : node;
-  return strip(schema) as JsonSchema;
+  // Walk schema positions deliberately: drop each `required` keyword, keep property names (a
+  // property may be called "required") and literal data (enum, const, default, examples) as is.
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const map = (value: unknown) =>
+    object(value) ? Object.fromEntries(Object.entries(value).map(([name, child]) => [name, walk(child)])) : value;
+  const walk = (node: unknown): unknown => {
+    if (!object(node)) return node;
+    return Object.fromEntries(
+      Object.entries(node).flatMap(([key, value]): Array<[string, unknown]> => {
+        if (key === "required") return [];
+        if (["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"].includes(key))
+          return [[key, map(value)]];
+        if (["anyOf", "oneOf", "allOf", "prefixItems"].includes(key))
+          return [[key, Array.isArray(value) ? value.map(walk) : value]];
+        if (["items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames"].includes(key))
+          return [[key, Array.isArray(value) ? value.map(walk) : walk(value)]];
+        return [[key, value]];
+      }),
+    );
+  };
+  return walk(schema) as JsonSchema;
 }
 
 /** A standard list's output with each item sparse. */
