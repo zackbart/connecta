@@ -469,6 +469,24 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(resendAdviceOf(mapped)).toBe(" Back off.");
       expect(order).toEqual(["rule", "detail"]);
       expect(display).toEqual(reasons.slice(0, 8));
+      const recoveryIds = Array.from({ length: 20 }, (_, i) => `id_${i}`);
+      const reviewed: VendorErrors = {
+        ...VENDOR,
+        facts: () => ({ ids: recoveryIds }),
+        displayFacts: {
+          ids: { maxItems: 12, review: "All ids in this fixture's bounded write are needed for recovery." },
+        },
+        detail: (input) => {
+          expect(input).not.toHaveProperty("body");
+          display = input.facts.ids;
+          return "Withheld.";
+        },
+      };
+      validateVendorErrors(reviewed);
+      (reviewed.displayFacts!.ids as { maxItems: number }).maxItems = 20;
+      toConnectorCallError(status(503), reviewed, { classification: "read", dispatches: [], withholds: () => true });
+      expect(display).toEqual(recoveryIds.slice(0, 12));
+
       expectTypeOf<Classified>().not.toHaveProperty("body");
       expectTypeOf<Classified>().not.toHaveProperty("detail");
       expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
@@ -1175,17 +1193,23 @@ function acme(
 }
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
-  it("INV-5: a result hook redacts joined text through this call's request-secret service", async () => {
+  it("INV-5: a result hook redacts split rich text through this call's request-secret service", async () => {
     const secret = "split-credential-value";
     const secrets = new SentSecrets();
     secrets.add(secret);
-    answers.push(() => Response.json([secret.slice(0, 5), secret.slice(5)]));
+    const pieces = Array.from({ length: Math.ceil(secret.length / 4) }, (_, i) => secret.slice(i * 4, i * 4 + 4));
+    answers.push(() => Response.json(pieces.map((plain_text) => ({ plain_text, annotation: "unrelated annotation" }))));
     const connection = acme({
-      result: (body) => RequestSecrets.use((secrets) => Effect.succeed({ parts: secrets.parts(body as string[]) })),
+      result: (body) =>
+        RequestSecrets.use((secrets) =>
+          Effect.succeed({
+            parts: secrets.parts((body as { plain_text: string }[]).map((run) => run.plain_text)),
+          }),
+        ),
     });
     const reply = await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
     expect(JSON.stringify(reply.data)).not.toContain("credential");
-    expect(reply.data).not.toEqual([secret.slice(0, 5), secret.slice(5)]);
+    expect(reply.data).not.toEqual({ parts: pieces });
   });
 
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {

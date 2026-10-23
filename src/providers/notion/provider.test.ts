@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 
-import { notion } from "./index.js";
+import { notion, NOTION_API_VERSION } from "./index.js";
+import { NotionApi, notionIndex } from "./api.js";
+import { openapi } from "./openapi.generated.js";
+import { manifest } from "../../http/vendor.js";
 import { configureGuardedTransport } from "../../guarded-transport.js";
 
 import { silentLogger } from "../../../test/helpers.js";
@@ -170,6 +173,31 @@ const PAGE_FIXTURE = {
     Invented: { id: "new", type: "brand_new_type", brand_new_type: "kept" },
   },
 };
+
+it("INV-11: the kit manifest covers every pinned operation with vendor path names and the pinned version", () => {
+  expect(NOTION_API_VERSION).toBe(openapi.version);
+  const paths = manifest(NotionApi).paths;
+  const actual = Object.entries(paths)
+    .flatMap(([path, item]) =>
+      Object.keys(item as object)
+        .filter((method) => ["get", "post", "patch", "put", "delete", "head"].includes(method))
+        .map((method) => `${method.toUpperCase()} ${path}`),
+    )
+    .sort();
+  expect(actual).toEqual(notionIndex.ops.map((op) => `${op.method} ${op.path}`).sort());
+  for (const op of notionIndex.ops) {
+    const expected = [...op.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+    const operation = (paths[op.path] as Record<string, { parameters?: { name: string; in: string }[] }>)[
+      op.method.toLowerCase()
+    ]!;
+    expect(
+      (operation.parameters ?? [])
+        .filter((param) => param.in === "path")
+        .map((param) => param.name)
+        .sort(),
+    ).toEqual(expected);
+  }
+});
 
 describe("notion() value safety", () => {
   it("INV-5: withholds a pre-signed file URL's signature and keeps the upload endpoint", async () => {
@@ -728,8 +756,27 @@ describe("notion() error mapping", () => {
     expect(updated.message).not.toContain("FAKE_SIGNATURE");
   });
 
+  caseOf("INV-5: token-only rate-limit metadata cannot leak vendor prose on a withheld operation", async () => {
+    queue({
+      status: 429,
+      body: {
+        code: "rate_limited",
+        message: "PRIVATE ERROR",
+        additional_data: { rate_limit_reason: "PRIVATE VENDOR PROSE" },
+      },
+    });
+    const error = await refusal(call(build(), "integration_create_page", { parent_page_id: "p", title: "x" }));
+    expect(error.code).toBe("rate_limited");
+    expect(error.message).not.toContain("PRIVATE");
+    expect(error.message).toContain("withheld because this operation handles credentials");
+  });
+
   it("INV-5 INV-9: preserves structured retry, commitment and withheld-error diagnostics", async () => {
-    for (const [, run] of cases) await run();
+    for (const [, run] of cases) {
+      calls.length = 0;
+      queued = [];
+      await run();
+    }
   });
 });
 

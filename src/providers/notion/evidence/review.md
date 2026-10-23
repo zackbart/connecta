@@ -29,3 +29,8 @@ Notion's published OpenAPI document is mutable. A live check during this
 migration reports standing contract changes for data-source retrieval,
 data-source query and search. Their existing endpoint digests and the runtime
 index pin remain unchanged; this migration does not accept those changes.
+
+The 56 operation rows newly added to drift v2 were captured from the live
+reference on 2026-10-23. The eight earlier endpoint digests remain unchanged.
+The live document digest differs from the runtime pin and is reported as
+advisory drift; these newly recorded rows do not regenerate runtime code.

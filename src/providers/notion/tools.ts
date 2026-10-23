@@ -9,7 +9,6 @@ import { read, write } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import { restKitTools } from "../_shared/rest/kit.js";
 import { MAX_PAGE_SIZE, incomplete, NOTION_REST, callNotion, notion } from "./api.js";
-type JsonRecord = Record<string, any>;
 const MAX_PAGE_PROPERTY_FILTERS = 100;
 const MAX_TEXT_CONTENT = 2_000;
 const MAX_RICH_TEXT_RUNS = 100;
@@ -1052,17 +1051,22 @@ function legacyCatalog(tool: ApiTool): ApiTool {
       node.type === "array" &&
       node.description !== undefined &&
       node.items !== undefined &&
-      !["children", "text", "checklist"].includes(path.at(-1) ?? "")
+      !["children", "text", "checklist", "sorts"].includes(path.at(-1) ?? "")
     ) {
       const { description, ...rest } = node;
       node = { ...rest, description };
+    }
+    if (tool.name === "integration_append_blocks" && node["type"] === "array" && node["maxItems"] !== undefined) {
+      const { type, items, maxItems, description, ...rest } = node;
+      node = { type, items, maxItems, description, ...rest };
     }
     return node;
   };
   const input = order(tool.inputSchema);
   if (["integration_search", "integration_create_page"].includes(tool.name)) {
     const { type, required, ...rest } = input;
-    tool.inputSchema = { type, required, ...rest };
+    tool.inputSchema =
+      tool.name === "integration_create_page" ? { required, type, ...rest } : { type, required, ...rest };
   } else tool.inputSchema = input;
   tool.outputSchema = order(tool.outputSchema);
   return tool;

@@ -122,6 +122,7 @@ export const notion = defineApiProvider<NotionOptions>({
   },
   headers: { "Notion-Version": NOTION_API_VERSION },
   maxResponseBytes: NOTION_MAX_RESPONSE_BYTES,
+  timeoutMs: 60_000,
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   defaultCallAdmission: NOTION_ADMISSION,
   credential: (options) => ({

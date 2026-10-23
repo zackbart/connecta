@@ -1,10 +1,10 @@
 // Notion's pinned API and value-safety boundary on the provider kit. The compact index remains the hatch contract.
 import { Effect, Schema, type Context } from "effect";
 import { ConnectorCallError } from "../../errors.js";
-import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
+import { Refusal, UnreadableBody, type HttpFailure, type VendorErrors } from "../../http/errors.js";
 import { restSafety, type SafetyOptions } from "../../http/safety.js";
 import { Classification, Credentials, RequestSecrets, type CallServices } from "../../http/services.js";
-import { get, type Connection, type ConnectOptions } from "../../http/vendor.js";
+import { get, type Connection, type ConnectOptions, type Vendor } from "../../http/vendor.js";
 import type { ConnectorUsageGuide } from "../../types.js";
 import { indexedVendor } from "../_shared/rest/kit.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
@@ -133,7 +133,7 @@ function refuseWithheldLinks(call: RestCall): void {
 export const notionIndex = new OperationIndex(openapi, { vendor: "notion", title: "Notion" });
 const SAFETY = valueSafety(NOTION_VALUE_SAFETY, () => notionIndex);
 const getMe = get("getMe", "/v1/users/me", { success: Schema.Unknown });
-export const NotionApi = {
+export const NotionApi: Vendor = {
   ...indexedVendor("Notion", notionIndex, [getMe]),
   textBodies: {
     review: "The legacy REST hatch decodes JSON, text and newline-delimited JSON responses by Content-Type.",
@@ -295,16 +295,24 @@ function protectRuns(
 export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
   Effect.gen(function* () {
     const type = (answer.headers.get("content-type") ?? "").toLowerCase();
+    const ndjson = /\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type);
     if (
+      (answer.bodyFormat === "text" || answer.bodyFormat === "empty") &&
+      typeof body === "string" &&
+      body.trim() === "" &&
+      !ndjson &&
+      /\bjson\b|\+json\b/.test(type)
+    )
+      return null;
+    if (
+      !ndjson &&
       /\bjson\b|\+json\b/.test(type) &&
       answer.bodyFormat === "text" &&
       typeof body === "string" &&
       body.trim() !== ""
     )
-      return yield* failed(
-        new ConnectorCallError("connector_call_failed", "Notion returned malformed JSON.", { retryable: false }),
-      );
-    if (/\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type) && typeof body === "string")
+      return yield* Effect.fail(new UnreadableBody());
+    if (ndjson && typeof body === "string")
       body = body
         .split("\n")
         .filter((line) => line.trim() !== "")
@@ -345,6 +353,13 @@ Workspace purpose: ${options.purpose}${skill.fragments.key}${skill.fragments.sha
 /** Notion's machine-readable error metadata, separate from its prose and from the core's write outcome. */
 export const errors: VendorErrors = {
   provider: "Notion",
+  displayFacts: {
+    children: {
+      maxItems: 100,
+      review:
+        "Notion accepts at most 100 child blocks in one append or page create; every committed child id is needed to reconcile that write.",
+    },
+  },
   presence: {
     commit: { path: ["additional_data", "committed_resource_id"], content: "string" },
     guidance: { path: ["additional_data", "retry_guidance"], content: "text" },

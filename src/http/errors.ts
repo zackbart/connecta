@@ -196,6 +196,8 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly facts: (tokens: unknown) => F;
   /** Structural text facts only: never exposes the string, including on withheld operations. */
   readonly presence?: PresenceReview;
+  /** Reviewed recovery ids may need more than the default eight display tokens; never changes classification. */
+  readonly displayFacts?: Readonly<Record<string, { readonly maxItems: number; readonly review: string }>>;
   /** Response headers rules and wording may read, by lowercase name. Every other header is invisible. */
   readonly headers?: readonly string[];
   /** One detail line for the reader, built after classification. */
@@ -224,18 +226,7 @@ interface AuthBeforeExecution<F extends Facts> {
 
 /** Refuse empty evidence at connection construction (INV-11); prose is never proof by itself. */
 export function validateVendorErrors(vendor: VendorErrors<any>): void {
-  for (const [name, review] of Object.entries(vendor.presence ?? {})) {
-    if (
-      !TOKEN.test(name) ||
-      !Array.isArray(review.path) ||
-      review.path.length === 0 ||
-      review.path.length > MAX_DEPTH ||
-      review.path.some((part) => typeof part !== "string" || !part) ||
-      !["string", "text"].includes(review.content)
-    ) {
-      throw new Error("Error presence reviews need a name, a bounded property path and string or text content.");
-    }
-  }
+  captureErrorReviews(vendor);
   const proof = vendor.authBeforeExecution;
   if (proof && (typeof proof.evidence !== "string" || !proof.evidence.trim() || typeof proof.matches !== "function")) {
     throw new Error("An authBeforeExecution declaration requires nonempty evidence and a narrow raw-fact predicate.");
@@ -259,6 +250,34 @@ const TOKEN = /^[A-Za-z0-9_.:[\]-]{1,128}$/;
 const DISPLAYED = 8;
 const MAX_HEADER = 128;
 const MAX_DEPTH = 32;
+const errorReviews = new WeakMap<object, { presence: PresenceReview; display: Readonly<Record<string, number>> }>();
+/** Metadata snapshots contain no request data, promises or services. */
+function captureErrorReviews(vendor: VendorErrors<any>) {
+  const previous = errorReviews.get(vendor);
+  if (previous) return previous;
+  const presence: Record<string, { path: readonly string[]; content: "string" | "text" }> = {};
+  for (const [name, review] of Object.entries(vendor.presence ?? {})) {
+    if (
+      !TOKEN.test(name) ||
+      !Array.isArray(review.path) ||
+      review.path.length === 0 ||
+      review.path.length > MAX_DEPTH ||
+      review.path.some((part) => typeof part !== "string" || !part) ||
+      !["string", "text"].includes(review.content)
+    )
+      throw new Error("Error presence reviews need a name, a bounded property path and string or text content.");
+    presence[name] = Object.freeze({ path: Object.freeze([...review.path]), content: review.content });
+  }
+  const display: Record<string, number> = {};
+  for (const [name, review] of Object.entries(vendor.displayFacts ?? {})) {
+    if (!TOKEN.test(name) || !Number.isSafeInteger(review.maxItems) || review.maxItems < 1 || !review.review.trim())
+      throw new Error("Displayed error facts need a positive whole maxItems and a nonempty review.");
+    display[name] = review.maxItems;
+  }
+  const captured = { presence: Object.freeze(presence), display: Object.freeze(display) };
+  errorReviews.set(vendor, captured);
+  return captured;
+}
 
 /**
  * The body as a vendor's `facts` may read it: tokens, finite numbers,
@@ -296,10 +315,14 @@ function bounded<F extends Facts>(facts: F): F {
   ) as F;
 }
 
-/** The facts the detail line shows: each list cut to its first eight entries. */
-function displayed<F extends Facts>(facts: F): F {
+/** The detail line gets eight list entries by default; reviewed recovery fields retain their fixed bound. */
+function displayed<F extends Facts>(facts: F, vendor: VendorErrors<any>): F {
+  const { display } = captureErrorReviews(vendor);
   return Object.fromEntries(
-    Object.entries(facts).map(([name, value]) => [name, Array.isArray(value) ? value.slice(0, DISPLAYED) : value]),
+    Object.entries(facts).map(([name, value]) => [
+      name,
+      Array.isArray(value) ? value.slice(0, display[name] ?? DISPLAYED) : value,
+    ]),
   ) as F;
 }
 
@@ -483,7 +506,7 @@ function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withhe
   // value-safety review lets its vendor text through.
   const detail = vendor.detail({
     status: failure.status,
-    facts: displayed(facts),
+    facts: displayed(facts, vendor),
     presence,
     headers,
     withheld,
@@ -526,7 +549,7 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
   return {
     status: failure.status,
     facts: bounded(vendor.facts(tokensOf(failure.body))),
-    presence: structuralPresence(failure.body, vendor.presence),
+    presence: structuralPresence(failure.body, captureErrorReviews(vendor).presence),
     headers: visibleHeaders(failure.headers, vendor.headers),
     retryAfterMs: retryAfterMs(failure.headers),
     operation: failure.operation,
