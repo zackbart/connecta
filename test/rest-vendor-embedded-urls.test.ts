@@ -283,18 +283,26 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
   );
 
   it("INV-5: admits a base64 JSON field above 8 MiB and inspects a withheld destination at its end", async () => {
-    const safe = "a".repeat(8 * 1024 * 1024 + 1);
-    const connector = vendor.create();
-    respond = () => vendor.envelope({});
-    const request = args(btoa(safe));
-    await call(connector, `${vendor.name}_api_write`, request);
-    expect(sent).toHaveLength(1);
-    expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
-    sent = [];
-    await expect(
-      call(connector, `${vendor.name}_api_write`, args(btoa(`${safe} https://f.test/?%5Bredacted%5D`))),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
-    expect(sent).toHaveLength(0);
+    const previousTransport =
+      vendor.name === "vercel"
+        ? configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) })
+        : undefined;
+    try {
+      const safe = "a".repeat(8 * 1024 * 1024 + 1);
+      const connector = vendor.create();
+      respond = () => vendor.envelope({});
+      const request = args(btoa(safe));
+      await call(connector, `${vendor.name}_api_write`, request);
+      expect(sent).toHaveLength(1);
+      expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
+      sent = [];
+      await expect(
+        call(connector, `${vendor.name}_api_write`, args(btoa(`${safe} https://f.test/?%5Bredacted%5D`))),
+      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
+      expect(sent).toHaveLength(0);
+    } finally {
+      if (vendor.name === "vercel") configureGuardedTransport(previousTransport);
+    }
   }, 20_000);
 });
 
