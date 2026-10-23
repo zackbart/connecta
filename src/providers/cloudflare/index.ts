@@ -226,8 +226,8 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   title: "Cloudflare",
   readme: "Cloudflare",
   bundle: {
-    baselineGzip: 334055,
-    note: "./providers/cloudflare was measured at 334,055 B gzip (#801), from 151,186 B on main: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before its former cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table adds about 12 KB. The value-safety consolidation (#801) moved the spec-derived candidate record out of the index and grew the table by 259 verdicts, a net +3,646 B (337,701 B), inside its former cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
+    baselineGzip: 483872,
+    note: "./providers/cloudflare measures 483,872 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,

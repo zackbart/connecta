@@ -1186,11 +1186,12 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
   });
 
   it("INV-9: a GET without positive read evidence gives a later write's key no advice", async () => {
-    const { served } = await lookupThenCreate((ctx) =>
+    const { served, state } = await lookupThenCreate((ctx) =>
       ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "GET" }),
     );
     if (served.ok) throw new Error("expected the write to fail");
     expectNoKeyAdvice(served.error);
+    expect(state.sent).toHaveLength(2);
   });
 
   it("INV-9: control: Stripe's own single keyed POST keeps its advice, direct and served", async () => {

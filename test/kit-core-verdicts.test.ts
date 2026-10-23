@@ -529,6 +529,7 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
           sent: call.sent,
         };
       }
+      if (row.replies.length) expect(seen.kit.sent, "requests").not.toEqual([]);
       // The same requests leave on both sides.
       if (seen.core) {
         expect(seen.kit.sent, "requests").toEqual(seen.core.sent);

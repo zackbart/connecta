@@ -89,9 +89,8 @@ it("INV-4: agent search paging bounds token reads per pass as dependencies grow"
       expect(page.isError, JSON.stringify(page.structuredContent)).not.toBe(true);
       expect(page.structuredContent.result).toMatchObject({ offset: 0, bytes: 10000, totalBytes: handle.totalBytes });
       expect(elapsedMs).toBeLessThan(15_000);
-      // Admission and validation passes remain bounded as tool dependencies grow.
-      expect(tokenReads).toBeGreaterThan(0);
-      expect(tokenReads).toBeLessThanOrEqual(12);
+      // Three token reads for admission and each of two fresh validation passes.
+      expect(tokenReads).toBe(9);
       counts.push(tokenReads);
     } finally {
       await app.close();
