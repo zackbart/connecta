@@ -630,6 +630,8 @@ export interface GoogleToolDeclaration {
   readonly annotations: NonNullable<ApiTool["annotations"]>;
   readonly inputSchema: JsonSchema;
   readonly outputSchema: JsonSchema;
+  /** Fixed write steps; the kit snapshots and freezes them at construction. Absent keeps the single implicit step. */
+  readonly writeSteps?: Readonly<Record<string, "once">>;
   readonly run: (args: Record<string, any>, ctx: ConnectorContext) => Effect.Effect<unknown, HttpFailure, CallServices>;
 }
 
@@ -653,6 +655,7 @@ export function googleTool(connection: Connection, declaration: GoogleToolDeclar
     description: declaration.description,
     input: ARGUMENTS,
     output: Schema.Unknown,
+    ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
     run: (args: Record<string, unknown>) =>
       Effect.gen(function* () {
         const operation = yield* Effect.serviceOption(Operation);
