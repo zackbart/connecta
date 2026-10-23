@@ -28,7 +28,7 @@
 //    statuses but never its text (`withholdsErrors`), unless its review
 //    found its errors cannot echo a stored secret (`vendorErrors`).
 //
-// Residual risk, as with a secret store: a secret a person typed into a free-text
+// Residual risk: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 //
 // The key-name rules combine Cloudflare's and Vercel's former engines.
@@ -380,7 +380,7 @@ function sanitizeUrl(value: string, credentials = true): string {
 
 // Pre-signed links inside free text. The key-name heuristic sees a URL only
 // when a whole string is one; a vendor whose text embeds the links it signs
-// (the vendor's page Markdown) scans its strings with these instead. The secret
+// (for example, Markdown) scans its strings with these instead. The secret
 // in scope is a link the vendor minted. A link a person wrote (a rich-text
 // href, an external file, a URL property) is their content and comes back as
 // written unless it names a signing parameter. Not in scope, so withheld
@@ -403,7 +403,7 @@ function sanitizeUrl(value: string, credentials = true): string {
 //    subdomain labels, and before a port, path, query, fragment, or the
 //    link's end. So `file.notes.example.example.com`, `my-bucket.example.com`,
 //    `example.com/x.file.notes.example`, `example.com/bucket`, and
-//    `file.notes.example@evil.com` are other people's hosts and paths. the vendor
+//    `file.notes.example@evil.com` are other people's hosts and paths. The vendor
 //    writes its links with a scheme, so a bare `file.notes.example/…` in prose,
 //    and a link with userinfo, are a person's and come back as written.
 //    Quoted and angle-delimited filenames may contain unmatched brackets;
@@ -775,8 +775,7 @@ function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean)
 }
 
 /**
- * `text` with every pre-signed link withheld: at one of `hosts` (the vendor's
- * file storage, say), its whole query and fragment; anywhere, a signing
+ * `text` with every pre-signed link withheld: at one of the reviewed file-storage `hosts`, its whole query and fragment; anywhere, a signing
  * parameter's value. Everything else comes back byte for byte.
  */
 export function withholdSignedLinks(text: string, hosts: FileHosts): string {

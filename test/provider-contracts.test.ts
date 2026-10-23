@@ -44,7 +44,10 @@ it.each([
 
 it.each([
   ["remoteMcp", () => remoteMcp("crm", { url: "https://crm.example/mcp", classify: { tools: {} } } as never)],
-  ["provider", () => stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, classify: { tools: {} } } as never)],
+  [
+    "provider",
+    () => stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, classify: { tools: {} } } as never),
+  ],
 ])("INV-11: leftover %s classify names deployment classification", (_name, construct) => {
   expect(construct).toThrow("ConnectaConfig.classification");
 });

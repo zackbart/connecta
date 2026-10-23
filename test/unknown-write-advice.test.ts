@@ -250,7 +250,7 @@ describe("Stripe's 503 overload advice", () => {
     const connector = stripe("notes", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
     return { sent, connector, registry: await vaulted([connector], "notes") };
   }
-  const write = { method: "POST", path: "/v1/customers", body: { name: "Fixture" } };
+  const write = { method: "DELETE", path: "/v1/customers/cus_1" };
 
   it("INV-9: a keyless write answered 503 is unknown without retry wording, direct, served and in a program", async () => {
     const { sent, connector, registry } = await overloaded();
@@ -273,7 +273,7 @@ describe("Stripe's 503 overload advice", () => {
     const program = await catchingProgram(registry, "notes.stripe_api_write", write);
     expect(program.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
     expect(resendWording(program.structuredContent)).toEqual([]);
-    expect(sent).toEqual(["POST", "POST", "POST"]);
+    expect(sent).toEqual(["DELETE", "DELETE", "DELETE"]);
   });
 });
 

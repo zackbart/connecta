@@ -263,13 +263,7 @@ describe("Q8 over nested api() calls, custom wrappers and programs", () => {
               {
                 ...CREATE,
                 handler: async (_args, ctx) => {
-                  await secrets
-                    .callTool(
-                      "create_item",
-                      {},
-                      ctx,
-                    )
-                    .catch(() => undefined);
+                  await secrets.callTool("create_item", {}, ctx).catch(() => undefined);
                   return send(
                     { method: "POST", path: "/item", ...(keyed ? { idempotencyKey: "outer-key" } : {}) },
                     ctx,

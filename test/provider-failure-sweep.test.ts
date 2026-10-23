@@ -35,7 +35,7 @@ const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
   "github.list_scopes",
-  ...["cloudflare", "mixpanel", "notion", "stripe", "vercel"].flatMap((name) => [
+  ...["cloudflare", "stripe", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -55,7 +55,6 @@ function create(fixture: ContractFixture): Connector {
     );
   }
   if (GOOGLE.has(fixture.name)) return fixture.create(fixture.name, { subject: "alice@example.com" });
-  if (fixture.name === "mixpanel") return fixture.create(fixture.name, { defaultProjectId: 99 });
   return fixture.create(fixture.name);
 }
 
@@ -67,8 +66,7 @@ const providers = fixtures.map((fixture) => ({
 
 function credential(name: string): Record<string, string> {
   return {
-    value:
-      name === "stripe" ? "sk_test_fixture" : name === "mixpanel" ? "fixture-user:fixture-secret" : "fixture-token",
+    value: name === "stripe" ? "sk_test_fixture" : "fixture-token",
     applicationId: "fixture-application",
     secret: "fixture-secret",
     clientId: "fixture-client",
@@ -316,7 +314,7 @@ const providerSources = Object.fromEntries(
 const AUTH_BEFORE_EXECUTION: ReadonlySet<string> = new Set(["stripe"]);
 
 /** Providers that renew the credential after a 401 within the call, and whose renewal the sweep lets succeed. */
-const RENEWS: ReadonlySet<string> = new Set(["ccb", "infisical"]);
+const RENEWS: ReadonlySet<string> = new Set(["ccb"]);
 
 /** Recovery the handoff can describe, so its outcome-aware words show. */
 const HANDOFFS = {

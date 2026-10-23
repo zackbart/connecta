@@ -6,19 +6,7 @@ import type { CallRecord } from "../fakes/service.js";
 import { REST_READ_TOOLS } from "../deploy/rest-tools.js";
 import { REST_SCENARIOS } from "./rest-scenarios.js";
 import { check } from "./baseline.js";
-import {
-  ACCOUNT_B,
-  BLOCKED_TITLES,
-  CHECKLIST,
-  DATABASE,
-  DNS_ID,
-  OLD_ENV,
-  PREVIEW_ENV,
-  SHOP_ZONE,
-  ZONE,
-  restState,
-  type RestVendor,
-} from "../fakes/rest.js";
+import { ACCOUNT_B, DNS_ID, OLD_ENV, PREVIEW_ENV, SHOP_ZONE, ZONE, restState, type RestVendor } from "../fakes/rest.js";
 
 type Args = Record<string, any>;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -115,17 +103,6 @@ function analyticsEvidence(answer: string) {
 const invalids = (world: World, trace: AgentTrace) => attempts(world, trace).filter((c) => c.error === "invalid_args");
 const good = (world: World, service: string, method: string, path: string) =>
   calls(world, service, method, path).filter(success);
-const checklist = (children: any[]) =>
-  same(
-    children.map((b) => ({
-      type: b.type,
-      checked: b.to_do?.checked,
-      text: b.to_do?.rich_text?.map((r: any) => r.text?.content ?? r.plain_text ?? "").join(""),
-    })),
-    CHECKLIST.map((text) => ({ type: "to_do", checked: false, text })),
-  );
-const filter = { property: "Status", status: { equals: "Blocked" } };
-
 function grade(id: string, world: World, trace: AgentTrace): Check[] {
   const answer = final(trace);
   const checks: Check[] = [];

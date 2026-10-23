@@ -215,14 +215,14 @@ const authorizationOnRequestOnly: FetchSeam = (send) => (input, init) => {
 const emptyLoginBody: FetchSeam = (send) => (input, init) =>
   urlOf(input).endsWith(LOGIN) ? send(input, { ...init, body: "{}" }) : send(input, init);
 
-/** A provider that serializes the same Forms login fields differently. */
+/** A provider that serializes the same Forms create fields differently. */
 const reshapedLogin =
   (reshape: (fields: Record<string, unknown>) => string): FetchSeam =>
   (send) =>
   (input, init) => {
-    if (!urlOf(input).endsWith(LOGIN)) return send(input, init);
-    if (typeof init?.body !== "string") throw new Error("the Forms login body is no longer a string");
-    return send(input, { ...init, body: reshape(Object.fromEntries(new URLSearchParams(init.body))) });
+    if (!isCreateForm(input, init)) return send(input, init);
+    if (typeof init?.body !== "string") throw new Error("the Forms create body is no longer a string");
+    return send(input, { ...init, body: reshape(JSON.parse(init.body) as Record<string, unknown>) });
   };
 
 /** A provider that sends its write before Forms answers the login, holding a token it already has. */
@@ -354,25 +354,27 @@ describe(suiteName, { timeout: 120_000 }, () => {
   it("INV-5: records auxiliary request bodies, so an emptied Forms login changes the goldens", NODE, async () => {
     const baseline = (await captureGoldens(forms)).calls!;
     const { calls } = await captureGoldens(forms, { seam: emptyLoginBody });
-    expect(baseline).toContain('"clientSecret": "<secret:clientSecret>"');
-    expect(calls).not.toContain('"clientSecret": "<secret:clientSecret>"');
+    expect(baseline).toContain('"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer"');
+    expect(calls).not.toContain('"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer"');
     expect(calls).not.toBe(baseline);
   });
 
   it(
-    "records a JSON body's exact bytes, so respacing or reordering the Forms login changes the goldens",
+    "records a JSON body's exact bytes, so respacing or reordering the Forms create body changes the goldens",
     NODE,
     async () => {
       const baseline = (await captureGoldens(forms)).calls!;
       expect(baseline).not.toContain('"text": "{');
       const spaced = (
-        await captureGoldens(forms, { seam: reshapedLogin((fields) => new URLSearchParams(fields as Record<string, string>).toString() + "&unused=") })
+        await captureGoldens(forms, {
+          seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)),
+        })
       ).calls!;
-      expect(spaced).toContain('"text": "{\\n \\"clientId\\": \\"<secret:clientId>\\"');
+      expect(spaced).toContain('"text": "{\\n');
       expect(spaced).not.toBe(baseline);
       const reordered = (
         await captureGoldens(forms, {
-          seam: reshapedLogin((fields) => new URLSearchParams(Object.fromEntries(Object.entries(fields).reverse()) as Record<string, string>).toString()),
+          seam: reshapedLogin((fields) => JSON.stringify(Object.fromEntries(Object.entries(fields).reverse()))),
         })
       ).calls!;
       expect(reordered).not.toBe(baseline);
@@ -382,18 +384,14 @@ describe(suiteName, { timeout: 120_000 }, () => {
 
   // Canonical order puts the login first in either case, so only the step
   // boundary tells the two apart.
-  it(
-    "records causal steps, so a write sent before the Forms login is answered changes the goldens",
-    NODE,
-    async () => {
-      const baseline = await captureCall(forms, "create_form");
-      const early = await captureCall(forms, "create_form", { seam: writeBeforeLoginAnswer });
-      expect(early).not.toBe(baseline);
-      expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
-      expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
-      expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
-    },
-  );
+  it("records causal steps, so a write sent before the Forms login is answered changes the goldens", NODE, async () => {
+    const baseline = await captureCall(forms, "create_form");
+    const early = await captureCall(forms, "create_form", { seam: writeBeforeLoginAnswer });
+    expect(early).not.toBe(baseline);
+    expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
+    expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
+    expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
+  });
 
   it("records a duplicated write, and whether its copies were sent together or in turn", NODE, async () => {
     // A duplicate must receive the same answer: distinct replies for identical

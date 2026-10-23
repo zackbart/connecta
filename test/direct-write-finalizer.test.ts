@@ -21,7 +21,6 @@ import { InvocationService } from "../src/invocation.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
@@ -190,7 +189,7 @@ const SURFACES: Surface[] = [
       const connector = stripe("workspace", { auth: { type: "apiKey" }, mode: "sandbox", purpose: "Billing" });
       const storage = memoryStorage();
       const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-      await vault.set("workspace", "secret_token", "fixture");
+      await vault.set("workspace", "sk_test_fixture", "fixture");
       const ctx = makeRegistry([connector], { storage, credentialVault: vault }).contextFor(
         "workspace",
         BASE,
@@ -202,9 +201,8 @@ const SURFACES: Surface[] = [
           ? connector.callTool(
               "stripe_api_write",
               {
-                method: "POST",
-                path: "/v1/customers",
-                body: { name: "Fixture" },
+                method: "DELETE",
+                path: "/v1/customers/cus_1",
               },
               ctx,
             )

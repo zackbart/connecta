@@ -33,11 +33,7 @@ async function oneRequest(connector: Connector, machineLogin: boolean): Promise<
   };
   const request = openRequest(ctx.requestScope);
   try {
-    await connector.callTool(
-      machineLogin ? "list_items" : "get_charge",
-      machineLogin ? {} : { chargeId: "ch_1" },
-      ctx,
-    );
+    await connector.callTool(machineLogin ? "list_items" : "get_charge", machineLogin ? {} : { chargeId: "ch_1" }, ctx);
   } finally {
     request.close();
   }

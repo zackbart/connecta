@@ -17,7 +17,7 @@ cannot be reused as user OAuth. Generic hosted connections do not inherit the
 removed API providers' projections, redaction rules, or API coverage.
 
 Infisical has no replacement in the package. Remove the connection, or implement
-a deployment-owned [`api()` connector](./integrating.md#custom-http-api-connector)
+a deployment-owned [`api()` connector](./integrating.md#a-hand-written-http-capability)
 for the required operations. The deployment owns its authentication, tool
 classification, and handling of secret values.
 

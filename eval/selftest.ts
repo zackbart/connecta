@@ -515,10 +515,7 @@ async function play(
         ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
         ...(typeof use.input.code === "string"
           ? {
-              code: use.input.code.replace(
-                /tracker|ci|assets|oauth|supabase|revenuecat|github/gi,
-                "wrong_destination",
-              ),
+              code: use.input.code.replace(/tracker|ci|assets|oauth|supabase|revenuecat|github/gi, "wrong_destination"),
             }
           : {}),
       },

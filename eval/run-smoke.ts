@@ -370,7 +370,8 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
             write: {
               address: "echo.shout",
               args: { text: "route" },
-              verify: () => "route exercised; the example ships no write-capable tool (the hosted notes connection needs a real token)",
+              verify: () =>
+                "route exercised; the example ships no write-capable tool (the hosted notes connection needs a real token)",
             },
           }
         : {

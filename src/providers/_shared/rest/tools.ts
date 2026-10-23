@@ -72,10 +72,9 @@ export interface RestFraming {
 
 /**
  * The cursor for the next page: pass `next` back as `param`, a query
- * parameter unless `in` says the operation takes it in its body (the vendor's
- * read-only POST queries do). `path` names a different GET that continues
- * the list, when the first page came from a call that created it (the vendor's
- * view queries). `hasMore` without `next` means the operation has no cursor.
+ * parameter unless `in` says the operation takes it in its body.
+ * `path` names a different GET that continues the list when the first page
+ * came from a call that created it. `hasMore` without `next` means the operation has no cursor.
  */
 export interface RestPage {
   hasMore: boolean;

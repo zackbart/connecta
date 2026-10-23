@@ -1384,9 +1384,8 @@ before considering the HTTP method. A write-classified GET is never replayed
 after a 401; a read-classified POST may replay once. Without a served verdict,
 this transport uses GET as read and other methods as write. Google drops the
 rejected token for the next deliberate call and retains `auth_required` with
-`writeOutcome: "unknown"` and the operator handoff. A renewed credential does not establish the write outcome. So does a
-recovery that hands back the token the write sent, such as one already spent
-on an earlier 401 in the same request: it renewed nothing.
+`writeOutcome: "unknown"` and the operator handoff. A renewed credential does not establish the write outcome. Recovery
+that hands back the same token renewed nothing.
 
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation

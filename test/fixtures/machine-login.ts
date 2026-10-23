@@ -9,6 +9,8 @@ import { bearer } from "../../src/http/oauth.js";
 import { defineApiProvider } from "../../src/http/provider.js";
 import { Credentials, Signal } from "../../src/http/services.js";
 import { read, write } from "../../src/http/tools.js";
+import type { ProviderOptions } from "../../src/provider.js";
+import type { CallServices } from "../../src/http/services.js";
 import { get, post, vendor } from "../../src/http/vendor.js";
 
 const listItems = get("listItems", "/items", { success: Schema.Unknown });
@@ -24,7 +26,7 @@ export function machineLogin(id: string) {
     token = yield* Effect.tryPromise({
       try: async () => {
         const response = await fetch("https://machine.example/login", {
-          method: "POST", body: JSON.stringify(values), signal,
+          method: "POST", body: JSON.stringify(values), ...(signal ? { signal } : {}),
         });
         return ((await response.json()) as { accessToken: string }).accessToken;
       },
@@ -32,23 +34,26 @@ export function machineLogin(id: string) {
     });
     return token;
   });
-  const factory = defineApiProvider({
+  const factory = defineApiProvider<ProviderOptions>({
     name: "machine", title: "Machine",
-    options: optionsOf<{ purpose: string }>()(PROVIDER_COMMON),
+    options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
     skill: { content: "Read and create fixture items.", instructionsHeading: "Instructions" },
     vendor: vendor("Machine", listItems, createItem),
     baseUrl: () => "https://machine.example",
     maxResponseBytes: 4096,
     credential: { label: "Machine auth", fields: [{ name: "clientId", label: "id" }, { name: "clientSecret", label: "secret" }] },
-    grant: () => Effect.succeed({
-      token: Effect.suspend(() => token ? Effect.succeed(token) : login),
+    grant: () => Effect.gen(function* () {
+      const services = yield* Effect.context<CallServices>();
+      const useLogin = login.pipe(Effect.provideContext(services));
+      return {
+      token: Effect.suspend(() => token ? Effect.succeed(token) : useLogin),
       refresh: () => Effect.suspend(() => {
         if (renewed) return Effect.succeed(token!);
         renewed = true;
-        return login;
+        return useLogin;
       }),
       rejected: Effect.fail(new Refusal({ error: new ConnectorCallError("auth_required", "Machine rejected the token.") })),
-    }),
+    }; }),
     writeUnauthorized: (renewal) => new ConnectorCallError(
       renewal._tag === "Renewed" ? "connector_call_failed" : "auth_required",
       "The write was sent before Machine rejected its credential, so whether it took effect is unknown.",
@@ -56,7 +61,7 @@ export function machineLogin(id: string) {
     authenticate: bearer,
     errors: {
       provider: "Machine", facts: () => ({}), detail: ({ status }) => `Machine returned HTTP ${status}.`,
-      unreadable: "Machine returned invalid JSON.", statuses: { 401: () => ({ code: "auth_required" }) },
+      unreadable: "Machine returned invalid JSON.", statuses: { 401: () => ({ code: "auth_required" }), 403: () => ({ code: "provider_permission_denied" }), 404: () => ({ code: "not_found" }) },
     },
     safety: () => ({ review: "Synthetic fixture items contain no stored secrets.", sensitiveFields: { names: [], choice: "drop" } }),
     probe: { operation: listItems, request: {}, describe: () => "Connected" },
