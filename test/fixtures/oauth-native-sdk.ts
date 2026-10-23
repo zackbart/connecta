@@ -26,6 +26,7 @@ export async function nativeOAuthServer(mode: string) {
   onTestFinished(async () => { await fetch(`${issuer}/finish`, { method: "POST" }); });
   return {
     issuer,
+    waitForRefresh: async () => { await fetch(`${issuer}/refresh-started`); },
     mode: async (mode: string) => { await fetch(`${issuer}/mode`, { method: "POST", body: mode }); },
     success: async () => { await fetch(`${issuer}/mode`, { method: "POST", body: "sdk-success" }); },
     finish: async () => { await fetch(`${issuer}/finish`, { method: "POST" }); },
