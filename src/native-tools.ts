@@ -16,7 +16,7 @@ import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { classifyCallError, type CallErrorDetails } from "./errors.js";
 import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
-import { jsonResult, type ToolResult } from "./meta-tools.js";
+import { jsonResult } from "./meta-tools.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
