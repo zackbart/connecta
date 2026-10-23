@@ -473,39 +473,6 @@
           "page": "https://developer.planning.center/docs/#/webhooks/2022-10-20"
         }
       ]
-    },
-    {
-      "type": "manual",
-      "source": "https://help.planningcenter.com/en/151880-connect-ai-tools-to-planning-center.html",
-      "evidence": {
-        "decision": "keep-api",
-        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md",
-        "endpoint": "https://mcp.planningcenteronline.com/mcp",
-        "catalogStatus": 401,
-        "annotations": "unverified",
-        "coverageSource": "https://www.planningcenter.com/blog/2026/08/announcing-the-planning-center-mcp-connect-chatgpt-claude-and-other-ai-tools",
-        "resourceMetadata": "https://mcp.planningcenteronline.com/.well-known/oauth-protected-resource",
-        "advertisedScopes": [
-          "mcp:read",
-          "mcp:write",
-          "mcp:people:read",
-          "mcp:services:read",
-          "mcp:groups:read",
-          "mcp:registrations:read",
-          "mcp:check_ins:read",
-          "mcp:calendar:read",
-          "mcp:giving:read",
-          "mcp:publishing:read",
-          "mcp:people:write"
-        ],
-        "authorizationMetadata": "https://mcp.planningcenteronline.com/.well-known/oauth-authorization-server",
-        "advertisedGrantTypes": [
-          "refresh_token",
-          "authorization_code"
-        ]
-      },
-      "reason": "Keep api(): hosted sign-in/product authorization has no proven PAT HTTP Basic equivalent; public tools/list returned HTTP 401, so exact annotations/coverage remain unverified. Scheduling, workflow and group writes remain API-only.",
-      "lastVerified": "2026-10-08"
     }
   ]
 }
