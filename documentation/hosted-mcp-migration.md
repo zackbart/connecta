@@ -86,6 +86,9 @@ a static token is not an equivalent grant.
 
 ## Run a hosted connection beside its API connector
 
+The Notion and Mixpanel API providers are [removed in 0.35.0](./provider-migration-0.35.md#remove-infisical-notion-and-mixpanel);
+their generic hosted entries replace the removed connections.
+
 Keep the existing API connector and its id. Add the generic hosted entry under a
 **distinct id**, then add only intended tool addresses to its pools. If replacing
 an old hosted entry, keep that hosted id and put the API connector under another
@@ -257,7 +260,6 @@ pair in its vault slot. Generic `remoteMcp()` base64-encodes a credential whose
 scheme ends in `Basic`, producing `Authorization: Bearer Basic <base64(pair)>`.
 Ordinary `Basic` or `Bearer <pair>` is not equivalent. Preserve an explicit old
 header/scheme instead of overriding it with these historical defaults.
-The API connector still uses its own service-account HTTP framing and admission.
 Keep `Get-Experiment` non-read: its optional compute flags can persist refreshed
 result caches and auto-conclude an experiment. If live hints mark it read, set
 an exact `"write"` or `"hidden"` deployment override.

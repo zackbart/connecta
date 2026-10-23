@@ -14,8 +14,10 @@ from deployment configuration. Remove or replace pool grants, classification
 entries, and agent instructions that name those connections or tools.
 
 For Notion and Mixpanel, configure the hosted server through generic
-`remoteMcp()` entries using the URLs, auth modes, and regional mapping in the
-[hosted MCP migration guide](./hosted-mcp-migration.md#notion). Hosted tools
+`remoteMcp()` entries using the URLs and auth modes in the
+[Notion](./hosted-mcp-migration.md#notion) and
+[Mixpanel](./hosted-mcp-migration.md#mixpanel) hosted MCP migration sections,
+including Mixpanel's regional mapping. Hosted tools
 have the server's live names, schemas, permissions, and classifications;
 rediscover them before updating programs or grants. A Notion integration token
 cannot be reused as user OAuth. Generic hosted connections do not inherit the
