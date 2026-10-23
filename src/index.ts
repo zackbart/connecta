@@ -358,7 +358,6 @@ export type {
   ProviderFactory,
   ProviderGuideBlocks,
   ProviderGuideInput,
-  ProviderKind,
   ProviderKitFacts,
   ProviderOptions,
   ProviderSkill,
@@ -395,8 +394,6 @@ export type {
   ApiTool,
 } from "./connectors/api.js";
 export type {
-  CatalogDriftCounts,
-  CatalogDriftReport,
   ConnectaBranding,
   ConnectaTheme,
   Connector,
@@ -433,11 +430,8 @@ export type {
   JsonSchema,
   KVStorage,
   Logger,
-  ReviewedTool,
-  ToolClassification,
   ToolDef,
   ToolAnnotations,
-  ToolVerdict,
 } from "./types.js";
 export type {
   ActivityActor,

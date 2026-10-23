@@ -1581,7 +1581,10 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const passive = providerCallContext(scope(storage), "read");
     attachCallClassification(passive, "read");
     onTestFinished(() => c.closeScope?.(passive));
-    await c.callTool("ping", {}, passive);
+    // A host read verdict no longer supplies source safety without annotations.
+    await c.callTool("ping", {}, passive, {
+      definition: { name: "ping", annotations: { readOnlyHint: true } },
+    });
     expect(sends).toBe(2);
     expect(server.counts.token).toBe(1);
     expect(providerRequests(passive)?.map((request) => ({ method: request.method, status: request.status }))).toEqual([

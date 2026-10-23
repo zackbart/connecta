@@ -38,7 +38,7 @@ export interface SafetyOptions {
     readonly redact: (data: unknown, operation: OperationRef) => unknown;
     readonly withholdsErrors: (operation: OperationRef) => boolean;
   };
-  /** A global review permitting unindexed paths, including why a vendor with no reviewed table needs none. */
+  /** A global review permitting unindexed paths only when there is no reviewed table. */
   readonly review?: string;
   /**
    * A.2's privacy projection: the provider's sensitive field names, dropped
@@ -72,7 +72,7 @@ export function resultSafety(options: SafetyOptions): ResultSafety {
       Effect.try({
         try: () => {
           if (reviewed?.resolve) return reviewed.resolve(method, path);
-          if (review) return { method, template: path };
+          if (!reviewed && review) return { method, template: path };
           throw new ConnectorCallError("invalid_args", "A reviewed path request needs a canonical operation index.");
         },
         catch: (error) => error,

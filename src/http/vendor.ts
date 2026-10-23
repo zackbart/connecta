@@ -69,7 +69,8 @@ type Part<Key extends string, S> = [S] extends [never]
 /** What one call to an operation supplies, typed from its Schemas. */
 type RequestOf<Op extends Operation> = Part<"params", Op["~Params"]> &
   Part<"query", Op["~Query"]> &
-  Part<"payload", Op["~Payload"]>;
+  Part<"payload", Op["~Payload"]> &
+  Part<"headers", Op["~Headers"]>;
 
 export interface Vendor {
   // The group type is erased here: kit callers name operations, never groups.
@@ -121,7 +122,7 @@ type Send<R = CallServices> = <Op extends Operation>(
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
 /** A request addressed by its actual method and path; safety resolves the canonical operation. */
-type PathRequest = WriteRequest;
+type PathRequest = WriteRequest & { readonly headers?: Readonly<Record<string, string>> };
 
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
@@ -230,24 +231,26 @@ export function connect<R>(
         if (!parsed) return yield* Effect.fail(new UnreadableBody());
         const withheld = options.safety.withholdsErrors(operation);
         const kept = options.result
-          ? yield* options
-              .result(parsed.value, {
+          ? yield* Effect.suspend(() =>
+              options.result!(parsed.value, {
                 status: reply.status,
                 bodyFormat: parsed.format,
                 headers,
                 operation: { ...operation },
                 withheld,
-              })
-              .pipe(
-                Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
-                  if (failure._tag === "StatusFailure")
-                    return Effect.fail(new StatusFailure({ ...failure, operation }));
-                  if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
-                  return Effect.die(
-                    new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),
-                  );
-                }),
-              )
+              }),
+            ).pipe(
+              Effect.catchDefect((defect) =>
+                Effect.die(withheld ? new Error("A result hook withholding vendor text failed.") : defect),
+              ),
+              Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
+                if (failure._tag === "StatusFailure") return Effect.fail(new StatusFailure({ ...failure, operation }));
+                if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
+                return Effect.die(
+                  new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),
+                );
+              }),
+            )
           : parsed.value;
         return { status: reply.status, data: options.safety.redact(kept, operation) };
       }).pipe(
@@ -307,6 +310,7 @@ export function connect<R>(
               path,
               request.query ? { urlParams: parameterPairs(request.query) } : {},
             );
+            if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
             if (request.form && Object.keys(request.form).length > 0) {
               built = HttpClientRequest.bodyText(
                 built,

@@ -140,9 +140,6 @@ export async function createOperatorVisualFixture(): Promise<OperatorVisualFixtu
     }
     if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
     else data.connectaVersion = "0.29.0";
-    for (const connector of data.connectors) {
-      if (connector.id === "github") connector.catalogDrift = { observedAt: VISUAL_NOW, reviewedBaseline: true, verification: "complete", schemaCoverage: { pinned: 2, unpinned: 0 }, unclassifiedTools: 2, unservedTools: 0, annotationConflicts: 1, schemaChanges: 1 };
-    }
     return {
       contract, data,
       activity: { events: events, nextCursor: "older" },

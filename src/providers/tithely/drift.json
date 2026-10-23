@@ -25,7 +25,6 @@
       "POST /recurring",
       "POST /refunds/{charge_id}"
     ],
-    "hosted": [],
     "evidence": {}
   },
   "checks": [

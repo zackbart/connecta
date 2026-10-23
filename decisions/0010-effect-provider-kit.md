@@ -1415,7 +1415,9 @@ provider cannot reach a body any earlier:
    `StatusFailure`, pinned to the answering operation, and `UnreadableBody`.
    Any other failure becomes a defect whose text the API boundary withholds;
    this includes free-text sibling tags such as `RequestRefused` and
-   `ResponseTooLarge`. Only an operation whose review withholds nothing,
+   `ResponseTooLarge`. Hook defects, including `ConnectorCallError`, are
+   rewrapped as plain errors when text is withheld. Only an operation whose
+   review withholds nothing,
    such as Tithe.ly's, may quote its own reason in a `Refusal`;
 6. `ResultSafety.redact(data, operation)`: the vendor's reviewed redaction
    (the REST family's `ValueSafety`, by operation), then A.2's
@@ -1436,8 +1438,9 @@ separate layer, because a stored downstream secret may never have been sent.
 A reviewed `sendPath` resolves the actual method and path through an indexed
 canonical resolver before dispatch; the caller's `template` cannot select its
 value-safety policy. An absent resolver or unknown operation fails closed.
-An explicit nonempty global review may permit unindexed paths, preserving
-Tithe.ly's legacy hatches. Typed `send` keeps its declared operation. The REST
+An explicit nonempty global review may permit unindexed paths only without a
+reviewed table. A uniform policy over legacy unindexed paths supplies its own
+resolver, as Tithe.ly's hatches do. Typed `send` keeps its declared operation. The REST
 adapter uses `OperationIndex.resolve` for both redaction and error withholding.
 
 `SafetyOptions.reviewed.resolve(method, path)` is the optional synchronous

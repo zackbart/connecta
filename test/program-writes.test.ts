@@ -5,12 +5,12 @@ import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fi
 import { describe, expect, it, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta, customExecutor } from "../src/index.js";
-import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
@@ -581,42 +581,6 @@ describe("classification and pool endpoints (#706)", () => {
     expect((await tools.callTool({ address: "test.mislabeled" })).isError).toBe(true);
     expect((await tools.callTool({ address: "test.mixed" })).isError).toBeFalsy();
     expect((await tools.callDestructiveTool({ address: "test.mislabeled" })).isError).toBeFalsy();
-  });
-
-  it("INV-1: deployment overrides beat stale reviewed schemas and provider writes", async () => {
-    const raw: ToolDef[] = [
-      { name: "lapsed", annotations: { readOnlyHint: true } },
-      { name: "mislabeled", annotations: { readOnlyHint: true } },
-      { name: "mixed" },
-      { name: "constructor" },
-    ];
-    const connector: Connector = {
-      id: "reviewed",
-      listTools: async () => raw,
-      callTool: async () => null,
-      classification: {
-        tools: {
-          lapsed: { verdict: "read", schemaDigest: `sha256:${"0".repeat(64)}` },
-          mislabeled: "write",
-          mixed: "write",
-        },
-      },
-    };
-    const registry = makeRegistry([connector], {
-      classification: {
-        reviewed: { lapsed: "read", mixed: "read", constructor: "read" as const },
-      },
-    });
-    const tools = await registry.getTools("reviewed", BASE, {});
-    expect(tools.map((tool) => tool.classification)).toEqual(["read", "write", "read", "read"]);
-    expect(tools[0]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
-    const without = makeRegistry([connector]);
-    expect((await without.getTools("reviewed", BASE, {})).map((tool) => tool.classification)).toEqual([
-      "write",
-      "write",
-      "write",
-      "write",
-    ]);
   });
 });
 

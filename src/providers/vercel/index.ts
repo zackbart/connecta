@@ -9,19 +9,16 @@ import { skill } from "./skill.generated.js";
  * moves, and `src/providers/vercel/drift.json` also records the contract digest
  * of every endpoint a named tool is written against.
  */
-import { apiConnector } from "../../connectors/api-connector.js";
-import { reviewedCatalog } from "../../catalog-drift.js";
-import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
+import { apiConnector } from "../../connectors/api-connector.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
+import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
+import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { VERCEL_API_BASE_URL, vercelRest } from "./rest.js";
-import { tracksEveryRequest } from "../../provider-call.js";
 
 export { VERCEL_API_BASE_URL } from "./rest.js";
-/** Vercel's official hosted MCP endpoint. */
-export const VERCEL_MCP_ENDPOINT = "https://mcp.vercel.com";
 
 interface VercelCommonOptions {
   /** Human-readable display name; defaults identify the implementation. */
@@ -41,18 +38,6 @@ interface VercelCommonOptions {
 }
 
 /**
- * Vercel's hosted MCP server over OAuth. Vercel admits only reviewed and
- * approved MCP clients, an operational gate outside Connecta.
- */
-export interface VercelOAuthOptions extends VercelCommonOptions {
-  auth: { type: "oauth" };
-  /** Refused: the hosted server scopes by the teams the grant can reach. */
-  teamId?: never;
-  /** Refused: the hosted server has one endpoint. */
-  baseUrl?: never;
-}
-
-/**
  * Connecta's REST connector to `api.vercel.com` with one operator-managed
  * access token, pasted into the connection in the operator UI.
  */
@@ -64,188 +49,11 @@ export interface VercelTokenOptions extends VercelCommonOptions {
   baseUrl?: string;
 }
 
-export type VercelOptions = VercelOAuthOptions | VercelTokenOptions;
-
-/**
- * Reviewed in #705's provider audit against https://vercel.com/docs/mcp/vercel-mcp/tools.
- * Retains the release-reviewed inventory, including names absent from today's
- * public reference. Live annotations were not reverified without credentials.
- * No schema digest is asserted without a captured schema to review. This
- * classifies the hosted OAuth catalog only; the REST connector annotates each
- * tool it authors.
- */
-const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
-  tools: {
-    "request_promote": {
-      verdict: "destructive",
-      reason:
-        "The rolling-releases MCP reference promotes an existing deployment to production; replaces the authored REST promotion write.",
-    },
-    "list_project_domains": {
-      verdict: "read",
-      reason: "The projects MCP reference lists project-domain metadata; formerly the named REST read.",
-    },
-    "add_project_domain": {
-      verdict: "destructive",
-      reason: "Attaches a domain to a project; preserves the former REST write classification.",
-    },
-    "cancel_deployment": {
-      verdict: "destructive",
-      reason: "Cancels an existing deployment, even if the vendor claims read-only access.",
-    },
-    "upload_file": { verdict: "destructive", reason: "Uploads deployment file bytes and creates vendor state." },
-    "create_deployment": {
-      verdict: "destructive",
-      reason: "Creates a preview or production deployment from Git or files.",
-    },
-    "list_deployment_events": {
-      verdict: "read",
-      reason: "Reads build events using the documented deployments catalog.",
-    },
-    "search_vercel_documentation": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel vercel documentation information without changing vendor state.",
-    },
-    "list_teams": { "verdict": "read", "reason": "Retrieves Vercel teams information without changing vendor state." },
-    "list_projects": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel projects information without changing vendor state.",
-    },
-    "get_project": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel project information without changing vendor state.",
-    },
-    "list_deployments": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel deployments information without changing vendor state.",
-    },
-    "get_deployment": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel deployment information without changing vendor state.",
-    },
-    "get_deployment_build_logs": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel deployment build logs information without changing vendor state.",
-    },
-    "get_runtime_logs": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel runtime logs information without changing vendor state.",
-    },
-    "get_runtime_errors": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel runtime errors information without changing vendor state.",
-    },
-    "get_web_analytics": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel web analytics information without changing vendor state.",
-    },
-    "list_agent_run_projects": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel agent run projects information without changing vendor state.",
-    },
-    "list_agent_runs": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel agent runs information without changing vendor state.",
-    },
-    "get_agent_run": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel agent run information without changing vendor state.",
-    },
-    "get_agent_run_trace": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel agent run trace information without changing vendor state.",
-    },
-    "check_domain_availability_and_price": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel check domain availability and price information without changing vendor state.",
-    },
-    "get_purchase_quote": {
-      "verdict": "read",
-      "reason": "Reads a purchase quote; billing changes require a separate purchase tool.",
-    },
-    "get_domain_order": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel domain order information without changing vendor state.",
-    },
-    "list_toolbar_threads": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel toolbar threads information without changing vendor state.",
-    },
-    "get_toolbar_thread": {
-      "verdict": "read",
-      "reason": "Retrieves Vercel toolbar thread information without changing vendor state.",
-    },
-    "use_vercel_cli": {
-      "verdict": "read",
-      "reason": "Returns CLI guidance only; any subsequent CLI execution is outside this tool.",
-    },
-    "reply_to_toolbar_thread": {
-      "verdict": "write",
-      "reason": "reply to toolbar thread creates or appends Vercel state; it has side effects.",
-    },
-    "add_toolbar_reaction": {
-      "verdict": "write",
-      "reason": "add toolbar reaction creates or appends Vercel state; it has side effects.",
-    },
-    "deploy_to_vercel": {
-      "verdict": "destructive",
-      "reason": "Can change a live deployment and the project serving production traffic.",
-    },
-    "buy_pro": { "verdict": "destructive", "reason": "buy pro changes existing Vercel state or removes it." },
-    "buy_credits": { "verdict": "destructive", "reason": "buy credits changes existing Vercel state or removes it." },
-    "buy_addon": { "verdict": "destructive", "reason": "buy addon changes existing Vercel state or removes it." },
-    "buy_domain": { "verdict": "destructive", "reason": "buy domain changes existing Vercel state or removes it." },
-    "get_access_to_vercel_url": {
-      "verdict": "destructive",
-      "reason": "Creates an access grant; the returned access URL is a credential.",
-    },
-    "web_fetch_vercel_url": {
-      "verdict": "destructive",
-      "reason": "Invokes application code, whose side effects cannot be established from HTTP GET alone.",
-    },
-    "import-claude-design-from-url": {
-      "verdict": "destructive",
-      "reason": "Imports into a project and can change existing live project state.",
-    },
-    "change_toolbar_thread_resolve_status": {
-      "verdict": "destructive",
-      "reason": "change toolbar thread resolve status changes existing Vercel state or removes it.",
-    },
-    "edit_toolbar_message": {
-      "verdict": "destructive",
-      "reason": "edit toolbar message changes existing Vercel state or removes it.",
-    },
-    "filter_project_envs": {
-      "verdict": "write",
-      "reason":
-        "Lists project environment variables and can return decrypted values; reviewed as a write so a read-only endpoint refuses the disclosure (#801).",
-    },
-    "get_project_env": {
-      "verdict": "write",
-      "reason":
-        "Returns one environment variable's decrypted value; reviewed as a write so a read-only endpoint refuses the disclosure (#801).",
-    },
-    "create_project_env": {
-      "verdict": "destructive",
-      "reason": "Creates or overwrites project environment variables that future deployments embed.",
-    },
-    "edit_project_env": {
-      "verdict": "destructive",
-      "reason": "Replaces an existing environment variable's value or targets.",
-    },
-  },
-};
+export type VercelOptions = VercelTokenOptions;
 
 function instructionsSection(instructions: string | undefined): string {
   const text = instructions?.trim();
   return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-function oauthUsageGuide(purpose: string, instructions: string | undefined): string {
-  const { oauth, shared } = skill.fragments;
-  return `# Vercel usage
-
-Vercel's hosted MCP server over OAuth. Account purpose: ${purpose}${oauth}${shared}${instructionsSection(instructions)}`;
 }
 
 function tokenUsageGuide(purpose: string, teamId: string | undefined, instructions: string | undefined): string {
@@ -266,31 +74,20 @@ const COMMON = {
 };
 
 /** The closed options vercel() accepts, selected by `auth.type`; see `assertKnownOptions`. */
-const VERCEL_OPTIONS = variants(["auth", "type"], {
-  // The never-typed keys stay out of the shape, so the walk refuses them by name.
-  oauth: optionsOf<Omit<VercelOAuthOptions, "teamId" | "baseUrl">>()({
-    ...COMMON,
-    auth: optionsOf<VercelOAuthOptions["auth"]>()(keys("type")),
-  }).shape,
-  token: optionsOf<VercelTokenOptions>()({
-    ...COMMON,
-    ...keys("teamId", "baseUrl"),
-    auth: optionsOf<VercelTokenOptions["auth"]>()(keys("type")),
-  }).shape,
-});
-
-function vercelOAuth(id: string, options: Readonly<VercelOAuthOptions>, provider: ProviderContext): Connector {
-  return hostedOAuth(id, provider, {
-    url: VERCEL_MCP_ENDPOINT,
-    title: options.title ?? "Vercel (MCP)",
-    description: `Vercel's official hosted MCP surface: ${options.purpose}`,
-    usageGuide: {
-      content: oauthUsageGuide(options.purpose, options.instructions),
-      summary: "Official MCP. Live Vercel schemas, id resolution, deployment diagnosis, purchases, and access grants.",
-      required: true,
-    },
-  });
-}
+const VERCEL_OPTIONS = variants(
+  ["auth", "type"],
+  {
+    // The never-typed keys stay out of the shape, so the walk refuses them by name.
+    oauth: { ...COMMON, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
+    token: optionsOf<VercelTokenOptions>()({
+      ...COMMON,
+      ...keys("teamId", "baseUrl"),
+      auth: optionsOf<VercelTokenOptions["auth"]>()(keys("type")),
+    }).shape,
+  },
+  undefined,
+  ["oauth"],
+);
 
 function vercelToken(id: string, options: Readonly<VercelTokenOptions>, provider: ProviderContext): Connector {
   const teamId = typeof options.teamId === "string" ? options.teamId.trim() || undefined : undefined;
@@ -319,26 +116,18 @@ function vercelToken(id: string, options: Readonly<VercelTokenOptions>, provider
   );
 }
 
-/**
- * A maintained Vercel connection. `auth` selects the implementation: OAuth
- * reaches Vercel's hosted MCP server; an access token reaches Connecta's REST
- * connector to `api.vercel.com`.
- */
+/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
 export const vercel = defineProvider<VercelOptions>({
   name: "vercel",
   title: "Vercel",
-  kind: "dual",
+  kind: "api",
   readme: "Vercel",
   bundle: {
     "baselineGzip": 228431,
     "note":
-      "./providers/vercel remeasures at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. Reported against this baseline, not capped (#899).",
+      "./providers/vercel was measured at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): that historical entry carried the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
   },
   skill,
   options: VERCEL_OPTIONS,
-  classify: VERCEL_MCP_CLASSIFICATION,
-  create: byAuth<VercelOptions>({ oauth: vercelOAuth, token: vercelToken }),
+  create: byAuth<VercelOptions>({ oauth: removedHostedMcp, token: vercelToken }),
 });
-
-/** @deprecated Read `vercel.definition.classify` instead. Kept for existing imports. */
-export const VERCEL_MCP_VETTED_CATALOG = reviewedCatalog(vercel.definition.classify!, 'defineProvider("vercel")');

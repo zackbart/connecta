@@ -1,5 +1,10 @@
 # Provider auth migration
 
+Hosted selections described in this historical migration are now removed.
+For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
+use the [current hosted MCP migration guide](./hosted-mcp-migration.md).
+The API migrations below remain applicable.
+
 Use this upgrade guide when moving a Stripe, Notion, Vercel, or Cloudflare
 deployment from 0.30 to 0.31, where `auth` selects each provider's
 implementation.

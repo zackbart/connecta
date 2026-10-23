@@ -18,8 +18,8 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | Upgrade between versions                 | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |
 | Diagnose with `connecta doctor`          | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                           |
 
-For removed Basecamp, Intercom, Linear, RevenueCat, and Wispr Flow provider
-imports, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).
+For removed hosted presets and the hosted halves of Stripe, Vercel, Cloudflare,
+Notion, Mixpanel, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).
 
 ## Audience rule
 

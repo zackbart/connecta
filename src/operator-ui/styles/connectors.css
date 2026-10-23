@@ -588,19 +588,7 @@
 .connector-diagnostics {
   gap: var(--space-5);
 }
-.connector-drift {
-  display: grid;
-  gap: var(--space-3);
-}
-.drift-head {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-}
-.drift-head .meta {
-  font-size: var(--text-xs);
-}
+
 .refusals {
   align-items: center;
   display: flex;

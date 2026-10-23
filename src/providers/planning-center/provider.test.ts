@@ -1,8 +1,9 @@
-// The Planning Center connection is hand-written fetch over JSON:API. Request
+// The Planning Center connection uses the provider kit over JSON:API. Request
 // shapes, projections, and typed failures live in the characterization
 // goldens; these tests pin what the goldens do not: credential admission, the
 // hatch confinement, credential stripping, and the excludeApps boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { ConnectorCallError } from "../../errors.js";
 import { planningCenter } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -32,6 +33,7 @@ function queue(...items: StubResponse[]): void {
 }
 
 beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -52,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 
@@ -138,9 +141,8 @@ describe("Planning Center excludeApps", () => {
   const withoutGiving = () => connection({ excludeApps: ["giving"] });
   const names = async (connector: Connector) => (await connector.listTools(context())).map((tool) => tool.name);
 
-  it.each(["/giving/v2/donations", "/GIVING/v2/donations", "/%67iving/v2/donations"])(
-    "INV-4: refuses %s through both hatches before any request",
-    async (path) => {
+  it("INV-4: refuses literal and encoded excluded products through both hatches before any request", async () => {
+    for (const path of ["/giving/v2/donations", "/GIVING/v2/donations", "/%67iving/v2/donations"]) {
       const connector = withoutGiving();
       for (const [tool, args] of [
         ["pco_api_get", { path }],
@@ -152,36 +154,38 @@ describe("Planning Center excludeApps", () => {
         expect(error.message).toContain("Planning Center Giving (/giving/v2) is disabled in this deployment");
       }
       expect(globalThis.fetch).not.toHaveBeenCalled();
-    },
-  );
+    }
+  });
 
   // Each of these once normalized, decoded, or delimited differently on the
   // way to Planning Center than where it was checked. While an app is
   // excluded none is admitted: the path must be literal.
-  it.each([
-    "/people/v2/%23/../../../giving/v2/donations",
-    "/people/v2/%3F/../giving/v2/donations",
-    "/people/v2/../../giving/v2/donations",
-    "/people/v2/.%2E/.%2e/giving/v2/donations",
-    "/people/v2/..%2F..%2Fgiving/v2/donations",
-    "/people/v2/..\\..\\giving/v2/donations",
-    "/people/v2/.%09./.%09./giving/v2/donations",
-    "/%2567iving/v2/donations",
-    "/giving//v2/funds",
-    "/giving/v2/donations#fragment",
-    "/giving/v2/%E0%A4%A",
-  ])("INV-4: refuses the non-literal path %s through both hatches before any request", async (path) => {
-    const connector = withoutGiving();
-    for (const [tool, args] of [
-      ["pco_api_get", { path }],
-      ["pco_api_mutate", { method: "POST", path, body: { data: { type: "Batch", attributes: {} } } }],
-      ["pco_api_mutate", { method: "DELETE", path }],
-    ] as const) {
-      const error = (await call(tool, args, connector).catch((caught) => caught)) as ConnectorCallError;
-      expect(error, `${tool} ${path}`).toBeInstanceOf(ConnectorCallError);
-      expect(["invalid_args", "provider_permission_denied"], `${tool} ${path}`).toContain(error.code);
+  it("INV-4: refuses ambiguous paths through both hatches before any request", async () => {
+    for (const path of [
+      "/people/v2/%23/../../../giving/v2/donations",
+      "/people/v2/%3F/../giving/v2/donations",
+      "/people/v2/../../giving/v2/donations",
+      "/people/v2/.%2E/.%2e/giving/v2/donations",
+      "/people/v2/..%2F..%2Fgiving/v2/donations",
+      "/people/v2/..\\..\\giving/v2/donations",
+      "/people/v2/.%09./.%09./giving/v2/donations",
+      "/%2567iving/v2/donations",
+      "/giving//v2/funds",
+      "/giving/v2/donations#fragment",
+      "/giving/v2/%E0%A4%A",
+    ]) {
+      const connector = withoutGiving();
+      for (const [tool, args] of [
+        ["pco_api_get", { path }],
+        ["pco_api_mutate", { method: "POST", path, body: { data: { type: "Batch", attributes: {} } } }],
+        ["pco_api_mutate", { method: "DELETE", path }],
+      ] as const) {
+        const error = (await call(tool, args, connector).catch((caught) => caught)) as ConnectorCallError;
+        expect(error, `${tool} ${path}`).toBeInstanceOf(ConnectorCallError);
+        expect(["invalid_args", "provider_permission_denied"], `${tool} ${path}`).toContain(error.code);
+      }
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     }
-    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("INV-4: checks the exact URL the transport would fetch, including the query it encodes", async () => {
@@ -318,4 +322,43 @@ describe("Planning Center excludeApps", () => {
       ["PATCH", "/webhooks/v2/webhook_subscriptions/123"],
     ]);
   });
+});
+
+it("INV-5 INV-10: credential probes preserve candidate keys, framing, failures, and response descriptions", async () => {
+  const connector = connection({ userAgent: "fixture-agent/1", authScope: "personal" });
+  const candidate = { applicationId: "candidate-id", secret: "candidate-secret" };
+  for (const [body, expected] of [
+    [
+      {
+        data: person("7", { name: "Alice" }),
+        included: [{ type: "Organization", id: "1", attributes: { name: "Example" } }],
+      },
+      { ok: true, message: "Authenticated as Alice (person 7) in Example." },
+    ],
+    [{ data: person("7", {}) }, { ok: true, message: "Authenticated as person 7 (person 7)." }],
+    [{ data: [] }, { ok: false, message: "Planning Center answered without the person record it should return." }],
+    [
+      { data: person("7", { name: candidate.secret }) },
+      { ok: true, message: "Authenticated as [redacted] (person 7)." },
+    ],
+  ] as const) {
+    queue({ body });
+    expect(await connector.testCredentials!(candidate, context({ applicationId: "stored", secret: "stored" }))).toEqual(
+      expected,
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "GET",
+      headers: {
+        authorization: `Basic ${btoa("candidate-id:candidate-secret")}`,
+        "x-pco-api-version": "2026-06-04",
+        "user-agent": "fixture-agent/1",
+      },
+    });
+    expect(calls.at(-1)!.url.href).toBe("https://api.planningcenteronline.com/people/v2/me?include=organization");
+  }
+  for (const values of [{}, { applicationId: "a" }, { applicationId: "bad:id", secret: "x" }]) {
+    const count = calls.length;
+    expect(await connector.testCredentials!(values, context())).toMatchObject({ ok: false });
+    expect(calls).toHaveLength(count);
+  }
 });

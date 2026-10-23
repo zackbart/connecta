@@ -1,5 +1,10 @@
 # Notion, Vercel and Cloudflare migration for 0.29
 
+Hosted selections described in this historical migration are now removed.
+For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
+use the [current hosted MCP migration guide](./hosted-mcp-migration.md).
+The API migrations below remain applicable.
+
 Use this upgrade guide for an existing deployment.
 [Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
 version changes; [integrating services](./integrating.md) covers new connectors.

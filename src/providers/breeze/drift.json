@@ -53,7 +53,6 @@
       "GET /volunteers/remove_role",
       "GET /volunteers/update"
     ],
-    "hosted": [],
     "evidence": {
       "openapi.document.json": "sha256:a1ffe0232115624a773f5c504fd4f6a905811e66b3df807c15abeaaa6dd6edb4",
       "openapi.json": "sha256:ef8673378705e0ee99ea85f598e670cfac0f2beafe5f7970ddec8a2a4604bb9d"

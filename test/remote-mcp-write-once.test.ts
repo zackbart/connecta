@@ -2,20 +2,20 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { attachCallClassification } from "../src/call-classification.js";
-import { ConnectorCallError } from "../src/errors.js";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { createExecuteTool } from "../src/execute.js";
-import { createMetaTools } from "../src/meta-tools.js";
-import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
-import { memoryStorage } from "../src/storage/memory.js";
+import { ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
+import { InvocationService } from "../src/invocation.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { scopes } from "../src/storage/keys.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { guestErrorText, guestFailureFacts, scriptedExecutor } from "./fixtures/misc.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { guestErrorText, guestFailureFacts, scriptedExecutor } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
 
 // Remote MCP writes through the real SDK client and transport against a real
@@ -58,7 +58,7 @@ function setup(
     overrideRead?: boolean;
     sameOriginOAuth?: boolean;
     public?: boolean;
-    reviewedRead?: boolean;
+    missingReadHints?: boolean;
     onApplied?: () => void;
     headers?: Record<string, string>;
     refresh?: "rotate" | "dead" | "outage";
@@ -81,7 +81,7 @@ function setup(
     );
     server.registerTool(
       "list_items",
-      { inputSchema: z.object({}), ...(options.reviewedRead ? {} : { annotations: { readOnlyHint: true } }) },
+      { inputSchema: z.object({}), ...(options.missingReadHints ? {} : { annotations: { readOnlyHint: true } }) },
       async () => {
         applied.push("list_items");
         return { content: [{ type: "text", text: "[]" }] };
@@ -197,7 +197,6 @@ function setup(
     versionNegotiation: options.versionNegotiation ?? "legacy",
     ...(options.redirects ? { redirects: options.redirects } : {}),
     ...(options.headers ? { headers: options.headers } : {}),
-    ...(options.reviewedRead ? { classify: { tools: { list_items: "read" as const } } } : {}),
     ...(options.public
       ? {}
       : {
@@ -208,7 +207,13 @@ function setup(
   });
   const registry = makeRegistry([connector], {
     storage,
-    ...(options.overrideRead ? { classification: { svc: { create_item: "read" } } } : {}),
+    ...(options.overrideRead
+      ? {
+          classification: {
+            svc: { create_item: "read", ...(options.missingReadHints ? { list_items: "read" as const } : {}) },
+          },
+        }
+      : {}),
   });
   const tools = createMetaTools(registry, BASE);
   const seedOAuth = () =>
@@ -359,7 +364,7 @@ describe("remote MCP OAuth writes after a 401", () => {
       ["invoke-cancel", false, "legacy", false, false],
       ["program", false, "legacy", false, false],
       ["call_tool", false, "legacy", false, false],
-      ["reviewed-read", true, "legacy", false, false],
+      ["missing-hints", true, "legacy", false, false],
       ["caught-reset", false, "legacy", false, false],
       ["caught-503", false, "legacy", false, false],
       ["caught-timeout", false, "legacy", false, false],
@@ -423,16 +428,16 @@ describe("remote MCP OAuth writes after a 401", () => {
         oauth,
         versionNegotiation,
         overrideRead: true,
-        reviewedRead: answer === "reviewed-read",
+        missingReadHints: answer === "missing-hints",
         ...(answer === "invoke-cancel" ? { onApplied: () => controller.abort(new Error("Caller left.")) } : {}),
         sameOriginOAuth,
         ...(oauth ? { headers: { "X-Context": "tenant_selector" } } : {}),
       });
       if (oauth) await flow.seedOAuth();
-      if (answer === "reviewed-read") {
+      if (answer === "missing-hints") {
         flow.answers.set("list_items", 401);
-        expect(await flow.outcome("list_items")).not.toHaveProperty("error");
-        expect(flow.sent("list_items")).toHaveLength(2);
+        expect((await flow.outcome("list_items")).error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+        expect(flow.sent("list_items")).toHaveLength(1);
         expect(flow.refreshes()).toBe(1);
         vi.unstubAllGlobals();
         continue;
@@ -660,16 +665,16 @@ describe("remote MCP writes and SDK recoveries under a new JSON-RPC id", () => {
     expect(flow.applied).toEqual(["create_item 1"]);
   });
 
-  it("INV-9: a direct read with no definition keeps the SDK's relist and second send after HeaderMismatch", async () => {
+  it("INV-9: an effective direct read without source hints refuses the SDK's second send after HeaderMismatch", async () => {
     const flow = setup({ versionNegotiation: "auto" });
     flow.answers.set("list_items", "mismatch");
     const ctx = flow.context();
     attachCallClassification(ctx, "read");
-    await expect(flow.connector.callTool("list_items", {}, ctx)).resolves.toMatchObject({
-      content: [{ type: "text", text: "[]" }],
-    });
-    expect(flow.sent("list_items")).toHaveLength(2);
-    expect(flow.applied).toEqual(["list_items", "list_items"]);
+    // A definition-free call has no source read proof. Its effective read
+    // classification cannot relax the fail-closed source class.
+    await expect(flow.connector.callTool("list_items", {}, ctx)).rejects.toMatchObject({ retryable: false });
+    expect(flow.sent("list_items")).toHaveLength(1);
+    expect(flow.applied).toEqual(["list_items"]);
   });
 
   it.each([false, true])(

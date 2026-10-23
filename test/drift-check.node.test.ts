@@ -13,11 +13,6 @@ const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.
 async function driftRecord(provider: string, directory = providerDirectory): Promise<any> {
   return JSON.parse(await readFile(join(directory, provider, "drift.json"), "utf8"));
 }
-async function documentedEvidence(provider: string) {
-  return (await driftRecord(provider)).checks.find((check: any) => check.type === "mcp-docs");
-}
-const vercelEvidence = await documentedEvidence("vercel");
-const VERCEL_MCP_ENDPOINT = vercelEvidence.endpoints[0];
 
 const checker = fileURLToPath(new URL("../scripts/drift-check.mjs", import.meta.url));
 const manifestDirectory = providerDirectory;
@@ -165,53 +160,6 @@ function run(directory: string, providers: string[], extra: string[] = []) {
 function findings(output: string, provider: string): Finding[] {
   const report = JSON.parse(output);
   return report.specs.find((entry: any) => entry.provider === provider).findings;
-}
-
-async function documentedVercelWorkspace(): Promise<{
-  directory: string;
-  toolReference: string;
-  setupReference: string;
-}> {
-  const directory = await mkdtemp(join(tmpdir(), "connecta-drift-docs-"));
-  temporary.push(directory);
-  const toolReference = join(directory, "vercel-tools.md");
-  const setupReference = join(directory, "vercel-setup.md");
-  const categories = vercelEvidence.inventory.categories as Record<string, string[]>;
-  await writeFile(
-    toolReference,
-    "# Vercel tools\n\n" +
-      Object.entries(categories)
-        .map(
-          ([category, names]) =>
-            `[${category}\n${names.length} tools](/docs/agent-resources/vercel-mcp/tools/${category})`,
-        )
-        .join("\n"),
-  );
-  await Promise.all(
-    Object.entries(categories).map(([category, names]) =>
-      writeFile(join(directory, `${category}.md`), names.map((name) => `## \`${name}\``).join("\n\n")),
-    ),
-  );
-  await writeFile(setupReference, `# Vercel MCP setup\n\nEndpoint: ${VERCEL_MCP_ENDPOINT}\n\nOAuth is required.\n`);
-  return { directory, toolReference, setupReference };
-}
-
-function runDocumented(provider: string, toolReference: string, setupReference: string) {
-  const result = spawnSync(
-    process.execPath,
-    [
-      checker,
-      "--docs",
-      "--provider",
-      provider,
-      ...(toolReference ? ["--tool-reference", `${provider}=${toolReference}`] : []),
-      "--setup-reference",
-      `${provider}=${setupReference}`,
-      "--json",
-    ],
-    { encoding: "utf8" },
-  );
-  return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
 afterEach(async () => {
@@ -459,31 +407,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(run(directory, ["notion"]).output.match(/^\s+contract-changed\b/gm)).toHaveLength(1);
   });
 
-  it.each([
-    ["--specs", "crm", "--docs"],
-    ["--docs", "z-vendor", "--specs"],
-  ] as const)("refuses %s narrowed to %s, which %s checks", async (selected, provider, required) => {
-    const directory = await recordWorkspace({
-      crm: {
-        version: 1,
-        provider: "crm",
-        checks: [
-          {
-            type: "mcp-docs",
-            setup: "https://crm.example/setup",
-            endpoints: ["https://crm.example/mcp"],
-            reviewed: ["list"],
-          },
-        ],
-      },
-      "z-vendor": { version: 1, provider: "z-vendor", checks: [endpointEvidence] },
-    });
-    const result = reportFor(directory, [selected, "--provider", provider]);
-    expect(result.status).toBe(2);
-    expect(result.output).toContain(`${provider} is only checked by ${required}`);
-    expect(result.output).toContain("which this run did not select");
-  });
-
   it(
     "reports a pinned OpenAPI index whose live document changed, and stays quiet while it matches",
     async () => {
@@ -526,102 +449,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     },
     CASE_TIMEOUT_MS,
   );
-
-  it("INV-1: reports a captured Vercel tool removal and its stale acknowledgement after complete count reconciliation", async () => {
-    const { directory, toolReference, setupReference } = await documentedVercelWorkspace();
-    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("23 tools", "22 tools"));
-    const sandboxes = join(directory, "sandboxes.md");
-    await writeFile(sandboxes, (await readFile(sandboxes, "utf8")).replace("## `run_session_command`", ""));
-    const result = JSON.parse(runDocumented("vercel", toolReference, setupReference).output).docs[0];
-    expect(result).toMatchObject({
-      documentedTools: 246,
-      added: [],
-      removed: ["run_session_command"],
-      findings: [
-        {
-          kind: "stale-unclassified-acknowledgement",
-          detail: "run_session_command: acknowledgement no longer applies",
-        },
-      ],
-    });
-    expect(result.intentionallyUnclassified).not.toContain("run_session_command");
-  });
-
-  it("INV-1: detects documented access changes and stale unclassified acknowledgements", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-"));
-    temporary.push(directory);
-    const records = await recordWorkspace({
-      crm: {
-        version: 1,
-        provider: "crm",
-        checks: [
-          {
-            type: "mcp-docs",
-            setup: "https://crm.example/setup",
-            inventory: {
-              url: "https://crm.example/tools",
-              format: "table",
-              accessColumn: "Access",
-              acknowledgedUnclassified: ["preview"],
-            },
-            endpoints: ["https://crm.example/mcp"],
-            reviewed: ["list"],
-            reviewedAccess: { list: "write" },
-          },
-        ],
-      },
-    });
-    const reference = join(directory, "crm.md");
-    const run = () =>
-      reportFor(records, ["--docs", "--tool-reference", `crm=${reference}`, "--setup-reference", `crm=${reference}`]);
-    await writeFile(
-      reference,
-      "# MCP\nOAuth https://crm.example/mcp\n\n| Tool | Access | Description |\n| --- | --- | --- |\n| `list` | Read | Checks credentials |\n| `preview` | Read | Renders screenshot |\n| `preview` | | Duplicate with blank access |\n",
-    );
-    const result = run();
-    expect(result.status).toBe(0);
-    const report = JSON.parse(result.output).docs[0];
-    expect(report.findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "documented-access-changed",
-          detail: expect.stringContaining("list"),
-        }),
-        expect.objectContaining({
-          kind: "stale-unclassified-acknowledgement",
-          detail: expect.stringContaining("preview"),
-        }),
-      ]),
-    );
-    expect(report.intentionallyUnclassified).not.toContain("preview");
-    expect(report.added).toContain("preview");
-    // Reordered columns work too; blank access retains its explicit acknowledgement.
-    const matching =
-      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n";
-    await writeFile(reference, matching);
-    const quiet = JSON.parse(run().output).docs[0];
-    expect(quiet.findings).toEqual([]);
-    expect(quiet.intentionallyUnclassified).toContain("preview");
-
-    await writeFile(
-      reference,
-      matching.replace("| Access | Description | Tool |", "| Permissions | Description | Tool |"),
-    );
-    expect(JSON.parse(run().output).docs[0].findings).toEqual([
-      expect.objectContaining({ kind: "parser-error", detail: expect.stringContaining("no longer contains Access") }),
-    ]);
-
-    const missingAccess = matching.replace(
-      "| Write | Checks credentials | `list` |",
-      "| | Checks credentials | `list` |",
-    );
-    await writeFile(reference, missingAccess);
-    expect(JSON.parse(run().output).docs[0].findings).toEqual([
-      { kind: "documented-access-missing", detail: "list: docs no longer declare the reviewed access value" },
-    ]);
-    await writeFile(reference, `${missingAccess}| Write | Checks credentials | \`list\` |\n`);
-    expect(JSON.parse(run().output).docs[0].findings).toEqual([]);
-  });
 });
 
 interface VersionedManifest {
@@ -765,6 +592,9 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
       expect(entry.documentation).toBe(`https://api.planningcenteronline.com/${app}/v2/documentation`);
     }
 
+    const { configureGuardedTransport } = await import("../src/guarded-transport.js");
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+
     // Call every named tool with its smallest valid arguments and require
     // each request to be a reviewed row: a tool that starts calling a new
     // endpoint fails here, not in a release that never checked it.
@@ -823,6 +653,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
         await connector.callTool(tool, args, ctx);
       }
     } finally {
+      configureGuardedTransport(undefined);
       globalThis.fetch = realFetch;
     }
     const matches = (request: string, endpoint: Endpoint) => {
@@ -886,20 +717,12 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
       expect([1, 2]).toContain(record.version);
       expect(record.checks.length).toBeGreaterThan(0);
       for (const check of record.checks) {
-        expect(["endpoints", "versioned-endpoints", "mcp-docs", "manual", "openapi-index"]).toContain(check.type);
+        expect(["endpoints", "versioned-endpoints", "manual", "openapi-index"]).toContain(check.type);
         if (check.type === "openapi-index") {
           const source = JSON.parse(await readFile(join(providerDirectory, provider, check.source), "utf8"));
           expect(source.url).toMatch(/^https:\/\//);
           expect(source.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
           expect(existsSync(join(providerDirectory, provider, "openapi.generated.ts"))).toBe(true);
-        }
-        if (check.type === "mcp-docs") {
-          expect(check.setup).toMatch(/^https:\/\//);
-          expect(check.endpoints.length).toBeGreaterThan(0);
-          expect(check.endpoints.every((endpoint: string) => endpoint.startsWith("https://"))).toBe(true);
-          expect(check.reviewed.length).toBeGreaterThan(0);
-          expect(new Set(check.reviewed).size).toBe(check.reviewed.length);
-          if (check.inventory) expect(check.inventory.url).toMatch(/^https:\/\//);
         }
         if (check.type === "endpoints" || check.type === "versioned-endpoints") {
           expect(check.endpoints.length).toBeGreaterThan(0);
@@ -910,55 +733,6 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
         }
       }
     }
-  });
-
-  it("reports a Vercel parser failure and a network failure while still checking a later provider", async () => {
-    const directory = await recordWorkspace({
-      vercel: { version: 1, provider: "vercel", checks: [vercelEvidence, manualCheck] },
-      "z-vendor": {
-        version: 1,
-        provider: "z-vendor",
-        checks: [
-          {
-            type: "mcp-docs",
-            setup: "https://vendor.example/setup",
-            endpoints: ["https://vendor.example/mcp"],
-            reviewed: ["read_item"],
-          },
-        ],
-      },
-    });
-    const moved = join(directory, "moved.md");
-    const setup = join(directory, "setup.md");
-    await writeFile(moved, "# Tools moved to category pages\n");
-    await writeFile(setup, `OAuth ${VERCEL_MCP_ENDPOINT} https://vendor.example/mcp`);
-    const result = reportFor(directory, [
-      "--tool-reference",
-      `vercel=${moved}`,
-      "--setup-reference",
-      `vercel=${setup}`,
-      "--setup-reference",
-      `z-vendor=${setup}`,
-    ]);
-    const report = JSON.parse(result.output);
-    expect(result.status).toBe(0);
-    expect(report.docs).toMatchObject([
-      { provider: "vercel", findings: [{ kind: "unavailable" }] },
-      { provider: "z-vendor", findings: [] },
-    ]);
-    expect(report.manual).toMatchObject([{ provider: "vercel", findings: [{ kind: "manual-required" }] }]);
-    const network = reportFor(directory, [
-      "--setup-reference",
-      `vercel=${join(directory, "absent.md")}`,
-      "--tool-reference",
-      `vercel=${moved}`,
-      "--setup-reference",
-      `z-vendor=${setup}`,
-    ]);
-    expect(JSON.parse(network.output).docs).toMatchObject([
-      { provider: "vercel", findings: [{ kind: "unavailable" }] },
-      { provider: "z-vendor", findings: [] },
-    ]);
   });
 
   it("reports per-product parser errors and continues version and endpoint checks without recording partial evidence", async () => {
@@ -995,8 +769,6 @@ describe("drift evidence validation", () => {
     { ...endpointEvidence, endpoints: [{ method: "GET", path: "/item", specRevision: "1" }] },
     { ...endpointEvidence, endpoints: [endpointEvidence.endpoints[0], endpointEvidence.endpoints[0]] },
     { ...endpointEvidence, specification: { url: "https://vendor.example/openapi.json", format: "guess" } },
-    { ...vercelEvidence, inventory: { url: "https://vendor.example/tools", format: "guess" } },
-    { ...vercelEvidence, reviewed: [] },
     { type: "unknown" },
     null,
   ])("reports invalid check evidence before network access and continues manual review", async (check) => {
@@ -1006,7 +778,7 @@ describe("drift evidence validation", () => {
     const result = reportFor(directory);
     expect(result.status).toBe(0);
     const report = JSON.parse(result.output);
-    expect([...report.specs, ...report.docs, ...report.records].flatMap((entry: any) => entry.findings)).toEqual([
+    expect([...report.specs, ...report.records].flatMap((entry: any) => entry.findings)).toEqual([
       expect.objectContaining({ kind: "evidence-invalid" }),
     ]);
     expect(report.manual[0].findings[0].kind).toBe("manual-required");
@@ -1015,7 +787,7 @@ describe("drift evidence validation", () => {
 
 describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_MS }, () => {
   const day = (offset: number) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
-  const generated = (operations: string[] = [], hosted: string[] = []) => ({ operations, hosted, evidence: {} });
+  const generated = (operations: string[] = []) => ({ operations, evidence: {} });
   const v2 = (checks: unknown[], extra: object = {}) => ({
     version: 2,
     provider: "vendor",
@@ -1030,22 +802,13 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
     lastVerified,
   });
   const evidenceInvalid = (report: any) =>
-    [...report.specs, ...report.docs, ...report.manual, ...report.records].flatMap((entry: any) => entry.findings);
+    [...report.specs, ...report.manual, ...report.records].flatMap((entry: any) => entry.findings);
 
   it.each([
     ["a future lastVerified", { ...manual(day(1)), lastVerified: day(-2) }],
     ["a rationale", { type: "manual", source: "https://vendor.example", rationale: "Prose.", lastVerified: day(1) }],
     ["a nested reviewedAt", { ...manual(day(1)), evidence: { reviewedAt: day(1) } }],
     ["an http source", { ...manual(day(1)), source: "http://vendor.example" }],
-    [
-      "a reviewed list",
-      {
-        type: "mcp-docs",
-        setup: "https://vendor.example/mcp",
-        endpoints: ["https://mcp.vendor.example"],
-        reviewed: ["a"],
-      },
-    ],
     ["a legacy pin", { type: "openapi-index", source: "openapi.source.json" }],
   ])("refuses %s in a version 2 check as invalid evidence", async (_label, check) => {
     const directory = await recordWorkspace({ vendor: v2([check]) });
@@ -1085,7 +848,6 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
       {
         generated: {
           operations: ["DELETE /items/{id}", "GET /items", "POST /items"],
-          hosted: [],
           evidence: { "openapi.json": `sha256:${"0".repeat(64)}` },
         },
       },

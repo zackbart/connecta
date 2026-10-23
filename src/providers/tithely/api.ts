@@ -319,6 +319,8 @@ export function tithelySafety(sensitiveFields: SafetyOptions["sensitiveFields"])
   return {
     review: "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data.",
     reviewed: {
+      // Legacy hatches admit unindexed paths with one uniform policy; only typed sends carry projection flags.
+      resolve: (method, path) => ({ method, template: path }),
       withholdsErrors: () => false,
       redact: (body, operation) => {
         if (operation.flags?.["payoutCurrency"] !== true) return body;

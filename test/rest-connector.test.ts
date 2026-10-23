@@ -603,7 +603,6 @@ describe("restTools()", () => {
 describe("auth dispatch", () => {
   const provider: ProviderContext = {
     connectorOptions: {},
-    classify: { tools: { list: "read" } },
     usageGuide: () => ({ content: "" }),
   };
 

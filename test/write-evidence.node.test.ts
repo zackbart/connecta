@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { InvocationService } from "../src/invocation.js";
@@ -44,26 +45,32 @@ async function listen(answer: (close: () => void, response: import("node:http").
 
 /** A Planning Center write served through the invocation, as an agent sends one. */
 async function planningCenterWrite(baseUrl: string, args: Record<string, unknown>) {
-  const connector = planningCenter("pco", { purpose: "Giving batches", baseUrl });
-  const storage = memoryStorage();
-  const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-  await vault.setAll("pco", { applicationId: "fixture-application", secret: "fixture-secret" }, "fixture");
-  const registry = makeRegistry([connector], { storage, credentialVault: vault });
-  const result = await new InvocationService(registry, new CatalogService(registry, "https://connecta.example")).invoke(
-    "pco.pco_api_mutate",
-    args,
-    { source: "call_destructive_tool" },
-  );
-  if (result.ok) throw new Error("expected the write to fail");
-  return {
-    error: result.error,
-    state: classifyWriteOutcome({
-      ok: false,
-      dispatched: result.dispatched,
-      answered: result.answered === true,
+  // Deliberately retain native fetch's hidden-replay behaviour in these controls.
+  // Production listen() installs nodeGuardedTransport, covered by guarded-attempts.
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  try {
+    const connector = planningCenter("pco", { purpose: "Giving batches", baseUrl });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.setAll("pco", { applicationId: "fixture-application", secret: "fixture-secret" }, "fixture");
+    const registry = makeRegistry([connector], { storage, credentialVault: vault });
+    const result = await new InvocationService(
+      registry,
+      new CatalogService(registry, "https://connecta.example"),
+    ).invoke("pco.pco_api_mutate", args, { source: "call_destructive_tool" });
+    if (result.ok) throw new Error("expected the write to fail");
+    return {
       error: result.error,
-    }),
-  };
+      state: classifyWriteOutcome({
+        ok: false,
+        dispatched: result.dispatched,
+        answered: result.answered === true,
+        error: result.error,
+      }),
+    };
+  } finally {
+    configureGuardedTransport(undefined);
+  }
 }
 
 it("INV-9: a write fetch resent after a 421 to a closed listener is unknown, though the server has its body", async () => {

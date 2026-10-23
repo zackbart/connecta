@@ -41,11 +41,10 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-1: Fail-closed classification.** A runtime-discovered tool is a read exactly when
   `readOnlyHint === true` and `destructiveHint !== true`; otherwise it is a write.
   Deployment code may override a tool to read, write, or hidden. Hidden tools
-  cannot be discovered or called. For remote MCP, an override never relaxes
-  source replay safety: the verified provider review, otherwise the server
-  hints. Its effective or source write class forbids replay and makes an
-  ambiguous dispatched failure non-retryable. Current provider reviews remain supported until
-  their migration; stale reviewed schemas fail closed.
+  cannot be discovered or called. For remote MCP, source classification uses
+  only server annotations; deployment overrides never relax replay safety.
+  Effective or source write forbids replay and makes an ambiguous dispatched
+  failure non-retryable. Missing or contradictory hints fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
   pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
   tools from search and describe and refuses every write call on every path

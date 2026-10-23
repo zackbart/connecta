@@ -77,7 +77,6 @@ import {
   observeCatalogFetch,
   observeCatalogExpiry,
 } from "../catalog-cache.js";
-import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
   boundedEchoText,
@@ -146,7 +145,6 @@ import type {
   ConnectorUsageGuide,
   CredentialTestResult,
   Logger,
-  ToolClassification,
   ToolDef,
 } from "../types.js";
 
@@ -203,31 +201,6 @@ export type RemoteMcpAuth =
       scope?: string;
     };
 
-/**
- * Apply a maintained provider's slot copy and header framing to credential
- * auth the deployment left bare.
- *
- * A provider knows what its own key is called and how the endpoint expects it
- * framed; a deployment that states either one keeps its answer. Every other
- * auth shape passes through untouched, so a provider can hand this its whole
- * `auth` option without branching first.
- */
-export function withCredentialDefaults(
-  auth: RemoteMcpAuth,
-  defaults: {
-    credential: ConnectorCredentialConfig;
-    /** Provider framing; omit to leave the `Bearer` default in place. */
-    scheme?: string | null;
-  },
-): RemoteMcpAuth {
-  if (auth.type !== "credential") return auth;
-  return {
-    ...auth,
-    credential: auth.credential ?? defaults.credential,
-    ...(auth.scheme === undefined && defaults.scheme !== undefined ? { scheme: defaults.scheme } : {}),
-  };
-}
-
 export type RemoteMcpRedirectPolicy = "none" | "same-origin";
 
 export interface RemoteMcpOptions {
@@ -265,21 +238,6 @@ export interface RemoteMcpOptions {
    * resource URL path; echoed values are redacted at eight characters or more.
    */
   headers?: Record<string, string>;
-  /**
-   * Reviewed read/write verdicts for this downstream's tools, by exact name.
-   * Validated at construction. A listed read fills downstream silence but
-   * never overrules an explicit write annotation; a listed write or
-   * destructive tool stays a write whatever the downstream claims; an unlisted
-   * tool is read-only only when it says so explicitly; a listed tool whose
-   * `schemaDigest` no longer matches, or cannot be checked, is served as a
-   * write. Setting it also reports
-   * catalog drift against the list: unclassified, unserved, contradicted, and
-   * schema-changed tools, as counts. The connector carries it as
-   * `classification`, and its `listTools` returns the downstream's listing
-   * unclassified: the registry classifies every read. Omit it to keep the
-   * downstream's own annotations, which still fail closed.
-   */
-  classify?: ToolClassification | undefined;
   /**
    * Downstream MCP version-negotiation mode. Defaults to `"auto"`, which
    * probes with `server/discover` and falls back to the legacy lifecycle when
@@ -332,7 +290,6 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
     "requireHttps",
     "logger",
     "_transportFactory",
-    "classify",
     "skills",
   ),
   readOnly: READ_ONLY,
@@ -1624,8 +1581,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (skillsEnabled !== undefined && typeof skillsEnabled !== "boolean") {
     throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);
   }
-  const classification =
-    opts.classify === undefined ? undefined : reviewedClassification(opts.classify, `connector "${id}"`);
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
@@ -3314,9 +3269,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           },
         }
       : {}),
-    // Data the registry classifies every read with; listTools below returns
-    // the downstream's listing unclassified.
-    ...(classification !== undefined ? { classification } : {}),
     // Declaring the slot is what makes the rest of the operator surface work:
     // the connection's credential form renders it, the shape check compares
     // against it, and authorize_connector returns the operator handoff rather than
@@ -3428,32 +3380,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // Race the entire operation inside its write decider. Cancellation must
         // retain the exact request ledger and a dispatched write's verdict.
         return await settleOnClose(ctx, async () => {
-          // Refusals before this call's dispatch record exists: no tools/call of
-          // its can have left, so they are known failures (ledger provenance).
-          if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
-            throw knownProviderFailure(
-              new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
-            );
-          }
           const state = stateFor(ctx);
           const client = await ensureConnected(ctx, state).catch((error: unknown) => {
             throw knownProviderFailure(error);
           });
           const definition = options?.definition;
           // The registry's verdict for this call; outside an invocation, the
-          // dispatched definition's, else a reviewed write or the annotations.
-          const reviewed = classification?.tools[name];
-          const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
+          // dispatched definition's, otherwise the server annotations.
           const facts = definition ?? state.toolDefinitions.get(name) ?? { name };
           const sourceFacts = definition ?? {
             name,
             ...(facts.annotations ? { annotations: facts.annotations as NonNullable<ToolDef["annotations"]> } : {}),
           };
-          // Reviews remain source policy until C.0c; deployment overrides never are.
-          const source = sourceClassification(sourceFacts, verdict === undefined ? undefined : { verdict });
-          const serverWrite =
-            (definition !== undefined || state.toolDefinitions.has(name) || verdict !== undefined) &&
-            source === "write";
+          // Deployment overrides never enter the source class.
+          const source = sourceClassification(sourceFacts);
+          const serverWrite = source === "write";
           const write = serverWrite || (callClassification(ctx) ?? definition?.classification ?? source) === "write";
           const dispatch = newDispatch(write, serverWrite);
           dispatch.request = {
