@@ -39,6 +39,7 @@ import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger, ToolDef } from "./types.js";
 import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
+import type { NativeCallRoute } from "./native-tools.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
 
@@ -236,6 +237,11 @@ interface ResultStash {
   write: boolean;
   /** The call's effective inline cap; recorded so its pages obey it too. */
   cap: number;
+  /**
+   * A native endpoint without execute_code pages through its `read_result`
+   * tool; everywhere else paging is `connecta.result` inside execute_code.
+   */
+  pagingTool?: "read_result";
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
@@ -275,6 +281,15 @@ const READ_REDUCE_FIRST =
   "To find something specific, repeat this read inside execute_code with connecta.call and filter or search the result there, returning only what matters";
 
 function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
+  if (results.pagingTool === "read_result") {
+    const shown =
+      preview.kind === "prefix"
+        ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest`
+        : preview.kind === "text-of-envelope"
+          ? `Its text follows; page the full ${totalBytes}-byte content array as JSON`
+          : `Page all ${totalBytes} bytes`;
+    return `${results.write ? WRITE_ALREADY_RAN + " " : ""}${shown} with read_result using nextAction.`;
+  }
   if (!results.write) {
     if (results.binding.program)
       return "filter/map/slice data inside execute_code and return only what you need; page this completed return with connecta.result using nextAction.";
@@ -346,7 +361,9 @@ async function stashResult(bytes: Uint8Array, results: ResultStash, preview: Pre
       totalBytes,
       hint: results.write
         ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
-        : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
+        : results.pagingTool
+          ? "Paging is unavailable."
+          : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
     };
   }
   return {
@@ -355,14 +372,20 @@ async function stashResult(bytes: Uint8Array, results: ResultStash, preview: Pre
     totalBytes,
     hint: pagingHint(results, totalBytes, preview),
     nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
-    nextAction: {
-      tool: "execute_code",
-      // A byte may cost six JSON characters when escaped. Leave room for the
-      // result id, page counters, and continuation metadata in the returned page.
-      arguments: {
-        code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
-      },
-    },
+    nextAction:
+      results.pagingTool === "read_result"
+        ? {
+            tool: "read_result",
+            arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
+          }
+        : {
+            tool: "execute_code",
+            // A byte may cost six JSON characters when escaped. Leave room for the
+            // result id, page counters, and continuation metadata in the returned page.
+            arguments: {
+              code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+            },
+          },
   };
 }
 
@@ -730,6 +753,8 @@ function metaToolsForRequest(
     requestScope?: object | undefined;
     onResultRead?: (dependencies: ProgramResultDependency[]) => void;
     downstreamInput?: boolean;
+    /** A native endpoint without execute_code: truncation notices page with read_result. */
+    pagingTool?: "read_result" | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -831,6 +856,7 @@ function metaToolsForRequest(
           },
           write: resolved.definition.classification !== "read",
           cap,
+          ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
           set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
           // The catalog entry, never `toolName`: a record names a tool
           // only through the grammar check (src/operator-record.ts).
@@ -1322,6 +1348,18 @@ const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
   }),
 );
 
+const READ_RESULT_DESC =
+  "Page a truncated result by the resultId in its notice; follow the notice's nextAction. Pages are UTF-8 byte ranges: continue from nextOffset while hasMore. Never repeat a write to see its output.";
+
+const READ_RESULT_INPUT = advertisedSchema(
+  z.strictObject({
+    id: z.string(),
+    offset: z.number().int().nonnegative().optional(),
+    page: z.number().int().nonnegative().optional(),
+    maxBytes: z.number().int().positive().optional(),
+  }),
+);
+
 const AUTHORIZE_INPUT = advertisedSchema(
   z.object({
     connector: z.string(),
@@ -1356,9 +1394,15 @@ export function registerMetaTools(
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
     requestScope?: object | undefined;
+    /**
+     * A native pool: register only `skills`, plus `read_result` when the pool
+     * has no execute_code, and return the route native tool calls take.
+     */
+    native?: { executeCode: boolean } | undefined;
   },
-): void {
+): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
+    ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     downstreamInput: Boolean(ctx.authElicitation),
     requestScope: ctx.requestScope,
     readOnly: ctx.readOnly,
@@ -1392,6 +1436,26 @@ export function registerMetaTools(
       return mt.skills(args as SkillArgs);
     },
   );
+
+  if (ctx.native) {
+    if (!ctx.native.executeCode) {
+      server.registerTool(
+        "read_result",
+        { description: READ_RESULT_DESC, inputSchema: READ_RESULT_INPUT, annotations: READ_ONLY_LOCAL },
+        async (args, request) => {
+          bindRequest(request);
+          return mt.readResult(args as GetResultArgs, { signal: request.mcpReq.signal });
+        },
+      );
+    }
+    // A native call is the call_tool or call_destructive_tool call it names,
+    // run exactly as those two tools run it below.
+    return (route, call, request) => {
+      bindRequest(request);
+      const run = () => (route === "call_tool" ? mt.callTool(call) : mt.callDestructiveTool(call));
+      return ctx.authElicitation ? ctx.authElicitation.run(route, call, request, run) : run();
+    };
+  }
 
   server.registerTool(
     "search_tools",
@@ -1476,4 +1540,5 @@ export function registerMetaTools(
         : mt.authorizeConnector(args as AuthorizeArgs);
     },
   );
+  return undefined;
 }

@@ -520,6 +520,9 @@ export type FailureEvent =
   | "operator status"
   | "operator agent slots read failed"
   | "result paging unavailable"
+  | "native tools/list omitted an unavailable connector"
+  | "native tools/list omitted a tool whose native name another tool shares"
+  | "native tools/list refused a pool over the 1,000-tool native cap"
   | "request failed"
   | "Clerk request denied"
   | "Clerk authentication failed";

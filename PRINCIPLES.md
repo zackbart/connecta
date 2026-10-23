@@ -47,10 +47,11 @@ The full Node run checks the executed test tree, including runtime skips.
   failure non-retryable. Missing or contradictory hints fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
   pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
-  tools from search and describe and refuses every write call on every path
+  tools from search, describe, and a native pool's tool list, and refuses every write call on every path
   before validation or dispatch; guides may still name them. A connector's `readOnly` applies the same restriction on every endpoint and composes with endpoint policy by OR. A writable endpoint sends writes only through
-  `call_destructive_tool` and programs, and annotates `execute_code` as a
-  write. Approval belongs to the host.
+  `call_destructive_tool`, programs, and on a native pool the write's own
+  tool, annotated destructive and run on the `call_destructive_tool` route;
+  it annotates `execute_code` as a write. Approval belongs to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream
   subject choice, client-dereferenceable URIs, or credentials. Enforcement
   lives below the sandbox.

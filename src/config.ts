@@ -316,6 +316,23 @@ const pool = {
    * `/mcp` never shows it.
    */
   description: opaque<string>({ check: assertPoolDescription }),
+  /**
+   * The tools this pool's endpoints list. `"meta"`, the default, is the six
+   * meta-tools. `"native"` lists each downstream tool directly, named
+   * `<connector>__<tool>` and annotated from its classification, for clients
+   * that run their own tool search; calls take the same invocation path.
+   */
+  surface: opaque<"meta" | "native">({
+    check: (value, path) => {
+      if (value !== "meta" && value !== "native") throw new ConfigError(`${path} must be "meta" or "native".`);
+    },
+  }),
+  /**
+   * `false` drops `execute_code` from a native pool and lists `read_result`
+   * for paging instead. Only valid with `surface: "native"`: the meta surface
+   * always includes it.
+   */
+  executeCode: opaque<boolean>({ check: assertFlag }),
 };
 
 const icon = {

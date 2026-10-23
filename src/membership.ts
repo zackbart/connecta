@@ -31,6 +31,8 @@ export interface ResolvedPool {
   owner?: string;
   /** Trimmed `description`, appended to this pool's MCP instructions. */
   description?: string;
+  /** Present for a native pool; absent is the six meta-tools. */
+  native?: { executeCode: boolean };
 }
 
 const AGENT_PREFIX = "agent:";

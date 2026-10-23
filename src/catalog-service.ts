@@ -758,7 +758,7 @@ export class CatalogService {
   // and describe, as if the connector never had it. Guides are not filtered.
   private discoveryCatalogs(
     ids: readonly string[],
-    route: SearchRoute | "connecta.describe",
+    route: SearchRoute | "connecta.describe" | "tools/list",
   ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
     return Effect.forEach(
       ids,
@@ -782,6 +782,35 @@ export class CatalogService {
           ),
         ),
       { concurrency: this.concurrency },
+    );
+  }
+
+  /**
+   * Every visible catalog as discovery shows it, for a native `tools/list`:
+   * a read-only endpoint or connector omits its writes, and each catalog
+   * settles on its own, so one unavailable connector is an `error` entry
+   * beside the others rather than a failed listing.
+   */
+  listCatalogs(): Promise<
+    Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>
+  > {
+    const connectors = this.registry.listConnectors();
+    return settleOnClose({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
+      runEdge(
+        Effect.map(
+          this.discoveryCatalogs(
+            connectors.map((connector) => connector.id),
+            "tools/list",
+          ),
+          (results) =>
+            results.map((result, index) => {
+              const connector = connectors[index]!;
+              return Result.isSuccess(result)
+                ? { connector, tools: result.success }
+                : { connector, error: result.failure };
+            }),
+        ),
+      ),
     );
   }
 

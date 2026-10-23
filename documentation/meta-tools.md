@@ -5,6 +5,9 @@ tools behind it. `search_tools` finds addresses, the call tools enforce the
 stored classification, `execute_code` runs programs on a writable or read-only endpoint, and `connecta.result` inside programs
 pages bounded results.
 
+A pool may instead list each downstream tool directly, for clients that run
+their own tool search; see [native tool surface](#native-tool-surface-prototype).
+
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
 those tools imply belongs to [code mode](./code-mode.md); inbound identity and
 credential administration belong to [auth](./auth.md).
@@ -22,13 +25,17 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                              |
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
+| List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface-prototype), [Eve agents](#eve-agents)                                                            |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
 ## The six tools
 
-Every deployment requires an executor, so `tools/list` is exactly six. No
-configuration adds a seventh or removes one, so a client's cached tool list
-never depends on the storage behind the deployment. There was an eighth,
+Every deployment requires an executor, so a meta endpoint's `tools/list` is
+exactly six. Meta is every endpoint's default; only a pool's
+`surface: "native"` replaces the six with the
+[native tool surface](#native-tool-surface-prototype). No other configuration
+adds a seventh or removes one, so a client's cached tool list never depends on
+the storage behind the deployment. There was an eighth,
 `resume_execution`, while programs paused at writes; it left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
@@ -1122,6 +1129,129 @@ SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
 name, or URL never changes the verdict. JSON-RPC `ProtocolError.data` is dropped
 at the downstream boundary, even when the agent may see the error's message.
 
+## Native tool surface (prototype)
+
+A pool set to `surface: "native"` lists each downstream tool as its own MCP
+tool instead of the six meta-tools, for clients that already defer tools behind
+their own search (Eve, Claude Code with tool search). It is a prototype under
+the [#703 rework](https://github.com/zackbart/connecta/issues/703); the meta
+surface stays the default everywhere, and plain `/mcp` is always meta.
+
+```ts
+pools: {
+  assistant: { tools: ["crm", "tickets"], members: ["agent:assistant"], surface: "native" },
+  assistant_lean: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: false },
+}
+```
+
+`executeCode: false` is valid only with `surface: "native"`; construction
+refuses it otherwise, and refuses any `surface` other than `"meta"` or
+`"native"`. Both pool endpoints, `/mcp/<pool>` and `/agent/<pool>`, serve the
+pool's surface.
+
+| A native pool lists          | Shape                                                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Each visible downstream tool | Named `<connector>__<tool>`; downstream `inputSchema` verbatim; no `outputSchema`; `_meta["dev.connecta/address"]` is its address                                 |
+| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes           |
+| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks |
+| `skills`                     | Always                                                                                                                                                            |
+
+`search_tools`, `call_tool`, `call_destructive_tool`, and `authorize_connector`
+are not listed. Auth failures still carry their handoff in the error envelope.
+
+**Names.** A name is a pure function of the connector id and downstream tool
+name, so it survives catalog refreshes. It is `<connector>__<tool>` when the
+tool name uses only `[A-Za-z0-9_-]`, contains no `__`, does not start with `_`,
+and the whole name fits 48 characters; otherwise it is that name's head plus
+`_` and the first six hex digits of the SHA-256 of `<connector>.<tool>`. A
+connector id that does not start with a letter is prefixed with `C`. 48
+characters leave room for a client's own prefix under common 64-character
+tool-name limits (Eve's `connecta__`, Claude Code's `mcp__connecta__`). Two
+tools that would share a name are both left out of the list, with an operator
+warning, and a call by that name is refused; both stay callable by address in
+`execute_code`.
+
+**Annotations** come from the served classification only: a read is
+`{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
+write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
+whatever hints the downstream declared. A read-only endpoint or connector
+leaves write tools out of the list, by the same rule search and describe use.
+
+**Calls take the existing paths.** A call to a downstream tool is the
+`call_tool` call for its address when the tool is currently a read, and the
+`call_destructive_tool` call when it is a write, run by the same handler. So
+classification, `read_only_endpoint` refusal, argument validation and repair,
+admission, redaction, single-attempt writes, auth elicitation, downstream input,
+result caps, and activity are unchanged. Activity records the call under
+`call_tool` or `call_destructive_tool`. A name the list does not contain fails
+as that address would through `call_tool`: `unknown_tool`, `unknown_address`, or
+the connector's catalog failure with its handoff. Success results are
+`call_tool`'s default mode: native `content`, never `structuredContent`, which
+is why no `outputSchema` is advertised. A truncated result's notice pages with
+`connecta.result` inside `execute_code`, or with `read_result` on a pool without
+`execute_code`.
+
+**Approval is the host's, enforcement is Connecta's.** The host approves from
+the annotations of the list it cached. If a tool changes from read to write
+between that list and a call (a downstream changes its hints, or the deployment
+changes its classification), the call runs under Connecta's current verdict:
+on the `call_destructive_tool` route, refused on a read-only endpoint, and never
+resent, although the host approved what it saw as a read. To narrow that
+window, a native `tools/list` carries a 300-second private cache hint, against
+an hour on meta endpoints.
+
+**Listing.** `tools/list` is one page with no cursor (Eve 0.83 reads only the
+first page). A pool listing more than 1,000 tools fails `tools/list` with a
+JSON-RPC error asking the operator to narrow the pool; nothing is silently
+dropped. A connector whose catalog cannot load is left out of that listing
+whole, never partially, with an operator warning; its tools return with the
+next listing that loads it. Listing never starts authorization. The server
+still declares `tools.listChanged: false`.
+
+**Instructions** replace the meta routing text: call one known operation
+directly; with `execute_code`, use one program for several, dependent, or
+reduced calls; write tools are absent and refused on a read-only endpoint;
+never repeat a write; page a truncated result as its notice says. A pool
+`description` is appended as on meta endpoints.
+
+Known gaps of the prototype: recovery `nextAction`s on unknown-address and
+invalid-argument errors still name `search_tools` (the `validation` and
+`repair` fields carry the fix); `connecta doctor` expects the six tools; and
+the operator UI and `describeConfig()` do not show a pool's surface yet.
+
+### Eve agents
+
+`@zackbart/connecta/eve` defines an [Eve](https://www.npmjs.com/package/eve)
+connection and its instructions for one agent endpoint. It imports
+`eve/connections`, `eve/instructions`, and `eve/tools/approval`, so the agent
+project must install `eve` 0.83; Connecta itself declares no dependency on it.
+
+```ts
+// agent/connections/connecta.ts
+import { connectaConnection } from "@zackbart/connecta/eve";
+export default connectaConnection({ pool: "assistant", description: "CRM and support tickets." });
+
+// agent/instructions/connecta.ts
+import { connectaInstructions } from "@zackbart/connecta/eve";
+export default connectaInstructions({ pool: "assistant" });
+```
+
+| Option       | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `url`        | The deployment's base URL, or a full endpoint URL when `pool` is absent. Defaults to `CONNECTA_URL`                          |
+| `pool`       | The endpoint is `<url>/agent/<pool>`                                                                                         |
+| `getToken`   | The agent's `cta_` token, re-read on every request. Defaults to `CONNECTA_ACCESS_TOKEN`                                      |
+| `approval`   | Eve approval policy for every Connecta tool. Defaults to `never()`                                                           |
+| `gateWrites` | `true` asks a person before every tool not annotated read-only: each native write, and `execute_code` on a writable endpoint |
+| `ttlMs`      | Instructions only: how long a fetched copy is reused, default ten minutes                                                    |
+
+The connection's auth is app-owned: one shared agent credential. Eve does not
+pass an MCP server's `instructions` to the model, so `connectaInstructions`
+fetches them at each turn start and adds them as system instructions prefixed
+`Connecta guidance:`. A failed fetch keeps the last copy, or adds nothing, and
+the tools still work. The helper works with either surface; with Eve, a native
+pool avoids searching twice (`eve__search`, then `search_tools`).
+
 ## Contributor reference
 
 ### Source and tests
@@ -1131,12 +1261,17 @@ Handlers and schemas live in [meta-tools.ts](https://github.com/zackbart/connect
 and [invocation](https://github.com/zackbart/connecta/blob/main/src/invocation.ts)
 serve both direct tools and programs. [Skills](https://github.com/zackbart/connecta/blob/main/src/skills.ts)
 owns the supplied usage instructions, each endpoint's instructions
-(`endpointInstructions`), and connector guides.
+(`endpointInstructions`), and connector guides. The native surface's names,
+listing, and call translation live in
+[native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts),
+and the Eve helper in [eve.ts](https://github.com/zackbart/connecta/blob/main/src/eve.ts).
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
 [call tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-call.test.ts),
 [skills tests](https://github.com/zackbart/connecta/blob/main/test/skills-extension.test.ts),
+[native surface tests](https://github.com/zackbart/connecta/blob/main/test/native-tools.test.ts),
+[Eve helper tests](https://github.com/zackbart/connecta/blob/main/test/eve-helper.test.ts),
 [surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts),
 and [pool description tests](https://github.com/zackbart/connecta/blob/main/test/pool-description.test.ts)
 check the published contract. Guest parity and clause evidence are in

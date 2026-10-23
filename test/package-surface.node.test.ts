@@ -124,6 +124,7 @@ describe("public package boundary", () => {
         "./json-schema",
         "./quickjs",
         "./worker",
+        "./eve",
         "./auth/clerk",
         "./auth/cloudflare-access",
         ...providerExports,
@@ -171,6 +172,15 @@ describe("public package boundary", () => {
       "quickjs-runtime.ts",
       "quickjs.ts",
     ]);
+  });
+
+  it("INV-13: keeps the Eve helper on its own subpath, installing nothing of eve", () => {
+    // The deployment supplies eve; declaring even an optional peer makes pnpm
+    // resolve it into every install of this repository.
+    for (const field of [packageJson.dependencies, packageJson.devDependencies, packageJson.peerDependencies]) {
+      expect(field).not.toHaveProperty("eve");
+    }
+    expect(packageJson.exports).toHaveProperty("./eve");
   });
 
   it("INV-13: keeps the Workers executor an optional peer with a published range", () => {
