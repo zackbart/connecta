@@ -661,7 +661,6 @@
       "endpoints": [
         {
           "operation": "GET /v1/account",
-          "page": "https://docs.stripe.com/api/account",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a6d79f7309af788cf6bf0405381d1e0c3924ac3d24b363de77e652102ba674f0"
         },
@@ -859,25 +858,21 @@
         },
         {
           "operation": "GET /v1/apple_pay/domains",
-          "page": "https://docs.stripe.com/api/apple_pay",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:10046c5e78f13b0741ecf59939a35dd5da9ac6568b7e1cc14d113f1aea19f454"
         },
         {
           "operation": "POST /v1/apple_pay/domains",
-          "page": "https://docs.stripe.com/api/apple_pay",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:4433bb32e1fb1324341b8ef4ea5c29e90a4bcca69443099f1109bd500c01b31a"
         },
         {
           "operation": "GET /v1/apple_pay/domains/{domain}",
-          "page": "https://docs.stripe.com/api/apple_pay",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:06cbb987a4808acd618c02f7a83d01e90a3491a4fbf76345d01b5b8734af14a2"
         },
         {
           "operation": "DELETE /v1/apple_pay/domains/{domain}",
-          "page": "https://docs.stripe.com/api/apple_pay",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b53ede3255de8f306f765e955588528c9cf29e22f11fe3680cb8bf3499199958"
         },
@@ -925,55 +920,46 @@
         },
         {
           "operation": "GET /v1/apps/installs",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f270e0160a3126d2950f80f01af300dbbbc713720d815f3f9ed2a66587b624eb"
         },
         {
           "operation": "POST /v1/apps/installs",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1eb93cb735ce6f0c43d0db43e174bf1353efc20656ff179f124b5b45caaa510b"
         },
         {
           "operation": "GET /v1/apps/installs/{id}",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1b9fe5a281928d3e8c445237f10ea77c69b8c698788613e0908d67a2d51c2b45"
         },
         {
           "operation": "POST /v1/apps/installs/{id}",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a1fa4b58ade9bcae46c078df2d9aa922b5e1d7648b80d23aa7ef729c07ecbce7"
         },
         {
           "operation": "POST /v1/apps/installs/{id}/uninstall",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a1fa4b58ade9bcae46c078df2d9aa922b5e1d7648b80d23aa7ef729c07ecbce7"
         },
         {
           "operation": "GET /v1/apps/secrets",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:989e03a1deef58f56f8203817576afc4db489ddb63a471112ca91ae4de454ad1"
         },
         {
           "operation": "POST /v1/apps/secrets",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2d359fa752030ec6c4a4254b783923ae1816badf3055edd33cc9957d5825356d"
         },
         {
           "operation": "POST /v1/apps/secrets/delete",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:6992380e095a5ea5189b5d1d0696b9eaea2f965b6cc98b853b5a2dea2bb8c333"
         },
         {
           "operation": "GET /v1/apps/secrets/find",
-          "page": "https://docs.stripe.com/api/apps",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:cd771fafceda0197851adfddee42ecd0545347109531342d5f55ba787f6bb0f2"
         },
@@ -997,13 +983,11 @@
         },
         {
           "operation": "GET /v1/balance_settings",
-          "page": "https://docs.stripe.com/api/balance_settings",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e0dc3eda3e930a8eed0941642787758e9bb47ebdcbb46ca33f14051af57387c7"
         },
         {
           "operation": "POST /v1/balance_settings",
-          "page": "https://docs.stripe.com/api/balance_settings",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3c0df31384e7cd0c41e3d7ae9aacaf5cb06e781128ea0b15e804878a224726ef"
         },
@@ -1021,205 +1005,171 @@
         },
         {
           "operation": "GET /v1/billing/alerts",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:bea328b4919bec5c96f434b96c893f1317c806cd1eec9c04d789165a2abf7f01"
         },
         {
           "operation": "POST /v1/billing/alerts",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:eda5c7c4e4807f5496430b69343f30029d501c091f75324574dcbb1bf6e31d2d"
         },
         {
           "operation": "GET /v1/billing/alerts/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2d7eb1d5a8bd5133ceedacf1d4452154921b415ffdcae1ce6634436482e4ff52"
         },
         {
           "operation": "POST /v1/billing/alerts/{id}/activate",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:57e2cc25c54f59ca338a9d3c3ff6783597245b076c838d68f8b641fa7bc3e455"
         },
         {
           "operation": "POST /v1/billing/alerts/{id}/archive",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:57e2cc25c54f59ca338a9d3c3ff6783597245b076c838d68f8b641fa7bc3e455"
         },
         {
           "operation": "POST /v1/billing/alerts/{id}/deactivate",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:57e2cc25c54f59ca338a9d3c3ff6783597245b076c838d68f8b641fa7bc3e455"
         },
         {
           "operation": "GET /v1/billing/credit_balance_summary",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a272cbfc4c0fc4a3328234c32b2b105ebf1718a1e5b92a4892488a857a5335f0"
         },
         {
           "operation": "GET /v1/billing/credit_balance_transactions",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:358a72cc15d80a33b94f3b822d622eddfea4862cb51ccf2638feb20689c2e7e5"
         },
         {
           "operation": "GET /v1/billing/credit_balance_transactions/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:35ad46f66415dc17b31cb709f9154844174f78b2f050675bda4d7e52d7c1e56d"
         },
         {
           "operation": "GET /v1/billing/credit_grants",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:35fd0c2ce6c4010090f7f9063bc696a937d35f24dea77ab8ad19bac23c08ea94"
         },
         {
           "operation": "POST /v1/billing/credit_grants",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:8df279ccad379ca11de3bc1fe4c85989421cf4cbe205308bac7f8dd9bc4036e3"
         },
         {
           "operation": "GET /v1/billing/credit_grants/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:8602bb19fb4e37db6edb400754026c8e9532a75633c83cb7f2cf9dd596259b07"
         },
         {
           "operation": "POST /v1/billing/credit_grants/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:4e2df1bdd6aec81c1bfade66ba14cc600d4c2e8ce9083290a424ac6eda0428f0"
         },
         {
           "operation": "POST /v1/billing/credit_grants/{id}/expire",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b0b3dcca1d9b7b5e67909354a3f175e3581d1900391adf9a2690050235a078e5"
         },
         {
           "operation": "POST /v1/billing/credit_grants/{id}/void",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b0b3dcca1d9b7b5e67909354a3f175e3581d1900391adf9a2690050235a078e5"
         },
         {
           "operation": "GET /v1/billing/feedback_options",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:255c35393a4e61ba8a68c6928c87c10af7f05d5b9e8ac061b20545acb10c14ce"
         },
         {
           "operation": "POST /v1/billing/feedback_options",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:719cc2b348c6efdbf9beb58c255f21bf1673e7a58ee7b31dfc8d61d03e2e0a7e"
         },
         {
           "operation": "GET /v1/billing/feedback_options/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f133ad9244d5c6b4b01edd6461fd4930c53649b442042aebc962e06d9abae735"
         },
         {
           "operation": "POST /v1/billing/feedback_options/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:66b2ae949de86f947512e80b2857ffa32f421373b325b486e2ad657bc7d5bacc"
         },
         {
           "operation": "POST /v1/billing/feedback_options/{id}/deactivate",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:66b2ae949de86f947512e80b2857ffa32f421373b325b486e2ad657bc7d5bacc"
         },
         {
           "operation": "POST /v1/billing/meter_event_adjustments",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c7c4fc0ffb14242daa6923c01fea46a6b4a247594e3393c7924465f02cd7edd3"
         },
         {
           "operation": "POST /v1/billing/meter_events",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:46700a5f0ddcf4e6339aab4d98f61b732ed4af530f04cd932171dfa496d3dce1"
         },
         {
           "operation": "GET /v1/billing/meters",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:5a31838462057f6f69185e0382e1886e176925e5fdb185d236014319b3b08f0f"
         },
         {
           "operation": "POST /v1/billing/meters",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b758528cc1fd7471b4777f81ee005196082bf5f064478aecde19d47d28ce525f"
         },
         {
           "operation": "GET /v1/billing/meters/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:80d55992e94408f23429ae31231fbf0de4cd40f6655d58f2a7aa2515558fc16b"
         },
         {
           "operation": "POST /v1/billing/meters/{id}",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a7253538eb35a7a90d8c5071d4e5fc867a86830c763a4d05981b881d3034e758"
         },
         {
           "operation": "POST /v1/billing/meters/{id}/deactivate",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:5d6d148348dfd4f74216c7ce51d8f2c7994c03884837ca48bc872918e5ac5c42"
         },
         {
           "operation": "GET /v1/billing/meters/{id}/event_summaries",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:55083ced0678df0ebb39235b675eb985d1f602d3495db4636e4dc7f64b6eba58"
         },
         {
           "operation": "POST /v1/billing/meters/{id}/reactivate",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:5d6d148348dfd4f74216c7ce51d8f2c7994c03884837ca48bc872918e5ac5c42"
         },
         {
           "operation": "GET /v1/billing_portal/configurations",
-          "page": "https://docs.stripe.com/api/billing_portal",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:61c3d98f61c3db017fd8e1593ce831d6e91ebc4f267470c3286faf453b9e385c"
         },
         {
           "operation": "POST /v1/billing_portal/configurations",
-          "page": "https://docs.stripe.com/api/billing_portal",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:4fc4354d36fd74a9aa3ecd5c9e4ec1128e7b4796fccd9ef1517a3035fee52b41"
         },
         {
           "operation": "GET /v1/billing_portal/configurations/{configuration}",
-          "page": "https://docs.stripe.com/api/billing_portal",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1493532d86f7e0a66e449fc0d313f3bf03753c47a1caddf582a4972cba0455b5"
         },
         {
           "operation": "POST /v1/billing_portal/configurations/{configuration}",
-          "page": "https://docs.stripe.com/api/billing_portal",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:850853e785a5d686d55fa79dc53d21a35d0a9bd74f1ec64cc5ff59fc99de80a5"
         },
         {
           "operation": "POST /v1/billing_portal/sessions",
-          "page": "https://docs.stripe.com/api/billing_portal",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:9a1a93245a05a911ba9a97d42c60a9f218bc03774a4119379d3f78427e741f3d"
         },
@@ -1783,37 +1733,31 @@
         },
         {
           "operation": "GET /v1/entitlements/active_entitlements",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:84b995494eaae19b3cafbcffa9d2fa54d6429cafab3760e88f0d945997f4d28a"
         },
         {
           "operation": "GET /v1/entitlements/active_entitlements/{id}",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:90b346e3b1cc7d5aca39b78fbb383da3adcb6989d97ba19ca43e509f8968aa7c"
         },
         {
           "operation": "GET /v1/entitlements/features",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b4b21df1e49ac76ae333e1834c889b44b07080b4c32d0e141d3ac65ba0c64061"
         },
         {
           "operation": "POST /v1/entitlements/features",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1c0bab77c98af4ba767633999931faaa7a82febc3fb8e165ec30a590df9c341c"
         },
         {
           "operation": "GET /v1/entitlements/features/{id}",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:925fcf2f55a95d9bf3b107e46dd72f207f14bc32f84894a3a2a907a3209093f6"
         },
         {
           "operation": "POST /v1/entitlements/features/{id}",
-          "page": "https://docs.stripe.com/api/entitlements",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2d886ca0f6a667ba7a0067aae959e64d680883951d8e930dbd51a2a8443948a9"
         },
@@ -1843,13 +1787,11 @@
         },
         {
           "operation": "GET /v1/exchange_rates",
-          "page": "https://docs.stripe.com/api/exchange_rates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:47c0603829b1bee3a0b9f09d7e802bf826f14d8609828cd052382ebaee5d1685"
         },
         {
           "operation": "GET /v1/exchange_rates/{rate_id}",
-          "page": "https://docs.stripe.com/api/exchange_rates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:95dd7793941fed6245e8c8e8671c967e903a018dc5083edc8beeaa68b5ed5261"
         },
@@ -2035,37 +1977,31 @@
         },
         {
           "operation": "GET /v1/invoice_payments",
-          "page": "https://docs.stripe.com/api/invoice_payments",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ebd8b5f00b560d2bf2907921d412f5d89647b3225f4ed6fda0a65193fc17a181"
         },
         {
           "operation": "GET /v1/invoice_payments/{invoice_payment}",
-          "page": "https://docs.stripe.com/api/invoice_payments",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:9175906bef16f67af43d3e71333ab7ddf61f6685f4d8ba3f996de94c56c16d34"
         },
         {
           "operation": "GET /v1/invoice_rendering_templates",
-          "page": "https://docs.stripe.com/api/invoice_rendering_templates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:658a8c79c3940b54ecdb5afd366cee8072b13e9a779f1cd258bae50f87ef6387"
         },
         {
           "operation": "GET /v1/invoice_rendering_templates/{template}",
-          "page": "https://docs.stripe.com/api/invoice_rendering_templates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:bafc1b0557d1a985e5f3362823a51c0b1a08c09ec116e0a5d5ac457e16aed06f"
         },
         {
           "operation": "POST /v1/invoice_rendering_templates/{template}/archive",
-          "page": "https://docs.stripe.com/api/invoice_rendering_templates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e8bb179d1b2ade604d3a472f395faed4d44e065774859f70189110a486bf1e91"
         },
         {
           "operation": "POST /v1/invoice_rendering_templates/{template}/unarchive",
-          "page": "https://docs.stripe.com/api/invoice_rendering_templates",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e8bb179d1b2ade604d3a472f395faed4d44e065774859f70189110a486bf1e91"
         },
@@ -2389,43 +2325,36 @@
         },
         {
           "operation": "POST /v1/link_account_sessions",
-          "page": "https://docs.stripe.com/api/link_account_sessions",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e36cd23253ade47648137e5622f806152c38ea6c79f08115dcb3b261e34932c4"
         },
         {
           "operation": "GET /v1/link_account_sessions/{session}",
-          "page": "https://docs.stripe.com/api/link_account_sessions",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:87079765ee0bccff9a922af34329f2a347946f17559373ca0bbc41b14e918095"
         },
         {
           "operation": "GET /v1/linked_accounts",
-          "page": "https://docs.stripe.com/api/linked_accounts",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:cc69115189e117aa3451c7992cd946d656f75a6db43ea462f0a3248f55091a2b"
         },
         {
           "operation": "GET /v1/linked_accounts/{account}",
-          "page": "https://docs.stripe.com/api/linked_accounts",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c6139a531c3c4c953a025a13cfc726bcfc053f3d829010bd2b5c04d5cc67b332"
         },
         {
           "operation": "POST /v1/linked_accounts/{account}/disconnect",
-          "page": "https://docs.stripe.com/api/linked_accounts",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:759fd6c5332ab03c08b9e8d1f2d7c438244aa812171b2c3db7d7f05cc92c2017"
         },
         {
           "operation": "GET /v1/linked_accounts/{account}/owners",
-          "page": "https://docs.stripe.com/api/linked_accounts",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b92878c9c300528b8d107a525592bbe81c7251fced23b5cf9d4639ab77e68317"
         },
         {
           "operation": "POST /v1/linked_accounts/{account}/refresh",
-          "page": "https://docs.stripe.com/api/linked_accounts",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:587ba3304e33e511adfa5f3dc7d597d9cd1b9f97d007123bd9d8220b5bff72b2"
         },
@@ -2437,13 +2366,11 @@
         },
         {
           "operation": "GET /v1/payment_attempt_records",
-          "page": "https://docs.stripe.com/api/payment_attempt_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:dc4a6ba010981797735969eed673022937b4447853b3070e9a547c013c218d11"
         },
         {
           "operation": "GET /v1/payment_attempt_records/{id}",
-          "page": "https://docs.stripe.com/api/payment_attempt_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:0e2f4eb61aa5ebd3f407dac5d099d5b6ba042c790d37d534e28c0f89dac34911"
         },
@@ -2521,31 +2448,26 @@
         },
         {
           "operation": "GET /v1/payment_links",
-          "page": "https://docs.stripe.com/api/payment_links",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ed6feacebff4d56773b68e0685a8c03ed3781e428ce214a2da27ba63e6001427"
         },
         {
           "operation": "POST /v1/payment_links",
-          "page": "https://docs.stripe.com/api/payment_links",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a232dfaefa0e33bc28e6e5b8de48ffab7132d8e73f35abc116127abaf776cc71"
         },
         {
           "operation": "GET /v1/payment_links/{payment_link}",
-          "page": "https://docs.stripe.com/api/payment_links",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1dc145b5953ba09ca06bb5a017738305237e35c45c5a941440722ec26aa18571"
         },
         {
           "operation": "POST /v1/payment_links/{payment_link}",
-          "page": "https://docs.stripe.com/api/payment_links",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:7273ce503bcbdfd7cc5ebe9063bedecb25fd4e396be6061c2353f358b2b15788"
         },
         {
           "operation": "GET /v1/payment_links/{payment_link}/line_items",
-          "page": "https://docs.stripe.com/api/payment_links",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c8b64bc7dcf3491f22fcf3f6582b1113904afddfc08a58ab5cdb2742aa06666b"
         },
@@ -2641,55 +2563,46 @@
         },
         {
           "operation": "GET /v1/payment_records",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:403cc48c4efe6747da58d0019ce93ded5fb46593aaa311bdb6f74802e846f223"
         },
         {
           "operation": "POST /v1/payment_records/report_payment",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b8dc0ee467c5deab7c70fa0603a658034c2eab6da4842567bc0176c76f038bdf"
         },
         {
           "operation": "GET /v1/payment_records/{id}",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:87f9593b6900cefe8355fc91af4b9e742f222014fda599e8af3ce7c09fed5a1a"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_payment_attempt",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3c56d8a2609b86661c5f010d1f0aa62796753e653d96fa51fc5353b229cc8e69"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_payment_attempt_canceled",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:78c502050cc00dbc26f72919946a327b88da275ad6f7aa023ba8deb277241ca5"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_payment_attempt_failed",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:53bc7bf2571b7ae846d22baffcd266c45ee7c8b305641a2fab01d6cce477b63d"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_payment_attempt_guaranteed",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:8dcb12aee9775ecee341b92b207bf024f949ef9697f57b89292c3b284a4e52f1"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_payment_attempt_informational",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:845084a063a1aa1f80573559b4a2280516a0d7c94a27ea07a5c35b2204a87f5b"
         },
         {
           "operation": "POST /v1/payment_records/{id}/report_refund",
-          "page": "https://docs.stripe.com/api/payment_records",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:db7dd280e52b7533fd2c161c0d9d194012a2c7dd9044f96081d221494352d1b7"
         },
@@ -2791,25 +2704,21 @@
         },
         {
           "operation": "GET /v1/product_catalog/trial_offers",
-          "page": "https://docs.stripe.com/api/product_catalog",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a89b540495a0768f8196ac903ad89902eb1fad2c97a58f8291bb8277466f84c9"
         },
         {
           "operation": "POST /v1/product_catalog/trial_offers",
-          "page": "https://docs.stripe.com/api/product_catalog",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:9ebaf59f996c6033bf5d6b5ca56c36c28288e812bdac3a38eea52237f2c97d09"
         },
         {
           "operation": "GET /v1/product_catalog/trial_offers/{id}",
-          "page": "https://docs.stripe.com/api/product_catalog",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2f09aa110ff1d8cd6e9dd0fbfc4d8094a8278e63652ffe82836ee8e5bb137a9e"
         },
         {
           "operation": "POST /v1/product_catalog/trial_offers/{id}",
-          "page": "https://docs.stripe.com/api/product_catalog",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b72fddcb470cdd6e852c3fe44fc66b7ec74635f81f96b7cb1c6c2a91ebfe85e3"
         },
@@ -3061,49 +2970,41 @@
         },
         {
           "operation": "GET /v1/reporting/report_runs",
-          "page": "https://docs.stripe.com/api/reporting",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:db611caa9ed39ba665e8a7448b1ae5facdea5f70d886cbcfb72df689f4c6f6b2"
         },
         {
           "operation": "POST /v1/reporting/report_runs",
-          "page": "https://docs.stripe.com/api/reporting",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:39195f72d73d5d83555b32ab3f21b6d111757dbafb5b26524dd2518053c420de"
         },
         {
           "operation": "GET /v1/reporting/report_runs/{report_run}",
-          "page": "https://docs.stripe.com/api/reporting",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:43625dc411b4f4645c89e940456612e5019e6244b65e801d6780ffa1d290f771"
         },
         {
           "operation": "GET /v1/reporting/report_types",
-          "page": "https://docs.stripe.com/api/reporting",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:dc1827f0be86ddbfffcd130eda9f98faae9e8823b80d7559a2fb1bc3104f801c"
         },
         {
           "operation": "GET /v1/reporting/report_types/{report_type}",
-          "page": "https://docs.stripe.com/api/reporting",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:dd1e9ca4bab95ec8d0d32fbac29e60d1e5f6ce4595016127afabcb370641e067"
         },
         {
           "operation": "GET /v1/reviews",
-          "page": "https://docs.stripe.com/api/reviews",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:253e4f89b30b27acfc5d009ba0f6544d0c983015e587d781aa64de56326b81bf"
         },
         {
           "operation": "GET /v1/reviews/{review}",
-          "page": "https://docs.stripe.com/api/reviews",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d9f637a1d8e42274ed8347f32debe790ab9798d2a5ba0603f3b39bddf6779a99"
         },
         {
           "operation": "POST /v1/reviews/{review}/approve",
-          "page": "https://docs.stripe.com/api/reviews",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d131318307488f37f8050f32de0b14650c119c369f05649b63ca1eaa1da0aa95"
         },
@@ -3685,295 +3586,246 @@
         },
         {
           "operation": "POST /v1/test_helpers/confirmation_tokens",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:bff17469ecad77ffa400c063d09cd896b7494a0fe4f045132422bbfcdc195cac"
         },
         {
           "operation": "POST /v1/test_helpers/customers/{customer}/fund_cash_balance",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3a22cd740e254af3d13dd18341321714b61a0a5e241b4951ae66071c83b0cee7"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:7c666284bbd6b990c917ac6f6c8bb62e7a87b5b8be59c3fa29cf43e0fd5016ed"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/capture",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:4e3d269e8128204656a9e90e61c85cdd72cda2039d1a4f607c2ff379f8cc7543"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/expire",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c256724441a041b2a10614da2051bd97a241f22225ec5c49866175a85ba6a649"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/finalize_amount",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2aadca03978d2913acc17c599f51fdd1a6a62d4e4560662df12b2806dabe0881"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/fraud_challenges/respond",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:99f1fd5e81645a84d5966830e0375bc8ffdbcfa8d9adf8a67feec772d8ba1bcb"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/increment",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b70388ca886b009cfcfef377d7e90118eeb30d92926094e2eaaa85be8af27d02"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/authorizations/{authorization}/reverse",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d75e1d163c765b6562359f08bdbf321b5be843ded53a40151a012ea41edcc87e"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/cards/{card}/shipping/deliver",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:487b09449a6caa45185b50a460024c3a01989c0e6bdb903cf64c6bb4b2041676"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/cards/{card}/shipping/fail",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:487b09449a6caa45185b50a460024c3a01989c0e6bdb903cf64c6bb4b2041676"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/cards/{card}/shipping/return",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:487b09449a6caa45185b50a460024c3a01989c0e6bdb903cf64c6bb4b2041676"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/cards/{card}/shipping/ship",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:487b09449a6caa45185b50a460024c3a01989c0e6bdb903cf64c6bb4b2041676"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/cards/{card}/shipping/submit",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:487b09449a6caa45185b50a460024c3a01989c0e6bdb903cf64c6bb4b2041676"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/activate",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:20cd389a942b9314e62447783d749094663706fb35b14fb0068c499293fa3975"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/deactivate",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:20cd389a942b9314e62447783d749094663706fb35b14fb0068c499293fa3975"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/reject",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ee0bafd0ce7eae5847f0005e0861ea79d17cfea70d9b554d2eb0a0250c178e4f"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/settlements",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1c61de76466829670105b37de62abb78772ee2a01ddbddde4f7f656fbb7fcc20"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/settlements/{settlement}/complete",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2520ce653c4ce941094fec26b43c20bf79d10a8a74b0d46ac9dc126041e254a4"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/transactions/create_force_capture",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ad3240680efb1920b108062d9b853260f60ade39a802b357bc09f0dc6ab66c68"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/transactions/create_unlinked_refund",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ad3240680efb1920b108062d9b853260f60ade39a802b357bc09f0dc6ab66c68"
         },
         {
           "operation": "POST /v1/test_helpers/issuing/transactions/{transaction}/refund",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3c9f40215c63c9b783928ab871ba45113e6cc45ed5887ee145aa5e662251ac0a"
         },
         {
           "operation": "POST /v1/test_helpers/refunds/{refund}/expire",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2797c9ae4aa24f877c131cbdd43b97f6f390289815f3e5555d302801753fe71c"
         },
         {
           "operation": "POST /v1/test_helpers/terminal/readers/{reader}/present_payment_method",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ea7e83160dea25d3ad9124ca8dc74e980c89a8d7d8d5ab2a7ac773596daf7125"
         },
         {
           "operation": "POST /v1/test_helpers/terminal/readers/{reader}/succeed_input_collection",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c9af392c7cd9b7871e8dad2ee57735ef25aef3ccdfb0d7e5ac66fcd8dd368ed4"
         },
         {
           "operation": "POST /v1/test_helpers/terminal/readers/{reader}/timeout_input_collection",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2718f1b2d9b5e3b1bbb55a7a030578957a733e463e063af9f73ac4e96c1de081"
         },
         {
           "operation": "GET /v1/test_helpers/test_clocks",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:fe79cd2aef38444eae4d98f4a16aee89cfd31e17be5138528fdda21c3821b40a"
         },
         {
           "operation": "POST /v1/test_helpers/test_clocks",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d08ab971a52a3735c607a219c4d3d887843c618a5ce65ce7a9572b3e1d2484b0"
         },
         {
           "operation": "GET /v1/test_helpers/test_clocks/{test_clock}",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a00f6f83f5a06631eac62dcbedadbf211fd0889d9c00229e4f8c7bf0cbffc92d"
         },
         {
           "operation": "DELETE /v1/test_helpers/test_clocks/{test_clock}",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f8e0c2c9a8fff1f8b49dd94a09a6150033617161c587f196679490548772e094"
         },
         {
           "operation": "POST /v1/test_helpers/test_clocks/{test_clock}/advance",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2db0f4dae3c63855765400baed80d8c30b55ef7489d2e61ed7520d69ecab99f5"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/inbound_transfers/{id}/fail",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:94c7f85c7676073298ec2821e42b9a0933360b1342a3323d1232e371a9fdd445"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/inbound_transfers/{id}/return",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1e42a270de014edeb20626f1c5ab9d9bf1b4234277b37214bf2c5328fdd33cbd"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/inbound_transfers/{id}/succeed",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:1e42a270de014edeb20626f1c5ab9d9bf1b4234277b37214bf2c5328fdd33cbd"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_payments/{id}",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c59247c8c12387c9dbae705013e0dabfec031c83b2701c65ca1f9b1b0746bf74"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_payments/{id}/fail",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f339dab940b9a48b20d06dae2fedb5bfcef302de0700d49d7306c33d6033b316"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_payments/{id}/post",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f339dab940b9a48b20d06dae2fedb5bfcef302de0700d49d7306c33d6033b316"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_payments/{id}/return",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:a5b1ebce4399630ef1c7d4ff01c6389c2ec6df39be3bd084ede871a6263dbe71"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_transfers/{outbound_transfer}",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:36b1679b8e8dc4fb09f1980333ce8022520d776b54b733138f5037a67ea47a5e"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_transfers/{outbound_transfer}/fail",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f8d5a3b1f112baf8f6f20854fc790e5760110fafb03ad14f95a8d67291b2edb8"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_transfers/{outbound_transfer}/post",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f8d5a3b1f112baf8f6f20854fc790e5760110fafb03ad14f95a8d67291b2edb8"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/outbound_transfers/{outbound_transfer}/return",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:9aa933b1e9ded74583f121a838cd28f228658c29438282fa8ab4ff0466df422d"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/received_credits",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:f951f982b7673d10e0feffb66ece04c2fb6c1831dd555e7ab2d1e20b9068fb1b"
         },
         {
           "operation": "POST /v1/test_helpers/treasury/received_debits",
-          "page": "https://docs.stripe.com/api/test_helpers",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:57aca09e9fd1deb8b40f998cab798fab59b6e0d020a0f3840d1ecbcdca21e94a"
         },
         {
           "operation": "GET /v1/three_d_secure/authentications",
-          "page": "https://docs.stripe.com/api/three_d_secure",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ad16c2b2ae24bf48e3d858d52f0f74d5df531387133ea8ef464c3c6747828298"
         },
         {
           "operation": "POST /v1/three_d_secure/authentications",
-          "page": "https://docs.stripe.com/api/three_d_secure",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:0b3def9eb6d4449db482f1ef101d0add0eb7769e56dea5161d1962924e86abcc"
         },
         {
           "operation": "GET /v1/three_d_secure/authentications/{authentication}",
-          "page": "https://docs.stripe.com/api/three_d_secure",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:7455cb0cd218ded3f5e5ceaf83c29e5f839ca31902f01dc04243daedf7d97f29"
         },
         {
           "operation": "POST /v1/three_d_secure/authentications/{authentication}/cancel",
-          "page": "https://docs.stripe.com/api/three_d_secure",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:c2a19699a27df454adbd0a36b182064ab02a3fdaaf25fdc6fb21f8a814641ae8"
         },
         {
           "operation": "POST /v1/three_d_secure/authentications/{authentication}/submit",
-          "page": "https://docs.stripe.com/api/three_d_secure",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b2e2035637990baa6e98bbef93f837982a7f513b138e1e56309b380e208cb78c"
         },
@@ -4297,193 +4149,161 @@
         },
         {
           "operation": "POST /v2/billing/meter_event_adjustments",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b12ffb3b9e63eb581707f6ec899af29d8eac689c0d94c7c5ea344e3763492165"
         },
         {
           "operation": "POST /v2/billing/meter_event_session",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ae7e911a03654ccb36e745aaaba1919de9f697acc5b1cd2dbc7cc5e7e0ada0dc"
         },
         {
           "operation": "POST /v2/billing/meter_event_stream",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:8ba53476d84ec8bed096ddc7e51a9b4e8c2d6bc45ea9a6aecc120785fe236899"
         },
         {
           "operation": "POST /v2/billing/meter_events",
-          "page": "https://docs.stripe.com/api/billing",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d424ffef7abec3c0d2d153ee91dfc2473741e55d8adea3c08c045c691eaf7b42"
         },
         {
           "operation": "GET /v2/commerce/product_catalog/imports",
-          "page": "https://docs.stripe.com/api/commerce",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:6d85d3d3c96a709511454b668be2357ddf189cc08a2fdcc0b64eea9ec34792ea"
         },
         {
           "operation": "POST /v2/commerce/product_catalog/imports",
-          "page": "https://docs.stripe.com/api/commerce",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d1f4153f1195d811c563ea519f2773ef2d938f88241ae16d05495d8dffefd44d"
         },
         {
           "operation": "GET /v2/commerce/product_catalog/imports/{id}",
-          "page": "https://docs.stripe.com/api/commerce",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:ab8b863dcd56e3214d1b9f45fe5203eb1512d5a218e087b81dbcf15f59e04896"
         },
         {
           "operation": "POST /v2/core/account_links",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:20a11476595fb591b2b2b10b7308611b9ba069cd242132220e524a4a3667da37"
         },
         {
           "operation": "POST /v2/core/account_tokens",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3dede3845d920d7f600951cd6f6f06cf418d60d83586f17acc9e3dde48f4d63b"
         },
         {
           "operation": "GET /v2/core/account_tokens/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e812eb0c28233ce6bdcdba28f440ef5edede094d062c525c4537e193a379b392"
         },
         {
           "operation": "GET /v2/core/accounts",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:86d7a54da3fcc57a6baac30149e83d719f686929c12efcafc191565da9b82e9f"
         },
         {
           "operation": "POST /v2/core/accounts",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:72ea89485c6b3c797a924a3e3af6671bad2d046996cb38ce00319394cbe5a941"
         },
         {
           "operation": "POST /v2/core/accounts/{account_id}/person_tokens",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:90ac1c720a028837dd7c4bab276198eae695ef8617d0e169133e498323c1f029"
         },
         {
           "operation": "GET /v2/core/accounts/{account_id}/person_tokens/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:0ac913b4f7a79bd7865d067cbc8597de96415c5f1e3480b0eb3f9de743f7262d"
         },
         {
           "operation": "GET /v2/core/accounts/{account_id}/persons",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:0ff1a265d2126b729ce87cf0dcc103b72a116e98d87f1cd62fb8d0534ab5ac31"
         },
         {
           "operation": "POST /v2/core/accounts/{account_id}/persons",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e926b5fbdcd5dcb0d3fb59fc70486d619550276614f9a11c9a8f33c8eadea5df"
         },
         {
           "operation": "GET /v2/core/accounts/{account_id}/persons/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:b1a35f04c7ce55ee267c05722158c390d70e248ae80cfee6f4c2d77315587fd2"
         },
         {
           "operation": "POST /v2/core/accounts/{account_id}/persons/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:3c513d188f7c00b05ffe40ce72345d39136ef96715a4ed743256b66181396b55"
         },
         {
           "operation": "DELETE /v2/core/accounts/{account_id}/persons/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:e65e67957c2b8ab61a01a22a6bd687a166b78f4cf610b0e079dd23bd6ad36832"
         },
         {
           "operation": "GET /v2/core/accounts/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:64d6204c5c5ac9b8e5246a2c274c70bedd4c84ec164bf5293f6c93ce247ff340"
         },
         {
           "operation": "POST /v2/core/accounts/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:97751f2ca7bbf76638e307851bb74eef9217fcc1e3b90d2f30b0aaa0e4ac442e"
         },
         {
           "operation": "POST /v2/core/accounts/{id}/close",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:01b892a21e956eaeb85b4bb903c0a2e80318f090d44821171bb8ce4f5a4e09c1"
         },
         {
           "operation": "GET /v2/core/event_destinations",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:d94dd95fd3f91741214469b59f69fb582c5b3ece6336d6c5a3989e66dedb0249"
         },
         {
           "operation": "POST /v2/core/event_destinations",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:dbf30fe1f4ab085b9d10b8ccca8722d809694cfdb57bf2ab0783b96dfc73517d"
         },
         {
           "operation": "GET /v2/core/event_destinations/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:703be34a53fc5481627794022f2609da007ff61e56ec2a02b8a9f4bca34c3247"
         },
         {
           "operation": "POST /v2/core/event_destinations/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:2c0c529be7470d2533b09dde104509a543da30d5fd75842cc88ca03d7c484aa0"
         },
         {
           "operation": "DELETE /v2/core/event_destinations/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:7f876c92dcee9754409c4533640f8b9dc9a5a3fb3310fb7b2377facde4b66e12"
         },
         {
           "operation": "POST /v2/core/event_destinations/{id}/disable",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:193e689f59e178d1a32dfbfd85b9fc63351c8ecf350eb250ca99d16e1a8a4b84"
         },
         {
           "operation": "POST /v2/core/event_destinations/{id}/enable",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:193e689f59e178d1a32dfbfd85b9fc63351c8ecf350eb250ca99d16e1a8a4b84"
         },
         {
           "operation": "POST /v2/core/event_destinations/{id}/ping",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:5207c1aff8c6c4a9ba2c91a83e09fc363ebdc8c00f751d574c4f2283c89cb229"
         },
         {
           "operation": "GET /v2/core/events",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:4b9d32930a108ce3e0b509e7fb8c744e7e401a12dc1909fdd8e00129d4f7cda5"
         },
         {
           "operation": "GET /v2/core/events/{id}",
-          "page": "https://docs.stripe.com/api/core",
           "specRevision": "2026-09-30.endive",
           "contract": "sha256:5207c1aff8c6c4a9ba2c91a83e09fc363ebdc8c00f751d574c4f2283c89cb229"
         }

@@ -76,9 +76,8 @@ export const vercel = defineApiProvider<VercelOptions>({
   title: "Vercel",
   readme: "Vercel",
   bundle: {
-    "baselineGzip": 228431,
-    "note":
-      "./providers/vercel was measured at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): that historical entry carried the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
+    baselineGzip: 371275,
+    note: "./providers/vercel measures 371,275 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: VERCEL_OPTIONS,
