@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { inputRequired } from "@modelcontextprotocol/server";
-import { z } from "zod";
+import * as z from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
