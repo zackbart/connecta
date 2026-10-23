@@ -28,7 +28,7 @@ import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
-import { errors, GMAIL, GmailApi, probe, safety } from "./api.js";
+import { errors, GMAIL, GmailApi, probe, result, safety } from "./api.js";
 import { GMAIL_API_BASE_URL, GMAIL_MAX_RESPONSE_BYTES } from "./lib/constants.js";
 import { gmailTools } from "./tools.js";
 export { GMAIL_API_BASE_URL, GMAIL_SCOPES } from "./lib/constants.js";
@@ -90,7 +90,7 @@ export const gmail = defineApiProvider<GmailOptions>({
   displayTitle: () => "Gmail (drafts only)",
   readme: "Gmail",
   bundle: {
-    baselineGzip: 336600,
+    baselineGzip: 337955,
     note: "./providers/gmail is measured locally on Node 26 in C.7: the shared Google Effect provider kit replaces the legacy transport (27,085 B). A deployment pays the kit once. Provider entries are reported, not capped (#899).",
   },
   skill,
@@ -104,6 +104,7 @@ export const gmail = defineApiProvider<GmailOptions>({
   grantRenewal: GOOGLE_GRANT_RENEWAL,
   authenticate: bearer,
   errors,
+  result,
   safety: () => safety,
   probe,
   guide: (options) => ({

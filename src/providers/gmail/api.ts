@@ -1,6 +1,6 @@
 // Gmail's declared operations are confined to the delegated user's own mailbox.
-import { Schema } from "effect";
-import { get, post, put, vendor } from "../../http/vendor.js";
+import { Effect, Schema } from "effect";
+import { encodedFieldProvenance, get, post, put, vendor, type EncodedFieldProvenance } from "../../http/vendor.js";
 import { googleErrors, googleSafety, type GoogleProduct } from "../_shared/google/kit.js";
 import { GMAIL_SCOPES } from "./lib/constants.js";
 
@@ -42,7 +42,35 @@ const OPERATIONS = [
 ] as const;
 
 // The manifest uses Discovery's path; transport stays fixed beneath users/me.
-export const GmailApi = vendor({ name: "Gmail", manifestBase: "/gmail/v1/users/{userId}" }, ...OPERATIONS);
+const bodyPaths = ["payload", "message.payload", "messages[*].payload"].flatMap((prefix) =>
+  // The normal MIME walk and a parsed forwarded-message walk each admit 20 levels.
+  Array.from({ length: 41 }, (_, depth) => `${prefix}${".parts[*]".repeat(depth)}.body.data`),
+);
+export const GmailApi = {
+  ...vendor({ name: "Gmail", manifestBase: "/gmail/v1/users/{userId}" }, ...OPERATIONS),
+  encodedFields: [...bodyPaths, "data"].map((path) => ({
+    path,
+    encoding: "base64url" as const,
+    review: "Gmail's bounded MIME projection decodes this body or attachment data before rendering or byte encoding.",
+  })),
+};
+
+const bodyProvenance = new WeakMap<object, EncodedFieldProvenance>();
+/** Product-private metadata copied only by the result hook, before the projection validates attachment sizes. */
+export const gmailBodyProvenance = (body: object): EncodedFieldProvenance | undefined => bodyProvenance.get(body);
+export const result = (body: unknown) =>
+  Effect.sync(() => {
+    const visit = (node: unknown, path: (string | number)[]) => {
+      if (node === null || typeof node !== "object") return;
+      const provenance = encodedFieldProvenance(body, [...path, "data"]);
+      if (provenance) bodyProvenance.set(node, provenance);
+      for (const [key, child] of Object.entries(node))
+        if (child !== null && typeof child === "object")
+          visit(child, [...path, Array.isArray(node) ? Number(key) : key]);
+    };
+    visit(body, []);
+    return body;
+  });
 export const errors = googleErrors(GMAIL);
 export const safety = googleSafety(GMAIL.provider, OPERATIONS);
 export const probe = {

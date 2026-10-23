@@ -9,7 +9,7 @@ import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { googleClient, googleTool, type GoogleClient, type GoogleToolDeclaration } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
-import { errors, GMAIL } from "./api.js";
+import { errors, GMAIL, gmailBodyProvenance } from "./api.js";
 
 /**
  * Each summary row costs one metadata read, so a page stays small. Gmail's
@@ -370,7 +370,7 @@ function attachmentBytes(
   ctx: ConnectorContext,
   messageId: string,
   part: JsonRecord,
-): Effect.Effect<Uint8Array | undefined, HttpFailure, CallServices> {
+): Effect.Effect<{ bytes: Uint8Array; changed: boolean } | undefined, HttpFailure, CallServices> {
   return Effect.gen(function* () {
     const stored = asRecord(part["body"]);
     let source = stored;
@@ -385,6 +385,21 @@ function attachmentBytes(
     }
     const data = source["data"];
     if (typeof data !== "string") return undefined;
+    const provenance = gmailBodyProvenance(source);
+    const validateSize = (length: number) => {
+      if (
+        provenance?.sizeValid === false ||
+        length !== declaredSize(stored) ||
+        (source["size"] !== undefined && length !== declaredSize(source))
+      )
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "Gmail attachment data does not match its declared byte size.",
+          { retryable: false },
+        );
+    };
+    // Check the original bytes before decoding data that the privacy boundary may have changed.
+    if (provenance) validateSize(provenance.originalLength);
     let bytes: Uint8Array;
     try {
       bytes = base64UrlBytes(data);
@@ -393,17 +408,8 @@ function attachmentBytes(
         retryable: false,
       });
     }
-    if (
-      bytes.length !== declaredSize(stored) ||
-      (source["size"] !== undefined && bytes.length !== declaredSize(source))
-    ) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "Gmail attachment data does not match its declared byte size.",
-        { retryable: false },
-      );
-    }
-    return bytes;
+    if (!provenance) validateSize(bytes.length);
+    return { bytes, changed: provenance?.changed === true };
   });
 }
 /** Read only a carried part of a fresh message, never an arbitrary download id. */
@@ -480,8 +486,9 @@ function readAttachment(
       const own = walk(part, true).own;
       const chosen = ownBody(own);
       if (!chosen) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
-      const bytes = yield* attachmentBytes(client, ctx, messageId, chosen);
-      if (!bytes) return unavailable("Gmail returned no readable forwarded message body data; open it in Gmail.");
+      const content = yield* attachmentBytes(client, ctx, messageId, chosen);
+      if (!content) return unavailable("Gmail returned no readable forwarded message body data; open it in Gmail.");
+      const { bytes } = content;
       const rendered = decodeBytes(ctx, chosen, bytes);
       if (!rendered.text.trim())
         return unavailable("This forwarded message has no readable text body; open it in Gmail.");
@@ -494,10 +501,12 @@ function readAttachment(
       decoded = headers.length > 0 ? `${headers.join("\n")}\n\n${body}` : body;
       envelope = { ...envelope, ...compact({ note: rendered.note }) };
     } else {
-      const bytes = yield* attachmentBytes(client, ctx, messageId, part);
-      if (!bytes) return unavailable("Gmail returned no attachment data; open it in Gmail.");
+      const content = yield* attachmentBytes(client, ctx, messageId, part);
+      if (!content) return unavailable("Gmail returned no attachment data; open it in Gmail.");
+      const { bytes, changed } = content;
       if (bytes.length > limit) return tooLarge();
-      if (!isText) return { ...envelope, content: encodeForAgent(ctx, bytes) };
+      if (!isText)
+        return { ...envelope, content: encodeForAgent(ctx, changed ? new TextEncoder().encode("[redacted]") : bytes) };
       const rendered = decodeBytes(ctx, part, bytes);
       decoded = rendered.text;
       if (mime === "message/rfc822" && !decoded.trim()) {

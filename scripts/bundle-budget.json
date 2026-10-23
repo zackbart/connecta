@@ -85,7 +85,7 @@
       "baselineGzip": 164063
     },
     "./providers/gmail": {
-      "baselineGzip": 336600
+      "baselineGzip": 337955
     },
     "./providers/infisical": {
       "baselineGzip": 27673
