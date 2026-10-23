@@ -12,6 +12,8 @@ import {
   type ServerContext,
   type StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
+import { withAuthorizationHandoff } from "./authorization-handoff.js";
+import { classifyCallError, type CallErrorDetails } from "./errors.js";
 import { CatalogService } from "./catalog-service.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { failureRecord, logFailure } from "./operator-record.js";
@@ -201,7 +203,11 @@ export class NativeSurface {
    */
   private async resolve(
     name: string,
-  ): Promise<{ kind: "found"; entry: NativeTool } | { kind: "ambiguous" } | { kind: "missing"; address: string }> {
+  ): Promise<
+    | { kind: "found"; entry: NativeTool }
+    | { kind: "ambiguous" }
+    | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
+  > {
     const connectors = this.registry.listConnectors();
     const prefixed = connectors.filter((connector) => {
       const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
@@ -211,13 +217,13 @@ export class NativeSurface {
       return name.startsWith(prefix) || name.startsWith(`${head}_`);
     });
     const found: NativeTool[] = [];
-    let failed: Connector | undefined;
+    let failed: { connector: Connector; cause: unknown } | undefined;
     for (const connector of prefixed.length > 0 ? prefixed : connectors) {
       let tools: ToolDef[];
       try {
         tools = await this.catalog.loadConnector(connector.id);
-      } catch {
-        failed ??= connector;
+      } catch (cause) {
+        failed ??= { connector, cause };
         continue;
       }
       for (const tool of tools) {
@@ -226,14 +232,7 @@ export class NativeSurface {
     }
     if (found.length === 1) return { kind: "found", entry: found[0]! };
     if (found.length > 1) return { kind: "ambiguous" };
-    // Hand the miss to invocation, which reports the catalog failure (with its
-    // auth handoff) or the unknown tool or address, exactly as call_tool does.
-    const split = name.lastIndexOf(SEPARATOR);
-    const connector = failed ?? (prefixed.length === 1 ? prefixed[0] : undefined);
-    return {
-      kind: "missing",
-      address: connector && split > 0 ? `${connector.id}.${name.slice(split + SEPARATOR.length)}` : name,
-    };
+    return { kind: "missing", ...(failed ? { failure: failed } : {}) };
   }
 
   /** A native call: the existing route its current verdict selects. */
@@ -251,7 +250,23 @@ export class NativeSurface {
       result.isError = true;
       return result;
     }
-    if (target.kind === "missing") return this.options.route("call_tool", { address: target.address, args }, request);
+    if (target.kind === "missing") {
+      // A failed catalog may supply an auth handoff, but a name that has not
+      // matched a definition never supplies an address to invocation.
+      const error: CallErrorDetails = target.failure
+        ? {
+            ...classifyCallError(target.failure.cause, "catalog_lookup_failed"),
+            connector: target.failure.connector.id,
+            message: `Connector "${target.failure.connector.id}" catalog lookup failed.`,
+          }
+        : { code: "unknown_tool", message: `Unknown native tool "${name}".`, retryable: false };
+      if (target.failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+        error.nextAction = { tool: "authorize_connector", arguments: { connector: target.failure.connector.id } };
+      }
+      const result = jsonResult({ ok: false, error: await withAuthorizationHandoff(this.options.requestScope, error) });
+      result.isError = true;
+      return result;
+    }
     const address = `${target.entry.connector.id}.${target.entry.tool.name}`;
     return this.options.route(
       target.entry.tool.classification === "read" ? "call_tool" : "call_destructive_tool",

@@ -220,9 +220,15 @@ describe("native tool surface", () => {
       code: "invalid_args",
       validation: { issues: [{ path: "/id", code: "required" }] },
     });
-    const unknown = await rpc(connecta, token, "native", "tools/call", { name: "crm__nope", arguments: {} });
-    expect(unknown.result.isError).toBe(true);
-    expect(envelope(unknown.result).error).toMatchObject({ code: "unknown_tool", retryable: false });
+    for (const modern of [true, false]) {
+      for (const name of ["crm__nope", "crm__wrong__get_person", "crm__export_all", "crm__export.all"]) {
+        const unknown = await rpc(connecta, token, "native", "tools/call", { name, arguments: { id: "p1" } }, modern);
+        // Illegal names are rejected by the SDK; legal misses are bounded tool failures.
+        expect(unknown.error || unknown.result.isError).toBeTruthy();
+        if (unknown.result)
+          expect(envelope(unknown.result).error).toMatchObject({ code: "unknown_tool", retryable: false });
+      }
+    }
     expect(sent).toEqual([]);
   });
 
