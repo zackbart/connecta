@@ -99,10 +99,11 @@ function errorsLine(name, errors) {
 /**
  * The generated `## Conventions` (decision 0011): what the provider's
  * declarations mean for an agent. `kit` is the definition's `ProviderKitFacts`
- * (page size and hatch verdicts arrive with the provider kit); `withheld` says
- * the folder holds a reviewed value-safety table.
+ * (page size, hatch verdicts, error meanings and the idempotency fact). The
+ * withheld-values line renders only for a kit whose hatch refuses a write
+ * carrying a withheld placeholder (`kit.refusesWithheld`); none does yet.
  */
-export function renderConventions({ name, kind, kit, withheld }) {
+export function renderConventions({ name, kind, kit }) {
   if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
   const api = [];
   const tail = [];
@@ -124,7 +125,7 @@ export function renderConventions({ name, kind, kit, withheld }) {
         "result cut for size; the ids that fetch what was cut stay in the result.",
     );
     if (kit?.hatch !== undefined) api.push(hatchLine(name, kit.hatch));
-    if (withheld) {
+    if (kit?.refusesWithheld === true) {
       tail.push(
         '- **Withheld values:** a value withheld for safety reads `"[redacted]"`, and a write that carries one is refused.',
       );

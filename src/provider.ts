@@ -163,6 +163,13 @@ export interface ProviderKitFacts {
   };
   /** Whether a write takes an idempotency key the vendor honors, checked against the built tools. */
   readonly idempotencyKey?: boolean;
+  /**
+   * Set only when the hatch refuses a write carrying a withheld placeholder
+   * value; the Withheld values convention promises exactly that. Unset until
+   * placeholder refusal for withheld scalar values exists, which a provider
+   * with a value-safety table needs before its step 2.
+   */
+  readonly refusesWithheld?: true;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -291,6 +298,7 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
       ? { errors: Object.freeze({ ...kit.errors, conflicts: Object.freeze([...kit.errors.conflicts]) }) }
       : {}),
     ...(kit.idempotencyKey !== undefined ? { idempotencyKey: kit.idempotencyKey } : {}),
+    ...(kit.refusesWithheld ? { refusesWithheld: true as const } : {}),
   });
 }
 
