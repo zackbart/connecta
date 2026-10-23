@@ -5,7 +5,7 @@
 import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forms } from "./index.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
@@ -103,12 +103,8 @@ async function conforms(connector: Connector, name: string, result: unknown, pro
 
 describe("writing forms", () => {
   // Kit writes on Node go through the owned transport that listen() installs.
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
   beforeEach(() => {
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(restoreTransport);
+    installOwnedTransport();
   });
 
   it.each([

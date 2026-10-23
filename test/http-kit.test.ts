@@ -1,5 +1,5 @@
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // The Effect provider kit (decision 0010, src/http/): the guarded
 // client's confinement and ceilings, the error contract and its bounded
 // vendor facts, the provenance it records for the core's write-outcome
@@ -69,6 +69,7 @@ import {
   type Dispatch,
 } from "../src/http/services.js";
 import { typedParams, indexedVendor, restKitTools } from "../src/providers/_shared/rest/kit.js";
+import { callMemo } from "../src/runtime/call.js";
 import { kitInput, read, write, list, get as getTool, action } from "../src/http/tools.js";
 import {
   connect,
@@ -100,7 +101,6 @@ import {
   type ProviderRequest,
 } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { errors as breezeErrors } from "../src/providers/breeze/api.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
@@ -111,7 +111,7 @@ let answers: Array<() => Response> = [];
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
   sent = [];
   answers = [];
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -125,7 +125,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 
@@ -744,7 +743,7 @@ describe("failure mapping (decision 0010, B.3)", NODE, () => {
 });
 
 describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
-  it("renders closed inputs and open outputs in the hand-written spelling", () => {
+  it("INV-11: renders object and union schemas exactly and accepts only canonical typed parameters", () => {
     const input = Schema.Struct({
       when: Schema.optionalKey(
         Schema.Union([Integer.check(Schema.isGreaterThanOrEqualTo(0)), Schema.String.check(Schema.isMinLength(1))]),
@@ -760,6 +759,68 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     expect(JSON.stringify(catalogSchema(output, "output"))).toBe(
       '{"type":"object","properties":{"next":{"type":["string","null"]},"n":{"type":"integer"}},"required":["next"]}',
     );
+    const shared = Schema.Union([
+      Integer.check(Schema.isLessThanOrEqualTo(3)),
+      Schema.Finite.check(Schema.isGreaterThanOrEqualTo(9)),
+    ]);
+    expect(catalogSchema(shared, "output")).toHaveProperty("anyOf");
+    for (const value of [
+      " ",
+      "%",
+      "%25",
+      "%2F",
+      "?",
+      "#",
+      "+",
+      "&",
+      "=",
+      ";",
+      "@",
+      ":",
+      "é",
+      "😀",
+      "~",
+      "!",
+      "'",
+      "(",
+      ")",
+      "*",
+    ]) {
+      expect(typedParams({ id: encodeURIComponent(value) })).toEqual({ id: value });
+    }
+    for (const encoded of ["%", "%C3", "%ff", "%7e", "%2f"]) {
+      expect(() => typedParams({ id: encoded })).toThrow(ConnectorCallError);
+    }
+
+    const object = Schema.Record(Schema.String, Schema.Unknown);
+    const array = Schema.Array(Schema.Unknown);
+    expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });
+    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toEqual({
+      type: ["object", "array"],
+      minItems: 1,
+    });
+    const constrained = Schema.Union([
+      Schema.String,
+      Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(2), Schema.isUnique()),
+    ]);
+    const rendered = catalogSchema(constrained, "input");
+    expect(rendered).toEqual({
+      type: ["string", "array"],
+      minItems: 1,
+      maxItems: 2,
+      uniqueItems: true,
+      items: { type: "string" },
+    });
+    for (const value of ["", "one", [], ["one"], ["one", "one"], ["one", "two"], ["one", "two", "three"], [1]]) {
+      const admitted = Schema.decodeUnknownSync(Schema.Unknown)(value);
+      expect(
+        validateToolInput(
+          catalogSchema(Schema.Struct({ value: constrained }), "input"),
+          { value: admitted },
+          { address: "acme.union", failClosed: true },
+        ) === null,
+      ).toBe(Schema.is(constrained)(value));
+    }
   });
 
   it("preserves empty legacy object spellings without changing decoder admission", () => {
@@ -913,68 +974,6 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       if (mode === "normal") await expect(outcome).resolves.toBeDefined();
       else await expect(outcome).rejects.toBeInstanceOf(ConnectorCallError);
       expect(sent.map((request) => request.method)).toEqual(mode === "extra" ? [] : ["GET", "POST"]);
-    }
-    const shared = Schema.Union([
-      Integer.check(Schema.isLessThanOrEqualTo(3)),
-      Schema.Finite.check(Schema.isGreaterThanOrEqualTo(9)),
-    ]);
-    expect(catalogSchema(shared, "output")).toHaveProperty("anyOf");
-    for (const value of [
-      " ",
-      "%",
-      "%25",
-      "%2F",
-      "?",
-      "#",
-      "+",
-      "&",
-      "=",
-      ";",
-      "@",
-      ":",
-      "é",
-      "😀",
-      "~",
-      "!",
-      "'",
-      "(",
-      ")",
-      "*",
-    ]) {
-      expect(typedParams({ id: encodeURIComponent(value) })).toEqual({ id: value });
-    }
-    for (const encoded of ["%", "%C3", "%ff", "%7e", "%2f"]) {
-      expect(() => typedParams({ id: encoded })).toThrow(ConnectorCallError);
-    }
-
-    const object = Schema.Record(Schema.String, Schema.Unknown);
-    const array = Schema.Array(Schema.Unknown);
-    expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });
-    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toEqual({
-      type: ["object", "array"],
-      minItems: 1,
-    });
-    const constrained = Schema.Union([
-      Schema.String,
-      Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(2), Schema.isUnique()),
-    ]);
-    const rendered = catalogSchema(constrained, "input");
-    expect(rendered).toEqual({
-      type: ["string", "array"],
-      minItems: 1,
-      maxItems: 2,
-      uniqueItems: true,
-      items: { type: "string" },
-    });
-    for (const value of ["", "one", [], ["one"], ["one", "one"], ["one", "two"], ["one", "two", "three"], [1]]) {
-      const admitted = Schema.decodeUnknownSync(Schema.Unknown)(value);
-      expect(
-        validateToolInput(
-          catalogSchema(Schema.Struct({ value: constrained }), "input"),
-          { value: admitted },
-          { address: "acme.union", failClosed: true },
-        ) === null,
-      ).toBe(Schema.is(constrained)(value));
     }
   });
 
@@ -2309,18 +2308,29 @@ describe("call services (decision 0010, B.1)", NODE, () => {
     expect(recoveryFor(ctx)).toEqual({ idempotencyKey: "key-1" });
   });
 
-  it("INV-7: a service kept past its call refuses to read credentials, charge, or record", async () => {
+  it("INV-7: a closed call refuses credentials, budget and ledger, and drops both recovery paths", async () => {
     const { call, charged, recorded } = lease();
     const kept = await runEdge(
       Effect.gen(function* () {
-        return { credentials: yield* Credentials, budget: yield* Budget, recovery: yield* Recovery };
+        return {
+          credentials: yield* Credentials,
+          budget: yield* Budget,
+          recovery: yield* Recovery,
+          ledger: yield* Ledger,
+        };
       }).pipe(Effect.provideContext(call.services)),
     );
+    const request = kept.ledger.open({ auxiliary: false, provider: "Acme", method: "POST" });
     call.close();
     const credentials = await runEdge(Effect.result(kept.credentials.values));
     expect(credentials._tag === "Failure" && credentials.failure.message).toMatch(/call has ended/);
     expect((await runEdge(Effect.result(kept.budget.charge)))._tag).toBe("Failure");
     await runEdge(kept.recovery.record({ idempotencyKey: "late" }));
+    expect(kept.recovery.recordNow).toBeTypeOf("function");
+    kept.recovery.recordNow!({ idempotencyKey: "late-now" });
+    expect(() => kept.ledger.open({ auxiliary: false, provider: "Acme", method: "POST" })).toThrow(/call has ended/);
+    expect(() => kept.ledger.dispatch(request)).toThrow(/call has ended/);
+    expect(request.dispatched).toBe(false);
     expect(charged).toEqual([]);
     expect(recorded).toEqual([]);
   });
@@ -2395,6 +2405,10 @@ describe("call services (decision 0010, B.1)", NODE, () => {
     const { call, charged } = lease();
     const view = callView(operation, call);
     const derived = deriveView(view, { allowAuthorization: true });
+    const key = {};
+    const create = vi.fn(() => ({}));
+    expect(callMemo(derived, key, create)).toBe(callMemo(view, key, create));
+    expect(create).toHaveBeenCalledTimes(1);
     await chargeView(derived);
     expect(charged).toEqual(["charge"]);
     expect(await view.credential!.getAll()).toEqual({ token: "t-123" });
@@ -2402,6 +2416,8 @@ describe("call services (decision 0010, B.1)", NODE, () => {
     expect(viewCaller({ ...view })).toBeUndefined();
     await expect(chargeView({ ...view })).rejects.toThrow(/call has ended/);
     call.close();
+    for (const retained of [view, derived]) expect(() => callMemo(retained, {}, create)).toThrow(/call has ended/);
+    expect(create).toHaveBeenCalledTimes(1);
     await expect(view.credential!.getAll()).rejects.toThrow(/call has ended/);
     await expect(chargeView(derived)).rejects.toThrow(/call has ended/);
     expect(charged).toEqual(["charge"]);
@@ -2689,7 +2705,15 @@ async function through(tool: ApiTool, args: Record<string, unknown>): Promise<{ 
 it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch", WORKERS, async () => {
   for (const test of [
     {
-      name: "Breeze read with empty body",
+      name: "local vendor wording on a read with empty body",
+      method: "GET",
+      served: "read",
+      override: false,
+      code: "unavailable",
+      retryable: true,
+    },
+    {
+      name: "generic read without status-specific words",
       method: "GET",
       served: "read",
       override: false,
@@ -2723,8 +2747,19 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
   ] as const) {
     sent = [];
     answers = [() => new Response(null, { status: 421 })];
-    const breezeRead = test.name === "Breeze read with empty body";
-    const connection = acme({ errors: breezeRead ? breezeErrors : VENDOR });
+    const localWords = test.name === "local vendor wording on a read with empty body";
+    const connection = acme({
+      errors: localWords
+        ? {
+            ...VENDOR,
+            detail: () => "",
+            statuses: {
+              ...VENDOR.statuses,
+              421: () => ({ code: "unavailable", words: () => "Fixture request failed (HTTP 421)." }),
+            },
+          }
+        : VENDOR,
+    });
     const tool = read(connection, {
       name: "misdirected",
       description: "A request answered 421.",
@@ -2749,7 +2784,7 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
     expect(error, test.name).toMatchObject({
       code: test.code,
       retryable: test.retryable,
-      message: breezeRead ? "Breeze request failed (HTTP 421)." : "Acme returned HTTP 421.",
+      message: localWords ? "Fixture request failed (HTTP 421)." : "Acme returned HTTP 421.",
     });
     expect(sent, test.name).toHaveLength(1);
     expect(sent[0]?.method, test.name).toBe(test.method);

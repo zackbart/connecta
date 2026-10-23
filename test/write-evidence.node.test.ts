@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { InvocationService } from "../src/invocation.js";
@@ -47,7 +47,7 @@ async function listen(answer: (close: () => void, response: import("node:http").
 async function planningCenterWrite(baseUrl: string, args: Record<string, unknown>) {
   // Deliberately retain native fetch's hidden-replay behaviour in these controls.
   // Production listen() installs nodeGuardedTransport, covered by guarded-attempts.
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  const transport = installOwnedTransport();
   try {
     const connector = planningCenter("pco", { purpose: "Giving batches", baseUrl });
     const storage = memoryStorage();
@@ -69,7 +69,7 @@ async function planningCenterWrite(baseUrl: string, args: Record<string, unknown
       }),
     };
   } finally {
-    configureGuardedTransport(undefined);
+    transport.restore();
   }
 }
 

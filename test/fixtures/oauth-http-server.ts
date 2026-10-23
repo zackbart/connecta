@@ -43,7 +43,11 @@ export default async function setup(project: TestProject) {
       if (!session) { response.writeHead(404).end(); return; }
       // Latch receipt independently of the held token response and waiter arrival.
       if (operation === "refresh-started") {
-        await session.refreshStarted;
+        const received = await Promise.race([
+          session.refreshStarted.then(() => true),
+          session.released.then(() => false),
+        ]);
+        if (!received) { response.writeHead(409).end(); return; }
         response.end("{}");
         return;
       }
@@ -128,6 +132,7 @@ export default async function setup(project: TestProject) {
       const form = new URLSearchParams(body);
       if (form.get("grant_type") !== "refresh_token") { response.writeHead(400).end(); return; }
       session.redeemed.push(form.get("refresh_token") ?? "");
+      session.startRefresh();
       if (session.mode === "body-lost") {
         response.writeHead(200, { "content-type": "application/json", "content-length": "150", "x-test-buffer-body": "1" });
         response.write('{"access_token":"new-access",');

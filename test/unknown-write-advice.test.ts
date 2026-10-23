@@ -15,7 +15,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { docs } from "../src/providers/docs/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -29,11 +29,10 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 const BASE = "https://connecta.example";
 
 beforeEach(() => {
-  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 

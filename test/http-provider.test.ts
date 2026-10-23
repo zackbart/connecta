@@ -5,7 +5,7 @@ import { attachCallClassification } from "../src/call-classification.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { keys, optionsOf } from "../src/config-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { Refusal, RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { bearer } from "../src/http/oauth.js";
 import { defineApiProvider } from "../src/http/provider.js";
@@ -89,9 +89,10 @@ const definition = {
   ],
 };
 
-beforeEach(() => configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) }));
+beforeEach(() => {
+  installOwnedTransport();
+});
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

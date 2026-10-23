@@ -23,14 +23,41 @@ export async function nativeOAuthServer(mode: string) {
   const base = inject("oauthHttpServer");
   const { id } = await (await fetch(`${base}/new`, { method: "POST", body: mode })).json() as { id: string };
   const issuer = `${base}/session/${id}`;
-  onTestFinished(async () => { await fetch(`${issuer}/finish`, { method: "POST" }); });
+  const waits = new Map<Promise<void>, AbortController>();
+  const finish = async () => {
+    for (const controller of waits.values())
+      controller.abort(new Error(`OAuth refresh receipt wait ended during fixture teardown: ${issuer}`));
+    await Promise.allSettled(waits.keys());
+    await (await fetch(`${issuer}/finish`, { method: "POST" })).text();
+  };
+  onTestFinished(finish);
   return {
     issuer,
-    waitForRefresh: async () => { await fetch(`${issuer}/refresh-started`); },
+    waitForRefresh: () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(
+        new Error(`Timed out waiting for the OAuth refresh request to reach the HTTP fixture (${mode}): ${issuer}`),
+      ), 2_000);
+      const pending = (async () => {
+        try {
+          const response = await fetch(`${issuer}/refresh-started`, { signal: controller.signal });
+          await response.text();
+          if (!response.ok) throw new Error(`OAuth fixture ended before receiving a refresh request: ${issuer}`);
+        } catch (error) {
+          throw controller.signal.aborted ? controller.signal.reason : error;
+        } finally {
+          clearTimeout(timer);
+        }
+      })();
+      waits.set(pending, controller);
+      void pending.then(() => waits.delete(pending), () => waits.delete(pending));
+      return pending;
+    },
     mode: async (mode: string) => { await fetch(`${issuer}/mode`, { method: "POST", body: mode }); },
     success: async () => { await fetch(`${issuer}/mode`, { method: "POST", body: "sdk-success" }); },
-    finish: async () => { await fetch(`${issuer}/finish`, { method: "POST" }); },
+    finish,
     sent: async () => (await (await fetch(issuer)).json() as { requests: Array<{ path: string; grant: string | null; credential: string | null }> }).requests,
+    redeemed: async () => (await (await fetch(issuer)).json() as { redeemed: string[] }).redeemed,
   };
 }
 export async function adapter(kind: "remoteMcp" | "api", issuer: string, storage: KVStorage, seed = true) {

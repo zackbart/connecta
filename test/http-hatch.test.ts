@@ -4,7 +4,7 @@ import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { hatch } from "../src/http/hatch.js";
@@ -104,14 +104,13 @@ let response: () => Response;
 beforeEach(() => {
   sent = [];
   response = () => Response.json({ id: "i1" });
-  configureGuardedTransport({
-    send: async (url, init) => {
-      sent.push({ url: String(url), method: init.method ?? "GET", body: init.body });
-      return response();
-    },
+  installOwnedTransport();
+  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+    sent.push({ url: String(url), method: init.method ?? "GET", body: init.body });
+    return response();
   });
 });
-afterEach(() => configureGuardedTransport(undefined));
+afterEach(() => vi.unstubAllGlobals());
 
 function setup(options: { deny?: boolean; verdicts?: Parameters<typeof hatch>[0]["verdicts"] } = {}) {
   const index = new OperationIndex(DATA, { vendor: "items", title: "Items" });

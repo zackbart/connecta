@@ -32,7 +32,7 @@ import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
-import type { Logger, ToolDef } from "../types.js";
+import type { Connector, Logger, ToolDef } from "../types.js";
 import { agentEndpointPool, isAgentPath } from "./agent-path.js";
 import {
   admitsMaintainer,
@@ -918,7 +918,7 @@ export function createMcpRoute(opts: ServerOptions): {
                 // Both admission and catalogs belong to this pass only. A second
                 // pass after reading the page must observe revocation afresh.
                 const requestScope = {};
-                const catalogs = new Map<string, ToolDef[]>();
+                const catalogs = new Map<string, { connector: Connector; tools: ToolDef[] }>();
                 try {
                   for (const dependency of dependencies) {
                     signal?.throwIfAborted();
@@ -935,20 +935,20 @@ export function createMcpRoute(opts: ServerOptions): {
                     }
                     const resolved = view.resolveAddress(`${dependency.connector}.${dependency.tool}`);
                     if (!resolved) return false;
-                    let tools = catalogs.get(resolved.connector.id);
-                    if (!tools) {
+                    let catalog = catalogs.get(resolved.connector.id);
+                    if (!catalog) {
                       // Track even a failed load so its scope is always closed.
-                      catalogs.set(resolved.connector.id, []);
-                      tools = await view.getTools(
+                      catalog = { connector: resolved.connector, tools: [] };
+                      catalogs.set(resolved.connector.id, catalog);
+                      catalog.tools = await view.getTools(
                         resolved.connector.id,
                         baseUrl,
                         requestScope,
                         signal ? { signal } : {},
                       );
-                      catalogs.set(resolved.connector.id, tools);
                     }
                     signal?.throwIfAborted();
-                    const tool = tools.find((tool) => tool.name === resolved.toolName);
+                    const tool = catalog.tools.find((tool) => tool.name === resolved.toolName);
                     if (
                       !(
                         tool &&
@@ -961,9 +961,9 @@ export function createMcpRoute(opts: ServerOptions): {
                   }
                   return true;
                 } finally {
-                  for (const id of catalogs.keys()) {
+                  for (const [id, { connector }] of catalogs) {
                     await closeConnectorScope(
-                      view.getConnector(id)!,
+                      connector,
                       view.contextFor(id, baseUrl, requestScope),
                       runtimeContext?.waitUntil?.bind(runtimeContext),
                     );

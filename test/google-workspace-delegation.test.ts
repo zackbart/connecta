@@ -27,7 +27,7 @@ import {
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { isKnownProviderFailure } from "../src/provider-call.js";
 import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
@@ -1150,7 +1150,7 @@ describe("the in-memory token cache", () => {
 
     // A kit-built write's late 401 discards only the token it carried
     // (writeRenewal "discard"): it mints nothing and the newer token stays.
-    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    const restore = installOwnedTransport();
     try {
       const form = forms("forms", { purpose: "Forms", serviceAccount: account(), subject: "alice@example.com" });
       const lateWrite = deferred();
@@ -1171,7 +1171,7 @@ describe("the in-memory token cache", () => {
       ]);
       expect(tokenCalls).toHaveLength(4);
     } finally {
-      configureGuardedTransport(restore);
+      restore.restore();
     }
   });
 
@@ -1291,7 +1291,7 @@ describe("the in-memory token cache", () => {
       () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
     );
     // A write call never replays even its auxiliary GET (0010 B.2).
-    const restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    const restoreTransport = installOwnedTransport();
     try {
       const failure = await mailbox()
         .callTool("update_draft", { draftId: "d1", body: "Revised." }, context(identity("alice")))
@@ -1309,19 +1309,15 @@ describe("the in-memory token cache", () => {
       expect(apiCalls.filter(({ method }) => method === "POST" || method === "PUT")).toHaveLength(0);
       expect(tokenCalls).toHaveLength(1);
     } finally {
-      configureGuardedTransport(restoreTransport);
+      restoreTransport.restore();
     }
   });
 });
 
 describe("Workspace served classification on unauthorized requests", () => {
   // Kit-built Workspace writes go through the Node owned transport that listen() installs.
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
   beforeEach(() => {
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(restoreTransport);
+    installOwnedTransport();
   });
 
   it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", NODE, async () => {

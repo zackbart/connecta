@@ -9,7 +9,7 @@ import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { deriveContext } from "../src/derived-context.js";
 import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { providerRequests, readRequest, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
@@ -79,11 +79,10 @@ function credential(name: string): Record<string, string> {
 
 // Kit providers (Tithe.ly) send writes through the owned transport listen() installs on Node.
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
