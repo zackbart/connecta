@@ -1,7 +1,7 @@
 import { github } from "./index.js";
-import { AppAuth } from "./auth.js";
-import { restConnector } from "./rest.js";
-import { ScopePolicy } from "./scope.js";
+import { AppAuth } from "./lib/auth.js";
+import { restConnector } from "./tools.js";
+import { ScopePolicy } from "./lib/scope.js";
 const options: Parameters<typeof github>[1] = {
   purpose: "Audit fixture",
   app: { appId: "12345" },

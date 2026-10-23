@@ -776,7 +776,11 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
   const client = googleClient(connection, FORMS.provider);
   const readOnly = { readOnlyHint: true } as const;
   const formPath = (formId: string) => `/forms/${encodeURIComponent(formId)}`;
-  const readForm = (formId: string) => client.json({ method: "GET", path: formPath(formId) });
+  // A tool that reads the form beside another request names a step for each,
+  // so a deployment that serves it as a write sends each request once.
+  const readForm = (formId: string, step?: string) =>
+    client.json({ method: "GET", path: formPath(formId) }, step ? { step } : undefined);
+  const pairedReads = { form: "once", answers: "once" } as const;
   const batch = (formId: string, requests: unknown[], revisionId: string | undefined) =>
     Effect.map(
       client.json(
@@ -1011,6 +1015,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       description:
         "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response reads one whole.",
       annotations: readOnly,
+      writeSteps: pairedReads,
       inputSchema: input(
         {
           formId: FORM_ID_PROPERTY,
@@ -1073,16 +1078,19 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
           // either failing fails the call rather than returning bare ids.
           const [form, listing] = yield* Effect.all(
             [
-              readForm(formId),
-              client.json({
-                method: "GET",
-                path: `${formPath(formId)}/responses`,
-                query: {
-                  filter: args["submittedAfter"] ? `timestamp > ${args["submittedAfter"]}` : undefined,
-                  pageSize: size,
-                  pageToken: token ?? undefined,
+              readForm(formId, "form"),
+              client.json(
+                {
+                  method: "GET",
+                  path: `${formPath(formId)}/responses`,
+                  query: {
+                    filter: args["submittedAfter"] ? `timestamp > ${args["submittedAfter"]}` : undefined,
+                    pageSize: size,
+                    pageToken: token ?? undefined,
+                  },
                 },
-              }),
+                { step: "answers" },
+              ),
             ],
             { concurrency: "unbounded" },
           );
@@ -1173,6 +1181,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       description:
         "Get one Google Form response whole, each answer labeled with its question's title, plus file ids, quiz grades, and feedback. questionIds narrows a large one.",
       annotations: readOnly,
+      writeSteps: pairedReads,
       inputSchema: input(
         {
           formId: FORM_ID_PROPERTY,
@@ -1194,11 +1203,14 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
           const formId: string = args["formId"];
           const [form, response] = yield* Effect.all(
             [
-              readForm(formId),
-              client.json({
-                method: "GET",
-                path: `${formPath(formId)}/responses/${encodeURIComponent(args["responseId"])}`,
-              }),
+              readForm(formId, "form"),
+              client.json(
+                {
+                  method: "GET",
+                  path: `${formPath(formId)}/responses/${encodeURIComponent(args["responseId"])}`,
+                },
+                { step: "answers" },
+              ),
             ],
             { concurrency: "unbounded" },
           );

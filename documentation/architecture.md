@@ -2070,6 +2070,15 @@ value is ignored, so it cannot replace or wrap the connector. Google Workspace
 uses it to tag whose account the connector acts as, which the registry reads to
 hide a mapping-subject connector from agents in a pool without an owner.
 
+GitHub's finite REST tools use kit read/write builders and a confined
+Connection while its App authentication and scope-verification transport stays
+private. Its tokens are partitioned by App/key, installation, repository IDs,
+permissions and purpose. A resource 401, or a 403 without rate-limit evidence,
+invalidates the exact bearer even when its body cannot be read. The next call
+mints lazily; there is no inline renewal or replay and no renewable Grant.
+Only completed scalar cache data crosses requests; private signing imports
+and all transport operations remain request-owned.
+
 The optional `probe.run(connection, options)` program replaces the operation
 probe when authentication needs a different read or a private login transport.
 It is built once at provider construction outside caller contexts, using the
