@@ -16,10 +16,12 @@
 
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
+import { ConnectorCallError } from "../errors.js";
 import { runEdge } from "../runtime/run.js";
-import { recordUnauthorized, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
-import { catalogSchema } from "./json-schema.js";
-import { boundCursor, PageInfo, type Page } from "./paging.js";
+import { recordUnauthorized, Refusal, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
+import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
+import { catalogSchema, Integer } from "./json-schema.js";
+import { boundCursor, Cursor, PageInfo, StandardPage, type Page } from "./paging.js";
 import {
   Classification,
   Dispatches,
@@ -111,39 +113,117 @@ export function kitInput(tool: ApiTool): Input | undefined {
   return inputs.get(tool);
 }
 
-/** A read: admitted to call_tool and programs. */
+/** A Struct's own property names, for `fields`. */
+function propertyNames(schema: Schema.Top, what: string): ReadonlySet<string> {
+  const fields = (schema as { readonly fields?: Readonly<Record<string, unknown>> }).fields;
+  if (!fields) throw new Error(`fields needs ${what} declared as a Schema.Struct.`);
+  return new Set(Object.keys(fields));
+}
+
+/** Refuse a bad `fields` path before anything is sent. */
+function checkFields(fields: readonly string[] | undefined, names: ReadonlySet<string>, of: string) {
+  const error = fieldsProblem(fields, names, of);
+  return error ? Effect.fail(new Refusal({ error })) : Effect.void;
+}
+
+const fieldsExample = (names: ReadonlySet<string>) => {
+  const first = [...names][0];
+  return first === undefined ? "" : `, e.g. ["${first}"]`;
+};
+
+/**
+ * A read: admitted to call_tool and programs. `fields: true` (decision 0011
+ * S5) appends a `fields` argument that narrows the returned record; the input
+ * and output must then be Structs, and a path outside the output's properties
+ * is refused before anything is sent.
+ */
 export function read<I extends Input, O extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: ToolSpec<I, O> & { readonly review?: string },
+  spec: ToolSpec<I, O> & { readonly review?: string; readonly fields?: true },
 ): ApiTool {
   if (spec.review !== undefined && !spec.review.trim()) throw new Error("A read review must be nonempty.");
-  return build(connection, spec, "read", { readOnlyHint: true }, undefined, spec.review);
+  if (spec.fields === undefined) return build(connection, spec, "read", { readOnlyHint: true }, undefined, spec.review);
+  const names = propertyNames(spec.output, "the output");
+  propertyNames(spec.input, "the input");
+  const input = Schema.Struct({
+    ...(spec.input as unknown as Schema.Struct<Schema.Struct.Fields>).fields,
+    fields: Schema.optionalKey(
+      fieldsInput(`Dot paths to keep in the result${fieldsExample(names)}. It only narrows the result.`),
+    ),
+  });
+  return build(
+    connection,
+    {
+      ...spec,
+      input,
+      run: (args: { readonly fields?: readonly string[] }) =>
+        Effect.gen(function* () {
+          yield* checkFields(args.fields, names, "the result");
+          const { fields, ...rest } = args;
+          return selectFields(yield* spec.run(rest as I["Type"]), fields) as O["Type"];
+        }),
+    } as unknown as ToolSpec<Input, O>,
+    "read",
+    { readOnlyHint: true },
+    undefined,
+    spec.review,
+  );
 }
 
 /** Fetch one entity with the same read contract as a list. */
 export function get<I extends Input, O extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: ToolSpec<I, O>,
+  spec: ToolSpec<I, O> & { readonly fields?: true },
 ): ApiTool {
   return read(connection, spec);
+}
+
+/** Step-1 lists keep `{ [key]: rows, page: PageInfo }` until their step 2. */
+interface LegacyListSpec<I extends Input, Row extends Schema.Top> extends Omit<ToolSpec<I, never>, "output" | "run"> {
+  readonly key: string;
+  readonly row: Row;
+  readonly cursor?: "plain" | "bound";
+  readonly page: (
+    args: I["Type"],
+    cursor: string | undefined,
+  ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
+}
+
+/**
+ * A standard list (decision 0011 S2, S3, S5): `{ items, page }`, with the kit
+ * appending `limit` (its declared default and maximum), `cursor` and
+ * `fields` to the tool's own filters.
+ */
+interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.Top> {
+  readonly name: string;
+  readonly description: string;
+  readonly filters: F;
+  readonly row: Row;
+  readonly limit: { readonly default: number; readonly max: number; readonly description: string };
+  readonly cursor?: "plain" | "bound";
+  readonly page: (
+    args: Schema.Struct<F>["Type"] & { readonly limit: number },
+    cursor: string | undefined,
+  ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
 }
 
 /** One page, with a cursor that either passes through or is tied to this call. */
 export function list<I extends Input, Row extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: Omit<ToolSpec<I, never>, "output" | "run"> & {
-    readonly key: string;
-    readonly row: Row;
-    readonly cursor?: "plain" | "bound";
-    readonly page: (
-      args: I["Type"],
-      cursor: string | undefined,
-    ) => Effect.Effect<Page<Row["Type"]>, HttpFailure, CallServices>;
-  },
+  spec: LegacyListSpec<I, Row>,
+): ApiTool;
+export function list<F extends Schema.Struct.Fields, Row extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: StandardListSpec<F, Row>,
+): ApiTool;
+export function list(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: LegacyListSpec<Input, Schema.Top> | StandardListSpec<Schema.Struct.Fields, Schema.Top>,
 ): ApiTool {
-  if (!spec.key || spec.key === "page") throw new Error("A list needs a row key distinct from page.");
   if (spec.cursor !== undefined && spec.cursor !== "plain" && spec.cursor !== "bound")
     throw new Error('A list cursor must be "plain" or "bound".');
+  if (!("key" in spec)) return standardList(connection, spec);
+  if (!spec.key || spec.key === "page") throw new Error("A list needs a row key distinct from page.");
   return read(connection, {
     ...spec,
     output: Schema.Struct({ [spec.key]: Schema.Array(spec.row), page: PageInfo }),
@@ -163,6 +243,72 @@ export function list<I extends Input, Row extends Schema.Top>(
         return { [spec.key]: result.rows, page: { ...result.page, nextCursor } };
       }),
   });
+}
+
+function standardList(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: StandardListSpec<Schema.Struct.Fields, Schema.Top>,
+): ApiTool {
+  const { default: size, max } = spec.limit;
+  if (!Number.isSafeInteger(size) || !Number.isSafeInteger(max) || size < 1 || max < size)
+    throw new Error(`${spec.name} limit needs positive whole default and max values, with default <= max.`);
+  for (const name of ["limit", "cursor", "fields"]) {
+    if (name in spec.filters) throw new Error(`${spec.name} filters cannot declare ${name}; the kit supplies it.`);
+  }
+  const names = propertyNames(spec.row, "the row");
+  const input = Schema.Struct({
+    ...spec.filters,
+    limit: Schema.optionalKey(
+      Integer.check(Schema.isBetween({ minimum: 1, maximum: max })).annotate({
+        description: spec.limit.description,
+        default: size,
+      }),
+    ),
+    cursor: Schema.optionalKey(Cursor),
+    fields: Schema.optionalKey(
+      fieldsInput(`Dot paths to keep in each item${fieldsExample(names)}. It only narrows the result.`),
+    ),
+  });
+  return build(
+    connection,
+    {
+      name: spec.name,
+      description: spec.description,
+      input,
+      output: Schema.Struct({ items: Schema.Array(spec.row), page: StandardPage }),
+      run: (args: Readonly<Record<string, unknown>> & { readonly fields?: readonly string[] }) =>
+        Effect.gen(function* () {
+          yield* checkFields(args.fields, names, "an item");
+          // A cursor stays valid when only the projection changes between pages.
+          const { fields, cursor: supplied, ...rest } = args;
+          const bound = spec.cursor === "bound";
+          const cursor =
+            typeof supplied === "string" && bound ? yield* boundCursor.decode(spec.name, rest, supplied) : supplied;
+          const result = yield* spec.page(
+            { ...rest, limit: typeof rest["limit"] === "number" ? rest["limit"] : size },
+            cursor as string | undefined,
+          );
+          const items = selectFields(result.rows, fields);
+          if (!result.page.hasMore) return { items, page: { hasMore: false } };
+          if (result.page.nextCursor === null)
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError(
+                  "connector_call_failed",
+                  "The vendor reported another page without a next cursor.",
+                  { retryable: false },
+                ),
+              }),
+            );
+          const nextCursor = bound
+            ? yield* boundCursor.encode(spec.name, rest, result.page.nextCursor)
+            : result.page.nextCursor;
+          return { items, page: { hasMore: true, nextCursor } };
+        }),
+    } as unknown as ToolSpec<Input, Schema.Top>,
+    "read",
+    { readOnlyHint: true },
+  );
 }
 
 /** An idempotency key the vendor honors, sent on a write's one request. */

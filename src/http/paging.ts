@@ -20,6 +20,15 @@ export const PageInfo = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
 });
 
+/**
+ * The standard `page` (decision 0011 S2): `nextCursor` is present exactly
+ * when `hasMore` is true. Step-1 lists keep `PageInfo` until their step 2.
+ */
+export const StandardPage = Schema.Struct({
+  hasMore: Schema.Boolean,
+  nextCursor: Schema.optionalKey(Schema.String),
+});
+
 /** The input field that carries a cursor back. */
 export const Cursor = Schema.String.check(Schema.isMinLength(1)).annotate({
   description: "Opaque nextCursor from the previous page. Pass it back unchanged.",
