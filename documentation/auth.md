@@ -1519,6 +1519,12 @@ once, so one match can never split another. A span wholly inside an existing
 `[redacted]` placeholder is that placeholder; a private value that contains the
 placeholder text is still redacted.
 
+A maintained provider's parsed vendor JSON has every value redacted on arrival
+and keeps its object keys until the connector returns, so the provider's value
+safety finds each field by the name the vendor gave it. The connector boundary
+then applies payload rules to the whole result or failure, keys included.
+Response header names are kept; their values are redacted.
+
 Every string that can reach an agent, an executor, a page or storage goes
 through one checker that applies all of the checks in this section: text and
 number leaves, object keys, declared binary fields, the bytes of typed binary,
