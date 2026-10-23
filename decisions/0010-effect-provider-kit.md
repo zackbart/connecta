@@ -890,8 +890,8 @@ class Grant extends Context.Service<Grant, {
 
 The static OAuth facade bounds each discarded 401 challenge at 1 MiB before
 renewing; an oversized challenge does not start renewal. Broken bounded body
-reads retain the 401, and Q8 remains the core's decision. The kit uses its
-provider's declared response ceiling.
+reads retain the 401, and Q8 remains the core's decision. By default the kit
+uses its provider's declared response ceiling.
 
 `ctx.oauth.fetch` keeps its published contract for custom handlers. It returns
 a `Response` and allows every `apiOrigins` origin, so it shares this decision,
@@ -907,6 +907,13 @@ handoff until renewal succeeds, always non-retryable with
 cancellation, successful renewal and oversized/broken 401 bodies. It also
 checks direct calls and caught/uncaught program accounting against #902's
 `classifyWriteOutcome`, and records the wording changes in the OAuth goldens.
+
+The B.4 static OAuth bridge can opt into `oauthWrite401: "grant"` to restore
+this parity between `Grant` and `ctx.oauth.fetch`, including the legacy
+write-401 diagnostic. Its `refreshOnce` mapper uses the core's
+`unsentAfterUnauthorized` and records the refusal on the same dispatch;
+`settleWrite` remains final. It adds no replay or claim-CAS ownership change,
+and custom `Grant` users without the opt-in retain B.2's behavior.
 
 Since #902 the goldens record one 401 behaviour for a write: it is never
 resent. Google mints a token and sends the write once (two requests), and
@@ -1672,6 +1679,7 @@ message, or the diagnostic for a renewed credential whose write was never
 replayed. The failure belongs to the same resource dispatch; `settleWrite`
 still decides the final outcome. Without the opt-in the B.2 behavior is
 unchanged, and a failed renewal never makes the resource write retryable.
+This restores the static `Grant`/`ctx.oauth.fetch` parity described in B.2.
 
 The static opt-in also uses the shared `OAUTH_CHALLENGE_MAX_BYTES` limit for
 discarded 401 challenges, before renewal. `GuardedClient.read(response,
