@@ -80,6 +80,7 @@ import {
   del,
   operations,
   manifest,
+  encodedFieldProvenance,
   type Connection,
 } from "../src/http/vendor.js";
 import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
@@ -1464,8 +1465,134 @@ it(
       expect(cancelled, mode).toBe(mode !== "empty");
     }
     await binaryReplyEvidence();
+    await encodedFieldEvidence();
   },
 );
+
+async function encodedFieldEvidence() {
+  const secret = "sk_test_0123456789";
+  const encode = (text: string) => btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  // The echo crosses the projection's cut, in both encoded content and ordinary JSON.
+  const original = `${"x".repeat(493)}${secret} ${encode(secret)} safe suffix`;
+  const declarations = [
+    {
+      path: "payload.parts[*].body.data",
+      encoding: "base64url" as const,
+      sizePath: "payload.parts[*].body.size",
+      review: "Fixture MIME body is decoded by its result hook.",
+    },
+  ];
+  const safety = resultSafety({
+    review: "Fixture bodies carry no stored credentials.",
+    sensitiveFields: { names: [], choice: "drop" },
+  });
+  const secrets = new SentSecrets();
+  secrets.add(secret);
+  const connection = connect(
+    { ...ACME_API, encodedFields: declarations },
+    guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }),
+    {
+      errors: VENDOR,
+      safety,
+      result: (body) =>
+        Effect.sync(() => {
+          const answer = body as { payload: { parts: { body: { data: string; size: number } }[] }; ordinary: string };
+          const first = answer.payload.parts[0]!.body;
+          const decoded = atob(first.data.replace(/-/g, "+").replace(/_/g, "/"));
+          expect(decoded).toBe(`${"x".repeat(493)}[redacted] [redacted] safe suffix`);
+          expect(decoded.slice(0, 500)).toBe(`${"x".repeat(493)}[redact`);
+          expect(answer.ordinary).toBe(decoded);
+          expect(first.size).toBe(original.length);
+          const provenance = encodedFieldProvenance(body, ["payload", "parts", 0, "body", "data"]);
+          expect(provenance).toEqual({ originalLength: original.length, sizeValid: true, changed: true });
+          expect(Object.isFrozen(provenance)).toBe(true);
+          expect(encodedFieldProvenance(body, ["payload", "parts", 1, "body", "data"])).toEqual({
+            originalLength: secret.length,
+            sizeValid: false,
+            changed: false,
+          });
+          expect(answer.payload.parts[1]!.body).toEqual({ data: secrets.redact(encode(secret)), size: 0 });
+          expect(answer.payload.parts[2]!.body.data).toBe(secrets.redact(`%%%${secret}`));
+          expect(encodedFieldProvenance(body, ["payload", "parts", 2, "body", "data"])).toBeUndefined();
+          expect(encodedFieldProvenance(body, ["payload", "parts", 3, "body", "data"])).toEqual({
+            originalLength: 3,
+            sizeValid: true,
+            changed: false,
+          });
+          expect(answer.payload.parts[3]!.body.data).toBe("YWJj");
+          expect(JSON.stringify(body)).not.toMatch(/originalLength|sizeValid|changed/);
+          return body;
+        }),
+    },
+  );
+  declarations[0]!.path = "ordinary";
+  declarations.length = 0;
+  answers.push(() =>
+    Response.json({
+      payload: {
+        parts: [
+          { body: { data: encode(original), size: original.length } },
+          { body: { data: encode(secret), size: 0 } },
+          { body: { data: `%%%${secret}`, size: secret.length } },
+          { body: { data: "YWJj", size: 3 } },
+        ],
+      },
+      ordinary: original,
+    }),
+  );
+  await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+  for (const [input, expected, changed] of [
+    ["PGI+", "PGI+", false],
+    ["PGI-", "PGI-", false],
+    ["YQ==", "YQ==", false],
+    [btoa(`<b>${secret}</b>`), btoa("<b>[redacted]</b>"), true],
+    [encode(`<b>${secret}</b>`), encode("<b>[redacted]</b>"), true],
+    [btoa(`\xff${secret}`), btoa("\xff[redacted]"), true],
+  ] as const) {
+    answers.push(() => Response.json({ data: input }));
+    const spelling = connect(
+      { ...ACME_API, encodedFields: [{ path: "data", encoding: "base64url", review: "Fixture decoded field." }] },
+      guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }),
+      {
+        errors: VENDOR,
+        safety,
+        result: (body) =>
+          Effect.sync(() => {
+            expect(body).toEqual({ data: expected });
+            expect(encodedFieldProvenance(body, ["data"])).toEqual({
+              originalLength: atob(input.replace(/-/g, "+").replace(/_/g, "/")).length,
+              changed,
+            });
+            return body;
+          }),
+      },
+    );
+    await runEdge(spelling.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+  }
+  for (const path of ["payload.*.data", "payload.parts[0].data", "payload..data", ".data", "payload.data?"]) {
+    expect(() =>
+      connect(
+        { ...ACME_API, encodedFields: [{ path, encoding: "base64url", review: "Fixture." }] },
+        guardedClient(OPTIONS),
+        { errors: VENDOR, safety },
+      ),
+    ).toThrow(/exact JSON paths/);
+  }
+  for (const field of [
+    { path: "data", encoding: "base64url", review: "" },
+    { path: "data", encoding: "hex", review: "Fixture." },
+    { path: "data", encoding: "base64url", review: "Two\nlines" },
+    { path: "payload.parts[*].data", sizePath: "other.parts[*].size", encoding: "base64url", review: "Fixture." },
+  ]) {
+    expect(() =>
+      connect(
+        { ...ACME_API, encodedFields: [field as NonNullable<Parameters<typeof connect>[0]["encodedFields"]>[number]] },
+        guardedClient(OPTIONS),
+        { errors: VENDOR, safety },
+      ),
+    ).toThrow(/Encoded fields|same array/);
+  }
+}
 
 async function binaryReplyEvidence() {
   const safety = resultSafety({

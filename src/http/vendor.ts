@@ -26,6 +26,7 @@ import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
 import { parameterPairs } from "./write-request.js";
+import type { SentSecrets } from "../sent-secrets.js";
 import type { GuardedClient, SuccessPrefix, PrefixResult } from "./client.js";
 import {
   validateVendorErrors,
@@ -81,6 +82,13 @@ export interface Vendor {
   readonly manifestBase?: string;
   /** Exact public JSON wire keys the projection navigates, each with its review reason. Values stay private. */
   readonly fixedKeys?: Readonly<Record<string, string>>;
+  /** Reviewed JSON fields decoded by the projection; normalized before whole-answer redaction. */
+  readonly encodedFields?: readonly {
+    readonly path: string;
+    readonly encoding: "base64url";
+    readonly sizePath?: string;
+    readonly review: string;
+  }[];
   /** Explicit response-byte review; the kit checks bytes before any base64 representation. */
   readonly binaryBodies?: {
     readonly review: string;
@@ -95,6 +103,140 @@ export interface Vendor {
       contentType?: string,
     ) => "text" | "json-or-text" | undefined;
   };
+}
+
+export interface EncodedFieldProvenance {
+  readonly originalLength: number;
+  readonly sizeValid?: boolean;
+  readonly changed: boolean;
+}
+
+const encodedProvenance = new WeakMap<object, ReadonlyMap<string, EncodedFieldProvenance>>();
+
+/** Result hooks alone may inspect byte counts and redaction flags for an exact decoded JSON field. */
+export function encodedFieldProvenance(
+  answer: unknown,
+  path: readonly (string | number)[],
+): EncodedFieldProvenance | undefined {
+  return answer !== null && typeof answer === "object"
+    ? encodedProvenance.get(answer)?.get(JSON.stringify(path))
+    : undefined;
+}
+
+type EncodedPath = readonly (string | "*")[];
+function encodedPath(path: string): EncodedPath {
+  if (typeof path !== "string" || !/^[A-Za-z0-9_]+(?:\[\*\])?(?:\.[A-Za-z0-9_]+(?:\[\*\])?)*$/.test(path))
+    throw new Error("Encoded fields require exact JSON paths with only whole array wildcards.");
+  return Object.freeze(path.split(".").flatMap((part) => (part.endsWith("[*]") ? [part.slice(0, -3), "*"] : [part])));
+}
+
+function decodedBase64url(value: string): Uint8Array | undefined {
+  if (!/^(?:[A-Za-z0-9_+/-]{4})*(?:[A-Za-z0-9_+/-]{2}(?:==)?|[A-Za-z0-9_+/-]{3}=?|)$/.test(value)) return undefined;
+  try {
+    const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return undefined;
+  }
+}
+
+function encodedFieldsReview(fields: Vendor["encodedFields"]) {
+  const seen = new Set<string>();
+  return Object.freeze(
+    (fields ?? []).map((field) => {
+      if (
+        field.encoding !== "base64url" ||
+        typeof field.review !== "string" ||
+        !field.review.trim() ||
+        /[\r\n]/.test(field.review) ||
+        seen.has(field.path)
+      )
+        throw new Error("Encoded fields require unique paths, base64url encoding and a one-line review reason.");
+      seen.add(field.path);
+      const path = encodedPath(field.path);
+      const sizePath = field.sizePath === undefined ? undefined : encodedPath(field.sizePath);
+      // Wildcards refer to the same array elements; a size cannot come from another lane.
+      if (
+        sizePath &&
+        (sizePath.filter((part) => part === "*").length !== path.filter((part) => part === "*").length ||
+          sizePath.some(
+            (part, index) =>
+              part === "*" && path.slice(0, index + 1).join(".") !== sizePath.slice(0, index + 1).join("."),
+          ))
+      )
+        throw new Error("An encoded field's size path must address the same array elements.");
+      return Object.freeze({ path, ...(sizePath ? { sizePath } : {}) });
+    }),
+  );
+}
+
+function normalizeEncodedFields(
+  value: unknown,
+  fields: ReturnType<typeof encodedFieldsReview>,
+  secrets: SentSecrets,
+): ReadonlyMap<string, EncodedFieldProvenance> {
+  const provenance = new Map<string, EncodedFieldProvenance>();
+  for (const field of fields) {
+    const visit = (node: unknown, index: number, concrete: (string | number)[]) => {
+      if (node === null || typeof node !== "object") return;
+      const segment = field.path[index]!;
+      const keys = segment === "*" ? (Array.isArray(node) ? node.map((_, i) => i) : []) : [segment];
+      for (const key of keys) {
+        if (!Object.hasOwn(node, key)) continue;
+        const record = node as Record<string | number, unknown>;
+        const next = [...concrete, key];
+        if (index + 1 < field.path.length) {
+          visit(record[key], index + 1, next);
+          continue;
+        }
+        const encoded = record[key];
+        if (typeof encoded !== "string") continue;
+        const bytes = decodedBase64url(encoded);
+        if (!bytes) continue;
+        let sizeValid: boolean | undefined;
+        if (field.sizePath) {
+          let declared: unknown = value;
+          for (const [i, part] of field.sizePath.entries()) {
+            const sizeKey = part === "*" ? next[i]! : part;
+            declared =
+              declared !== null && typeof declared === "object" && Object.hasOwn(declared, sizeKey)
+                ? (declared as Record<string | number, unknown>)[sizeKey]
+                : undefined;
+          }
+          sizeValid = typeof declared === "number" && Number.isSafeInteger(declared) && declared === bytes.length;
+        }
+        let changed = false;
+        if (sizeValid !== false) {
+          let sanitized: Uint8Array;
+          try {
+            const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+            const redacted = secrets.redact(text);
+            sanitized = redacted === text ? bytes : new TextEncoder().encode(redacted);
+          } catch {
+            // Preserve arbitrary bytes; encode's byte path also checks UTF-8 and nested encodings.
+            let binary = "";
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            sanitized = Uint8Array.from(secrets.redact(binary), (unit) => unit.charCodeAt(0));
+          }
+          const url = !/[+/]/.test(encoded);
+          let safe = secrets.encode(sanitized, { url });
+          safe = /=+$/.test(encoded) ? safe + "=".repeat((4 - (safe.length % 4)) % 4) : safe.replace(/=+$/, "");
+          const safeBytes = decodedBase64url(safe)!;
+          changed = safeBytes.length !== bytes.length || safeBytes.some((byte, i) => byte !== bytes[i]);
+          // Preserve untouched spelling, including padding. The ordinary JSON pass still checks it.
+          if (changed) record[key] = safe;
+        }
+        provenance.set(
+          JSON.stringify(next),
+          Object.freeze({ originalLength: bytes.length, ...(sizeValid === undefined ? {} : { sizeValid }), changed }),
+        );
+      }
+    };
+    visit(value, 0, []);
+  }
+  return provenance;
 }
 
 /** Group a vendor's operations into one API, the source of its client and its manifest. */
@@ -217,6 +359,7 @@ export function connect<R>(
   )
     throw new Error("Fixed JSON keys require exact nonempty names and a one-line review reason for each.");
   const fixedKeyNames = fixedKeys ? new Set(Object.keys(fixedKeys)) : undefined;
+  const encodedFields = encodedFieldsReview(vendor.encodedFields);
   if (binaryBodies && (!binaryBodies.review.trim() || typeof binaryBodies.forResponse !== "function"))
     throw new Error("Binary bodies require a nonempty vendor review and a response contract selector.");
   if (textBodies && (!textBodies.review.trim() || typeof textBodies.forResponse !== "function"))
@@ -294,10 +437,19 @@ export function connect<R>(
               }
             : parse(
                 reply.text,
-                (value, format) =>
-                  reply.prefix?.truncated && typeof value === "string"
-                    ? secrets.redactOpenTail(value)
-                    : secrets.redact(value, "payload", format === "json" ? fixedKeyNames : undefined),
+                (value, format) => {
+                  const provenance =
+                    format === "json" && encodedFields.length > 0
+                      ? normalizeEncodedFields(value, encodedFields, secrets)
+                      : undefined;
+                  const redacted =
+                    reply.prefix?.truncated && typeof value === "string"
+                      ? secrets.redactOpenTail(value)
+                      : secrets.redact(value, "payload", format === "json" ? fixedKeyNames : undefined);
+                  if (provenance?.size && redacted !== null && typeof redacted === "object")
+                    encodedProvenance.set(redacted, provenance);
+                  return redacted;
+                },
                 textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
               );
 

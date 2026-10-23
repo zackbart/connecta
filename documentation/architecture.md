@@ -2151,6 +2151,28 @@ JSON embedded inside text retain ordinary redaction. Docs uses this for the
 fixed fields its document rendering navigates, including `paragraph` and
 `textRun`; a private argument matching either name cannot erase the structure.
 
+A vendor may declare `encodedFields`: exact dotted JSON paths with whole
+array segments (`payload.parts[*].body.data`), `encoding: "base64url"`, an
+optional `sizePath` addressing the same array elements, and a one-line review.
+Construction freezes the declaration. Before ordinary whole-answer redaction,
+the kit decodes each valid field and redacts its decoded text and bytes through
+the same request-secret service. Unchanged fields retain their original
+spelling; changed fields retain the original alphabet and padding style when
+re-encoded. Both standard and URL-safe alphabets are accepted with valid padding. Invalid base64url stays on
+the ordinary redaction path. A declared size is checked against the original
+decoded byte length first; a mismatch also retains ordinary redaction. Size
+values stay unchanged. This never exempts the encoded field or its surrounding
+JSON from the generic redaction pass.
+
+Result hooks alone may call `encodedFieldProvenance(answer, concretePath)`.
+Its private WeakMap is keyed by the parsed, redacted answer; each frozen
+entry holds only `originalLength`, optional `sizeValid`, and `changed`.
+Provenance contains no content and is never serialized into facts, messages
+or logs. Gmail copies this metadata privately for its decoded body containers:
+text renders after redaction and before cuts, while changed binary content is
+withheld in full. Its original byte counts still govern attachment validation.
+Vendors without this declaration retain the existing parsing path.
+
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
 Transport diagnostics use the vendor error label rather than the provider
