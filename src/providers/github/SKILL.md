@@ -9,11 +9,10 @@ Create a GitHub App, generate its RSA private key, and install it on every
 configured owner. Org grants require **All repositories**, including future
 repositories. Exact repo grants work with selected-repository installations.
 Read-only grants request read permissions; read-write grants request only the
-permissions needed by each operation. The App needs repository Metadata,
-Contents, Issues, Pull requests, Actions, Checks and Commit statuses for the
-reviewed read tools. Grant Contents, Issues, Pull requests and Actions write
-only for the operations the deployment needs. Workflow-file edits also need
-the App's Workflows write permission and `workflows: "write"` on the effective
+permissions needed by each operation. The App needs repository Metadata.
+Search requests Contents read for code, or Issues and Pull requests read for
+issue and PR searches. Release writes need Contents write. Merge needs Contents,
+Pull requests and Workflows write, plus `workflows: "write"` on the effective
 scope. Org grants authorize repository operations, not organization administration.
 
 Pass `app: { appId, privateKey }` with the key from an environment secret, or
