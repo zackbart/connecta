@@ -764,9 +764,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           serviceAccount: account(),
           subject: "shared-inbox@org.example",
         } as Parameters<typeof gmail>[1]);
+        // A kit-built mapping connector carries the same subject tag.
+        const formsMapping = vi.fn(() => "alice@org.example");
+        const mappedForms = forms("forms", { purpose: "Forms", serviceAccount: account(), subject: formsMapping });
         const code = (error: unknown) => String((error as { code?: string }).code ?? error);
         const { connecta, mapping, assistant } = await deployment({
-          extra: [shared],
+          extra: [shared, mappedForms],
           executor: scriptedExecutor(async (fns) => ({
             search: ((await fns.search!({ query: "labels" })) as { tools: { address: string }[] }).tools.map(
               (tool) => tool.address,
@@ -814,6 +817,18 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
           "connector:mail",
         );
+        expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
+          "connector:forms",
+        );
+        expect(addresses(await rpc(assistant, group, "search_tools", { query: "form" }))).toEqual([]);
+        expect(
+          (await rpc(assistant, group, "call_tool", { address: "forms.get_form", args: { formId: "f" } }))
+            .structuredContent.error.code,
+        ).toBe("unknown_address");
+        expect(
+          (await rpc(assistant, group, "call_destructive_tool", { address: "forms.create_form", args: { title: "x" } }))
+            .structuredContent.error.code,
+        ).toBe("unknown_address");
         expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).toContain(
           "connector:shared_mail",
         );
@@ -833,7 +848,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(
           addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
         ).toEqual(["mail.list_labels"]);
+        expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "form" }))).toContain(
+          "forms.get_form",
+        );
         expect(mapping).not.toHaveBeenCalled();
+        expect(formsMapping).not.toHaveBeenCalled();
         expect(tokenCalls).toEqual([]);
         expect(apiCalls).toEqual([]);
         await connecta.close();
@@ -1126,6 +1145,32 @@ describe("the in-memory token cache", () => {
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2", "Bearer token-2"]);
     await labels(connector, context(identity("alice")));
     expect(tokenCalls).toHaveLength(2);
+
+    // A kit-built write's late 401 discards only the token it carried
+    // (writeRenewal "discard"): it mints nothing and the newer token stays.
+    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
+      const form = forms("forms", { purpose: "Forms", serviceAccount: account(), subject: "alice@example.com" });
+      const lateWrite = deferred();
+      apiReplies.push(lateWrite.reply);
+      const write = form
+        .callTool("update_form_info", { formId: "f", title: "Renamed" }, context(identity("alice")))
+        .catch((error) => error);
+      await vi.waitFor(() => expect(apiCalls).toHaveLength(5));
+      now += 3_545_000;
+      await form.callTool("get_form", { formId: "f" }, context(identity("alice")));
+      lateWrite.release(Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
+      expect(await write).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      await form.callTool("get_form", { formId: "f" }, context(identity("alice")));
+      expect(apiCalls.slice(4).map((call) => [call.method, call.authorization])).toEqual([
+        ["POST", "Bearer token-3"],
+        ["GET", "Bearer token-4"],
+        ["GET", "Bearer token-4"],
+      ]);
+      expect(tokenCalls).toHaveLength(4);
+    } finally {
+      configureGuardedTransport(restore);
+    }
   });
 
   it("keys the cache by the key itself, so a rotated key never reuses a token", WORKERS, async () => {
@@ -1341,6 +1386,24 @@ describe("Workspace served classification on unauthorized requests", () => {
         error: { code: "connector_call_failed", retryable: false },
       });
       expect(apiCalls).toHaveLength(1);
+      // Forms reads that send two requests declare a step for each: served as
+      // writes, both GETs leave once and the call answers as on a read.
+      const paired = createMetaTools(
+        makeRegistry(
+          [forms("workspace", { purpose: "Forms", serviceAccount: account(), subject: "alice@example.com" })],
+          { classification: { workspace: { list_responses: "write", get_response: "write" } } },
+        ),
+        "https://connecta.example",
+      );
+      for (const [tool, args] of [
+        ["list_responses", { formId: "form-1" }],
+        ["get_response", { formId: "form-1", responseId: "r1" }],
+      ] as const) {
+        const sent = apiCalls.length;
+        const served = await paired.callDestructiveTool({ address: `workspace.${tool}`, args });
+        expect(served.isError, JSON.stringify(served.structuredContent)).toBeFalsy();
+        expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(["GET", "GET"]);
+      }
     },
   );
 

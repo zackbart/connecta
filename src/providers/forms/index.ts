@@ -96,8 +96,8 @@ export const forms = defineApiProvider<FormsOptions>({
   title: "Google Forms",
   readme: "Google Forms",
   bundle: {
-    baselineGzip: 332452,
-    note: "./providers/forms remeasures at 332,452 B gzip in C.7 (decision 0010), on a local Node 26 measure: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http) through the shared Google Workspace layer, from 26,161 B for the api() provider. A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
+    baselineGzip: 333968,
+    note: "./providers/forms remeasures at 333,968 B gzip in C.7 step 1 (#703), Node 22 CI static at 7e110415: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http) through the shared Google Workspace layer, from 26,161 B for the api() provider. A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
