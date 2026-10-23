@@ -1471,8 +1471,8 @@ function projectRows<Row>(values: unknown[], raw: boolean | undefined, project: 
   return values.map((value) => projectValue(value, raw, project));
 }
 
-/** Step-1 byte shim: these legacy filter arrays wrote descriptions after items.
- * Keep Schemas as the sole contract/decoder source; delete this ordering adapter in step 2. */
+// step-1 compat: legacy key order; delete in Overflow step 2
+// Legacy minItems filter arrays put description after items; only rendered catalog keys change.
 function legacyInputOrder(tool: ApiTool): ApiTool {
   const order = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(order);
