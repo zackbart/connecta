@@ -464,7 +464,14 @@ function readSuccessPrefix(
     const parts: Uint8Array[] = [];
     let total = 0;
     let stopped: PrefixResult["stopped"] = "end";
-    const consume = Stream.runForEachWhile(response.stream, (chunk) => {
+    const source = response.stream.pipe(
+      Stream.catch((error) =>
+        error.reason._tag === "EmptyBodyError"
+          ? Stream.fromEffect(response.arrayBuffer.pipe(Effect.map((buffer) => new Uint8Array(buffer))))
+          : Stream.fail(error),
+      ),
+    );
+    const consume = Stream.runForEachWhile(source, (chunk) => {
       const kept = chunk.subarray(0, Math.max(0, prefix.maxBytes - total));
       parts.push(kept);
       total += kept.byteLength;

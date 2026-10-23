@@ -1228,21 +1228,23 @@ it(
         expect(hooks, test.name).toBe(1);
       }
     }
-    for (const mode of ["bytes", "stop", "time", "failure", "defect", "abort"] as const) {
+    for (const mode of ["bytes", "stop", "time", "empty", "failure", "defect", "abort"] as const) {
       let cancelled = false;
       let callbacks = 0;
       const controller = new AbortController();
       answers.push(
         () =>
           new Response(
-            new ReadableStream({
-              start(stream) {
-                stream.enqueue(new TextEncoder().encode("!!!"));
-              },
-              cancel() {
-                cancelled = true;
-              },
-            }),
+            mode === "empty"
+              ? null
+              : new ReadableStream({
+                  start(stream) {
+                    stream.enqueue(new TextEncoder().encode("!!!"));
+                  },
+                  cancel() {
+                    cancelled = true;
+                  },
+                }),
             {
               status: mode === "failure" ? 400 : 200,
               headers: { "content-length": "1000" },
@@ -1291,6 +1293,11 @@ it(
         if (mode === "failure") {
           expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "ResponseTooLarge" } });
           expect(callbacks).toBe(0);
+        } else if (mode === "empty") {
+          expect(result).toMatchObject({
+            _tag: "Success",
+            success: { data: "", prefix: { truncated: false, bytes: 0, stopped: "end" } },
+          });
         } else {
           expect(result).toMatchObject({
             _tag: "Success",
@@ -1301,7 +1308,7 @@ it(
           });
         }
       }
-      expect(cancelled, mode).toBe(true);
+      expect(cancelled, mode).toBe(mode !== "empty");
     }
     await binaryReplyEvidence();
   },
