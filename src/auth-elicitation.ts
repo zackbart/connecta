@@ -200,13 +200,17 @@ export class AuthElicitation {
     }
   }
 
+  bind(context: ServerContext): void {
+    this.downstream.bind(context);
+  }
+
   async run(
     tool: string,
     args: Record<string, unknown>,
     context: ServerContext,
     operation: () => Promise<ToolResult>,
   ): Promise<ToolResult | InputRequiredResult> {
-    this.downstream.bind(context);
+    this.bind(context);
     const prior = context.mcpReq.requestState<AuthRequestState | DownstreamRequestState>();
     if (prior?.version === 2) return this.downstream.resume(prior, tool, args, context, operation);
     const previous = prior;

@@ -124,6 +124,7 @@ export interface NativeSurfaceOptions {
   baseUrl: string;
   executeCode: boolean;
   route: NativeCallRoute;
+  bind: (request: ServerContext) => void;
   logger: Logger;
   requestScope: object;
   requestSignal?: AbortSignal | undefined;
@@ -237,6 +238,7 @@ export class NativeSurface {
 
   /** A native call: the existing route its current verdict selects. */
   private async call(name: string, args: Record<string, unknown>, request: ServerContext): Promise<unknown> {
+    this.options.bind(request);
     const target = await this.resolve(name);
     if (target.kind === "ambiguous") {
       const result: ToolResult = jsonResult({
@@ -261,7 +263,11 @@ export class NativeSurface {
           }
         : { code: "unknown_tool", message: `Unknown native tool "${name}".`, retryable: false };
       if (target.failure && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
-        error.nextAction = { tool: "authorize_connector", arguments: { connector: target.failure.connector.id } };
+        error.nextAction = {
+          tool: "authorize_connector",
+          arguments: { connector: target.failure.connector.id },
+          operatorHandoff: "Give the returned handoff to the operator.",
+        };
       }
       const result = jsonResult({ ok: false, error: await withAuthorizationHandoff(this.options.requestScope, error) });
       result.isError = true;

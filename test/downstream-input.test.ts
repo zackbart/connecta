@@ -30,6 +30,7 @@ afterEach(async () => {
 
 function setup(
   options: {
+    native?: boolean;
     repeat?: boolean;
     key?: string;
     url?: string;
@@ -241,6 +242,7 @@ function setup(
         tools: ["service"],
         members: ["alice", "bob"].map((id) => ({ namespace: "https://clerk.example.test", id })),
         readOnly: false,
+        ...(options.native ? { surface: "native" as const } : {}),
       },
     },
     executor: {
@@ -270,8 +272,8 @@ function setup(
       legacy?: boolean;
     } = {},
   ) => {
-    const name = opts.name ?? "call_tool";
-    const args = opts.args ?? { address: "service.read", args: { id: 1 } };
+    const name = opts.name ?? (options.native ? "service__read" : "call_tool");
+    const args = opts.args ?? (options.native ? { id: 1 } : { address: "service.read", args: { id: 1 } });
     const request = mcpRpc("tools/call", {
       name,
       arguments: args,
@@ -294,7 +296,8 @@ function setup(
       if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
     }
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
-    return readJsonRpc(await app.fetch(opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request));
+    const pool = opts.pool ?? (options.native ? "trusted" : undefined);
+    return readJsonRpc(await app.fetch(pool ? new Request(`${BASE}/mcp/${pool}`, request) : request));
   };
   return {
     rpc,
@@ -328,6 +331,38 @@ function setup(
 }
 
 describe("downstream input relay", () => {
+  it("INV-4 INV-9: native form and URL continuations preserve wire identity and send each read or write once", async () => {
+    for (const url of [undefined, "https://input.test/continue"]) {
+      for (const name of ["service__read", "service__write"]) {
+        const flow = setup({ native: true, url });
+        const capabilities = { elicitation: url ? { url: {} } : { form: {} } };
+        const first = (await flow.rpc({ name, capabilities })).result;
+        expect(first.resultType).toBe("input_required");
+        expect(first.inputRequests["downstream/service/0"].params.mode).toBe(url ? "url" : "form");
+        expect(flow.call).toHaveBeenCalledOnce();
+        const state = first.requestState;
+        const responses = {
+          "downstream/service/0": { action: "accept", ...(!url ? { content: { name: "Alice" } } : {}) },
+        };
+        const other = name === "service__read" ? "service__write" : "service__read";
+        expect((await flow.rpc({ name: other, state, responses, capabilities })).error.data.reason).toBe(
+          "invalid_request_state",
+        );
+        const changed = await flow.rpc({ name, args: { id: 2 }, state, responses, capabilities });
+        expect(changed.result.structuredContent.error.code).toBe("invalid_request_state");
+        expect(flow.call).toHaveBeenCalledOnce();
+        const done = (await flow.rpc({ name, state, responses, capabilities })).result;
+        expect(done.isError).toBeUndefined();
+        expect(flow.call).toHaveBeenCalledTimes(2);
+        expect(flow.continuationSend).toHaveBeenCalledOnce();
+        const replay = (await flow.rpc({ name, state, responses, capabilities })).result;
+        expect(replay.isError).toBe(true);
+        expect(replay.content[0].text).toContain("Invalid or expired requestState");
+        expect(flow.call).toHaveBeenCalledTimes(2);
+      }
+    }
+  });
+
   for (const { name, schema, args: original, echo } of privateArgumentCases)
     it(`INV-5: continuation failures preserve safe ${name} echoes`, async () => {
       const flow = setup({ catalogSchema: schema, failureStatus: 429 });

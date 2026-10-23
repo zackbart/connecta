@@ -512,6 +512,7 @@ function serveMcp(
         baseUrl,
         executeCode: native.executeCode,
         route: nativeRoute,
+        bind: (context) => authElicitation.bind(context),
         logger: opts.config.logger,
         requestScope,
         requestSignal,
