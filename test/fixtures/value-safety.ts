@@ -23,9 +23,15 @@
 //   in an expansion, or in an event's `data.object` and partial copies;
 // - a `refuse` verdict that reaches transport through the generic tools;
 // - a reviewed operation whose failure echoes the vendor's error text;
+// - a credential name that a private value sharing part of it hides from value
+//   safety, or a private value echoed as a key, called directly or from a
+//   program on a writable or read-only endpoint;
 // - a moved verdict count (a reviewed change updates it with the table).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { api } from "../../src/connectors/api.js";
+import { CredentialVault } from "../../src/credentials.js";
 import { ConnectorCallError } from "../../src/errors.js";
+import { createExecuteTool } from "../../src/execute.js";
 import type { OperationIndex } from "../../src/providers/_shared/rest/operation-index.js";
 import {
   CREDENTIAL_SUFFIX,
@@ -38,7 +44,10 @@ import {
   valueSafety,
   type ValueSafetyTable,
 } from "../../src/providers/_shared/rest/value-safety.js";
-import type { Connector, ConnectorContext } from "../../src/types.js";
+import { requestSentSecrets } from "../../src/sent-secrets.js";
+import { memoryStorage } from "../../src/storage/memory.js";
+import type { Connector, ConnectorContext, Executor } from "../../src/types.js";
+import { makeRegistry, silentLogger } from "../helpers.js";
 
 const script = (await import(new URL("../../scripts/value-safety.mjs", import.meta.url).href)) as {
   VALUE_SAFETY_FORMAT: number;
@@ -562,9 +571,67 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       expect(counts).toEqual(harness.counts);
     });
 
-    it("INV-5: a reviewed path removes a client secret by name on any operation", () => {
+    it("INV-5: a reviewed path removes a client secret by name on any operation, beside private values sharing part of its name or echoed as keys, directly and from programs on writable and read-only endpoints", async () => {
       const safety = valueSafety(table, () => harness.index);
       expect(safety.redact({ client_secret: "S" }, "GET", "/")).toEqual({ client_secret: REDACTED });
+      // Sent-secret redaction runs before value safety; renaming `client_secret` there would hide it (#703).
+      const held = "pi_1_secret_VENDOR_HELD_0001";
+      const [short, long] = ["ecre", "my-client_se-key"];
+      const pins = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        const body = { client_secret: held, [short]: "echoed", [long]: "echoed" };
+        return Response.json({ success: true, result: body, ...body });
+      }) as typeof fetch;
+      const clean = (out: unknown) => {
+        const text = JSON.stringify(out);
+        expect(text).toContain("echoed");
+        expect(text).not.toContain("VENDOR_HELD");
+        expect(text).not.toContain(long);
+        expect(text).not.toMatch(/\\?"ecre\\?"/);
+      };
+      try {
+        const ctx = { ...harness.ctx(), requestScope: {} };
+        for (const pin of [short, long]) requestSentSecrets(ctx).arguments({ pin }, pins);
+        clean(await harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx));
+        const credential = (await harness.ctx().credential!.getAll())!["value"]!;
+        for (const readOnly of [false, true]) {
+          const connector = harness.connector();
+          const storage = memoryStorage();
+          const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
+          await credentialVault.set(connector.id, credential, "operator");
+          const writer = api("pins", {
+            tools: [
+              {
+                name: "set_pin",
+                description: "Save a PIN",
+                annotations: { readOnlyHint: false },
+                inputSchema: pins,
+                handler: async () => ({ ok: true }),
+              },
+            ],
+          });
+          const refusals: unknown[] = [];
+          const executor: Executor = {
+            execute: async (_code, providers) => {
+              const host = providers[0]!.fns;
+              for (const pin of [short, long])
+                await host.call!("pins.set_pin", { pin }).catch((error: unknown) => refusals.push(error));
+              return { result: await host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args), logs: [] };
+            },
+          };
+          const registry = makeRegistry([writer, connector], { storage, credentialVault });
+          const run = createExecuteTool(registry, "https://connecta.test", executor, silentLogger, undefined, {
+            readOnly,
+          });
+          const result = await run({ code: "async () => {}" });
+          expect(result.isError, JSON.stringify(result)).toBeFalsy();
+          expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" }), expect.objectContaining({ code: "read_only_endpoint" })] : []);
+          clean(result);
+        }
+      } finally {
+        globalThis.fetch = realFetch;
+      }
     });
 
     describe("refusals", () => {

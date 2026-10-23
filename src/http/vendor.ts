@@ -11,8 +11,9 @@
 // `Answer`, never a response. HttpApiClient's own decoding would read the
 // whole body without a ceiling, quote the body in a SchemaError, and fail an
 // empty 200. Every answer, from a declared operation or a hatch's path, takes
-// one route: bounded read, JSON, the request's sent secrets redacted from the
-// whole body before anything can cut or extract from it (#911), status (with
+// one route: bounded read, JSON, the request's sent secrets redacted from
+// every value of the whole body before anything can cut or extract from it
+// (#911), its keys kept for value safety to match by name, status (with
 // its operation, so value safety decides what a failure may quote), the
 // vendor's `result` hook, then the connection's ResultSafety. A provider
 // cannot reach a body earlier.
@@ -79,8 +80,6 @@ export interface Vendor {
   readonly indexed?: { readonly operations: readonly string[]; readonly api: () => HttpApi.HttpApi<string, any> };
   /** Published specification path prefix; transport operations remain relative to the confined base. */
   readonly manifestBase?: string;
-  /** Exact public JSON wire keys the projection navigates, each with its review reason. Values stay private. */
-  readonly fixedKeys?: Readonly<Record<string, string>>;
   /** Explicit response-byte review; the kit checks bytes before any base64 representation. */
   readonly binaryBodies?: {
     readonly review: string;
@@ -208,15 +207,6 @@ export function connect<R>(
   validateVendorErrors(options.errors);
   const textBodies = vendor.textBodies ? { ...vendor.textBodies } : undefined;
   const binaryBodies = vendor.binaryBodies ? { ...vendor.binaryBodies } : undefined;
-  const fixedKeys = vendor.fixedKeys ? Object.freeze({ ...vendor.fixedKeys }) : undefined;
-  if (
-    fixedKeys &&
-    Object.entries(fixedKeys).some(
-      ([key, reason]) => !key || typeof reason !== "string" || !reason.trim() || /[\r\n]/.test(reason),
-    )
-  )
-    throw new Error("Fixed JSON keys require exact nonempty names and a one-line review reason for each.");
-  const fixedKeyNames = fixedKeys ? new Set(Object.keys(fixedKeys)) : undefined;
   if (binaryBodies && (!binaryBodies.review.trim() || typeof binaryBodies.forResponse !== "function"))
     throw new Error("Binary bodies require a nonempty vendor review and a response contract selector.");
   if (textBodies && (!textBodies.review.trim() || typeof textBodies.forResponse !== "function"))
@@ -278,7 +268,8 @@ export function connect<R>(
         });
         // Header-derived format decisions see only redacted Content-Type.
         const headers = new Headers(secrets.redact([...reply.headers]));
-        // Whole, before a detail line trims it or a projection extracts from it.
+        // Whole, before a detail line trims it or a projection extracts from it. Values only:
+        // result safety and projections match fields by their vendor names (#703).
         const parsed =
           reply.bytes !== undefined
             ? {
@@ -294,10 +285,10 @@ export function connect<R>(
               }
             : parse(
                 reply.text,
-                (value, format) =>
+                (value) =>
                   reply.prefix?.truncated && typeof value === "string"
                     ? secrets.redactOpenTail(value)
-                    : secrets.redact(value, "payload", format === "json" ? fixedKeyNames : undefined),
+                    : secrets.redact(value, "values"),
                 textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
               );
 
@@ -444,22 +435,20 @@ export function connect<R>(
 
 function parse(
   text: string | undefined,
-  redact: (value: unknown, format: "json" | "text") => unknown,
+  redact: (value: unknown) => unknown,
   format?: "text" | "json-or-text",
 ): { value: unknown; format: "json" | "text" | "empty" } | undefined {
   if (text === undefined) return undefined;
-  if (format === "text") return { value: redact(text, "text"), format: "text" };
+  if (format === "text") return { value: redact(text), format: "text" };
   if (text.trim() === "")
-    return format === "json-or-text"
-      ? { value: redact(text, "text"), format: "text" }
-      : { value: undefined, format: "empty" };
+    return format === "json-or-text" ? { value: redact(text), format: "text" } : { value: undefined, format: "empty" };
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return format === "json-or-text" ? { value: redact(text, "text"), format: "text" } : undefined;
+    return format === "json-or-text" ? { value: redact(text), format: "text" } : undefined;
   }
-  return { value: redact(value, "json"), format: "json" };
+  return { value: redact(value), format: "json" };
 }
 
 /** The endpoint manifest drift checks compare against the vendor's published contract. */

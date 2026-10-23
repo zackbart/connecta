@@ -1,8 +1,8 @@
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
-import { Effect, Schema } from "effect";
+import { type Context, Effect, Schema } from "effect";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { Refusal, type HttpFailure, type VendorErrors, type OperationRef } from "../../http/errors.js";
-import { Credentials } from "../../http/services.js";
+import { Credentials, RequestSecrets } from "../../http/services.js";
 import { get, vendor, type Vendor } from "../../http/vendor.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import { openapi } from "./openapi.generated.js";
@@ -232,11 +232,13 @@ export const errors: VendorErrors = {
 export const result = (
   body: unknown,
   answer: { readonly bodyFormat: "json" | "text" | "empty" },
-): Effect.Effect<unknown, HttpFailure> => {
+): Effect.Effect<unknown, HttpFailure, RequestSecrets> => {
   // Legacy hatches returned null for a blank response, but kept a JSON string even when blank.
   if (answer.bodyFormat === "text" && typeof body === "string" && !body.trim()) return Effect.succeed(null);
-  const failure = reportedFailure(body);
-  return failure ? Effect.fail(new Refusal({ error: failure })) : Effect.succeed(body ?? null);
+  return RequestSecrets.use((secrets) => {
+    const failure = reportedFailure(body, secrets);
+    return failure ? Effect.fail(new Refusal({ error: failure })) : Effect.succeed(body ?? null);
+  });
 };
 
 // The only documented capability-bearing response values are calendar feeds.
@@ -267,7 +269,10 @@ function shortText(value: unknown): string | undefined {
  * or an `errorCode`. The giving endpoints' success shape is
  * `{ success: true, errors: null }`, so a null or empty `errors` is not one.
  */
-function reportedFailure(payload: unknown): ConnectorCallError | undefined {
+function reportedFailure(
+  payload: unknown,
+  secrets: Context.Service.Shape<typeof RequestSecrets>,
+): ConnectorCallError | undefined {
   const root = asRecord(payload);
   const errors = root["errors"];
   const hasErrors =
@@ -280,8 +285,9 @@ function reportedFailure(payload: unknown): ConnectorCallError | undefined {
   if (root["success"] !== false && root["errorCode"] === undefined && !hasErrors) {
     return undefined;
   }
-  // The kit already redacted the whole answer before shortText can cut it.
-  const reported = root;
+  // The kit redacted the answer's values; shortText cuts serialized JSON, so its keys are
+  // checked too before the cut (#703).
+  const reported = secrets.redact(root);
   const message =
     shortText(reported["errorMessage"]) ??
     shortText(reported["message"]) ??

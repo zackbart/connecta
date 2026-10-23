@@ -2160,13 +2160,16 @@ maps an oversized challenge using its own recorded dispatch, including a
 declared-size refusal before the response wrapper exists. It never renews
 after that refusal.
 
-A vendor may declare `fixedKeys`, mapping exact public JSON wire keys to
-one-line review reasons. Construction freezes the declaration. Parsed JSON
-keeps those keys so projections can navigate their schema; every value and
-every other key still passes sent-secret redaction. Text, binary bodies and
-JSON embedded inside text retain ordinary redaction. Docs uses this for the
-fixed fields its document rendering navigates, including `paragraph` and
-`textRun`; a private argument matching either name cannot erase the structure.
+The kit's parse pass redacts every value of a parsed JSON body and keeps its
+object keys. Value safety drops and redacts fields, and projections navigate
+them, by the names the vendor gave them, so a private argument sharing part of
+a name such as `client_secret` or `paragraph` cannot hide the field from the
+rule that withholds it or erase the structure a projection reads. A result
+hook that redacts again does so the same way. Text, binary bodies and JSON
+embedded inside a string are values and retain ordinary redaction. Keys are
+checked once value safety and the projections have run: the `api()` boundary
+and the invocation apply payload rules to the connector's result and failures,
+keys included, before the agent boundary's pass.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.

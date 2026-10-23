@@ -149,7 +149,7 @@ describe("every Notion representation", () => {
 });
 
 describe("redact before normalization or extraction", () => {
-  it("INV-5: Breeze redacts a private amount before decimal parsing can shorten its representation", async () => {
+  it("INV-5: Breeze redacts a private amount before decimal parsing can shorten its representation, and a private key before its failure text is cut", async () => {
     const value = "12345.6700";
     vi.stubGlobal("fetch", async () => Response.json([{ id: "1", amount: value }]));
     const connector = breeze("giving", { subdomain: "example", purpose: "Giving records" });
@@ -164,6 +164,20 @@ describe("redact before normalization or extraction", () => {
     expect(result.totalAmount).toBeNull();
     expect(result.contributions[0].amount).toBe(MARKER);
     expect(JSON.stringify(result)).not.toContain("12345.67");
+    // The kit keeps keys for value safety (#703); the 300-unit cut would leave five units of this one.
+    const key = "Q8!wZ2?vR7#k";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ success: false, errors: { [`${"x".repeat(293)}${key}`]: "no" } }),
+    );
+    const error = (await connector
+      .callTool(
+        "list_contributions",
+        { start: "2026-01-01", end: "2026-01-31" },
+        { ...privateContext(key), credential: keyed().credential! },
+      )
+      .catch((caught: unknown) => caught)) as Error;
+    expect(error.message).toContain("Breeze reported a failure");
+    expect(error.message).not.toContain(key.slice(0, 4));
   });
 
   it("INV-5: Gmail does not extract a private charset fragment into its fallback notice", async () => {
