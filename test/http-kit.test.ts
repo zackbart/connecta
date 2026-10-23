@@ -398,6 +398,39 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(facts).toMatchObject({ list: ["token", 1, true] });
       expect(JSON.stringify(facts)).not.toMatch(/text with spaces|https|Infinity/);
       expect(body.prose).toBe("the token expired");
+      for (const [value, expected] of [
+        [0, 0],
+        [5, 5],
+        ["+5", 5],
+        [" 5 ", 5],
+        ["", undefined],
+        [" ", undefined],
+        [null, undefined],
+        [-1, undefined],
+        ["private prose", undefined],
+        [Infinity, undefined],
+      ] as const) {
+        let numeric: unknown;
+        const reviewed: VendorErrors = {
+          ...VENDOR,
+          numericFacts: {
+            wait: { path: ["retry_after"], review: "Fixture retry delay in seconds; raw prose stays unavailable." },
+          },
+          classify: [
+            (input) => {
+              numeric = input.numbers;
+              return undefined;
+            },
+          ],
+        };
+        toConnectorCallError(status(429, {}, { retry_after: value }), reviewed, {
+          classification: "read",
+          dispatches: [],
+          withholds: () => true,
+        });
+        expect(numeric).toEqual({ wait: expected });
+      }
+
       // Presence is a closed structural declaration: neither callback sees the text it classifies.
       for (const [value, present, nonBlank] of [
         [undefined, false, false],

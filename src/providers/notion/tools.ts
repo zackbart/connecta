@@ -1039,7 +1039,7 @@ function legacyCatalog(tool: ApiTool): ApiTool {
       branches[0]?.type === "object" &&
       branches[1]?.type === "null"
     ) {
-      const { anyOf, ...rest } = node;
+      const { anyOf: _anyOf, ...rest } = node;
       node = { ...branches[0], type: ["object", "null"], ...rest };
     }
     if (node.type === "object" && node.description !== undefined && node.properties) {

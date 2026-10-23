@@ -34,3 +34,10 @@ The 56 operation rows newly added to drift v2 were captured from the live
 reference on 2026-10-23. The eight earlier endpoint digests remain unchanged.
 The live document digest differs from the runtime pin and is reported as
 advisory drift; these newly recorded rows do not regenerate runtime code.
+
+Numeric retry metadata is reviewed separately from prose: finite, nonnegative
+numbers and nonblank numeric strings preserve Notion's delay. Empty and blank
+strings now mean absent (the 1,000 ms default), rather than legacy's immediate
+zero-delay retry; this difference was accepted for the migration. All committed
+child ids remain available, including beyond the documented 100-child request
+cap, under the unchanged four-MiB error-body ceiling.

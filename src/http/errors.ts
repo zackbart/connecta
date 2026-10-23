@@ -128,6 +128,7 @@ export interface Classified<F extends Facts = Facts> {
   /** The vendor's `facts`, over the whole error body: tokens, finite numbers, booleans, and complete lists of them. */
   readonly facts: F;
   readonly presence: Presence;
+  readonly numbers: Readonly<Record<string, number | undefined>>;
   /** Only the vendor's reviewed `headers`, by lowercase name. */
   readonly headers: Readonly<Record<string, string>>;
   readonly retryAfterMs: number | undefined;
@@ -164,6 +165,7 @@ interface DetailInput<F extends Facts = Facts> {
   /** The same facts, with each list cut to its first eight entries for display. */
   readonly facts: F;
   readonly presence: Presence;
+  readonly numbers: Readonly<Record<string, number | undefined>>;
   readonly headers: Readonly<Record<string, string>>;
   readonly withheld: boolean;
   readonly body?: unknown;
@@ -196,6 +198,8 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly facts: (tokens: unknown) => F;
   /** Structural text facts only: never exposes the string, including on withheld operations. */
   readonly presence?: PresenceReview;
+  /** Reviewed finite, nonnegative numeric metadata; blank strings are absent and raw text never reaches rules. */
+  readonly numericFacts?: Readonly<Record<string, { readonly path: readonly string[]; readonly review: string }>>;
   /** Reviewed recovery ids may need more than the default eight display tokens; never changes classification. */
   readonly displayFacts?: Readonly<Record<string, { readonly maxItems: number; readonly review: string }>>;
   /** Response headers rules and wording may read, by lowercase name. Every other header is invisible. */
@@ -250,7 +254,14 @@ const TOKEN = /^[A-Za-z0-9_.:[\]-]{1,128}$/;
 const DISPLAYED = 8;
 const MAX_HEADER = 128;
 const MAX_DEPTH = 32;
-const errorReviews = new WeakMap<object, { presence: PresenceReview; display: Readonly<Record<string, number>> }>();
+const errorReviews = new WeakMap<
+  object,
+  {
+    presence: PresenceReview;
+    display: Readonly<Record<string, number>>;
+    numbers: Readonly<Record<string, readonly string[]>>;
+  }
+>();
 /** Metadata snapshots contain no request data, promises or services. */
 function captureErrorReviews(vendor: VendorErrors<any>) {
   const previous = errorReviews.get(vendor);
@@ -274,7 +285,24 @@ function captureErrorReviews(vendor: VendorErrors<any>) {
       throw new Error("Displayed error facts need a positive whole maxItems and a nonempty review.");
     display[name] = review.maxItems;
   }
-  const captured = { presence: Object.freeze(presence), display: Object.freeze(display) };
+  const numbers: Record<string, readonly string[]> = {};
+  for (const [name, review] of Object.entries(vendor.numericFacts ?? {})) {
+    if (
+      !TOKEN.test(name) ||
+      !Array.isArray(review.path) ||
+      review.path.length === 0 ||
+      review.path.length > MAX_DEPTH ||
+      review.path.some((part) => typeof part !== "string" || !part) ||
+      !review.review.trim()
+    )
+      throw new Error("Numeric error facts need a name, a bounded property path and a nonempty review.");
+    numbers[name] = Object.freeze([...review.path]);
+  }
+  const captured = {
+    presence: Object.freeze(presence),
+    display: Object.freeze(display),
+    numbers: Object.freeze(numbers),
+  };
   errorReviews.set(vendor, captured);
   return captured;
 }
@@ -499,7 +527,7 @@ function verdict(
 
 function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
-  const { facts, headers, presence } = input;
+  const { facts, headers, presence, numbers } = input;
   // Classification first, over facts and headers only.
   const { code, retryable, retryAfterMs: wait, current, words, advice } = classified(input, vendor);
   // Then the wording. The body reaches `detail` only when this operation's
@@ -508,6 +536,7 @@ function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withhe
     status: failure.status,
     facts: displayed(facts, vendor),
     presence,
+    numbers,
     headers,
     withheld,
     ...(withheld ? {} : { body: failure.body }),
@@ -550,6 +579,19 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
     status: failure.status,
     facts: bounded(vendor.facts(tokensOf(failure.body))),
     presence: structuralPresence(failure.body, captureErrorReviews(vendor).presence),
+    numbers: Object.fromEntries(
+      Object.entries(captureErrorReviews(vendor).numbers).map(([name, path]) => {
+        let value = failure.body;
+        for (const part of path)
+          value =
+            value !== null && typeof value === "object" && Object.hasOwn(value, part)
+              ? (value as Record<string, unknown>)[part]
+              : undefined;
+        const number =
+          typeof value === "number" || (typeof value === "string" && value.trim() !== "") ? Number(value) : NaN;
+        return [name, Number.isFinite(number) && number >= 0 ? number : undefined];
+      }),
+    ),
     headers: visibleHeaders(failure.headers, vendor.headers),
     retryAfterMs: retryAfterMs(failure.headers),
     operation: failure.operation,

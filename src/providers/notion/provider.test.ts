@@ -174,8 +174,23 @@ const PAGE_FIXTURE = {
   },
 };
 
-it("INV-11: the kit manifest covers every pinned operation with vendor path names and the pinned version", () => {
+it("INV-5 INV-11: preserves the manifest, version, admission defaults and candidate credential probe", async () => {
   expect(NOTION_API_VERSION).toBe(openapi.version);
+  expect(build().callAdmission?.rules[0]).toMatchObject({
+    maxConcurrency: 3,
+    budget: { kind: "rolling-window", maxCalls: 180, windowMs: 60_000 },
+  });
+  const override = { rules: [{ maxConcurrency: 1 }] };
+  expect(build({ callAdmission: override }).callAdmission).toEqual(override);
+  queue({ body: { object: "user", bot: { workspace_name: "Fixture workspace" } } });
+  expect(await build().testCredential!("candidate-notion-token", context("stored-notion-token"))).toEqual({
+    ok: true,
+    message: "Authenticated as Fixture workspace.",
+  });
+  expect(calls).toHaveLength(1);
+  expect(new Headers(calls[0]!.headers).get("authorization")).toBe("Bearer candidate-notion-token");
+  expect(new Headers(calls[0]!.headers).get("notion-version")).toBe(NOTION_API_VERSION);
+
   const paths = manifest(NotionApi).paths;
   const actual = Object.entries(paths)
     .flatMap(([path, item]) =>

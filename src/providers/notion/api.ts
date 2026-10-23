@@ -43,17 +43,6 @@ function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
 }
 
-/**
- * Notion repeats `Retry-After` in the body as `additional_data.retry_after`,
- * a string of whole seconds, so a proxy that drops the header still leaves a
- * window to wait out.
- */
-function bodyRetryAfterMs(additional: unknown): number | undefined {
-  const raw = isRecord(additional) ? additional["retry_after"] : undefined;
-  const seconds = typeof raw === "string" || typeof raw === "number" ? Number(raw) : Number.NaN;
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.trunc(seconds * 1000) : undefined;
-}
-
 /** A Notion object id, dashed or not: the only committed-id shape shown when error text is withheld. */
 const NOTION_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -363,9 +352,16 @@ export const errors: VendorErrors = {
   provider: "Notion",
   displayFacts: {
     children: {
-      maxItems: 100,
+      maxItems: NOTION_MAX_RESPONSE_BYTES,
       review:
-        "Notion accepts at most 100 child blocks in one append or page create; every committed child id is needed to reconcile that write.",
+        "Retain every committed child id for reconciliation, even in a response beyond the documented 100-child request cap. The transport bounds the entire error body to four MiB; every listed token consumes at least one byte.",
+    },
+  },
+  numericFacts: {
+    retryAfter: {
+      path: ["additional_data", "retry_after"],
+      review:
+        "Notion supplies a retry delay in seconds in error metadata; accept finite nonnegative numbers and nonblank numeric strings, never error prose.",
     },
   },
   presence: {
@@ -378,7 +374,6 @@ export const errors: VendorErrors = {
     return {
       code: typeof body.code === "string" ? body.code : undefined,
       reason: typeof extra.rate_limit_reason === "string" ? extra.rate_limit_reason : undefined,
-      retryAfter: bodyRetryAfterMs(extra),
       committed: typeof extra.committed_resource_id === "string" ? extra.committed_resource_id : undefined,
       children: Array.isArray(extra.committed_child_ids) ? extra.committed_child_ids : undefined,
       childrenSafe:
@@ -432,7 +427,7 @@ export const errors: VendorErrors = {
       words: (detail) =>
         `${detail} Notion returns this both for an object that does not exist and for one that exists but has not been shared with this integration — do not treat it as proof of deletion. Confirm the id, then confirm the page or database is shared with the integration in Notion.`,
     }),
-    409: ({ operation, retryAfterMs, facts }) =>
+    409: ({ operation, retryAfterMs, numbers }) =>
       operation.flags?.write
         ? {
             code: "conflict",
@@ -442,11 +437,12 @@ export const errors: VendorErrors = {
           }
         : {
             code: "unavailable",
-            retryAfterMs: retryAfterMs ?? Number(facts.retryAfter ?? 1000),
+            retryAfterMs:
+              retryAfterMs ?? (numbers.retryAfter === undefined ? 1000 : Math.trunc(numbers.retryAfter * 1000)),
             words: (detail) => `${detail} Notion reported a write conflict; this is safe to retry.`,
           },
     422: () => ({ code: "connector_call_failed", retryable: false }),
-    429: ({ facts, retryAfterMs }) => {
+    429: ({ facts, retryAfterMs, numbers }) => {
       const reason = facts.reason;
       if (reason === "public_api_request_blocked")
         return {
@@ -461,23 +457,24 @@ export const errors: VendorErrors = {
           : " Notion allows each integration 180 requests a minute (600 on Business and Enterprise), and a separate budget shared by the whole workspace.";
       return {
         code: "rate_limited",
-        retryAfterMs: retryAfterMs ?? Number(facts.retryAfter ?? 1000),
+        retryAfterMs: retryAfterMs ?? (numbers.retryAfter === undefined ? 1000 : Math.trunc(numbers.retryAfter * 1000)),
         words: (detail) => `${detail}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope}`,
         advice: " Wait out the retry window.",
       };
     },
-    529: ({ retryAfterMs, facts }) => ({
+    529: ({ retryAfterMs, numbers }) => ({
       code: "unavailable",
-      retryAfterMs: retryAfterMs ?? Number(facts.retryAfter ?? 5000),
+      retryAfterMs: retryAfterMs ?? (numbers.retryAfter === undefined ? 5000 : Math.trunc(numbers.retryAfter * 1000)),
       words: (detail) => `${detail} Notion is overloaded.`,
       advice: "; retry after the reported window",
     }),
-    serverError: ({ facts, retryAfterMs, presence }) =>
+    serverError: ({ retryAfterMs, presence, numbers }) =>
       presence.commit?.present || presence.guidance?.nonBlank
         ? { code: "connector_call_failed", retryable: false }
         : {
             code: "unavailable",
-            retryAfterMs: retryAfterMs ?? (typeof facts.retryAfter === "number" ? facts.retryAfter : undefined),
+            retryAfterMs:
+              retryAfterMs ?? (numbers.retryAfter === undefined ? undefined : Math.trunc(numbers.retryAfter * 1000)),
           },
     otherwise: () => ({ code: "connector_call_failed", retryable: false }),
   },

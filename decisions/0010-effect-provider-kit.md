@@ -1976,3 +1976,9 @@ a bounded write while leaving the default eight-item wording bound unchanged.
 Both declarations are captured at construction; values come only from the
 already redacted error body. The result hook may require `RequestSecrets` to
 protect joined rich-text lanes, without access to other call services.
+
+Notion's retry-delay metadata also uses reviewed numeric paths: only finite,
+nonnegative numbers or nonblank numeric strings reach the rules. Blank values
+are absent, an accepted step-1 difference from legacy's zero-delay coercion.
+Recovery ids remain complete under the response-byte ceiling, even when a
+vendor returns more than its documented per-write child count.
