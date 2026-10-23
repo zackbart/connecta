@@ -479,7 +479,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
       // Match the legacy wording rule even for direct calls: their GET
       // lookups have no served verdict. Physical write accounting stays the
       // core's Classification; only these Google-specific words use this.
-      const served = Option.isSome(active) ? callClassification(active.value) : undefined;
+      const served = Option.isSome(active) && active.value ? callClassification(active.value) : undefined;
       const write = (served ?? (request.method === "GET" ? "read" : "write")) === "write";
       const operation = yield* connection.safety.resolve(request.method, request.path);
       return yield* connection
