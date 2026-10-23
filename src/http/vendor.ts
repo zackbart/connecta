@@ -266,8 +266,11 @@ export function connect<R>(
               ),
             );
         });
-        // Header-derived format decisions see only redacted Content-Type.
-        const headers = new Headers(secrets.redact([...reply.headers]));
+        // Header-derived format decisions see only redacted Content-Type. Names are protocol
+        // constants `Headers` must accept, so only the values are redacted, together (#703).
+        const entries = [...reply.headers];
+        const values = secrets.redact(entries.map(([, value]) => value));
+        const headers = new Headers(entries.map(([name], index) => [name, values[index]!]));
         // Whole, before a detail line trims it or a projection extracts from it. Values only:
         // result safety and projections match fields by their vendor names (#703).
         const parsed =
