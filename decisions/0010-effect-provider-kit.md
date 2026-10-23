@@ -1367,7 +1367,7 @@ export function operations(vendor: Vendor): string[];          // manifest's ope
 ```
 
 - Result hooks may require only the active call's `RequestSecrets` at settle time to protect joined text; no caller context is copied or cached (C.6 Notion).
-- Opt-in error `presence` declarations review fixed paths and expose only `present` (nonempty string) and `nonBlank` (after trimming) booleans, preserving Notion's commit and retry-guidance classification without exposing vendor text.
+- Opt-in error `presence` declarations snapshot and freeze fixed paths at construction, resolve only in the sent-secret-redacted error body, and expose only `present` (nonempty string) and `nonBlank` (after trimming) booleans; withholding and token-bound commit details stay unchanged (C.6 Notion).
 - A vendor may declare `manifestBase` to prefix only its published manifest paths; its transport operations remain relative to the confined base URL.
 - Schemas use the stable `effect` `Schema`. Query struct field order is wire
   order. Optional fields use `Schema.optionalKey`.
