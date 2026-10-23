@@ -405,7 +405,7 @@ describe("provider sites the boundary cannot cover", () => {
   });
 
   it.each(["planning-center", "tithely"])(
-    "INV-5: %s redacts a short private value padded with spaces before trimming its error text, drops a sensitive field beside a private value inside its name, and withholds a header line whose credential prefix a private value took",
+    "INV-5: %s redacts a short private value padded with spaces before trimming its error text, drops a sensitive field beside a private value inside its name, and withholds a header line's whole value when a private value took its prefix",
     async (name) => {
       const value = " Q8!w "; // Below K, so the boundary's fragment matching cannot stand in for the site.
       vi.stubGlobal("fetch", async () =>
@@ -449,7 +449,7 @@ describe("provider sites the boundary cannot cover", () => {
                     attributes: {
                       name: "people.v2.events.person.created",
                       authenticity_secret: "VENDOR-HELD-0001",
-                      note: "Authorization: Bearer sk_live_VENDOR-HELD-0003",
+                      note: "Authorization: Bearer sk_live_VENDOR-HELD-0003\nCookie: public=tracking123456; session=VENDOR-HELD-0004",
                     },
                   },
                 ],
@@ -458,14 +458,15 @@ describe("provider sites the boundary cannot cover", () => {
             : {
                 name: "Public church",
                 bank: { account_number: "VENDOR-HELD-0002" },
-                note: "Authorization: Bearer sk_live_VENDOR-HELD-0003",
+                note: "Authorization: Bearer sk_live_VENDOR-HELD-0003\nCookie: public=tracking123456; session=VENDOR-HELD-0004",
               },
         ),
       );
       const held = { ...ctx, requestScope: {} };
       requestSentSecrets(held).arguments({ value: pco ? "ecre" : "bank" }, schema);
-      // The header line keeps no name to match once a private value took it and the prefix (#703).
-      requestSentSecrets(held).arguments({ value: "Authorization: Bearer sk_live_" }, schema);
+      // Header lines are read before the echo replaces their name, `:` or prefix (#703).
+      for (const value of ["Authorization: Bearer", "Cookie: public="])
+        requestSentSecrets(held).arguments({ value }, schema);
       const out = shown(
         await connector.callTool(
           pco ? "pco_api_get" : "tithely_api_read",

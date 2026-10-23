@@ -340,7 +340,11 @@ describe("global embedded REST URL policy (#812)", () => {
   it.each([
     ["many signed queries", "[f](https://example.com/a?sig=PRIVATE)".repeat(40_000)],
     ["one long parameter name", `see https://example.com/a?${"a".repeat(2_000_000)}=value`],
-    ["many parameter delimiters", `see https://example.com/a?${"?&a&".repeat(400_000)}`],
+    [
+      // Placeholder runs a repeated private value leaves: each run is read once (#703).
+      "many parameter delimiters and placeholder runs",
+      `see https://example.com/a?${"?&a&".repeat(400_000)} ${"[redacted]abc-".repeat(100_000)}=PRIVATE ${"[redacted]!!!=".repeat(100_000)}=PRIVATE`,
+    ],
   ])(
     "INV-5: scans %s with bounded linear passes",
     (_, input) => {

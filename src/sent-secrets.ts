@@ -5,7 +5,7 @@ import { credentialUrlViews } from "./credential-url.js";
 import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
-import { REDACTED, redactionAltered, splitRemainder } from "./redaction-marker.js";
+import { REDACTED } from "./redaction-marker.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -690,7 +690,7 @@ function merged(spans: number[]): number[] {
 /** Replace each merged span once, from the original text: no replacement can split another
  * view's match. Header-line scrubbing belongs to an actual echo. */
 function replace(text: string, spans: number[]): string {
-  const ranges = merged(spans);
+  const ranges = merged(headerValues(text, spans));
   const parts: string[] = [];
   let cursor = 0;
   for (let index = 0; index < ranges.length; index += 2) {
@@ -698,10 +698,9 @@ function replace(text: string, spans: number[]): string {
     cursor = ranges[index + 1]!;
   }
   parts.push(text.slice(cursor));
-  return splitHeaderLines(parts.join("").replace(headerLine, `$1$2${REDACTED}`));
+  return parts.join("").replace(headerLine, `$1$2${REDACTED}`);
 }
 
-/** A line's leading run of header-name characters and placeholders, and what follows it. */
 /** A unit of a header line's name, as `headerLine` reads one. */
 function headerNameUnit(code: number): boolean {
   return (
@@ -709,59 +708,45 @@ function headerNameUnit(code: number): boolean {
   );
 }
 
-/** The longest header name read around a placeholder; real names are far shorter. */
-const MAX_HEADER_NAME = 256;
+/** Whitespace as `headerLine`'s `\s` reads it around a header's `:`. */
+function headerSpace(text: string, at: number): boolean {
+  return /\s/.test(text[at]!);
+}
 
 /**
- * Header lines whose name redaction altered (#703). A name holding a placeholder before its `:`
- * may have named a credential, so the line's value goes. A placeholder in the name followed
- * directly by a credential's remainder may stand for the name, its `:` and a credential prefix
- * (`Authorization: Bearer `), so that remainder goes with it. A line that begins with a placeholder
- * and a space, or fewer credential characters, keeps its text: a private word opening a line is not
- * taken for a header. One linear pass from each line's first placeholder.
+ * The echo's spans with the value of every sensitive header line (`headerLine`'s names) added,
+ * read on the text before the echo is replaced (#703). An echoed private value can take part of a
+ * header's name, its `:`, or a credential prefix such as `Bearer `, so the line cannot be read
+ * after replacement; read here, the whole value goes, every cookie pair and any short tail with
+ * it. A line that is not a sensitive header keeps its text. One forward pass; nothing is kept.
  */
-function splitHeaderLines(text: string): string {
-  if (!redactionAltered(text)) return text;
-  let out = "";
-  let copied = 0;
-  for (let at = text.indexOf(REDACTED); at >= 0;) {
-    let lineEnd = at;
-    while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") lineEnd++;
-    // The name runs back from the placeholder to the line's start, after any indentation.
-    let name = at;
-    while (name > 0 && at - name <= MAX_HEADER_NAME) {
-      if (text.endsWith(REDACTED, name)) name -= REDACTED.length;
-      else if (headerNameUnit(text.charCodeAt(name - 1))) name--;
-      else break;
-    }
-    let indent = name;
-    while (indent > 0 && (text[indent - 1] === " " || text[indent - 1] === "\t")) indent--;
-    const opens = indent === 0 || text[indent - 1] === "\n" || text[indent - 1] === "\r";
-    if (opens && at - name <= MAX_HEADER_NAME) {
-      let end = at;
-      while (end < lineEnd && end - name <= MAX_HEADER_NAME) {
-        if (text.startsWith(REDACTED, end)) end += REDACTED.length;
-        else if (headerNameUnit(text.charCodeAt(end))) end++;
-        else break;
-      }
-      const colon = /^[\t ]*:[\t ]*/.exec(text.slice(end, Math.min(lineEnd, end + 64)));
-      if (colon) {
-        const value = end + colon[0].length;
-        if (/[A-Za-z0-9]/.test(text.slice(value, lineEnd).replaceAll(REDACTED, ""))) {
-          out += `${text.slice(copied, value)}${REDACTED}`;
-          copied = lineEnd;
-        }
-      } else {
-        const remainder = splitRemainder(text, at);
-        if (remainder > at) {
-          out += `${text.slice(copied, at)}${REDACTED}`;
-          copied = remainder;
+function headerValues(text: string, spans: number[]): number[] {
+  const out = [...spans];
+  for (let line = 0; line < text.length;) {
+    let at = line;
+    while (at < text.length && (text[at] === " " || text[at] === "\t")) at++;
+    const name = at;
+    while (at < text.length && headerNameUnit(text.charCodeAt(at))) at++;
+    let next = at;
+    while (next < text.length && text[next] !== "\n" && text[next] !== "\r") next++;
+    if (at > name) {
+      const word = text.slice(name, at).toLowerCase();
+      if (word === "cookie" || word === "set-cookie" || /key|token|secret|auth|signature|session/.test(word)) {
+        let colon = at;
+        while (colon < text.length && headerSpace(text, colon)) colon++;
+        if (text[colon] === ":") {
+          let value = colon + 1;
+          while (value < text.length && headerSpace(text, value)) value++;
+          let end = value;
+          while (end < text.length && text[end] !== "\n" && text[end] !== "\r") end++;
+          if (end > value) out.push(value, end);
+          next = Math.max(next, end);
         }
       }
     }
-    at = text.indexOf(REDACTED, lineEnd);
+    line = next + 1;
   }
-  return copied === 0 ? text : out + text.slice(copied);
+  return out;
 }
 
 /** Spans of the joined pieces, replaced in each piece they touch: a match across pieces leaves

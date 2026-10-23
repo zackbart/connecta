@@ -583,9 +583,30 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       const [short, long] = ["ecre", "my-client_se-key"];
       // Each alters one value a rule decides on, or takes a credential's public prefix; none alters
       // another's (#703).
-      const altering = ["TOKE", "head", "KEY=", "https:/", "on/js", "Authorization: Bearer sk_live_"];
+      // Hex signatures and a token whose public prefix a private value takes: what stays visible must
+      // not rebuild them, however short or encoded.
+      const [hex, tailHex, entityHex] = [
+        "2a4d6bf783019ec5a87b2c04ef6d319c7b4e05f2a619e8bd3c07e9a5f8ae5c9d",
+        "9f1c3e5a7b2d4f6081a3c5e7f9b1d3f5a7c9e1b3d5f7091a2b3c4d5e6f708192",
+        "c4e1a7d3f9b5208e6a1c7d3f9b5e2a8c4f0d6b2e8a4c1f7d3b9e5a2c8f4d0b6e",
+      ];
+      const token = "sk_live_A7vJp9nR-2tW6qK8c-M4zX1sF5-hL3dB0uY";
+      const encode = (text: string, form: (code: number) => string) => Array.from(text, (c) => form(c.charCodeAt(0))).join("");
+      const altering = [
+        "TOKE",
+        "head",
+        "KEY=",
+        "https:/",
+        "on/js",
+        "alue",
+        "Authorization: Bearer",
+        "Cookie: public=",
+        `Authorization: Bearer ${token.slice(0, -7)}`,
+      ];
       const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok", "secret=whsec_"] : [];
-      const signing = table.embeddedUrls ? ["Signatur", "X-Goog-Credential="] : [];
+      const signing = table.embeddedUrls
+        ? ["Signatur", "X-Goog-Credential=", "X-Amz-Security-Token=", `X-Goog-Signature=${tailHex.slice(0, -7)}`]
+        : [];
       const all = [short, long, ...altering, ...resources, ...signing];
       const pins = {
         type: "object",
@@ -605,8 +626,11 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         ],
         env: ["API_KEY=VENDOR_HELD_ENV"],
         destination: "https://hooks.example/services/VENDOR_HELD_DEST",
-        // A header line whose name and credential prefix a private value took.
+        // Header lines whose name, `:` and credential prefix a private value took: the whole value
+        // goes, every cookie pair after an altered name, and a short tail.
         echo: "Authorization: Bearer sk_live_VENDOR_HELD_BEARER\nRetry after checking permissions.",
+        trace: "Cookie: public=tracking123456; session=VENDOR_HELD_COOKIE\nRetry after checking permissions.",
+        dump: `Authorization: Bearer ${token}\nRetry after checking permissions.`,
         // The Content-Type itself (`on/js`) would hand this body over as bytes or one string.
         ...(table.resources
           ? {
@@ -623,6 +647,10 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
                 },
                 { object: "charge", failure_message: "see http://bank.example/r?access_token=VENDOR_HELD_PARAM now" },
                 { object: "charge", failure_message: "hook http://hooks.example/w?secret=whsec_VENDOR_HELD_WHSEC now" },
+                {
+                  object: "charge",
+                  failure_message: `sig http://storage.example/f?X-Goog-Credential=${encode(entityHex, (code) => `&#${code};`)} now`,
+                },
               ],
             }
           : {}),
@@ -630,11 +658,15 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           ? {
               note: "get http://bucket.s3.amazonaws.com/f?X-Amz-Signature=VENDOR_HELD_SIGN now",
               split: "get http://bucket.storage.example/f?X-Goog-Credential=VENDOR_HELD_GOOG now",
+              encoded: `get http://bucket.storage.example/f?X-Amz-Security-Token=${encode(hex, (code) => `%${code.toString(16)}`)} now`,
+              tail: `get http://bucket.storage.example/f?X-Goog-Signature=${tailHex} now`,
             }
           : {}),
       };
-      // A streamed row's keys are text the kit redacted whole, then parsed.
-      const stream = '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n';
+      // A streamed row's keys are text the kit redacted whole, then parsed, route header pairs included.
+      const stream =
+        '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n' +
+        '{"src":"/","headers":[{"key":"X-Custom","value":"VENDOR_HELD_ROUTE"}]}\n';
       let streaming = false;
       const realFetch = globalThis.fetch;
       globalThis.fetch = (async () =>
@@ -645,7 +677,12 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         const text = JSON.stringify(out);
         expect(text).toContain("echoed");
         expect(text).toContain("streamed");
-        expect(text.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
+        // What an agent can decode: percent escapes and numeric character references.
+        const shown = text
+          .replace(/%([0-9a-f]{2})/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+        expect(shown.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
+        for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7)]) expect(shown, text).not.toContain(held);
         expect(text).not.toContain(long);
         expect(text).not.toMatch(/\\?"ecre\\?"/);
       };

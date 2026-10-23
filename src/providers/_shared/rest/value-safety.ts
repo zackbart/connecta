@@ -679,14 +679,13 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
     const marker = markers && (at === 0 || OPENS_LINK.test(text[at - 1]!)) ? markerLed(text, at) : -1;
     if (marker >= 0) {
       // A placeholder opening a word stands where a link's scheme and host may have been.
+      // Its run is read once, query or not, and the scan resumes after it.
       const host = marker + REDACTED.length;
       const span = linkSpan(text, host, host, false);
-      if (span.cut >= 0) {
-        const start = at;
-        at = span.end - 1;
-        yield { ...span, start, host };
-        continue;
-      }
+      const start = at;
+      at = Math.max(at, span.end - 1);
+      yield { ...span, start, host };
+      continue;
     }
     if (char === "]" && text[at + 1] === "(") {
       const destination = markdownStart(text, at + 2);
@@ -742,6 +741,9 @@ function credentialQuery(text: string): boolean {
     const pair = decodeLinkText(query.slice(at, end));
     const equals = pair.indexOf("=");
     at = end + 1;
+    // A component redaction altered with no readable name (its name, or its `=`, taken) may be a
+    // credential parameter's value, however encoded (#703).
+    if (pair !== REDACTED && redactionAltered(equals < 0 ? pair : pair.slice(0, equals))) return true;
     if (equals < 0) continue;
     const name = pair.slice(0, equals);
     if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
@@ -790,8 +792,7 @@ function withholdSigningParams(anchored: string): string {
     const start = altered >= 0 && (named < 0 || altered < named) ? altered : named;
     // Skip an existing complete placeholder, but still remove any suffix.
     const already = anchored.startsWith(REDACTED, start);
-    let end = already ? start + REDACTED.length : start;
-    while (end < anchored.length && !endsValue(anchored, end)) end++;
+    const end = valueEnd(anchored, already ? start + REDACTED.length : start);
     // Resume both scans after this value, as one scan would.
     SIGNING_PARAM.lastIndex = end;
     if (named >= 0 && named <= end) signing = SIGNING_PARAM.exec(anchored);
@@ -808,28 +809,43 @@ const EQUALS = /=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d/iy;
 const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)$/i;
 const NAME_CHAR = /[\w.~-]/;
 
+/** Where a parameter's value ends: at `endsValue`, reading every placeholder in it whole (#703). */
+function valueEnd(text: string, at: number): number {
+  while (at < text.length) {
+    if (text.startsWith(REDACTED, at)) at += REDACTED.length;
+    else if (endsValue(text, at)) break;
+    else at++;
+  }
+  return at;
+}
+
 /**
  * Where the next placeholder that may hide a signing parameter starts, at or
- * after `from`, or `-1` (#703); its value goes with it. Either it sits in a
- * run of name characters that ends at an `=` (a name redaction altered), or
- * credential characters follow it (it may stand for a signing name, its `=`
- * and the value's start, leaving the rest). A placeholder right after an `=`
- * with no name after it is a withheld value.
+ * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
+ * `=`, and the start of its value, so a placeholder followed by any of a
+ * value's letters, digits or `%` escapes goes with them, however short. One
+ * inside a name ending at an encoded `=` (`&#61;`, `\u003d`) gives that
+ * value's start. A placeholder right after an `=` with nothing readable after
+ * it is a withheld value. Each placeholder is read once, resuming after its run.
  */
 function alteredParameter(text: string, from: number): number {
   for (let at = text.indexOf(REDACTED, from); at >= 0;) {
+    const tail = splitRemainder(text, at, endsValue);
+    if (tail.readable) return at;
     let end = at;
-    while (end < text.length) {
+    while (end < tail.end) {
       if (text.startsWith(REDACTED, end)) end += REDACTED.length;
       else if (NAME_CHAR.test(text[end]!)) end++;
       else break;
     }
     EQUALS.lastIndex = end;
-    const name = text.slice(at, end);
-    if (redactionAltered(name) && !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) && EQUALS.test(text))
-      return at;
-    if (splitRemainder(text, at) > at) return at;
-    at = text.indexOf(REDACTED, end);
+    if (
+      redactionAltered(text.slice(at, end)) &&
+      !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) &&
+      EQUALS.test(text)
+    )
+      return EQUALS.lastIndex;
+    at = text.indexOf(REDACTED, Math.max(tail.end, at + REDACTED.length));
   }
   return -1;
 }
@@ -1057,7 +1073,21 @@ function routeLike(value: JsonRecord): boolean {
 function headerValues(value: unknown): unknown {
   if (isRecord(value)) return Object.fromEntries(Object.keys(value).map((name) => [name, REDACTED]));
   if (Array.isArray(value)) {
-    return value.map((item) => (isRecord(item) && "value" in item ? { ...item, value: REDACTED } : item));
+    // A pair whose keys redaction altered may hold its value under any of them (#703).
+    return value.map((item) =>
+      !isRecord(item)
+        ? item
+        : keysAltered(item)
+          ? Object.fromEntries(
+              Object.entries(item).map(([key, entry]) => [
+                key,
+                key === "value" || redactionAltered(key) ? withheld(entry) : entry,
+              ]),
+            )
+          : "value" in item
+            ? { ...item, value: REDACTED }
+            : item,
+    );
   }
   return value;
 }

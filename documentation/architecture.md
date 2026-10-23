@@ -1136,11 +1136,11 @@ including titles, descriptions, schemas and annotations. If a tool name would
 change, the complete catalog is refused. Rewriting a name changes dispatch;
 dropping only that tool would publish a partial catalog, against INV-8. Later
 cached reads need no credential set because the stored facts are already clean.
-Echoed sensitive header lines are also withheld. A line whose header name a
-private value altered loses its value, and when a placeholder in a header name
-is followed by at least eight credential characters (a private value took the
-name, its `:` and a credential prefix), that remainder is withheld too (#703).
-A line that only opens with a private word keeps its text. The set is never persisted
+Echoed sensitive header lines are also withheld. They are read on the text
+before the echo is replaced and merged into its spans, so a private value that
+takes part of a header's name, its `:` or a credential prefix (`Bearer `) cannot
+hide the header: the whole value goes, every cookie pair and any short tail
+with it (#703). A line that is not a sensitive header keeps its text. The set is never persisted
 or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
@@ -1439,13 +1439,21 @@ every vendor ships one reviewed table through one mechanism
    withholds the query and fragment. A key that carries it (text a result
    hook parses after the kit redacted it whole, such as NDJSON and log
    streams) loses its value, and its record's key-based decisions take their
-   protective outcome. A placeholder can also stand for a credential's public
-   prefix (`sk_live_`, `whsec_`, `Bearer `, or a signing parameter's name and
-   `=`) and leave its secret remainder. Wherever signing parameters are
-   scanned, a placeholder followed by at least eight credential characters
-   (letters, digits, and `_.~+/=-`, one a letter or digit) is withheld with
-   that remainder through the end of its value (`splitRemainder`); fewer than
-   eight, K, is not taken for a credential's remainder. Value safety's own
+   protective outcome, route header pairs included. A placeholder can also
+   stand for a credential's public prefix (`sk_live_`, `whsec_`, or a signing
+   parameter's name and `=`) and leave its remainder, which with the prefix
+   known rebuilds the credential however short or encoded it is. Wherever
+   signing parameters are scanned, a placeholder followed by any of a value's
+   letters, digits or `%` escapes is withheld with them through the end of the
+   value (`splitRemainder`), and a value's end never splits a placeholder. In
+   reviewed links, a query component that carries the placeholder and has no
+   readable name withholds the query. What stays visible cannot complete a
+   credential: punctuation alone after a placeholder, and text past a value's
+   end (whitespace, a quote, an angle bracket, `&`, `#`, `)`, `]`, a backtick
+   or a backslash), which belongs to another parameter decided by its own
+   name. A signing value written as numeric character references outside a
+   reviewed link is withheld by no rule, collision or not, since the signing
+   scan ends a value at `&`. Value safety's own
    placeholders are not alterations: `@keys` map keys, a withheld value right
    after `=`, and a withheld `#[redacted]` fragment. More is withheld only
    when a private value occurs in a decision input, and then deliberately:
