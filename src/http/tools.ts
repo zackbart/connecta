@@ -16,6 +16,7 @@
 
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
+import type { JsonSchema } from "../types.js";
 import { ConnectorCallError } from "../errors.js";
 import { runEdge } from "../runtime/run.js";
 import { recordUnauthorized, Refusal, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
@@ -166,13 +167,16 @@ export function read<I extends Input, O extends Schema.Top>(
         Effect.gen(function* () {
           yield* checkFields(args.fields, names, "the result");
           const { fields, ...rest } = args;
-          return selectFields(yield* spec.run(rest as I["Type"]), fields) as O["Type"];
+          return selectFields(yield* spec.run(rest as I["Type"]), fields);
         }),
-    } as unknown as ToolSpec<Input, O>,
+      // A selection may omit any property: the result is typed unknown and rendered sparse.
+      output: Schema.Unknown,
+    } as unknown as ToolSpec<Input, typeof Schema.Unknown>,
     "read",
     { readOnlyHint: true },
     undefined,
     spec.review,
+    sparse(catalogSchema(spec.output, "output")),
   );
 }
 
@@ -281,7 +285,8 @@ function standardList(
       name: spec.name,
       description: spec.description,
       input,
-      output: Schema.Struct({ items: Schema.Array(spec.row), page: StandardPage }),
+      // `fields` narrows each item, so items render sparse; the envelope keeps items and page required.
+      output: Schema.Unknown,
       run: (args: Readonly<Record<string, unknown>> & { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
           yield* checkFields(args.fields, names, "an item");
@@ -311,10 +316,40 @@ function standardList(
             : result.page.nextCursor;
           return { items, page: { hasMore: true, nextCursor } };
         }),
-    } as unknown as ToolSpec<Input, Schema.Top>,
+    } as unknown as ToolSpec<Input, typeof Schema.Unknown>,
     "read",
     { readOnlyHint: true },
+    undefined,
+    undefined,
+    sparseItems(catalogSchema(Schema.Struct({ items: Schema.Array(spec.row), page: StandardPage }), "output")),
   );
+}
+
+/** What a `fields` selection may return: the declared shape with no property required, at any depth. */
+function sparse(schema: JsonSchema): JsonSchema {
+  const strip = (node: unknown): unknown =>
+    Array.isArray(node)
+      ? node.map(strip)
+      : node !== null && typeof node === "object"
+        ? Object.fromEntries(
+            Object.entries(node)
+              .filter(([key]) => key !== "required")
+              .map(([key, value]) => [key, strip(value)]),
+          )
+        : node;
+  return strip(schema) as JsonSchema;
+}
+
+/** A standard list's output with each item sparse. */
+function sparseItems(schema: JsonSchema): JsonSchema {
+  const root = schema as { properties: { items: { items: JsonSchema } } };
+  return {
+    ...schema,
+    properties: {
+      ...root.properties,
+      items: { ...root.properties.items, items: sparse(root.properties.items.items) },
+    },
+  } as JsonSchema;
 }
 
 /** An idempotency key the vendor honors, sent on a write's one request. */
@@ -362,6 +397,8 @@ function build<I extends Input, O extends Schema.Top>(
   annotations: ApiTool["annotations"],
   idempotency?: Idempotency<I["Type"]>,
   review?: string,
+  /** A rendered output schema that replaces the Schema's, for sparse `fields` results. */
+  rendered?: JsonSchema,
 ): ApiTool {
   // One key protects one request: a tool with several write steps cannot share it.
   const declared = Object.entries(spec.writeSteps ?? { write: "once" });
@@ -420,7 +457,7 @@ function build<I extends Input, O extends Schema.Top>(
     name: spec.name,
     description: spec.description,
     inputSchema: catalogSchema(spec.input, "input"),
-    outputSchema: catalogSchema(spec.output, "output"),
+    outputSchema: rendered ?? catalogSchema(spec.output, "output"),
     annotations,
     handler: (args, ctx) => {
       // The builder's verdict only stands in for a call no invocation dispatched.

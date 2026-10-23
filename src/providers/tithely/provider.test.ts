@@ -348,8 +348,13 @@ describe("connection modes the goldens do not build", () => {
     expect((narrowed.usageGuide as { content: string }).content).toContain(
       `${dropped}\n\nThis connection is read-only: every write is refused.\n\nList tools return 10 rows by default on this connection.\n\n## Giving data`,
     );
-    const charges = (await narrowed.listTools(context())).find((tool) => tool.name === "list_charges")!;
+    const catalog = await narrowed.listTools(context());
+    const charges = catalog.find((tool) => tool.name === "list_charges")!;
     expect((charges.inputSchema as any).properties.limit).toMatchObject({ default: 10, maximum: 99 });
+    // fields may omit any property, so selected results render sparse; list envelopes keep items and page.
+    const organizations = catalog.find((tool) => tool.name === "list_organizations")!.outputSchema as any;
+    expect(organizations.required).toEqual(["items", "page"]);
+    expect(JSON.stringify(organizations.properties.items)).not.toContain('"required"');
   });
 });
 
