@@ -2143,6 +2143,14 @@ maps an oversized challenge using its own recorded dispatch, including a
 declared-size refusal before the response wrapper exists. It never renews
 after that refusal.
 
+A vendor may declare `fixedKeys`, mapping exact public JSON wire keys to
+one-line review reasons. Construction freezes the declaration. Parsed JSON
+keeps those keys so projections can navigate their schema; every value and
+every other key still passes sent-secret redaction. Text, binary bodies and
+JSON embedded inside text retain ordinary redaction. Docs uses this for the
+fixed fields its document rendering navigates, including `paragraph` and
+`textRun`; a private argument matching either name cannot erase the structure.
+
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
 Transport diagnostics use the vendor error label rather than the provider
