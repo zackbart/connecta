@@ -2052,6 +2052,9 @@ catalog bridge builds kit `read` and `write` tools that keep each legacy
 declaration's annotations and schema bytes. `api()` validates every call
 against that exact input schema before the handler runs, so the bridge decodes
 arguments permissively; step 2 replaces those schemas with Effect declarations.
+The bridge also forwards optional fixed write steps, which the kit snapshots
+at construction. Docs declares a create and its optional initial-text edit as
+separate steps, each sent at most once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
