@@ -35,6 +35,11 @@ function node(schema: unknown, components: Json, seen: ReadonlySet<string> = new
   else if (typeof type === "string" || Array.isArray(type)) out.t = type as string | string[];
   if (Array.isArray(source["enum"])) out.e = source["enum"];
   if (typeof source["description"] === "string") out.d = source["description"];
+  // A property's key annotation renders as an `allOf` member beside its encoded type.
+  for (const member of Array.isArray(source["allOf"]) ? source["allOf"] : []) {
+    if (out.d === undefined && typeof record(member)["description"] === "string")
+      out.d = record(member)["description"] as string;
+  }
   const branches = source["anyOf"] ?? source["oneOf"];
   if (Array.isArray(branches)) out.a = branches.map((branch) => node(branch, components, seen));
   const properties = record(source["properties"]);
