@@ -163,8 +163,8 @@ export const ccb = defineApiProvider<CcbOptions>({
   title: "Church Community Builder",
   readme: "Church Community Builder",
   bundle: {
-    baselineGzip: 120479,
-    note: "./providers/ccb starts at 120,479 B gzip before the kit migration. The shared Effect provider kit is paid once per deployment; provider entries are reported, not capped (#899).",
+    baselineGzip: 328952,
+    note: "./providers/ccb measures 328,952 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: CCB_OPTIONS,
