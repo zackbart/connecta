@@ -33,6 +33,7 @@
     "bin",
     "dist",
     "documentation",
+    "guides",
     "examples/worker",
     "templates",
     "README.md",

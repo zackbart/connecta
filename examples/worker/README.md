@@ -30,6 +30,9 @@ migrations, and secrets.
 | `gitignore`                                            | the copied deployment's `.gitignore`, shipped under this name because npm strips `.gitignore` ([Copied into its own repository](#copied-into-its-own-repository)) |
 | `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028))                                  |
 
+Construct Connecta once per isolate and pass `ctx` through to `fetch`, as the
+example entrypoint does.
+
 Keep `enable_request_signal` in `alchemy.run.ts` and `wrangler.jsonc`. On Workers it lets a live
 response's client disconnect abort its request, so connecta cancels the stream
 and returns the admission permit promptly. The total admitted-request bound in

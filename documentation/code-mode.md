@@ -33,9 +33,9 @@ new behavior.
 
 ## Deploy-time capability
 
-The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
-six — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
-`authorize_connector` and `skills`. Construction fails when the
+The `executor` passed to `createConnecta()` is required. The
+[six-tool surface](./meta-tools.md#the-six-tools) is defined in the meta-tool
+reference. Construction fails when the
 executor is missing, and the removed `surface` option is rejected rather than
 ignored ([#273](https://github.com/zackbart/connecta/issues/273)), as are the
 pause-only `execute.resumableWrites` and `execute.pausedRunTtlSeconds`
@@ -70,9 +70,7 @@ through `admission`. Lease release disposes RPC and loader handles independently
 of guest settlement. `bindings`, `modules`, or `globalOutbound` violate `P2`.
 The [Worker example](../examples/worker/README.md#code-mode) has the full setup.
 
-Replace `import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
-`import { workerExecutor } from "@zackbart/connecta/worker";` and use the wiring above.
-Keep the peer. Unbranded executors throw, including bundled upstream copies.
+Keep the Worker's optional peer. Unbranded executors throw, including bundled upstream copies.
 Shipped executors carry a non-enumerable `Symbol.for("connecta.executor")` version/lifecycle brand.
 Custom sandboxes import `customExecutor` from `@zackbart/connecta`, then configure
 `executor: customExecutor(myExecutor, { lifecycle: "self-managed" })`. They own guest termination

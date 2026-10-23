@@ -371,7 +371,9 @@ Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
 
-## Vercel workload credentials (prototype)
+## Vercel workload credentials
+
+Coming in 0.35.0; merged on main and unavailable in earlier releases.
 
 An agent running on Vercel can present its project's signed OIDC token instead
 of provisioning a Connecta token. Declare the binding beside its name:
@@ -847,7 +849,7 @@ and reports.
 
 A pool is a named slice of the deployment served to its members: people at
 `/mcp/<pool>` and agents at `/agent/<pool>`. A support team sees two notes
-tools and Linear, a calendar bot sees one tool, both over the same credentials. Private remote catalog
+tools and tickets, a calendar bot sees one tool, both over the same credentials. Private remote catalog
 cache entries remain partitioned by the admitted pool.
 
 ```ts
@@ -860,12 +862,12 @@ createConnecta({
   agents: ["calendar-bot"],
   pools: {
     support: {
-      tools: ["linear", "notes.search_pages", "notes.fetch_page"],
+      tools: ["tickets", "notes.search_pages", "notes.fetch_page"],
       members: supportTeam,
-      description: "Support tools: Linear and two notes reads. Ask a maintainer for anything else.",
+      description: "Support tools: tickets and two notes reads. Ask a maintainer for anything else.",
     },
     calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
-    reporting: { tools: ["linear", "notes"], readOnly: true, members: analysts },
+    reporting: { tools: ["tickets", "notes"], readOnly: true, members: analysts },
   },
   connectors, executor,
 });
@@ -1234,7 +1236,7 @@ intake-redacted successes, keyed by connector configuration. Set
 `authScope: "personal"` when every human needs a separate downstream account:
 
 ```ts
-remoteMcp("linear", { url: "https://mcp.linear.app/mcp", authScope: "personal",
+remoteMcp("crm", { url: "https://crm.example.com/mcp", authScope: "personal",
   auth: { type: "oauth" } });
 ```
 
@@ -1915,8 +1917,8 @@ createConnecta({
   auth: cloudflareAccessAuth(),
   // Administers shared credentials, agent tokens, and activity.
   maintainers: ["owner-id"],
-  // Each member connects their own account on personal_linear.
-  pools: { team: { tools: ["shared_docs", "personal_linear", "notes.search_pages"], members: team } },
+  // Each member connects their own account on personal_crm.
+  pools: { team: { tools: ["shared_docs", "personal_crm", "notes.search_pages"], members: team } },
   connectors, executor,
   readOnly: false, // required: true refuses every write call
 });

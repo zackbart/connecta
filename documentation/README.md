@@ -19,17 +19,22 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | Upgrade between versions                 | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |
 | Diagnose with `connecta doctor`          | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                           |
 
-For removed hosted presets and the hosted halves of Stripe, Vercel, Cloudflare,
-Notion, Mixpanel, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).
+For removed hosted presets and the former hosted modes of Stripe, Vercel,
+Cloudflare, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).
+Notion and Mixpanel lose only their maintained API providers in 0.35.0; their
+hosted MCP servers remain connectable through generic `remoteMcp()` entries
+in that guide. For all three removed API providers, including Infisical, use
+[Provider migration for 0.35](./provider-migration-0.35.md).
 
 For a Vercel-hosted agent without a provisioned Connecta token, use
-[Vercel workload credentials (prototype)](./auth.md#vercel-workload-credentials-prototype).
+[Vercel workload credentials (coming in 0.35.0)](./auth.md#vercel-workload-credentials).
 
 ## Audience rule
 
-Shipped docs (`documentation/`, `templates/`, `examples/worker/`, and the root
-`README.md`) are written first for an agent operating a deployment from the
-installed package. Operator conventions must be self-contained rules plus a
+`documentation/`, `templates/`, and `examples/worker/` are written first for an
+agent operating a deployment from the installed package. The root `README.md`
+and `guides/` explain the product for people and also ship in the package;
+they own no operator contracts. Operator conventions must be self-contained rules plus a
 neutral example. Decision records and issues explain why; no operator task
 requires them, `spec/`, `.claude/`, or the Connecta source checkout. Those
 three directories do not ship. Contributor source maps, INV citations, and
@@ -63,9 +68,11 @@ implementation evidence.
 ### Documentation ownership
 
 The root [README](../README.md) explains the product for people. It owns what
-Connecta offers, how the pieces connect, deployment choices, and the setup
-handoff. Keep JavaScript, imports, configuration, migrations, and internal
-module maps here in agent documentation.
+Connecta offers and the setup handoff. The human guides explain
+[how it works](../guides/how-it-works.md), [connecting agents](../guides/connecting-agents.md),
+and [safety and trust](../guides/safety-and-trust.md). Keep their examples small
+and consistent with these contracts. Configuration references, complete setup
+procedures, migrations, and internal module maps belong here in agent documentation.
 
 [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md) is the
 canonical repository policy, with `CLAUDE.md` as its symlink. Do not copy its

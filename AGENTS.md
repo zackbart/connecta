@@ -9,11 +9,13 @@ Read [PRINCIPLES.md](./PRINCIPLES.md) before changing a subsystem, then use the
 [agent documentation index](./documentation/README.md) to select the task guide
 and contract sections. [Architecture](./documentation/architecture.md) maps the
 implementation; subsystem source and tests establish current behavior.
-[README.md](./README.md) is the human-facing product overview. Keep behavior,
-configuration, contracts, and technical setup in agent docs. This file owns
+[README.md](./README.md) owns the short human-facing product overview and setup
+handoff. [guides/](./guides/) owns human-facing explanations of the mental model,
+agent connections, and safety. Keep exact behavior, configuration references,
+contracts, and runnable deployment setup in agent docs. This file owns
 repository policy; scoped skills and provider guides own their task-specific
-detail. Update the owning guide when changing behavior, and keep the overview
-consistent without adding API or configuration instructions to it.
+detail. Update the owning contract when changing behavior, and keep the README
+and explanatory guides consistent without adding a configuration reference.
 The [rework plan of record #703](https://github.com/zackbart/connecta/issues/703)
 owns the rework and supersedes older guidance wherever they conflict.
 [decisions/](./decisions/) explains past choices without binding later PRs.
@@ -24,9 +26,15 @@ file new work with motivation, behavior, and acceptance criteria, not a TODO.md.
 
 ## Shipped documentation audience
 
-Write `documentation/`, `templates/`, `examples/worker/`, and `README.md`
+Write `documentation/`, `templates/`, and `examples/worker/`
 first for an agent operating a deployment from the installed package. Route
 operator tasks through `node_modules/@zackbart/connecta/documentation/README.md`.
+Write `README.md` and `guides/` for people: short, explanatory, and visual.
+Guides may illustrate a concept with a small example, but own no contracts or
+complete setup procedures; link to `documentation/` for those and keep the
+explanations consistent with it. `guides/` ships in the npm package so README
+links also work for installed-package readers. The same neutral-name rule below
+applies to the README and guides.
 State every operator convention as self-contained rules with a neutral example;
 decision records and issues may explain why, never supply required steps.
 `decisions/`, `spec/`, and `.claude/` do not ship. Separate contributor-only

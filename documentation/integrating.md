@@ -93,9 +93,9 @@ the deployment constructs its registry.
 
 ## Maintained integrations
 
-Import a provider individually from its published subpath. For former Basecamp,
-Intercom, Linear, RevenueCat, and Wispr Flow presets, follow the
-[hosted MCP migration guide](./hosted-mcp-migration.md) to configure `remoteMcp()`.
+Import a provider individually from its published subpath. For removed presets
+or a provider's former hosted mode, use the
+[hosted MCP migration guide](./hosted-mcp-migration.md).
 
 The [human README](../README.md#what-you-can-connect) lists available
 integrations. In the installed package, `dist/providers/<name>/index.d.ts`
@@ -111,9 +111,8 @@ deletes files.
 
 Stripe, Vercel, and Cloudflare vendor only their APIs.
 Keep their existing API auth choices.
-GitHub retains its six App-authenticated REST tools. For hosted servers, including
-Notion, Mixpanel, or GitHub, add a distinct `remoteMcp()` entry
-using the [hosted MCP migration guide](./hosted-mcp-migration.md).
+GitHub retains its six App-authenticated REST tools. Hosted servers use distinct
+`remoteMcp()` entries, separate from maintained API providers.
 
 For Stripe API-key setup, see [Stripe setup](./provider-auth-migration.md).
 Prefer a restricted `rk_` key with only read permissions for read-only access;
