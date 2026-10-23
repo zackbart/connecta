@@ -42,7 +42,6 @@
       "POST /api/v3/payments/authorize",
       "POST /api/v3/subscriptions/{donorId}"
     ],
-    "hosted": [],
     "evidence": {}
   },
   "checks": [
