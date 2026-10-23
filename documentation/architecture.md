@@ -2055,6 +2055,10 @@ arguments permissively; step 2 replaces those schemas with Effect declarations.
 The bridge also forwards optional fixed write steps, which the kit snapshots
 at construction. Docs declares a create and its optional initial-text edit as
 separate steps, each sent at most once.
+Drive's two-request reads also declare fixed steps: `get_file_content` uses
+`metadata` and `content`, and non-root `list_folder_items` uses `folder` and
+`files`. These reads still send both GETs when deployment classification
+serves them as writes; each step can leave only once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
@@ -2177,6 +2181,9 @@ every other key still passes sent-secret redaction. Text, binary bodies and
 JSON embedded inside text retain ordinary redaction. Docs uses this for the
 fixed fields its document rendering navigates, including `paragraph` and
 `textRun`; a private argument matching either name cannot erase the structure.
+Drive declares the exact v3 keys its projections and cursor codec navigate,
+plus Google's error-envelope keys, so matching private values cannot erase a
+listing, drop `move_file`'s old parents, or change a rate-limit verdict.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.

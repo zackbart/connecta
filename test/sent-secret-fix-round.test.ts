@@ -54,6 +54,77 @@ describe("bounded reads match original spans", () => {
     expect(result.content).toContain(MARKER);
     expect(result.content).not.toContain("private-begin");
     expect(leaks(JSON.stringify(result), privateValue)).toBe(false);
+
+    // Private values matching wire keys must leave the projection, paging
+    // and error decisions intact. The public result boundary still redacts.
+    for (const key of ["files", "nextPageToken", "incompleteSearch", "emailAddress", "trashed"]) {
+      stubGoogle(() => ({
+        files: [{ id: "f1", name: "F", owners: [{ emailAddress: "alice@example.com" }], trashed: false }],
+        nextPageToken: "next-1",
+        incompleteSearch: true,
+      }));
+      const listing: any = await connector.callTool("search_files", {}, privateContext(key));
+      expect(listing[key === "files" ? MARKER : "files"]).toEqual([
+        { id: "f1", name: "F", owners: ["alice@example.com"], [key === "trashed" ? MARKER : "trashed"]: false },
+      ]);
+      expect(listing.page.hasMore).toBe(true);
+      expect(listing.page.nextCursor).toBeTypeOf("string");
+      expect(listing[key === "incompleteSearch" ? MARKER : "incompleteSearch"]).toBe(true);
+    }
+
+    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
+      for (const key of ["parents", "rent"]) {
+        const requests: { method: string; removeParents: string | null }[] = [];
+        stubGoogle((url, init) => {
+          requests.push({ method: init.method ?? "GET", removeParents: url.searchParams.get("removeParents") });
+          return init.method === "PATCH" ? { id: "f1", parents: ["new-1"] } : { parents: ["old-1"] };
+        });
+        const moved: any = await connector.callTool(
+          "move_file",
+          { fileId: "f1", folderId: "new-1" },
+          privateContext(key),
+        );
+        expect(requests).toEqual([
+          { method: "GET", removeParents: null },
+          { method: "PATCH", removeParents: "old-1" },
+        ]);
+        expect(moved[key === "parents" ? MARKER : "pa[redacted]s"]).toEqual(["new-1"]);
+      }
+    } finally {
+      configureGuardedTransport(restore);
+    }
+
+    for (const key of ["error", "errors", "details", "reason", "status", "message"]) {
+      // Exercise both arrays and the status fallback, all with the same prose.
+      for (const reason of [
+        { errors: [{ reason: "userRateLimitExceeded" }] },
+        { details: [{ reason: "userRateLimitExceeded" }] },
+        { status: "RATE_LIMIT_EXCEEDED" },
+      ]) {
+        stubGoogle(() => Response.json({ error: { message: "Request refused.", ...reason } }, { status: 403 }));
+        await expect(connector.callTool("get_file", { fileId: "f1" }, privateContext(key))).rejects.toMatchObject({
+          code: "rate_limited",
+          retryable: true,
+        });
+      }
+      stubGoogle((url) =>
+        url.pathname.endsWith("/export")
+          ? Response.json(
+              { error: { message: "Request refused.", errors: [{ reason: "exportSizeLimitExceeded" }] } },
+              { status: 403 },
+            )
+          : { id: "d1", mimeType: "application/vnd.google-apps.document" },
+      );
+      await expect(connector.callTool("get_file_content", { fileId: "d1" }, privateContext(key))).rejects.toMatchObject(
+        {
+          code: "connector_call_failed",
+          retryable: false,
+          message:
+            "Google Drive: Request refused. The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.",
+        },
+      );
+    }
   });
 
   it("INV-5: an aligned Basic username cannot hide an unfinished encoded credential pair", () => {

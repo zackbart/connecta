@@ -1404,6 +1404,49 @@ describe("Workspace served classification on unauthorized requests", () => {
         expect(served.isError, JSON.stringify(served.structuredContent)).toBeFalsy();
         expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(["GET", "GET"]);
       }
+
+      const driveReads = createMetaTools(
+        makeRegistry([drive("files", { purpose: "Files", serviceAccount: account(), subject: "alice@example.com" })], {
+          classification: { files: { get_file_content: "write", list_folder_items: "write" } },
+        }),
+        "https://connecta.example",
+      );
+      for (const [mimeType, payload, format, content] of [
+        ["text/plain", "hello", "text", "hello"],
+        ["application/pdf", new Uint8Array([1, 2, 3]), "base64", "AQID"],
+        ["application/vnd.google-apps.document", "# hi", "markdown", "# hi"],
+      ] as const) {
+        apiReplies.push(
+          () => Response.json({ id: "f1", name: "F", mimeType }),
+          () => new Response(payload, { headers: { "content-type": "text/plain" } }),
+        );
+        const sent = apiCalls.length;
+        const served = await driveReads.callDestructiveTool({
+          address: "files.get_file_content",
+          args: { fileId: "f1" },
+        });
+        expect(served.isError, JSON.stringify(served.structuredContent)).toBeFalsy();
+        const block = served.content[0];
+        expect(block?.type).toBe("text");
+        expect(JSON.parse(block?.type === "text" ? block.text : "null")).toMatchObject({ format, content });
+        expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(["GET", "GET"]);
+      }
+      apiReplies.push(
+        () => Response.json({ id: "folder-1", mimeType: "application/vnd.google-apps.folder" }),
+        () => Response.json({ files: [{ id: "f1", name: "F" }] }),
+      );
+      const sent = apiCalls.length;
+      const listing = await driveReads.callDestructiveTool({
+        address: "files.list_folder_items",
+        args: { folderId: "folder-1" },
+      });
+      expect(listing.isError, JSON.stringify(listing.structuredContent)).toBeFalsy();
+      const block = listing.content[0];
+      expect(block?.type).toBe("text");
+      expect(JSON.parse(block?.type === "text" ? block.text : "null")).toMatchObject({
+        files: [{ id: "f1", name: "F" }],
+      });
+      expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(["GET", "GET"]);
     },
   );
 

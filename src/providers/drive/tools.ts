@@ -19,8 +19,8 @@ import { encodeForAgent, redactBeforeCut, redactBoundedRead, redactSentSecrets }
 /** Rows are one cheap request per page; Drive's own maximum is 1,000. */
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
-const DEFAULT_CONTENT_CHARS = 20000;
-const MAX_CONTENT_CHARS = 100000;
+const DEFAULT_CONTENT_CHARS = 20_000;
+const MAX_CONTENT_CHARS = 100_000;
 /** A binary file is returned as base64 at or under this size, never above. */
 const BINARY_INLINE_BYTES = 1024 * 1024;
 /**
@@ -63,9 +63,9 @@ const DRIVE_ID = /^[A-Za-z0-9_-]{1,256}$/;
  * carrying it would pass this is refused when Drive sends it, rather than
  * issued and then refused on replay.
  */
-const MAX_CURSOR_CHARS = 16384;
+const MAX_CURSOR_CHARS = 16_384;
 /** Upload ceiling for text, in characters; Drive's multipart limit is 5 MB. */
-const MAX_UPLOAD_CHARS = 1000000;
+const MAX_UPLOAD_CHARS = 1_000_000;
 /** Base64 characters for {@link BINARY_INLINE_BYTES} decoded bytes. */
 const MAX_UPLOAD_BASE64 = 4 * Math.ceil(BINARY_INLINE_BYTES / 3);
 const FOLDER = "application/vnd.google-apps.folder";
@@ -373,7 +373,6 @@ interface Fetched {
  * One page of a listing, as many rows as fit `maxBytes` with the whole
  * result — envelope and cursor included — and a cursor that resumes at the
  * first row left out, inside Drive's page or after it.
-
  */
 function pageOf(
   ctx: ConnectorContext,
@@ -645,7 +644,7 @@ function download(
         headers: { Range: `bytes=0-${limit}` },
       },
       "*/*",
-      { maxBytes: limit },
+      { maxBytes: limit, step: "content" },
     );
     return { bytes: read.bytes.subarray(0, limit), more: read.truncated, contentType: read.contentType };
   });
@@ -660,14 +659,17 @@ function readContent(
   return Effect.gen(function* () {
     const filePath = `/files/${encodeURIComponent(fileId)}`;
     const file = asRecord(
-      yield* client.json({
-        method: "GET",
-        path: filePath,
-        query: {
-          ...ALL_DRIVES,
-          fields: "id,name,mimeType,size,webViewLink,capabilities(canDownload),shortcutDetails(targetId)",
+      yield* client.json(
+        {
+          method: "GET",
+          path: filePath,
+          query: {
+            ...ALL_DRIVES,
+            fields: "id,name,mimeType,size,webViewLink,capabilities(canDownload),shortcutDetails(targetId)",
+          },
         },
-      }),
+        { step: "metadata" },
+      ),
     );
     const mimeType = String(file["mimeType"] ?? "application/octet-stream");
     const size = sizeOf(ctx, file["size"]);
@@ -691,6 +693,7 @@ function readContent(
       const { text: body } = yield* client.text(
         { method: "GET", path: `${filePath}/export`, query: { mimeType: exported.mimeType } },
         exported.mimeType,
+        { step: "content" },
       );
       const result = compact({
         ...base,
@@ -887,13 +890,13 @@ const INCLUDE_TRASHED: JsonSchema = {
 const NAME_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
-  maxLength: 1000,
+  maxLength: 1_000,
   pattern: "^[^\\r\\n]*$",
   description: "File name as Drive shows it, extension included where it has one.",
 };
 const DESCRIPTION_PROPERTY: JsonSchema = {
   type: "string",
-  maxLength: 10000,
+  maxLength: 10_000,
   description: "Free-text description shown in Drive's details pane.",
 };
 const PARENT_PROPERTY: JsonSchema = idProperty("Folder id to place it in, or root for My Drive; defaults to My Drive.");
@@ -1017,23 +1020,27 @@ export function driveTools({
     tool: string,
     args: JsonRecord,
     query: Record<string, string | number | boolean | undefined>,
+    step?: string,
   ) =>
     // The Drive query decides the rows: folder, search, corpus, drive, order.
     pageOf(ctx, "files", args, { tool, ...query }, (pageToken, pageSize) =>
       Effect.gen(function* () {
         const listing = asRecord(
-          yield* client.json({
-            method: "GET",
-            path: "/files",
-            query: {
-              ...ALL_DRIVES,
-              includeItemsFromAllDrives: true,
-              fields: `nextPageToken,incompleteSearch,files(${SUMMARY_FIELDS})`,
-              ...query,
-              pageSize,
-              pageToken,
+          yield* client.json(
+            {
+              method: "GET",
+              path: "/files",
+              query: {
+                ...ALL_DRIVES,
+                includeItemsFromAllDrives: true,
+                fields: `nextPageToken,incompleteSearch,files(${SUMMARY_FIELDS})`,
+                ...query,
+                pageSize,
+                pageToken,
+              },
             },
-          }),
+            step ? { step } : undefined,
+          ),
         );
         return {
           ids: asArray(listing["files"]).map((file) => String(asRecord(file)["id"] ?? "")),
@@ -1116,6 +1123,7 @@ export function driveTools({
     },
     {
       name: "list_folder_items",
+      writeSteps: { folder: "once", files: "once" },
       description:
         "List the files and folders directly inside one Drive folder, in My Drive or a shared drive. Not recursive: list a subfolder by its own id.",
       annotations: readOnly,
@@ -1139,11 +1147,14 @@ export function driveTools({
           let driveId: string | undefined;
           if (folderId !== "root") {
             const folder = asRecord(
-              yield* client.json({
-                method: "GET",
-                path: filePath(folderId),
-                query: { ...ALL_DRIVES, fields: "id,mimeType,driveId" },
-              }),
+              yield* client.json(
+                {
+                  method: "GET",
+                  path: filePath(folderId),
+                  query: { ...ALL_DRIVES, fields: "id,mimeType,driveId" },
+                },
+                { step: "folder" },
+              ),
             );
             if (folder["mimeType"] !== FOLDER) {
               throw new ConnectorCallError(
@@ -1154,12 +1165,18 @@ export function driveTools({
             driveId = text(folder["driveId"]);
           }
           const q = `'${folderId}' in parents${args["includeTrashed"] === true ? "" : " and trashed = false"}`;
-          return yield* list(ctx, "list_folder_items", args, {
-            q,
-            corpora: driveId ? "drive" : "user",
-            driveId,
-            orderBy: args["orderBy"] ?? "folder,name",
-          });
+          return yield* list(
+            ctx,
+            "list_folder_items",
+            args,
+            {
+              q,
+              corpora: driveId ? "drive" : "user",
+              driveId,
+              orderBy: args["orderBy"] ?? "folder,name",
+            },
+            "files",
+          );
         }),
     },
     {
@@ -1184,6 +1201,7 @@ export function driveTools({
     },
     {
       name: "get_file_content",
+      writeSteps: { metadata: "once", content: "once" },
       description:
         "Read a Drive file's content: Docs as Markdown, Sheets as CSV of the first sheet, Slides as text, text files as text, small binaries as base64. Never drawings or folders.",
       annotations: readOnly,
