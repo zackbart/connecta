@@ -1221,36 +1221,9 @@ the operator UI and `describeConfig()` do not show a pool's surface yet.
 
 ### Eve agents
 
-`@zackbart/connecta/eve` defines an [Eve](https://www.npmjs.com/package/eve)
-connection and its instructions for one agent endpoint. It imports
-`eve/connections`, `eve/instructions`, and `eve/tools/approval`, so the agent
-project must install `eve` 0.83; Connecta itself declares no dependency on it.
-
-```ts
-// agent/connections/connecta.ts
-import { connectaConnection } from "@zackbart/connecta/eve";
-export default connectaConnection({ pool: "assistant", description: "CRM and support tickets." });
-
-// agent/instructions/connecta.ts
-import { connectaInstructions } from "@zackbart/connecta/eve";
-export default connectaInstructions({ pool: "assistant" });
-```
-
-| Option       | Meaning                                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `url`        | The deployment's base URL, or a full endpoint URL when `pool` is absent. Defaults to `CONNECTA_URL`                          |
-| `pool`       | The endpoint is `<url>/agent/<pool>`                                                                                         |
-| `getToken`   | The agent's `cta_` token, re-read on every request. Defaults to `CONNECTA_ACCESS_TOKEN`                                      |
-| `approval`   | Eve approval policy for every Connecta tool. Defaults to `never()`                                                           |
-| `gateWrites` | `true` asks a person before every tool not annotated read-only: each native write, and `execute_code` on a writable endpoint |
-| `ttlMs`      | Instructions only: how long a fetched copy is reused, default ten minutes                                                    |
-
-The connection's auth is app-owned: one shared agent credential. Eve does not
-pass an MCP server's `instructions` to the model, so `connectaInstructions`
-fetches them at each turn start and adds them as system instructions prefixed
-`Connecta guidance:`. A failed fetch keeps the last copy, or adds nothing, and
-the tools still work. The helper works with either surface; with Eve, a native
-pool avoids searching twice (`eve__search`, then `search_tools`).
+The Eve helper is published separately as `@zackbart/connecta-eve`.
+Connecta core supplies the native pool surface and has no Eve dependency.
+Consult that package's documentation for its compatibility and setup.
 
 ## Contributor reference
 
@@ -1263,15 +1236,13 @@ serve both direct tools and programs. [Skills](https://github.com/zackbart/conne
 owns the supplied usage instructions, each endpoint's instructions
 (`endpointInstructions`), and connector guides. The native surface's names,
 listing, and call translation live in
-[native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts),
-and the Eve helper in [eve.ts](https://github.com/zackbart/connecta/blob/main/src/eve.ts).
+[native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts).
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
 [call tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-call.test.ts),
 [skills tests](https://github.com/zackbart/connecta/blob/main/test/skills-extension.test.ts),
 [native surface tests](https://github.com/zackbart/connecta/blob/main/test/native-tools.test.ts),
-[Eve helper tests](https://github.com/zackbart/connecta/blob/main/test/eve-helper.test.ts),
 [surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts),
 and [pool description tests](https://github.com/zackbart/connecta/blob/main/test/pool-description.test.ts)
 check the published contract. Guest parity and clause evidence are in

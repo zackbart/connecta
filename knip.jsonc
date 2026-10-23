@@ -4,8 +4,6 @@
     "src/index.ts",
     "src/node.ts",
     "src/worker.ts",
-    // Published Eve helper subpath (optional peer `eve`).
-    "src/eve.ts",
     "src/json-schema.ts",
     "src/executors/quickjs.ts",
     "src/executors/quickjs-child.ts",
@@ -60,9 +58,6 @@
     // examples/worker/wrangler.jsonc — is in the same position:
     // test/d1-storage.node.test.ts imports it, and losing that import
     // brings its exemption back.
-    // `eve` is imported only by the Eve helper (src/eve.ts) and installed by
-    // the deployment. Declaring it, even as an optional peer, makes pnpm
-    // install it into this repository; types/eve.d.ts types it here.
-    "eve"
+
   ]
 }

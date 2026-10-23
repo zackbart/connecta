@@ -36,7 +36,7 @@
       "@zackbart/connecta/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts", "types/**/*.d.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts"],
   "exclude": [
     "node_modules",
     "examples",

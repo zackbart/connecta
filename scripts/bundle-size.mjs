@@ -36,9 +36,7 @@ const budget = JSON.parse(readFileSync(join(root, "scripts", "bundle-budget.json
 
 const NODE_ENTRIES = new Set(["./node", "./quickjs", "./sqlite"]);
 const isReported = (name) => name.startsWith("./providers/");
-// `eve` is the Eve helper's (./eve) and the deployment's own install: it is
-// not even an optional peer, because pnpm would then install it here.
-const OPTIONAL_PEERS = [...Object.keys(manifest.peerDependencies ?? {}), "eve"];
+const OPTIONAL_PEERS = Object.keys(manifest.peerDependencies ?? {});
 const WORKER_EXAMPLE = "examples/worker";
 
 /** `./dist/x.js` in the exports map → `src/x.ts`. */

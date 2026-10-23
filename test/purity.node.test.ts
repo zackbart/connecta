@@ -108,9 +108,11 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
     const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
     const workerExecutor = join(SRC, "worker.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
-    const eveHelper = join(SRC, "eve.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
-    expect(graph.has(eveHelper)).toBe(false);
+    for (const file of graph)
+      expect(readFileSync(file, "utf8")).not.toMatch(
+        /(?:from|import\()\s*["\'](?:eve(?:\/|["\'])|@zackbart\/connecta-eve)/,
+      );
     const nodeTransport = join(SRC, "http", "node-transport.ts");
     expect(graph.has(nodeTransport)).toBe(false);
     expect(importGraph(join(SRC, "worker.ts")).has(nodeTransport)).toBe(false);
