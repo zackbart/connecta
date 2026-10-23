@@ -97,8 +97,8 @@ export const sheets = defineApiProvider<SheetsOptions>({
   title: "Google Sheets",
   readme: "Google Sheets",
   bundle: {
-    baselineGzip: 334866,
-    note: "./providers/sheets measured 334,866 B gzip in C.7 CI on Node 22 at 20a268ff, including reviewed fixed JSON keys: the shared Google Workspace layer now runs on the Effect provider kit, from 26,026 B for the api() provider (#682). A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
+    baselineGzip: 334571,
+    note: "./providers/sheets measures 334,571 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
