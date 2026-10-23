@@ -101,7 +101,7 @@ const NOTION_OPTIONS = variants(
   ["oauth"],
 );
 
-/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
+/** Maintained API connection. Hosted MCP uses a separate generic connection. */
 export const notion = defineApiProvider<NotionOptions>({
   name: "notion",
   title: "Notion",

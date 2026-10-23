@@ -2577,3 +2577,10 @@ The contract now lives in [Operator UI](./operator-ui.md#operator-data-contract)
 including configuration provenance, live facts, activity disclosure, doctor,
 and the browser implementation. [Optional deployment modules](#optional-deployment-modules)
 keeps the module composition and request-lifetime rules here.
+
+Vendor error declarations may review structural text presence at fixed body
+paths. The error boundary exposes only `present` and `nonBlank`, after
+sent-secret redaction, and never the text. Reviewed recovery-token lists can
+set a fixed `displayFacts` bound with a reason; other lists display eight
+entries. Both reviews are snapshotted at connection construction and never
+change classification or the operation's error-withholding policy.

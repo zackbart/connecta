@@ -135,6 +135,13 @@ const SAFETY = valueSafety(NOTION_VALUE_SAFETY, () => notionIndex);
 const getMe = get("getMe", "/v1/users/me", { success: Schema.Unknown });
 export const NotionApi: Vendor = {
   ...indexedVendor("Notion", notionIndex, [getMe]),
+  binaryBodies: {
+    review:
+      "The legacy Notion REST hatch returns non-text, non-JSON success bodies as a bounded byte wrapper after sent-secret checks; named tools share that boundary.",
+    forResponse: (_status, _operation, contentType) =>
+      contentType !== "" &&
+      !/^text\/|\bxml\b|\bcsv\b|\bjson\b|\+json\b|\b(?:x-ndjson|jsonl|stream\+json)\b/.test(contentType),
+  },
   textBodies: {
     review: "The legacy REST hatch decodes JSON, text and newline-delimited JSON responses by Content-Type.",
     forResponse: (_status, _operation, contentType = "") =>
@@ -296,6 +303,7 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
   Effect.gen(function* () {
     const type = (answer.headers.get("content-type") ?? "").toLowerCase();
     const ndjson = /\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type);
+    if (!ndjson && answer.bodyFormat === "text" && body === "") return null;
     if (
       (answer.bodyFormat === "text" || answer.bodyFormat === "empty") &&
       typeof body === "string" &&
@@ -373,6 +381,11 @@ export const errors: VendorErrors = {
       retryAfter: bodyRetryAfterMs(extra),
       committed: typeof extra.committed_resource_id === "string" ? extra.committed_resource_id : undefined,
       children: Array.isArray(extra.committed_child_ids) ? extra.committed_child_ids : undefined,
+      childrenSafe:
+        !Array.isArray(extra.committed_child_ids) ||
+        extra.committed_child_ids.every(
+          (child: unknown) => child !== undefined && (typeof child !== "string" || NOTION_ID.test(child)),
+        ),
     };
   },
   detail: ({ body: payload, status, withheld, facts, presence }) => {
@@ -387,6 +400,8 @@ export const errors: VendorErrors = {
         : `Notion returned HTTP ${status}.`;
     const label = facts.code ? `Notion ${facts.code}: ${detail}` : detail;
     if (status < 500 || status === 529) return label;
+    if (withheld && presence.commit?.present && facts.childrenSafe === false)
+      return `${label} Notion committed the write before failing; what it committed is withheld because this operation handles credentials. Read the object instead of repeating the write.`;
     const committed = committedIds(extra, withheld);
     if (committed) return `${label}${committed}`;
     if (presence.commit?.present && withheld)

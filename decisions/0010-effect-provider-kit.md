@@ -1966,3 +1966,12 @@ The previous draft asked eight questions. The orchestrator decided them:
   That provider then stays on the old path until the kit grows the primitive.
   A kit change that needs a verdict the core does not give is a change to
   the core contract, decided there, never a kit rule.
+
+C.6 Notion adds reviewed error-body presence facts: fixed property paths expose
+only nonempty-string presence and nonblank-text presence, never raw text.
+They preserve legacy commit and retry-guidance behavior without classifying
+vendor prose. Reviewed `displayFacts` limits retain the recovery ids needed for
+a bounded write while leaving the default eight-item wording bound unchanged.
+Both declarations are captured at construction; values come only from the
+already redacted error body. The result hook may require `RequestSecrets` to
+protect joined rich-text lanes, without access to other call services.
