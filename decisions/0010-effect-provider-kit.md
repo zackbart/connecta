@@ -1872,6 +1872,31 @@ They share `Schema` and `Stream`, so the set costs about 120 KB, not their
 sum. `examples/worker` imports no provider, so no capped entry moves. Bundle
 cost is paid once per deployment and does not decide Q1.
 
+### Accepted migrated kit cost (2026-10-23)
+
+The owner accepted the migrated kit's bundle cost on 2026-10-23 for the #703
+rework. The [#941 review](https://github.com/zackbart/connecta/pull/941)
+measured a one-time shared deployment increase over the legacy implementation
+of 157,088 B gzip on Node (about 157 KB) and 123,980 B on Workers (about
+124 KB). A deployment pays this shared kit cost once, with its first kit
+provider.
+
+Standalone provider entries are roughly 320–480 KB gzip each, including the
+shared kit and other dependencies. These entry sizes are not additive deployment
+costs; they must not be summed to estimate a deployment with several providers.
+The prototype tables above remain historical measurements, not the migrated
+kit's accepted cost.
+
+F3's common provider baseline snapshot uses the Node 22 CI `static` job's
+`Run pnpm run check:build` step from
+[run 39997464724](https://github.com/zackbart/connecta/actions/runs/39997464724)
+at `9420933711af5e42bf9d134d1b73bed114a48fa0`. Tithe.ly is excluded because
+its step-2 PR #970 owns its baseline. Use those CI gzip measurements rather
+than local compressor results; this snapshot changes neither the compressor
+nor any deployment cap.
+
+### Historical round-2 line measurements
+
 **Lines.** The previous round counted the code `get_charge` and `list_charges`
 need with the TypeScript scanner: 452 today, 381 on the kit (−16%), and
 316 → 245 (−22%) without the 136 lines identical in both. Counting
