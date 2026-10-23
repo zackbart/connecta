@@ -1,5 +1,6 @@
 // Portable security/data-integrity regressions for #812 and PR #846 review rounds.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
@@ -77,7 +78,9 @@ const PLACEHOLDER = [PLACEHOLDERS[2]!];
 let sent: Array<{ body: BodyInit | null | undefined; url: string }>;
 let respond: () => Response;
 const realFetch = globalThis.fetch;
+let previousTransport: ReturnType<typeof configureGuardedTransport>;
 beforeEach(() => {
+  previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   sent = [];
   respond = () => Response.json({});
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -87,6 +90,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
+  configureGuardedTransport(previousTransport);
 });
 const call = (connector: Connector, tool: string, args: Record<string, unknown>) =>
   connector.callTool(tool, args, ctx) as Promise<any>;
