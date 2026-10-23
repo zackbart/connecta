@@ -2828,7 +2828,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       payload: Schema.Struct({ value: Schema.String }),
     });
     const connection = connect(
-      vendor({ name: "Typed", manifestBase: "/api/v3" }, operation),
+      vendor({ name: "Typed", manifestBase: "/gmail/v1/users/{userId}" }, operation),
       guardedClient({ ...OPTIONS, maxResponseBytes: 4096 }),
       {
         errors: VENDOR,
@@ -2841,7 +2841,22 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(operations(vendor({ name: "Typed", manifestBase: "/api/v3" }, operation))).toEqual([
       "POST /api/v3/items/{id}",
     ]);
-    for (const prefix of ["relative", "/api/../v3", "/api/", "/api?query"])
+    expect(operations(vendor({ name: "Typed", manifestBase: "/gmail/v1/users/{userId}" }, operation))).toEqual([
+      "POST /gmail/v1/users/{userId}/items/{id}",
+    ]);
+    for (const prefix of [
+      "relative",
+      "/api/../v3",
+      "/api/./v3",
+      "/api/",
+      "/api?query",
+      "/api/{id/other}",
+      "/api/{id?query}",
+      "/api/pre{id}",
+      "/api/{id}post",
+      "/api/{}",
+      "/api/{id-name}",
+    ])
       expect(() => vendor({ name: "Invalid", manifestBase: prefix }, operation)).toThrow(/manifestBase/);
     for (const value of ["one", "changed"]) {
       sent = [];

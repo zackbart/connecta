@@ -104,7 +104,7 @@ export function vendor(
   const manifestBase = typeof declaration === "string" ? undefined : declaration.manifestBase;
   if (
     manifestBase !== undefined &&
-    (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(manifestBase) ||
+    (!/^\/(?:[A-Za-z0-9._~-]+|\{[A-Za-z0-9_]+\})(?:\/(?:[A-Za-z0-9._~-]+|\{[A-Za-z0-9_]+\}))*$/.test(manifestBase) ||
       manifestBase.split("/").some((segment) => segment === "." || segment === ".."))
   )
     throw new Error("A vendor manifestBase must be an absolute path prefix without dot segments or a trailing slash.");

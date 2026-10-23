@@ -2165,7 +2165,10 @@ an object with required properties; its decoder is unchanged. Closed empty
 input records render `properties: {}` and `required: []` explicitly.
 
 A vendor may set `manifestBase` to prefix its documented operation paths.
-Transport paths remain relative to the confined base URL. The catalog renderer
+The prefix accepts literal path segments and whole `{param}` segments whose
+names contain only letters, digits and underscores. It is concatenated verbatim
+for the manifest; transport paths remain relative to the confined base URL,
+with no parameter interpolation. The catalog renderer
 collapses unions of bare object and array branches into a type array; branches
 with additional constraints retain `anyOf`.
 
