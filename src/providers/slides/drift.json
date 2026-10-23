@@ -1,6 +1,16 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "slides",
+  "generated": {
+    "operations": [
+      "GET /v1/presentations/{presentationId}/pages/{pageObjectId}",
+      "GET /v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
+      "GET /v1/presentations/{presentationsId}",
+      "POST /v1/presentations",
+      "POST /v1/presentations/{presentationId}:batchUpdate"
+    ],
+    "evidence": {}
+  },
   "checks": [
     {
       "type": "endpoints",
@@ -8,37 +18,34 @@
         "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
         "format": "google-discovery"
       },
-      "scopes": ["https://www.googleapis.com/auth/presentations"],
+      "scopes": [
+        "https://www.googleapis.com/auth/presentations"
+      ],
       "endpoints": [
         {
-          "method": "GET",
-          "path": "/v1/presentations/{presentationsId}",
           "specRevision": "20260930",
-          "contract": "sha256:8a81f8bae848361b08d6789c56ffefcdfddb7da566a8bbb31c672ad958bd8d04"
+          "contract": "sha256:8a81f8bae848361b08d6789c56ffefcdfddb7da566a8bbb31c672ad958bd8d04",
+          "operation": "GET /v1/presentations/{presentationsId}"
         },
         {
-          "method": "GET",
-          "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}",
           "specRevision": "20260930",
-          "contract": "sha256:06d099c356ad5668662829f3d5ce44834b04b505c6e312e6630e8f069c2a7516"
+          "contract": "sha256:06d099c356ad5668662829f3d5ce44834b04b505c6e312e6630e8f069c2a7516",
+          "operation": "GET /v1/presentations/{presentationId}/pages/{pageObjectId}"
         },
         {
-          "method": "GET",
-          "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
           "specRevision": "20260930",
-          "contract": "sha256:860a4e43c44543d26ba7ab0f5c8a93c0bf23869f599ab92a5ea9986d4a4a4b9c"
+          "contract": "sha256:860a4e43c44543d26ba7ab0f5c8a93c0bf23869f599ab92a5ea9986d4a4a4b9c",
+          "operation": "GET /v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail"
         },
         {
-          "method": "POST",
-          "path": "/v1/presentations",
           "specRevision": "20260930",
-          "contract": "sha256:6df5af1d78f892c0e2476529237bd22535607759e67bfa2b94d66ea4e3f41456"
+          "contract": "sha256:6df5af1d78f892c0e2476529237bd22535607759e67bfa2b94d66ea4e3f41456",
+          "operation": "POST /v1/presentations"
         },
         {
-          "method": "POST",
-          "path": "/v1/presentations/{presentationId}:batchUpdate",
           "specRevision": "20260930",
-          "contract": "sha256:4722cd566efd79e2844347a8ee7203445fa146124ce0c01164a29349e8effc0d"
+          "contract": "sha256:4722cd566efd79e2844347a8ee7203445fa146124ce0c01164a29349e8effc0d",
+          "operation": "POST /v1/presentations/{presentationId}:batchUpdate"
         }
       ]
     }

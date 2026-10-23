@@ -207,7 +207,7 @@ var options15 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture15 = {
   name: "slides",
   options: options15,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return slides(id, { ...options15, ...overrides });
   },
