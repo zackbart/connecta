@@ -1042,7 +1042,7 @@
           },
           "body": {
             "type": "object",
-            "description": "Body content type and schema; when paged, the properties and required names on this page."
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
           },
           "verdict": {
             "type": "string",
