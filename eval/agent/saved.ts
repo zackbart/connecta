@@ -11,6 +11,7 @@ export interface SavedGradeInputs {
   trace: AgentTrace;
   world: {
     rest?: World["rest"];
+    tithely?: World["tithely"];
     ci?: World["ci"];
     tracker: TrackerState;
     chat: ChatState;
@@ -27,6 +28,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     trace,
     world: {
       rest: world.rest,
+      ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ci: world.ci,
       tracker: world.tracker,
       chat: world.chat,
@@ -124,6 +126,12 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     state.calls.some((c) => /^(stripe_sandbox|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service))
   )
     throw new Error("Incomplete saved grading evidence: rest");
+  if (state.tithely) {
+    for (const key of ["organizations", "accounts", "methods", "charges", "recurring", "refunds", "cancelled"] as const)
+      requireEvidence(Array.isArray(state.tithely[key]), `tithely.${key}`);
+    Object.assign(world.tithely, structuredClone(state.tithely));
+  } else if (state.calls.some((c) => c.service === "tithely"))
+    throw new Error("Incomplete saved grading evidence: tithely");
   world.ci.splice(0, world.ci.length, ...state.ci!);
   Object.assign(world.tracker, saved.world.tracker);
   Object.assign(world.chat, saved.world.chat);

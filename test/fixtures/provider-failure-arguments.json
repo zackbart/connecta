@@ -1123,51 +1123,34 @@
     "get_balance_summary": {}
   },
   "tithely": {
-    "tithely_api_get": {
-      "path": "/payment-methods/pm_9",
-      "query": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        }
-      ]
+    "tithely_api_search": {
+      "query": "refund charge"
     },
-    "tithely_api_mutate": {
+    "tithely_api_details": {
+      "method": "POST",
+      "path": "/charges"
+    },
+    "tithely_api_read": {
+      "path": "/payment-methods/pm_9",
+      "query": {
+        "account_id": "user_jane"
+      }
+    },
+    "tithely_api_write": {
       "method": "POST",
       "path": "/charges",
-      "form": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        },
-        {
-          "name": "pm_id",
-          "value": "pm_9"
-        },
-        {
-          "name": "organization_id",
-          "value": "org_1"
-        },
-        {
-          "name": "amount",
-          "value": 2555
-        },
-        {
-          "name": "giving_type",
-          "value": "Tithe"
-        }
-      ]
+      "body": {
+        "account_id": "user_jane",
+        "pm_id": "pm_9",
+        "organization_id": "org_1",
+        "amount": 2555,
+        "giving_type": "Tithe"
+      }
     },
     "list_organizations": {
       "limit": 5
     },
-    "get_organization": {
-      "organizationId": "org_1"
-    },
     "list_accounts": {},
-    "get_account": {
-      "accountId": "user_jane"
-    },
     "list_charges": {
       "organizationId": "org_1",
       "limit": 1,

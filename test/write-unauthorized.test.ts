@@ -406,9 +406,9 @@ describe("a write answered 401 is decided before every other exception", () => {
     const connector = tithely("giving", { purpose: "Review", environment: "test" });
     const error = await call(
       connector,
-      "tithely_api_mutate",
+      "tithely_api_write",
       true,
-      { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] },
+      { method: "POST", path: "/refunds/ch_1" },
       { publicKey: "pub_abc123", privateKey: "pri_def456" },
     );
     expect(error).toMatchObject({
