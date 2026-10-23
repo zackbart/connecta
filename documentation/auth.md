@@ -371,11 +371,106 @@ Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
 
+## Vercel workload credentials (prototype)
+
+An agent running on Vercel can present its project's signed OIDC token instead
+of provisioning a Connecta token. Declare the binding beside its name:
+
+```ts
+agents: [{
+  name: "assistant",
+  vercel: {
+    team: "team_example",       // immutable owner_id, required; team slugs are refused
+    project: "prj_example",     // immutable project_id (preferred), or exact project name
+    // environments: ["production"], // default; preview/development require explicit entries
+  },
+}],
+pools: {
+  assistant: { tools: ["crm", "tickets"], members: ["agent:assistant"] },
+},
+```
+
+Enable OIDC federation in the calling Vercel project's security settings.
+Use exact values from that project's settings; wildcards and empty environment
+lists are refused. The team must be its immutable `team_...` ID, matched against
+`owner_id`; a team slug is not accepted. Prefer an immutable `prj_...` project ID,
+matched against `project_id`. A project name instead matches `project` and follows
+that name, including reuse within the team. Project names may contain dots, such
+as `assistant.example.com`; colons are refused. A workload that could match two
+agents is refused at construction; use project IDs consistently across agents
+to avoid ambiguous bindings.
+
+The default admits production only. List `preview` or `development` explicitly
+when those environments should have the same pool access. Every deployment of
+the bound project in an allowed environment can act as the agent. This is
+project workload identity, with no end-user identity or forwarding. Enabling
+`development` lets project members who can obtain development tokens act as the
+agent. Enabling `preview` lets code on any pushed preview branch act as the agent.
+
+Treat the project's OIDC token as a bearer credential for all of this agent's
+pools. Its default audience, `https://vercel.com/<team-slug>`, is shared by every
+service accepting Vercel's default OIDC tokens; it is not specific to Connecta.
+Anything holding the project's token can act as the agent:
+project code, builds (including build steps and dependency install scripts with
+access to `VERCEL_OIDC_TOKEN`), and services the project sends the token to,
+including other agents and third-party APIs. A holder may be able to obtain
+fresh Vercel tokens through `@vercel/oidc`'s exchange, so access may outlast the
+original token's expiry. Binding a project means trusting everything that can
+obtain that project's tokens. Send them only to services trusted with the same
+agent access. Signature verification establishes the project identity; it does
+not isolate Connecta from these other token holders.
+
+Both team (`https://oidc.vercel.com/<team-slug>`) and global
+(`https://oidc.vercel.com`) issuer modes work. Connecta verifies RS256 signatures
+against Vercel's fixed public JWKS, exact issuer/audience/subject consistency,
+the configured team/project/environment, required expiration and issued-at,
+and not-before when present, with 30 seconds of clock skew. External-user
+tokens carrying `external_sub` are refused. Public keys cache for five minutes;
+an unknown key can trigger one additional refresh per 30 seconds. Failed fetches
+back off for 30 seconds and never admit with expired cached keys. Fetches have
+the same five-second authentication deadline as agent tokens. Neither token
+contents nor upstream errors enter activity; activity names the declared agent.
+If the two concurrent key-fetch slots are occupied on a cold or expired cache,
+the endpoint returns 503 with `Retry-After: 1`, rather than rejecting the credential
+with 401.
+
+Send the token as `Authorization: Bearer <OIDC token>` to
+`https://connecta.example.com/agent/assistant`. The inbound
+`x-vercel-oidc-token` header alone is not a Connecta credential. In Eve:
+
+```ts
+import { getVercelOidcToken } from "@vercel/oidc";
+import { defineMcpClientConnection } from "eve/connections";
+
+export default defineMcpClientConnection({
+  url: "https://connecta.example.com/agent/assistant",
+  description: "Use the assistant's shared CRM and ticket tools.",
+  auth: {
+    credentialOwner: "app",
+    getToken: async () => ({ token: await getVercelOidcToken() }),
+  },
+});
+```
+
+Resolve the token inside the request through `getToken`; never obtain it at
+module initialization or cache it. Vercel supplies request tokens through
+`x-vercel-oidc-token`; the helper can also read `VERCEL_OIDC_TOKEN` in builds
+or development. Eve's inbound `vercelOidc()` and `vercelSubject()` configure
+who may call Eve, separately from this outbound connection.
+
+OIDC-only agents need no `accessTokens` module. To accept either credential
+for the same agent, also configure `accessTokens(storage)`; its token slot,
+rotation and revocation keep their existing behavior. Revoking a `cta_` token
+does not revoke the workload binding: remove the binding or agent in code to
+stop OIDC admission. Both credentials reach exactly the pools listing the
+agent. Human endpoints refuse Vercel workload credentials without consulting
+human adapters. Removing the agent stops both credential paths.
+
 ## Agent tokens and upgrading from earlier tokens
 
-Machine clients are **agents**, declared by name in code. `agents: string[]`
-lists them: each name matches `^[a-z0-9_-]+$`, at most 64 characters, and is
-unique; anything else, or agents without `accessTokens`, throws at
+Machine clients are **agents**, declared by name in code. String entries in `agents`
+list them: each name matches `^[a-z0-9_-]+$`, at most 64 characters, and is
+unique; anything else, or token-only agents without `accessTokens`, throws at
 construction. `describeConfig()` lists the names and never token state.
 `accessTokens` from `@zackbart/connecta/auth/access-tokens` installs the `cta_`
 inbound adapter and, beside `ui`, the Tokens page and `/ui/access-tokens`
@@ -466,7 +561,7 @@ request without any storage write. An admitted agent's identity is:
 }
 ```
 
-`identity.agent` is set only by the built-in adapter; a result from any other
+`identity.agent` is set only by built-in agent credential adapters; a result from any other
 inbound provider that carries `agent` is refused like an unknown token. An
 agent has no principal, so personal connectors are absent for it and it never
 reads activity. Its subject partitions result handles per
@@ -635,7 +730,7 @@ A member reference is one of:
 - `"agent:<name>"`, naming an agent declared in `agents` (pool `members` only).
 
 A person matches when the admitted principal equals the reference exactly; an
-agent matches by `identity.agent`, which only the built-in token adapter sets.
+agent matches by `identity.agent`, which only built-in agent credential adapters set.
 Construction throws on a bare id without exactly one interactive
 provider, a bare id containing `:`, an undeclared agent, a repeated reference,
 an empty or missing pool `members`, an agent in `maintainers`, `maintainers`
@@ -811,11 +906,11 @@ at the edge so an agent sends one credential, and it behaves the same on Node.
   `/%61gent/x`, `//agent/x`, `/agent/%2f..`, `/agentx`) answers the pool 404
   before any admission or auth, so a path Access bypasses never reaches a
   human route. The query string is not part of the match.
-- **Auth.** Only the built-in `cta_` adapter is consulted. Clerk and Access
+- **Auth.** Only built-in `cta_` and configured Vercel workload adapters are consulted. Clerk and Access
   adapters never run; `ctx.access`, which Access attaches even to a bypassed
   path, is never read or passed on; cookies, Clerk handshake parameters,
   `Cf-Access-Jwt-Assertion`, and Access service headers are ignored. A
-  missing, malformed, unknown, revoked, or non-`cta_` credential gets 401 with
+  missing, malformed, unknown, revoked, or unaccepted credential gets 401 with
   `WWW-Authenticate: Bearer` and no `resource_metadata`.
 - **Membership.** An admitted agent must be listed in that pool's `members`.
   A non-member agent, a pool that lists no agents, and an undeclared but
