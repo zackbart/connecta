@@ -136,17 +136,21 @@ describe("reading content", () => {
 
   it("names Drive's export limit from Google's reason, never from a guess", async () => {
     const meta = metadata({ mimeType: "application/vnd.google-apps.document", capabilities: { canDownload: true } });
-    route = (request) =>
-      meta(request) ?? GOOGLE_ERROR(403, "exportSizeLimitExceeded", "This file is too large to be exported.");
+    const message = "Request refused.";
+    route = (request) => meta(request) ?? GOOGLE_ERROR(403, "exportSizeLimitExceeded", message);
     const failure = await call(connection(), "get_file_content", { fileId: "f1" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("larger than Google will export");
+    expect(failure).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message:
+        "Google Drive: Request refused. The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.",
+    });
 
-    // Any other refusal of the same export is passed on as it was mapped,
-    // with no export-limit story attached.
+    // Identical status and prose with a different reason gets its own verdict.
     calls.length = 0;
-    route = (request) => meta(request) ?? GOOGLE_ERROR(403, "domainPolicy", "Blocked by policy.");
+    route = (request) => meta(request) ?? GOOGLE_ERROR(403, "domainPolicy", message);
     const policy = await call(connection(), "get_file_content", { fileId: "f1" }).catch((error) => error);
+    expect(policy).toMatchObject({ code: "provider_permission_denied", retryable: false });
     expect(policy.message).toContain("domain policy");
     expect(policy.message).not.toContain("export");
   });
