@@ -69,7 +69,8 @@ type Part<Key extends string, S> = [S] extends [never]
 /** What one call to an operation supplies, typed from its Schemas. */
 type RequestOf<Op extends Operation> = Part<"params", Op["~Params"]> &
   Part<"query", Op["~Query"]> &
-  Part<"payload", Op["~Payload"]>;
+  Part<"payload", Op["~Payload"]> &
+  Part<"headers", Op["~Headers"]>;
 
 export interface Vendor {
   // The group type is erased here: kit callers name operations, never groups.
@@ -137,7 +138,7 @@ type Send<R = CallServices> = <Op extends Operation>(
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
 /** A request addressed by its actual method and path; safety resolves the canonical operation. */
-type PathRequest = WriteRequest;
+type PathRequest = WriteRequest & { readonly headers?: Readonly<Record<string, string>> };
 
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
@@ -323,6 +324,7 @@ export function connect<R>(
               path,
               request.query ? { urlParams: parameterPairs(request.query) } : {},
             );
+            if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
             if (request.form && Object.keys(request.form).length > 0) {
               built = HttpClientRequest.bodyText(
                 built,

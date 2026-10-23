@@ -65,7 +65,10 @@ export interface GuardedOptions<R = never> {
    * `authenticate`, as guarded-fetch's `admit` does, so a refused request
    * never resolves a credential.
    */
-  readonly admit?: (url: URL) => Effect.Effect<void, HttpFailure, R | CallServices>;
+  readonly admit?: (
+    url: URL,
+    request: { readonly method: string; readonly body?: string },
+  ) => Effect.Effect<void, HttpFailure, R | CallServices>;
   /** Headers proving identity, resolved per request and applied last. */
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, R | CallServices>;
 }
@@ -135,7 +138,11 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         return yield* refuse(`A ${provider} request path escaped the connector's base URL.`);
       }
       let confined = HttpClientRequest.setUrl(request, url.href);
-      if (options.admit) yield* options.admit(wireUrl(confined));
+      if (options.admit)
+        yield* options.admit(wireUrl(confined), {
+          method: confined.method,
+          ...(bodyText(confined) === undefined ? {} : { body: bodyText(confined)! }),
+        });
       for (const [name, value] of Object.entries(constant)) {
         if (confined.headers[name.toLowerCase()] === undefined)
           confined = HttpClientRequest.setHeader(confined, name, value);

@@ -32,7 +32,6 @@ export const PENDING = {
     "infisical",
     "mixpanel",
     "notion",
-    "planning-center",
     "sheets",
     "slides",
     "stripe",

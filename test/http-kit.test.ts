@@ -38,7 +38,7 @@ import {
   type Verdict,
   type VendorErrors,
 } from "../src/http/errors.js";
-import { Integer, catalogSchema, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
+import { Integer, catalogSchema, emptyRequired, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
 import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
 import { allRows, boundCursor, lookahead, token, offset, page, link } from "../src/http/paging.js";
 import { restSafety, resultSafety } from "../src/http/safety.js";
@@ -659,6 +659,25 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     const output = Schema.Struct({ next: Schema.NullOr(Schema.String), n: Schema.optionalKey(Integer) });
     expect(JSON.stringify(catalogSchema(output, "output"))).toBe(
       '{"type":"object","properties":{"next":{"type":["string","null"]},"n":{"type":"integer"}},"required":["next"]}',
+    );
+  });
+
+  it("preserves empty legacy object spellings without changing decoder admission", () => {
+    const closed = Schema.Record(Schema.String, Schema.Never);
+    expect(catalogSchema(closed, "input")).toEqual({
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    });
+    expect(Schema.decodeUnknownExit(closed)({})._tag).toBe("Success");
+    expect(Schema.decodeUnknownExit(closed)({ extra: true })._tag).toBe("Failure");
+    const output = Schema.Struct({
+      rows: Schema.Array(emptyRequired(Schema.Struct({ value: Schema.optionalKey(Schema.String) }))),
+    });
+    expect(catalogSchema(output, "output")).toHaveProperty("properties.rows.items.required", []);
+    expect(() => catalogSchema(emptyRequired(Schema.Struct({ id: Schema.String })), "output")).toThrow(
+      "no required properties",
     );
   });
 
