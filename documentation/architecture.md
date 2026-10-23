@@ -2569,3 +2569,8 @@ The contract now lives in [Operator UI](./operator-ui.md#operator-data-contract)
 including configuration provenance, live facts, activity disclosure, doctor,
 and the browser implementation. [Optional deployment modules](#optional-deployment-modules)
 keeps the module composition and request-lifetime rules here.
+
+A result hook may read only `RequestSecrets` from the call services, so joined
+rich-text lanes can redact split credentials before projections. A reviewed
+response-format selector also receives the normalized Content-Type after
+sent-secret redaction; it never receives other response headers.

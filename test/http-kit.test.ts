@@ -1111,6 +1111,7 @@ function acme(
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
     result?: Parameters<typeof connect>[2]["result"];
+    textBodies?: Parameters<typeof connect>[0]["textBodies"];
   } = {},
 ) {
   const guarded = guardedClient({
@@ -1119,26 +1120,62 @@ function acme(
     ...(options.refresh ? { authenticate: bearer } : {}),
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
   });
-  return connect(ACME_API, options.refresh ? refreshOnce(guarded as never) : guarded, {
-    errors: VENDOR,
-    safety: resultSafety({
-      review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
-      reviewed: {
-        resolve: (method, path) => ({ method, template: path }),
-        // The review: a key's `token` is a credential wherever it appears.
-        redact: (data) =>
-          Array.isArray(data)
-            ? data.map((row) => ({ ...(row as object), ...("token" in row ? { token: "[redacted]" } : {}) }))
-            : data,
-        withholdsErrors: () => options.withholds === true,
-      },
-      sensitiveFields: { names: ["owner"], choice: options.sensitive ?? "drop" },
-    }),
-    ...(options.result ? { result: options.result } : {}),
-  }) as Connection;
+  return connect(
+    { ...ACME_API, ...(options.textBodies ? { textBodies: options.textBodies } : {}) },
+    options.refresh ? refreshOnce(guarded as never) : guarded,
+    {
+      errors: VENDOR,
+      safety: resultSafety({
+        review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
+        reviewed: {
+          resolve: (method, path) => ({ method, template: path }),
+          // The review: a key's `token` is a credential wherever it appears.
+          redact: (data) =>
+            Array.isArray(data)
+              ? data.map((row) => ({ ...(row as object), ...("token" in row ? { token: "[redacted]" } : {}) }))
+              : data,
+          withholdsErrors: () => options.withholds === true,
+        },
+        sensitiveFields: { names: ["owner"], choice: options.sensitive ?? "drop" },
+      }),
+      ...(options.result ? { result: options.result } : {}),
+    },
+  ) as Connection;
 }
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
+  it("INV-5: response format uses redacted Content-Type and joined text uses this call's request secrets", async () => {
+    const secret = "split-credential-value";
+    const secrets = new SentSecrets();
+    secrets.add(secret);
+    const pieces = Array.from({ length: Math.ceil(secret.length / 4) }, (_, i) => secret.slice(i * 4, i * 4 + 4));
+    const text = `  ${JSON.stringify(pieces.map((plain_text) => ({ plain_text, annotation: "unrelated annotation" })))}  `;
+    answers.push(() => new Response(text, { headers: { "content-type": `text/plain; echo=${secret}` } }));
+    let type: string | undefined;
+    const connection = acme({
+      textBodies: {
+        review: "Fixture text remains text even when JSON-shaped.",
+        forResponse: (_status, _operation, contentType) => {
+          type = contentType;
+          return "text";
+        },
+      },
+      result: (body, answer) => {
+        expect(answer.bodyFormat).toBe("text");
+        expect(body).toBe(text);
+        return RequestSecrets.use((secrets) =>
+          Effect.succeed({
+            parts: secrets.parts((JSON.parse(body as string) as { plain_text: string }[]).map((run) => run.plain_text)),
+          }),
+        );
+      },
+    });
+    const reply = await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+    expect(type).toBe("text/plain; echo=[redacted]");
+    expect(JSON.stringify(reply.data)).not.toContain("credential");
+    expect(reply.data).not.toEqual({ parts: pieces });
+  });
+
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {
     const rows = [1, 2, 3].map((n) => ({ token: `sk_live_secret_${n}`, owner: { email: "alice@example.com" }, n }));
     answers.push(() => Response.json(rows));
