@@ -309,9 +309,6 @@ export function connect<R>(
                 ...(reply.prefix ? { prefix: reply.prefix } : {}),
               }),
             ).pipe(
-              Effect.catchDefect((defect) =>
-                Effect.die(withheld ? new Error("A result hook withholding vendor text failed.") : defect),
-              ),
               Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
                 if (failure._tag === "StatusFailure") return Effect.fail(new StatusFailure({ ...failure, operation }));
                 if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
