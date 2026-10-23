@@ -75,6 +75,8 @@ type RequestOf<Op extends Operation> = Part<"params", Op["~Params"]> &
 export interface Vendor {
   // The group type is erased here: kit callers name operations, never groups.
   readonly api: HttpApi.HttpApi<string, any>;
+  /** A pinned-index adapter keeps bulk manifest declarations outside the typed client. */
+  readonly indexed?: { readonly operations: readonly string[]; readonly api: () => HttpApi.HttpApi<string, any> };
   /** Published specification path prefix; transport operations remain relative to the confined base. */
   readonly manifestBase?: string;
   /** Reviewed text contracts, selected by status and canonical operation; absent means JSON only. */
@@ -327,7 +329,7 @@ export function connect<R>(
               request.query ? { urlParams: parameterPairs(request.query) } : {},
             );
             if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
-            if (request.form && Object.keys(request.form).length > 0) {
+            if (request.form !== undefined) {
               built = HttpClientRequest.bodyText(
                 built,
                 new URLSearchParams(parameterPairs(request.form)).toString(),
@@ -365,7 +367,7 @@ function parse(
 
 /** The endpoint manifest drift checks compare against the vendor's published contract. */
 export function manifest(vendor: Vendor): OpenApi.OpenAPISpec {
-  const document = OpenApi.fromApi(vendor.api);
+  const document = OpenApi.fromApi(vendor.indexed?.api() ?? vendor.api);
   return vendor.manifestBase === undefined
     ? document
     : {
@@ -384,6 +386,7 @@ const METHODS = ["get", "head", "post", "put", "patch", "delete"] as const;
  * `providers:generate` writes into `drift.json`'s `generated.operations`.
  */
 export function operations(vendor: Vendor): string[] {
+  if (vendor.indexed) return [...vendor.indexed.operations];
   return Object.entries(manifest(vendor).paths)
     .flatMap(([path, item]) =>
       METHODS.filter((method) => (item as Record<string, unknown>)[method] !== undefined).map(

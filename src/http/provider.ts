@@ -41,26 +41,32 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;
   readonly maxResponseBytes: number;
+  readonly timeoutMs?: number;
   readonly headers?: GuardedOptions["headers"];
   readonly admit?: GuardedOptions["admit"];
   /** Connection-specific transport settings, built outside every caller context. */
   readonly transport?: (options: Readonly<O>) => Pick<GuardedOptions, "headers" | "admit">;
-  readonly defaultCallAdmission?: import("../types.js").ConnectorCallAdmissionPolicy;
+  readonly defaultCallAdmission?:
+    | import("../types.js").ConnectorCallAdmissionPolicy
+    | ((options: Readonly<O>) => import("../types.js").ConnectorCallAdmissionPolicy);
   readonly pageSize?: { readonly default: number; readonly max: number };
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
-  readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
-  readonly errors: VendorErrors;
+  readonly authenticate:
+    | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
+    | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
+  readonly errors: VendorErrors<any>;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly probe: {
     readonly operation: ProbeOperation;
-    readonly request: unknown;
+    readonly request: unknown | ((options: Readonly<O>) => unknown);
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
+    readonly failure?: (error: ConnectorCallError, options: Readonly<O>) => CredentialTestResult | undefined;
   };
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
@@ -95,6 +101,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     vendor,
     baseUrl,
     maxResponseBytes,
+    timeoutMs,
     headers,
     admit,
     transport,
@@ -160,10 +167,11 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         provider: errors.provider,
         baseUrl: baseUrl(options),
         maxResponseBytes,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(oauthWrite401 ? { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES } : {}),
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
-        authenticate,
+        authenticate: typeof authenticate === "function" ? authenticate(options) : authenticate,
         ...configured,
       });
       const connected = connect(
@@ -221,26 +229,36 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           signal,
         };
         return runEdge(
-          connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
-            Effect.flatMap(({ data }) =>
-              Effect.try({
-                try: () => {
-                  const described = probe.describe(data, options);
-                  return typeof described === "string" ? { ok: true, message: described } : described;
-                },
-                catch: (error) => error,
-              }).pipe(
-                Effect.catch((error) =>
-                  error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+          connection
+            .send(
+              probe.operation,
+              (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
+                Connection["send"]
+              >[1],
+            )
+            .pipe(
+              Effect.flatMap(({ data }) =>
+                Effect.try({
+                  try: () => {
+                    const described = probe.describe(data, options);
+                    return typeof described === "string" ? { ok: true, message: described } : described;
+                  },
+                  catch: (error) => error,
+                }).pipe(
+                  Effect.catch((error) =>
+                    error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+                  ),
                 ),
               ),
+              Effect.catch((failure) =>
+                Effect.sync(() => {
+                  const error = toConnectorCallError(failure, errors, map);
+                  return probe.failure?.(error, options) ?? { ok: false, message: error.message };
+                }),
+              ),
+              Effect.provideContext(lease.services),
+              Effect.ensuring(Effect.sync(lease.close)),
             ),
-            Effect.catch((failure) =>
-              Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
-            ),
-            Effect.provideContext(lease.services),
-            Effect.ensuring(Effect.sync(lease.close)),
-          ),
           { signal: ctx.signal },
         );
       };
@@ -255,7 +273,12 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const usageGuide = guide(options);
       return tracksEveryRequest(
         api(id, {
-          ...(defaultCallAdmission ? { callAdmission: defaultCallAdmission } : {}),
+          ...(defaultCallAdmission
+            ? {
+                callAdmission:
+                  typeof defaultCallAdmission === "function" ? defaultCallAdmission(options) : defaultCallAdmission,
+              }
+            : {}),
           ...provider.connectorOptions,
           ...(authScope ? { authScope: authScope(options) } : {}),
           title: options.title ?? displayTitle?.(options) ?? metadata.title,

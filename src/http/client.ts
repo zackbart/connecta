@@ -58,6 +58,8 @@ export interface GuardedOptions<R = never> {
   readonly baseUrl: string;
   /** Ceiling on any response body, in bytes. Required: it is a fact about the API. */
   readonly maxResponseBytes: number;
+  /** Request and response-body deadline, as imposed by the vendor. */
+  readonly timeoutMs?: number;
   /** Optional lower ceiling for discarded OAuth 401 challenges. */
   readonly maxUnauthorizedResponseBytes?: number;
   /** Constant headers, such as `Accept`. */
@@ -110,6 +112,8 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   if (unauthorizedLimit !== undefined && (!Number.isInteger(unauthorizedLimit) || unauthorizedLimit < 1))
     throw new Error("maxUnauthorizedResponseBytes must be a whole number of bytes >= 1.");
   const responseLimit = (status: number) => (status === 401 ? Math.min(limit, unauthorizedLimit ?? limit) : limit);
+  if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1))
+    throw new Error("timeoutMs must be a positive whole number.");
   const base = confinementBase(provider, options.baseUrl);
   const basePath = base.pathname.replace(/\/+$/, "");
   const constant = { ...options.headers };
@@ -312,7 +316,11 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
               ...body,
               // A redirect re-sends the credential wherever `Location` points.
               redirect: "manual",
-              signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
+              signal: AbortSignal.any([
+                interrupted,
+                ...(callSignal ? [callSignal] : []),
+                ...(options.timeoutMs === undefined ? [] : [AbortSignal.timeout(options.timeoutMs)]),
+              ]),
             });
           },
           catch: (failure): HttpFailure => {
