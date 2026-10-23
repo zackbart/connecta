@@ -2,7 +2,7 @@
 // that borrow an admitted caller, budget, or served write classification.
 import { callFromContext, contextView, operationView, viewLease } from "./call.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
-export function credentialProbeContext(ctx: ConnectorContext, values: ConnectorCredentialValues): ConnectorContext {
+function credentialProbeContext(ctx: ConnectorContext, values: ConnectorCredentialValues): ConnectorContext {
   const operation = operationView(
     {
       storage: ctx.storage,
