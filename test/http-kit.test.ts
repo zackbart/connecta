@@ -67,6 +67,7 @@ import {
   type CallServices,
   type Dispatch,
 } from "../src/http/services.js";
+import { typedParams } from "../src/providers/_shared/rest/kit.js";
 import { kitInput, read, write, list, get as getTool, action } from "../src/http/tools.js";
 import {
   connect,
@@ -687,6 +688,34 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(9)),
     ]);
     expect(catalogSchema(shared, "output")).toHaveProperty("anyOf");
+    for (const value of [
+      " ",
+      "%",
+      "%25",
+      "%2F",
+      "?",
+      "#",
+      "+",
+      "&",
+      "=",
+      ";",
+      "@",
+      ":",
+      "é",
+      "😀",
+      "~",
+      "!",
+      "'",
+      "(",
+      ")",
+      "*",
+    ]) {
+      expect(typedParams({ id: encodeURIComponent(value) })).toEqual({ id: value });
+    }
+    for (const encoded of ["%", "%C3", "%ff", "%7e", "%2f"]) {
+      expect(() => typedParams({ id: encoded })).toThrow(ConnectorCallError);
+    }
+
     const object = Schema.Record(Schema.String, Schema.Unknown);
     const array = Schema.Array(Schema.Unknown);
     expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });

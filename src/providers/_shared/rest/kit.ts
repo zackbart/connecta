@@ -50,6 +50,23 @@ export function checked<A>(run: () => A): Effect.Effect<A, Refusal> {
   );
 }
 
+/** Index matches retain encoded segments; HttpApiClient uses encodeURIComponent. */
+export function typedParams(params: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(params).map(([name, encoded]) => {
+      let value: string;
+      try {
+        value = decodeURIComponent(encoded);
+      } catch {
+        return invalid(`Indexed path parameter ${name} is not valid URI encoding.`);
+      }
+      if (encodeURIComponent(value) !== encoded)
+        invalid(`Indexed path parameter ${name} does not round-trip through the typed path encoder.`);
+      return [name, value];
+    }),
+  );
+}
+
 /** Only the JSON forms the pinned index and legacy hatch catalogs publish. No vendor encoders run here. */
 export function schema(node: JsonSchema): Schema.Codec<unknown> {
   const n = node as Json;
