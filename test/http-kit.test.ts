@@ -1220,12 +1220,14 @@ it(
       return Response.json({});
     }) as typeof fetch;
     const connection = connect(ACME_API, guardedClient(OPTIONS), { errors: VENDOR, safety });
-    await runEdge(connection.sendPath({ ...POST_ITEMS, form: {} }).pipe(Effect.provideContext(services("write"))));
+    await runEdge(
+      connection.sendPath({ ...POST_ITEMS, form: {}, emptyForm: true }).pipe(Effect.provideContext(services("write"))),
+    );
     expect(body).toBe("");
     expect(type).toBe("application/x-www-form-urlencoded");
     globalThis.fetch = (async (_url, init) =>
       new Promise((_resolve, reject) => {
-        const signal = init?.signal!;
+        const signal = init!.signal!;
         if (signal.aborted) reject(signal.reason);
         else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       })) as typeof fetch;

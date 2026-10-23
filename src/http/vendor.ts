@@ -149,7 +149,7 @@ type Send<R = CallServices> = <Op extends Operation>(
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
 /** A request addressed by its actual method and path; safety resolves the canonical operation. */
-type PathRequest = WriteRequest & { readonly headers?: Readonly<Record<string, string>> };
+type PathRequest = WriteRequest & { readonly headers?: Readonly<Record<string, string>>; readonly emptyForm?: true };
 
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
@@ -362,7 +362,7 @@ export function connect<R>(
               request.query ? { urlParams: parameterPairs(request.query) } : {},
             );
             if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
-            if (request.form !== undefined) {
+            if (request.form !== undefined && (Object.keys(request.form).length > 0 || request.emptyForm === true)) {
               built = HttpClientRequest.bodyText(
                 built,
                 new URLSearchParams(parameterPairs(request.form)).toString(),
