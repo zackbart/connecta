@@ -216,23 +216,25 @@ export function connect<R>(
         if (!parsed) return yield* Effect.fail(new UnreadableBody());
         const withheld = options.safety.withholdsErrors(operation);
         const kept = options.result
-          ? yield* options
-              .result(parsed.value, {
+          ? yield* Effect.suspend(() =>
+              options.result!(parsed.value, {
                 status: reply.status,
                 headers,
                 operation: { ...operation },
                 withheld,
-              })
-              .pipe(
-                Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
-                  if (failure._tag === "StatusFailure")
-                    return Effect.fail(new StatusFailure({ ...failure, operation }));
-                  if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
-                  return Effect.die(
-                    new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),
-                  );
-                }),
-              )
+              }),
+            ).pipe(
+              Effect.catchDefect((defect) =>
+                Effect.die(withheld ? new Error("A result hook withholding vendor text failed.") : defect),
+              ),
+              Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
+                if (failure._tag === "StatusFailure") return Effect.fail(new StatusFailure({ ...failure, operation }));
+                if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
+                return Effect.die(
+                  new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),
+                );
+              }),
+            )
           : parsed.value;
         return { status: reply.status, data: options.safety.redact(kept, operation) };
       }).pipe(

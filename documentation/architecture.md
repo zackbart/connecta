@@ -1998,6 +1998,8 @@ The mapping records each request's own served provenance and raw 401 facts.
 `api()` and invocation retain the sole write-outcome decision in the core's
 `providerCallFailure`/`settleWrite`. A blocked resend reports the first
 reservation's answer even for a read-classified tool issuing a physical write.
+An accepted write's blocked retry retains its original HTTP status; a slot
+occupied by an auxiliary read instead names the separate write step needed.
 Structured resend advice reaches output only when the core permits it. Generic
 unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
 adds no Promise entry or lifetime owner. The rule tables in `http-kit.test.ts`,
@@ -2105,10 +2107,14 @@ shapes wait for the Google Drive migration in C.7.
 
 Reviewed path calls resolve their actual method and path through an indexed
 safety adapter; a provider-supplied template cannot bypass the policy.
-Unindexed paths require an explicit global review. Sent-secret redaction
+Unindexed paths require an explicit global review and no reviewed table;
+a global review never substitutes for a reviewed table's resolver. A uniform
+policy over legacy unindexed paths declares its own resolver. Sent-secret redaction
 covers response headers before result hooks can extract fragments. Withheld
 hooks admit only operation-bound status failures or unreadable bodies; other
-failures become defects whose text the API boundary withholds.
+failures become defects whose text the API boundary withholds. Hook defects
+are rewrapped as plain errors when text is withheld, including defects that
+carry a `ConnectorCallError`.
 
 ### Why not Schema or HttpApi for core routes
 
