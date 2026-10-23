@@ -2000,6 +2000,20 @@ caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
 
+The helper's connection-specific `transport(options)` supplies constant
+headers and final-URL admission outside any caller context. Admission receives
+the request method and encoded text body before authentication, so product
+exclusions can inspect JSON:API writes. `sendPath` accepts per-request headers;
+typed operations can declare header Schemas. Authentication still owns its
+headers and applies last. A provider's default call-admission policy yields to
+an explicit deployment policy. A typed refusal thrown by the probe's reply
+describer becomes the ordinary failed credential-test result.
+
+`emptyRequired(schema)` preserves a legacy output object's explicit
+`required: []` through Effect's canonical JSON Schema rendering. It refuses
+an object with required properties; its decoder is unchanged. Closed empty
+input records render `properties: {}` and `required: []` explicitly.
+
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection
 before paging or provider projections can read it. Read methods beyond GET

@@ -592,6 +592,9 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
       expect(entry.documentation).toBe(`https://api.planningcenteronline.com/${app}/v2/documentation`);
     }
 
+    const { configureGuardedTransport } = await import("../src/guarded-transport.js");
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+
     // Call every named tool with its smallest valid arguments and require
     // each request to be a reviewed row: a tool that starts calling a new
     // endpoint fails here, not in a release that never checked it.
@@ -650,6 +653,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
         await connector.callTool(tool, args, ctx);
       }
     } finally {
+      configureGuardedTransport(undefined);
       globalThis.fetch = realFetch;
     }
     const matches = (request: string, endpoint: Endpoint) => {

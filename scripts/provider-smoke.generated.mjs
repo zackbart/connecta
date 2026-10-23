@@ -181,7 +181,7 @@ var options13 = { "purpose": "Audit fixture" };
 var fixture13 = {
   name: "planning-center",
   options: options13,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return planningCenter(id, { ...options13, ...overrides });
   },

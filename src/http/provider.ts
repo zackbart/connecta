@@ -39,6 +39,9 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly maxResponseBytes: number;
   readonly headers?: GuardedOptions["headers"];
   readonly admit?: GuardedOptions["admit"];
+  /** Connection-specific transport settings, built outside every caller context. */
+  readonly transport?: (options: Readonly<O>) => Pick<GuardedOptions, "headers" | "admit">;
+  readonly defaultCallAdmission?: import("../types.js").ConnectorCallAdmissionPolicy;
   readonly pageSize?: { readonly default: number; readonly max: number };
   readonly credential?: ConnectorCredentialConfig;
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
@@ -87,6 +90,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     maxResponseBytes,
     headers,
     admit,
+    transport,
+    defaultCallAdmission,
     pageSize: declaredPageSize,
     credential,
     oauth,
@@ -140,6 +145,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           `defaultPageSize must be a whole number from 1 to ${pageSize?.max ?? "a declared pageSize maximum"}.`,
         );
       }
+      const configured = transport?.(options);
       const guarded = guardedClient({
         provider: metadata.title,
         baseUrl: baseUrl(options),
@@ -147,6 +153,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
         authenticate,
+        ...configured,
       });
       const connected = connect(vendor, oauth ? refreshOnce(guarded) : guarded, {
         errors,
@@ -178,7 +185,16 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         };
         return runEdge(
           connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
-            Effect.map(({ data }) => ({ ok: true, message: probe.describe(data, options) })),
+            Effect.flatMap(({ data }) =>
+              Effect.try({
+                try: () => ({ ok: true, message: probe.describe(data, options) }),
+                catch: (error) => error,
+              }).pipe(
+                Effect.catch((error) =>
+                  error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+                ),
+              ),
+            ),
             Effect.catch((failure) =>
               Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
             ),
@@ -199,6 +215,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const usageGuide = guide(options);
       return tracksEveryRequest(
         api(id, {
+          ...(defaultCallAdmission ? { callAdmission: defaultCallAdmission } : {}),
           ...provider.connectorOptions,
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
