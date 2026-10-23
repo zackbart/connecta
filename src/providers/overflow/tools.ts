@@ -1471,6 +1471,7 @@ function projectRows<Row>(values: unknown[], raw: boolean | undefined, project: 
   return values.map((value) => projectValue(value, raw, project));
 }
 
+// step-1 compat: delete in Overflow step 2.
 // Preserve legacy catalog key order on the original kit tool and its decoder identity.
 // Legacy minItems filter arrays put description after items; only rendered catalog keys change.
 function legacyInputOrder(tool: ApiTool): ApiTool {

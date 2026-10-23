@@ -2755,7 +2755,11 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
             detail: () => "",
             statuses: {
               ...VENDOR.statuses,
-              421: () => ({ code: "unavailable", words: () => "Fixture request failed (HTTP 421)." }),
+              421: () => ({
+                code: "connector_call_failed",
+                retryable: false,
+                words: () => "Fixture request failed (HTTP 421).",
+              }),
             },
           }
         : VENDOR,

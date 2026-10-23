@@ -1,7 +1,10 @@
 import { onTestFinished, vi } from "vitest";
 import { configureGuardedTransport } from "../../src/guarded-transport.js";
 
-/** Stand in for listen() while resolving the current fetch fake at send time. */
+/**
+ * Stand in for listen() while resolving the current fetch fake at send time.
+ * Call inside a test or beforeEach so onTestFinished can own restoration.
+ */
 export function installOwnedTransport() {
   const send = vi.fn(async (url: URL, init: RequestInit) => globalThis.fetch(url, init));
   const previous = configureGuardedTransport({ send });

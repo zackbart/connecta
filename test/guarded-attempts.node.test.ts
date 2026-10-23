@@ -306,7 +306,6 @@ it("INV-9 INV-11: Node without /node refuses writes before dispatch and permits 
   const inner = installOwnedTransport();
   expect(guardedTransport(true).send).toBe(inner.send);
   inner.restore();
-  inner.restore();
   expect(guardedTransport(true).send).toBe(outer.send);
   await guardedTransport(true).send(new URL("https://tickets.example"), {});
   expect(outer.send).toHaveBeenCalledTimes(1);
@@ -317,6 +316,8 @@ it("INV-9 INV-11: Node without /node refuses writes before dispatch and permits 
   await guardedTransport(true).send(new URL("https://tickets.example"), {});
   expect(replacement).toHaveBeenCalledTimes(1);
   outer.restore();
+  inner.restore();
+  expect(() => guardedTransport(true)).toThrow("Guarded writes on Node require the owned transport");
   vi.stubGlobal("fetch", send);
   send.mockClear();
   const refused = await call("https://tickets.example");

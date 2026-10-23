@@ -459,7 +459,7 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           },
         };
         const registry = await vaulted([wrapper], "billing");
-        return [
+        const observed = [
           await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
             "billing.delete_pair",
             {},
@@ -467,13 +467,15 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           ),
           await catchingProgram(registry, "billing.delete_pair"),
         ];
+        expect(sent).toBe(4);
+        return observed;
       },
     ],
     [
       "a Stripe composite whose redacted private argument matches its advice",
       async () => {
-        const { registry, args } = await privateComposite();
-        return [
+        const { registry, args, state } = await privateComposite();
+        const observed = [
           await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
             "billing.delete_pair",
             args,
@@ -481,6 +483,8 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           ),
           await catchingProgram(registry, "billing.delete_pair", args),
         ];
+        expect(state.sent).toBe(4);
+        return observed;
       },
     ],
     [

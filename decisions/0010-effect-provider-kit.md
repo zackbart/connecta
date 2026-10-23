@@ -575,8 +575,8 @@ A.2.
 mechanism (`http-kit.test.ts`, "call services"); B.1 proves them on
 invocation and the registry:
 
-- "INV-7: a service kept past its call refuses to read credentials, charge, or
-  record", and the same for a retained Promise view.
+- "INV-7: a closed call refuses credentials, budget and ledger, and drops both
+  recovery paths", and the same for a retained Promise view.
 - "INV-7: closing a call or request promptly settles paused credentials and
   budget without releasing their underlying operations", including the
   Promise bridge's request ownership.
