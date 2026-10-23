@@ -1389,6 +1389,66 @@ it(
         expect(hooks, test.name).toBe(1);
       }
     }
+    // Exact reviewed wire keys survive only in parsed JSON, while their values,
+    // partial key matches and JSON embedded in text keep the ordinary protection.
+    const fixedKeys: Record<string, string> = { paragraph: "Public paragraph member in this fixture's JSON schema." };
+    const fixedSafety = resultSafety({
+      review: "Fixture JSON has no stored values.",
+      sensitiveFields: { names: [], choice: "drop" },
+    });
+    const fixedConnection = connect({ ...ACME_API, fixedKeys }, guardedClient({ ...OPTIONS, maxResponseBytes: 1024 }), {
+      errors: VENDOR,
+      safety: fixedSafety,
+    });
+    fixedKeys.prefix_paragraph = "A mutation after construction cannot exempt another key.";
+    delete fixedKeys.paragraph;
+    const privateSecrets = new SentSecrets();
+    privateSecrets.arguments(
+      { private: "paragraph" },
+      { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+    );
+    answers.push(() =>
+      Response.json({
+        paragraph: "paragraph",
+        prefix_paragraph: "paragraph",
+        nested: { paragraph: "paragraph" },
+        embedded: JSON.stringify({ paragraph: "paragraph" }),
+      }),
+    );
+    const fixedReply = await runEdge(
+      fixedConnection.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))),
+    );
+    expect(fixedReply.data).toEqual({
+      paragraph: "[redacted]",
+      "prefix_[redacted]": "[redacted]",
+      nested: { paragraph: "[redacted]" },
+      embedded: JSON.stringify({ "[redacted]": "[redacted]" }),
+    });
+    for (const format of [undefined, "text"] as const) {
+      const connection = connect(
+        {
+          ...ACME_API,
+          ...(format
+            ? {
+                fixedKeys: { paragraph: "Public schema member; text is not JSON framing." },
+                textBodies: { review: "Fixture raw text.", forResponse: () => format },
+              }
+            : {}),
+        },
+        guardedClient(OPTIONS),
+        { errors: VENDOR, safety: fixedSafety },
+      );
+      answers.push(() => Response.json({ paragraph: "paragraph" }));
+      const reply = await runEdge(
+        connection.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))),
+      );
+      expect(format ? JSON.parse(reply.data as string) : reply.data).toEqual({ "[redacted]": "[redacted]" });
+    }
+    for (const fixedKeys of [{ paragraph: " " }, { paragraph: "two\nlines" }, { "": "Empty key" }]) {
+      expect(() =>
+        connect({ ...ACME_API, fixedKeys }, guardedClient(OPTIONS), { errors: VENDOR, safety: fixedSafety }),
+      ).toThrow(/one-line review/);
+    }
     for (const mode of ["bytes", "stop", "time", "empty", "failure", "defect", "abort"] as const) {
       let cancelled = false;
       let callbacks = 0;

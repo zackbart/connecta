@@ -652,9 +652,8 @@ describe("round-5 whole-call failure sweep", () => {
           title: "Fixture",
           text: "Initial text",
         });
-        expect(requests.map((r) => r.method)).toEqual(
-          classification === "read" && status === 401 ? ["POST", "POST", "POST"] : ["POST", "POST"],
-        );
+        // POST is never replayed, even when deployment policy serves this tool as a read (0010 B.2).
+        expect(requests.map((r) => r.method)).toEqual(["POST", "POST"]);
         expect(result).toMatchObject({
           ok: false,
           error:

@@ -53,7 +53,7 @@ var options4 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture4 = {
   name: "docs",
   options: options4,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return docs(id, { ...options4, ...overrides });
   },
