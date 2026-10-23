@@ -34,7 +34,7 @@
     "./providers/drive remeasures at 337,847 B gzip in C.7 (#703), Node 22 CI static at 2c2a853f: the Google Workspace provider kit replaces the historical 28,955 B api() provider. API and upload transports stay separately confined, sharing one delegated grant, with reviewed bounded binary reads. A deployment pays the Effect kit once. Reported against this baseline, not capped (#899).",
     "./providers/forms remeasures at 333,968 B gzip in C.7 step 1 (#703), Node 22 CI static at 7e110415: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http) through the shared Google Workspace layer, from 26,161 B for the api() provider. A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
     "./providers/github remeasures at 322,737 B gzip in C.8 step 1 (#703), Node 22 CI static at f36b60e6: the six REST tools now run on the Effect provider kit, with private GitHub App signing, scoped installation tokens and lazy rejection recovery. This replaces the historical 164,063 B baseline that included the hosted half removed by C.0c. Provider entries are reported, not capped (#899).",
-    "./providers/gmail is measured by CI at d6b7d390 in C.7: the shared Google Effect provider kit replaces the legacy transport (27,085 B). A deployment pays the kit once. Provider entries are reported, not capped (#899).",
+    "./providers/gmail measures 340,098 B gzip in C.7, Node 22 CI static at 87e8a63d (run 39982381093): the shared Google Effect provider kit replaces the legacy transport (27,085 B). A deployment pays the kit once. Provider entries are reported, not capped (#899).",
     "./providers/infisical starts at 27,673 B gzip before its C.5 kit migration. Provider entries are reported, not capped (#899).",
     "./providers/mixpanel measures 337,658 B gzip in CI in C.6 (#703). The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. Provider entries are reported, not capped (#899); no runtime dependency was added.",
     "./providers/notion was measured at 211,946 B gzip (#801), against a 145,300 B baseline: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
@@ -85,7 +85,7 @@
       "baselineGzip": 322737
     },
     "./providers/gmail": {
-      "baselineGzip": 339819
+      "baselineGzip": 340098
     },
     "./providers/infisical": {
       "baselineGzip": 27673

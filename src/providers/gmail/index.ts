@@ -90,8 +90,8 @@ export const gmail = defineApiProvider<GmailOptions>({
   displayTitle: () => "Gmail (drafts only)",
   readme: "Gmail",
   bundle: {
-    baselineGzip: 339819,
-    note: "./providers/gmail is measured by CI at d6b7d390 in C.7: the shared Google Effect provider kit replaces the legacy transport (27,085 B). A deployment pays the kit once. Provider entries are reported, not capped (#899).",
+    baselineGzip: 340098,
+    note: "./providers/gmail measures 340,098 B gzip in C.7, Node 22 CI static at 87e8a63d (run 39982381093): the shared Google Effect provider kit replaces the legacy transport (27,085 B). A deployment pays the kit once. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
