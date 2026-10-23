@@ -1,7 +1,7 @@
 // Stripe's reviewed value-safety table (#801), on the shared mechanism in
 // `../_shared/rest/value-safety.ts`: every operation the detector flags in the
-// pinned spec (`value-safety.candidates.json`) has one verdict here, and
-// `value-safety.node.test.ts` runs the shared harness over it.
+// pinned spec (`evidence/value-safety.json`) has one verdict here, and
+// `provider.safety.node.test.ts` runs the shared harness over it.
 //
 // Stripe repeats one object graph across hundreds of operations (a
 // PaymentIntent is embedded in charges, invoices, and errors), so most flagged
@@ -46,7 +46,7 @@
 //   collects documents from the person being verified and shows no stored
 //   data. Payment link URLs are public by design and bound to no customer.
 // - Issuing card numbers and CVCs come back only as expansions, which the
-//   connector refuses on every Issuing path (`rest.ts`); the card operations
+//   connector refuses on every Issuing path (`api.ts`); the card operations
 //   also redact both fields.
 // Embedded URL verdict (#812): reviewed paths + global signing parameters.
 // Evidence: digest-verified Stripe v2555, components/schemas/charge's
@@ -96,7 +96,7 @@ const WEBHOOK =
 const EVENT_DESTINATION =
   "Event destinations carry a webhook signing secret and a destination URL whose path or query can be a bearer secret.";
 const APPS_SECRET =
-  "An Apps secret's payload is the stored secret value; names and scopes stay. Expanding payload is also refused (`rest.ts`).";
+  "An Apps secret's payload is the stored secret value; names and scopes stay. Expanding payload is also refused (`api.ts`).";
 const APP_INSTALL = "An app install's auth_code is an OAuth authorization code exchangeable for tokens.";
 const TERMINAL_CONFIG =
   "Terminal configurations carry Wi-Fi passwords and a private key password; the key file is a File id, and the pre-shared-key network's SSID stays.";
@@ -105,7 +105,7 @@ const FORWARDING =
 const PRESIGNED =
   "Product catalog imports answer pre-signed upload and error-file URLs that grant access without Stripe authentication.";
 const ISSUING_CARD =
-  "Full card numbers and CVCs are refused as expansions (`rest.ts`) and redacted here; the card id, last4, and expiry stay.";
+  "Full card numbers and CVCs are refused as expansions (`api.ts`) and redacted here; the card id, last4, and expiry stay.";
 const FILE =
   "A file's own URL needs the account's secret key; its file links are public bearer URLs, reduced to their origin.";
 const FILE_LINK_READ = "A file link's URL lets anyone download the file; only its origin comes back.";

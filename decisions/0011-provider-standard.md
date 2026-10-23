@@ -260,6 +260,16 @@ Since 0012, a record describes only the vendored API contracts Connecta wraps.
   check whose `lastVerified` is older than 180 days. A test that fails as the
   calendar moves would break `main` with no change.
 
+For heavily shared recursive contracts, an endpoint specification may opt into
+`contractAlgorithm: "ref-graph-v1"`. This hashes canonical structural nodes once,
+replacing local references with component hashes and treating a strongly connected
+reference component as one deterministic unit. It preserves full reachable request
+and success contracts, excludes the same prose/extensions/errors, and stays bounded
+without expanding shared graphs exponentially. The default inline algorithm and
+all existing digests remain unchanged. Stripe's first v2 endpoint baseline uses
+this versioned opt-in; small-contract mutation pairs must agree with the inline
+algorithm on whether a change matters.
+
 ### Generated, not hand-kept
 
 | Artifact                                                                      | From                                         | Written by                              | Checked by                                                |

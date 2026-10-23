@@ -1,16 +1,25 @@
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { apiConnector } from "../../connectors/api-connector.js";
-import { tracksEveryRequest } from "../../provider-call.js";
-import { defineProvider, type ProviderContext } from "../../provider.js";
-import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
-import { restTools } from "../_shared/rest/tools.js";
-import { stripeRest, type StripeMode } from "./rest.js";
+import { defineApiProvider } from "../../http/provider.js";
+import type { ConnectorCallAdmissionPolicy } from "../../types.js";
+import {
+  authenticate,
+  connectedAccount,
+  MAX_RESPONSE_BYTES,
+  READ_CAP_MS,
+  MODE_COPY,
+  probe,
+  result,
+  safety,
+  stripeErrors,
+  StripeApi,
+  stripeIndex,
+  usageGuide,
+} from "./api.js";
+import { stripeTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
-
-export { STRIPE_API_BASE_URL } from "./rest.js";
-export type { StripeMode } from "./rest.js";
-
+import { STRIPE_API_BASE_URL, type StripeMode } from "./lib/config.js";
+export { STRIPE_API_BASE_URL } from "./lib/config.js";
+export type { StripeMode } from "./lib/config.js";
 interface StripeCommonOptions {
   /** Human-readable display name; defaults to "Stripe" for OAuth and the mode for a key. */
   title?: string;
@@ -72,47 +81,6 @@ const STRIPE_ADMISSION: Readonly<Record<StripeMode, ConnectorCallAdmissionPolicy
   },
 };
 
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-const MODE_COPY: Readonly<Record<StripeMode, { title: string; blurb: string; warning: string; rate: string }>> = {
-  production: {
-    title: "Stripe (production)",
-    blurb: "production — live money and real customers",
-    warning:
-      "This is a PRODUCTION Stripe connection. Every write moves real money against real customers, and a refund cannot be undone. If a request could plausibly be a rehearsal, route it to a sandbox connector instead.",
-    rate: "100 requests per second",
-  },
-  sandbox: {
-    title: "Stripe (sandbox)",
-    blurb: "sandbox — test data, no real money",
-    warning:
-      "This is a SANDBOX Stripe connection. Nothing here is real money and none of these objects exist in production, so never answer a question about live revenue, payouts, or a named customer from this connector.",
-    rate: "25 requests per second",
-  },
-};
-
-function keyUsageGuide(
-  mode: StripeMode,
-  purpose: string,
-  connectedAccount: string | undefined,
-  instructions: string | undefined,
-): string {
-  const copy = MODE_COPY[mode];
-  const { key, shared, key_limits, key_tail } = skill.fragments;
-  const connect = connectedAccount
-    ? `\n\nConnected account: \`${connectedAccount}\`. Every call acts as this Connect account; the platform account's own objects are out of reach here.`
-    : "";
-  return `# Stripe usage
-
-Mode: ${mode}. Connector purpose: ${purpose}
-
-${copy.warning}${connect}${key}${shared}${key_limits}${copy.rate}${key_tail}
-${instructionsSection(instructions)}`;
-}
-
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options stripe() accepts, selected by `auth.type`; see `assertKnownOptions`. */
@@ -131,51 +99,9 @@ const STRIPE_OPTIONS = variants(
   ["oauth"],
 );
 
-function stripeApiKey(id: string, options: Readonly<StripeApiKeyOptions>, provider: ProviderContext): Connector {
-  const mode = options.mode;
-  if (mode !== "production" && mode !== "sandbox") {
-    throw new Error(`stripe("${id}") requires mode "production" or "sandbox" with apiKey auth.`);
-  }
-  let connectedAccount: string | undefined;
-  if (options.connectedAccount !== undefined) {
-    connectedAccount = typeof options.connectedAccount === "string" ? options.connectedAccount.trim() : "";
-    if (!/^acct_[A-Za-z0-9]+$/.test(connectedAccount)) {
-      throw new Error(`stripe("${id}") connectedAccount must be a Stripe account id ("acct_...").`);
-    }
-  }
-  const copy = MODE_COPY[mode];
-  const live = mode === "production" ? "live" : "test";
-  const rest = stripeRest(mode, connectedAccount);
-  return tracksEveryRequest(
-    apiConnector(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? copy.title,
-      description: `Stripe payments (${copy.blurb}) — ${options.purpose}`,
-      credential: {
-        label: `Stripe ${live}-mode secret or restricted key`,
-        description: `A ${live}-mode secret (sk_${live}_…) or restricted (rk_${live}_…) key; prefer a restricted key with only the permissions this connector needs. It is sent only to api.stripe.com and files.stripe.com, stored encrypted, and never displayed.`,
-        placeholder: `rk_${live}_…`,
-      },
-      testCredential: rest.testCredential,
-      callAdmission: STRIPE_ADMISSION[mode],
-      usageGuide: {
-        content: keyUsageGuide(mode, options.purpose, connectedAccount, options.instructions),
-        // Explicit rather than derived: a key connector must lead with its one mode.
-        summary:
-          mode === "production"
-            ? "PRODUCTION: real money. One live-mode key over REST; search operations, read details, then read or write."
-            : "Sandbox: test data only. One test-mode key over REST; search operations, read details, then read or write.",
-      },
-      tools: [...restTools(rest.vendor), ...rest.tools],
-    }),
-  );
-}
-
-/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
-export const stripe = defineProvider<StripeOptions>({
+export const stripe = defineApiProvider<StripeOptions>({
   name: "stripe",
   title: "Stripe",
-  kind: "api",
   readme: "Stripe",
   bundle: {
     "baselineGzip": 232089,
@@ -184,5 +110,30 @@ export const stripe = defineProvider<StripeOptions>({
   },
   skill,
   options: STRIPE_OPTIONS,
-  create: byAuth<StripeOptions>({ oauth: removedHostedMcp, apiKey: stripeApiKey }),
+  vendor: StripeApi,
+  baseUrl: (options) => {
+    connectedAccount(options);
+    return STRIPE_API_BASE_URL;
+  },
+  displayTitle: (options) => MODE_COPY[options.mode].title,
+  description: (options) => `Stripe payments (${MODE_COPY[options.mode].blurb}) — ${options.purpose}`,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
+  timeoutMs: READ_CAP_MS,
+  headers: { "Stripe-Version": stripeIndex.version },
+  defaultCallAdmission: (options) => STRIPE_ADMISSION[options.mode],
+  credential: (options) => {
+    const live = options.mode === "production" ? "live" : "test";
+    return {
+      label: `Stripe ${live}-mode secret or restricted key`,
+      description: `A ${live}-mode secret (sk_${live}_…) or restricted (rk_${live}_…) key; prefer a restricted key with only the permissions this connector needs. It is sent only to api.stripe.com and files.stripe.com, stored encrypted, and never displayed.`,
+      placeholder: `rk_${live}_…`,
+    };
+  },
+  authenticate,
+  safety,
+  errors: stripeErrors,
+  result,
+  probe,
+  guide: usageGuide,
+  tools: stripeTools,
 });

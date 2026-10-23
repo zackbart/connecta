@@ -14,8 +14,9 @@
 // own them, so a function's own `call` or a copy of a boundary borrows nothing.
 // Round 16: key-reuse advice holds only when its key protects the whole
 // logical call: one boundary, one write sent, carrying that key.
-import { afterEach, describe, expect, inject, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
@@ -25,11 +26,11 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
-import { restTools } from "../src/providers/_shared/rest/tools.js";
 import { github } from "../src/providers/github/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
+import { stripeConnection } from "../src/providers/stripe/api.js";
+import { stripeTools } from "../src/providers/stripe/tools.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { stripeRest } from "../src/providers/stripe/rest.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
@@ -40,7 +41,11 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -1135,7 +1140,10 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
   /** A tracked api() over Stripe's own write tool, which `before` precedes in the same call. */
   async function lookupThenCreate(before: (ctx: ConnectorContext & { fetch: typeof fetch }) => Promise<unknown>) {
     const setup = await billing((sent) => (sent.method === "GET" ? Response.json({ data: [] }) : lost()));
-    const write = restTools(stripeRest("sandbox", undefined).vendor).find((tool) => tool.name === "stripe_api_write");
+    const options = { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" } as const;
+    const write = stripeTools({ connection: stripeConnection(options), options }).find(
+      (tool) => tool.name === "stripe_api_write",
+    )!;
     const tracked = tracksEveryRequest(
       api("billing", {
         credential: setup.connector.credential!,
@@ -1147,7 +1155,7 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
             inputSchema: { type: "object" },
             async handler(_args, ctx) {
               await before(ctx);
-              return await write!.handler(create("only"), ctx);
+              return await write.handler(create("only"), ctx);
             },
           },
         ],
