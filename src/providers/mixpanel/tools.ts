@@ -297,10 +297,7 @@ export function mixpanelTools({
                   invalid("event must be a JSON array of names.");
                 if (args.select !== undefined)
                   invalid("Generic export does not accept select; reduce the bounded export data in execute_code.");
-                return await tool.handler(
-                  { path: args.path, ...(args.select === undefined ? {} : { select: args.select }), query },
-                  ctx,
-                );
+                return await tool.handler({ path: args.path, query: { ...query, limit: query.limit ?? 1000 } }, ctx);
               }
               if (query.from_date !== undefined || query.to_date !== undefined) dates(query);
               if (path === "/api/query/retention") retention(query);

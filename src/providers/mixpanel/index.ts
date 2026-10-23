@@ -79,8 +79,8 @@ export const mixpanel = defineApiProvider<MixpanelOptions>({
   title: "Mixpanel",
   readme: "Mixpanel",
   bundle: {
-    baselineGzip: 336200,
-    note: "./providers/mixpanel remeasures locally at 336,200 B gzip in C.6 (#703), on Node 26 with the system zlib preload. The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. CI measurement remains for the orchestrator to record. Provider entries are reported, not capped (#899); no runtime dependency was added.",
+    baselineGzip: 337658,
+    note: "./providers/mixpanel measures 337,658 B gzip in CI in C.6 (#703). The nine-operation reviewed subset now runs on the Effect provider kit, with fixed regional connections, bounded JSONL export, and unchanged Basic authentication, value safety, catalogs and guide. This replaces the historical 205,500 B baseline that included the hosted MCP half removed by C.0c. Provider entries are reported, not capped (#899); no runtime dependency was added.",
   },
   skill,
   options: MIXPANEL_OPTIONS,
