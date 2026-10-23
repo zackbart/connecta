@@ -1358,14 +1358,17 @@ every vendor ships one reviewed table through one mechanism
    parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
    Credential and Security-Token values are withheld across all decoded string
    values, including values written with decimal, hexadecimal or named HTML
-   character references. References are read whole as value data; only an
-   ampersand is decoded internally to find a nested reference's extent. No
-   decoded replacement is returned. Possible named references are read
-   fail-closed with their required semicolon and bounded HTML name length;
-   numeric references also accept an omitted semicolon. A literal query
-   separator such as `&name=alice` still ends the signing value. Ordinary
-   query strings and prose retain their original spelling. Generic credential names (`code`, `key`, `token`, `signature`, `sig`,
-   etc.) and credential-looking fragments apply only to reviewed diagnostic
+   character references. References are read whole as value data; decoding
+   only finds nested-reference boundaries and classifies a placeholder's
+   remainder. No decoded replacement is returned. Possible named references
+   are read fail-closed with their required semicolon and bounded HTML name length;
+   numeric references also accept an omitted semicolon, and `amp` may omit
+   its semicolon immediately before `#`. Signing separators accept nested
+   ampersand references around decimal, hexadecimal or named `=` references.
+   A literal query separator such as `&name=alice` still ends the signing
+   value. Ordinary query strings and prose retain their original spelling.
+   Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
+   and credential-looking fragments apply only to reviewed diagnostic
    paths and vendor error text. Matching destinations lose their entire query
    and fragment. The tables list exact operations/resource paths with evidence:
    Stripe charge failure/outcome messages, Vercel deployment failures and
@@ -1452,16 +1455,24 @@ every vendor ships one reviewed table through one mechanism
    known rebuilds the credential however short or encoded it is. Wherever
    signing parameters are scanned, a placeholder followed by any of a value's
    base64 or base64url characters (letters, digits, `+`, `/`, `=`, `-`, `_`)
-   or `%` escapes or character references is withheld with them through the end of the value
-   (`splitRemainder`), so a tail of `+/` alone goes too, and a value's end
-   never splits a placeholder. In reviewed links, a query component that
-   carries the placeholder and has no readable name withholds the query. What
+   or `%` escapes is withheld with them through the end of the value
+   (`splitRemainder`), so a tail of `+/` alone goes too. A reference in an
+   inferred remainder counts only when it decodes to credential characters
+   or an ampersand; other references end that remainder, preserving text after
+   spacing or punctuation references. Known signing values read references
+   whole regardless of the character they spell. A value's end never splits
+   a placeholder. In reviewed links, a query component that carries the
+   placeholder and has no readable name withholds the query. What
    stays visible cannot complete a credential: other punctuation alone after a
    placeholder (`.`, `,`, `;`, `!`), which no base64 value contains, and text
    past a value's end (whitespace, a quote, an angle bracket, `&`, `#`, `)`,
    `]`, a backtick or a backslash), except where that syntax is part of a
-   character reference read whole. A following parameter is decided by its
-   own name. Value safety's own
+   character reference read whole. A bare numeric reference body (`#50;`,
+   `#x32;`, with optional semicolons and nested ampersand continuations) can
+   remain when redaction removes part of a reference. It is read as value
+   data, so `#` ends a signing value only when it does not open such a body.
+   Numeric fragments directly after a signing value are withheld too.
+   A following parameter is decided by its own name. Value safety's own
    placeholders are not alterations: `@keys` map keys, a withheld value right
    after `=`, and a withheld `#[redacted]` fragment. More is withheld only
    when a private value occurs in a decision input, and then deliberately:

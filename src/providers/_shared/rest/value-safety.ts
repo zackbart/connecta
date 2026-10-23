@@ -44,7 +44,13 @@
 // URL policy and exemptions are reviewed per vendor in its table (`keep`,
 // `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
 import { ConnectorCallError } from "../../../errors.js";
-import { characterReferenceEnd, REDACTED, redactionAltered, splitRemainder } from "../../../redaction-marker.js";
+import {
+  bareReferenceEnd,
+  characterReferenceEnd,
+  REDACTED,
+  redactionAltered,
+  splitRemainder,
+} from "../../../redaction-marker.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
@@ -444,7 +450,7 @@ function sanitizeUrl(value: string, credentials = true): string {
 
 /** Signing parameters that are a credential in any URL, with their `=` plain or encoded. */
 const SIGNING_PARAM =
-  /x-(?:amz|goog)-(?:signature|credential|security-token)(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)/gi;
+  /x-(?:amz|goog)-(?:signature|credential|security-token)(?:=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d)/gi;
 /**
  * One encoded character at the start of link text: a percent escape, an HTML
  * character reference, a `\u` or `\x` escape, or a Markdown backslash escape.
@@ -793,10 +799,11 @@ function withholdSigningParams(anchored: string): string {
   let altered = alteredParameter(anchored, 0);
   while (signing || altered >= 0) {
     const named = signing ? signing.index + signing[0].length : -1;
-    const start = altered >= 0 && (named < 0 || altered < named) ? altered : named;
+    const inferred = altered >= 0 && (named < 0 || altered < named);
+    const start = inferred ? altered : named;
     // Skip an existing complete placeholder, but still remove any suffix.
     const already = anchored.startsWith(REDACTED, start);
-    const end = valueEnd(anchored, already ? start + REDACTED.length : start);
+    const end = valueEnd(anchored, already ? start + REDACTED.length : start, inferred);
     // Resume both scans after this value, as one scan would.
     SIGNING_PARAM.lastIndex = end;
     if (named >= 0 && named <= end) signing = SIGNING_PARAM.exec(anchored);
@@ -809,14 +816,14 @@ function withholdSigningParams(anchored: string): string {
 }
 
 /** An `=`, plain or encoded, as a signing parameter's name ends with one. */
-const EQUALS = /=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d/iy;
-const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)$/i;
+const EQUALS = /=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d/iy;
+const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&(?:amp(?:;|(?=#))|#0*38;?|#x0*26;?)*(?:#0*61;?|#x0*3d;?|equals;?)|\\u003d)$/i;
 const NAME_CHAR = /[\w.~-]/;
 
 /** Where a parameter's value ends, reading placeholders and character references whole (#703). */
-function valueEnd(text: string, at: number): number {
+function valueEnd(text: string, at: number, inferred: boolean): number {
   while (at < text.length) {
-    const reference = characterReferenceEnd(text, at);
+    const reference = Math.max(characterReferenceEnd(text, at, inferred), bareReferenceEnd(text, at, inferred));
     if (text.startsWith(REDACTED, at)) at += REDACTED.length;
     else if (reference > at) at = reference;
     else if (endsValue(text, at)) break;
@@ -848,7 +855,7 @@ function alteredParameter(text: string, from: number): number {
     EQUALS.lastIndex = end;
     if (
       redactionAltered(text.slice(at, end)) &&
-      !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) &&
+      !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 64), at)) &&
       EQUALS.test(text)
     )
       return EQUALS.lastIndex;

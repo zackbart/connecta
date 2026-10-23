@@ -614,6 +614,9 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
             `X-Goog-Signature=${tailHex.slice(0, -7)}`,
             `X-Amz-Security-Token=${plus}`,
             `X-Goog-Security-Token=${url}`,
+            // Review probe: private values ending inside a reference.
+            "X-Amz-Signature=&",
+            "X-Amz-Security-Token&",
           ]
         : [];
       const all = [short, long, ...altering, ...resources, ...signing];
@@ -628,6 +631,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
               "mixed&#50;&#x61;&plus;VENDOR_HELD_MIXED",
               "&amp;#50;&#38;#x61;VENDOR_HELD_NESTED",
             ].map((value) => ({
+              separator: `diagnostic X-Amz-Security-Token&amp;#61;VENDOR_HELD_SEPARATOR_${value.length}&name=alice now`,
+              split: `diagnostic X-Amz-Security-Token&#61;VENDOR_HELD_SPLIT_${value.length}&name=alice now`,
               note: `diagnostic X-Amz-Signature=${value}&name=alice now`,
               link: `see http://storage.example/f?X-Goog-Credential=${value}&name=alice now`,
               ...(table.resources
@@ -721,7 +726,9 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         const shown = text
           .replace(/%([0-9a-f]{2})/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
           .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
-          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+          .replace(/#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+          .replace(/#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
         // Collect every call path's observation even when one detects an exposure.
         expect.soft(shown.match(/VENDOR_HELD\w*/g) ?? [], `${path}: ${text}`).toEqual([]);
         for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7), "+/+/+/+/", "-_-_-_-_"])
