@@ -380,7 +380,7 @@ of provisioning a Connecta token. Declare the binding beside its name:
 agents: [{
   name: "assistant",
   vercel: {
-    team: "team_example",       // immutable owner_id (preferred), or exact team slug
+    team: "team_example",       // immutable owner_id, required; team slugs are refused
     project: "prj_example",     // immutable project_id (preferred), or exact project name
     // environments: ["production"], // default; preview/development require explicit entries
   },
@@ -392,18 +392,32 @@ pools: {
 
 Enable OIDC federation in the calling Vercel project's security settings.
 Use exact values from that project's settings; wildcards and empty environment
-lists are refused. Prefer immutable IDs so a renamed or recreated slug cannot
-transfer admission. A slug/name binding follows that name, including reuse.
-With slugs, team matches the `owner` claim and project matches `project`.
-A workload that could match two agents is refused at construction; use IDs
-consistently across agents to avoid ambiguous bindings.
+lists are refused. The team must be its immutable `team_...` ID, matched against
+`owner_id`; a team slug is not accepted. Prefer an immutable `prj_...` project ID,
+matched against `project_id`. A project name instead matches `project` and follows
+that name, including reuse within the team. Project names may contain dots, such
+as `assistant.example.com`; colons are refused. A workload that could match two
+agents is refused at construction; use project IDs consistently across agents
+to avoid ambiguous bindings.
 
 The default admits production only. List `preview` or `development` explicitly
 when those environments should have the same pool access. Every deployment of
 the bound project in an allowed environment can act as the agent. This is
-project workload identity, with no end-user identity or forwarding.
+project workload identity, with no end-user identity or forwarding. Enabling
+`development` lets project members who can obtain development tokens act as the
+agent. Enabling `preview` lets code on any pushed preview branch act as the agent.
 
-Both team (`https://oidc.vercel.com/<team>`) and global
+Treat the project's OIDC token as a bearer credential for all of this agent's
+pools. Its default audience, `https://vercel.com/<team-slug>`, is shared by every
+service accepting Vercel's default OIDC tokens; it is not specific to Connecta.
+Anything holding the project's token can act as the agent until it expires:
+project code, builds (including build steps and dependency install scripts with
+access to `VERCEL_OIDC_TOKEN`), and services the project sends the token to,
+including other agents and third-party APIs. Send it only to services trusted
+with the same agent access. Signature verification establishes the project
+identity; it does not isolate Connecta from these other token holders.
+
+Both team (`https://oidc.vercel.com/<team-slug>`) and global
 (`https://oidc.vercel.com`) issuer modes work. Connecta verifies RS256 signatures
 against Vercel's fixed public JWKS, exact issuer/audience/subject consistency,
 the configured team/project/environment, required expiration and issued-at,
@@ -413,6 +427,9 @@ an unknown key can trigger one additional refresh per 30 seconds. Failed fetches
 back off for 30 seconds and never admit with expired cached keys. Fetches have
 the same five-second authentication deadline as agent tokens. Neither token
 contents nor upstream errors enter activity; activity names the declared agent.
+If the two concurrent key-fetch slots are occupied on a cold or expired cache,
+the endpoint returns 503 with `Retry-After: 1`, rather than rejecting the credential
+with 401.
 
 Send the token as `Authorization: Bearer <OIDC token>` to
 `https://connecta.example.com/agent/assistant`. The inbound
@@ -424,6 +441,7 @@ import { defineMcpClientConnection } from "eve/connections";
 
 export default defineMcpClientConnection({
   url: "https://connecta.example.com/agent/assistant",
+  description: "Use the assistant's shared CRM and ticket tools.",
   auth: {
     credentialOwner: "app",
     getToken: async () => ({ token: await getVercelOidcToken() }),

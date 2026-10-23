@@ -3,7 +3,7 @@ import { array, ConfigError, object, opaque, required, text, type Field } from "
 
 type VercelEnvironment = "production" | "preview" | "development";
 
-/** Exact Vercel workload binding. Prefer immutable team_ / prj_ IDs. */
+/** Vercel workload binding: immutable team_ ID; prefer a prj_ project ID. */
 interface VercelAgentCredential {
   team: string;
   project: string;
@@ -26,9 +26,11 @@ const segment = (kind: "team" | "project") =>
   required(
     opaque<string>({
       check(value, path) {
-        const pattern = kind === "team" ? /^(?:team_[A-Za-z0-9]+|[a-z0-9-]+)(?![\s\S])/ : /^[A-Za-z0-9_-]+(?![\s\S])/;
+        const pattern = kind === "team" ? /^team_[A-Za-z0-9]+(?![\s\S])/ : /^[A-Za-z0-9._-]+(?![\s\S])/;
         if (typeof value !== "string" || value.length > 128 || !pattern.test(value)) {
-          throw new ConfigError(`${path} must be an exact Vercel ${kind} ID or ${kind === "team" ? "slug" : "name"}.`);
+          throw new ConfigError(
+            `${path} must be ${kind === "team" ? "an immutable Vercel team_ ID" : "an exact Vercel project ID or name"}.`,
+          );
         }
       },
     }),
@@ -75,11 +77,11 @@ export const agentConfig: Field<readonly AgentConfig[], readonly ResolvedAgent[]
       if (!a) continue;
       for (const prior of agents.slice(0, i)) {
         const b = prior.vercel;
-        // A slug and an ID can designate the same team/project. Refuse possible
+        // A project name and an ID can designate the same project. Refuse possible
         // overlap rather than let declaration order select another identity.
         if (
           b &&
-          (a.team === b.team || a.team.startsWith("team_") !== b.team.startsWith("team_")) &&
+          a.team === b.team &&
           (a.project === b.project || a.project.startsWith("prj_") !== b.project.startsWith("prj_")) &&
           a.environments.some((env) => b.environments.includes(env))
         ) {

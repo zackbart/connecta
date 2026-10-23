@@ -255,6 +255,7 @@ const SIGN_IN: Record<string, { label: string; mark: SignInTile["mark"] }> = {
   clerk: { label: "Clerk", mark: "clerk" },
   "cloudflare-access": { label: "Cloudflare Access", mark: "access" },
   access_token: { label: "Agent tokens", mark: "tokens" },
+  vercel_oidc: { label: "Vercel workloads", mark: "tokens" },
 };
 
 const STORE: Record<string, string> = { memory: "Memory", d1: "D1", sqlite: "SQLite", custom: "Custom" };

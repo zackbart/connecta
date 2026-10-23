@@ -10,6 +10,7 @@ const JWKS = `${ISSUER}/.well-known/jwks`;
 const CACHE_MS = 300_000;
 const REFRESH_MS = 30_000;
 const SKEW_SECONDS = 30;
+const KEY_FETCH_BUSY = Symbol("key fetch capacity reached");
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
@@ -67,7 +68,7 @@ async function readKeys(signal: AbortSignal): Promise<Map<string, JsonWebKey>> {
   };
   try {
     signal.throwIfAborted();
-    response = await fetch(JWKS, { signal, redirect: "error", headers: { Accept: "application/json" } });
+    response = await fetch(JWKS, { signal, redirect: "manual", headers: { Accept: "application/json" } });
     signal.throwIfAborted();
     if (!response.ok || !response.body) throw new Error("JWKS unavailable");
     reader = response.body.getReader();
@@ -133,7 +134,8 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth |
   let fetching = 0;
 
   async function load(signal: AbortSignal): Promise<void> {
-    if (fetching >= 2 || Date.now() < retryAfter) throw new Error("JWKS unavailable");
+    if (fetching >= 2) throw KEY_FETCH_BUSY;
+    if (Date.now() < retryAfter) throw new Error("JWKS unavailable");
     fetching++;
     try {
       const keys = await readKeys(signal);
@@ -166,11 +168,12 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth |
           )
             return denied();
           const c = jwt.claims;
-          const segment = (value: unknown): value is string =>
-            typeof value === "string" && /^[A-Za-z0-9_-]{1,128}(?![\s\S])/.test(value);
+          const segment = (value: unknown, project = false): value is string =>
+            typeof value === "string" &&
+            (project ? /^[A-Za-z0-9._-]{1,128}(?![\s\S])/ : /^[A-Za-z0-9_-]{1,128}(?![\s\S])/).test(value);
           if (
             !segment(c.owner) ||
-            !segment(c.project) ||
+            !segment(c.project, true) ||
             !segment(c.owner_id) ||
             !segment(c.project_id) ||
             !segment(c.environment) ||
@@ -183,7 +186,7 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth |
           const agent = bindings.find(
             ({ vercel: v }) =>
               v &&
-              v.team === (v.team.startsWith("team_") ? c.owner_id : c.owner) &&
+              v.team === c.owner_id &&
               v.project === (v.project.startsWith("prj_") ? c.project_id : c.project) &&
               v.environments.some((environment) => environment === c.environment),
           );
@@ -230,7 +233,18 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth |
           if (!valid || !validTime()) return denied();
           return { ok: true, agent: agent.name, subjectId: agentSubjectId(agent.name) };
         });
-      } catch {
+      } catch (error) {
+        if (error === KEY_FETCH_BUSY)
+          return {
+            ok: false,
+            response: Response.json(
+              { error: "authentication_busy" },
+              {
+                status: 503,
+                headers: { "Cache-Control": "no-store", "Retry-After": "1" },
+              },
+            ),
+          };
         return denied();
       }
     },

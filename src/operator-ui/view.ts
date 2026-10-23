@@ -746,6 +746,7 @@ const ACTOR_KINDS: Readonly<Record<string, string>> = {
   "cloudflare-access": "Cloudflare Access",
   anonymous: "Anonymous",
   access_token: "Agent token",
+  vercel_oidc: "Vercel workload",
 };
 
 /** How a caller signed in, as a person reads it. An unknown kind is shown as sent. */

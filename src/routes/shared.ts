@@ -215,8 +215,7 @@ export async function authorize(
   const credential = authorizationCredential(request);
   const explicit = credential.kind !== "absent";
   if (credential.kind === "invalid") {
-    const challenge =
-      auth.find((provider) => provider.kind !== "access_token")?.challenge?.(request, baseUrl) ?? "Bearer";
+    const challenge = auth.find((provider) => !assertsAgents(provider))?.challenge?.(request, baseUrl) ?? "Bearer";
     return {
       ok: false,
       response: await providerChallenge(
@@ -403,6 +402,7 @@ export async function authorizeAgent(
     return agentChallenge();
   }
   if (!result.ok) {
+    if (result.response.status === 503) return result;
     void result.response.body?.cancel().catch(() => {});
     return agentChallenge();
   }

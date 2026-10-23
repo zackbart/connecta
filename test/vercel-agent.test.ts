@@ -3,11 +3,13 @@ import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import type { AgentConfig } from "../src/agent-config.js";
 import { AGENT_NAMESPACE } from "../src/agent-identity.js";
+import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { vercelAgentAuth } from "../src/auth/vercel-agent.js";
 import { api } from "../src/connectors/api.js";
-import { authorizeAgent } from "../src/routes/shared.js";
+import { authorize, authorizeAgent } from "../src/routes/shared.js";
+import { actorLabel } from "../src/operator-ui/view.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { readJsonRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 
@@ -17,8 +19,10 @@ const credential = { team: "team_assistant", project: "prj_assistant" };
 const agents = [{ name: "assistant", vercel: credential }];
 let first: CryptoKeyPair;
 let second: CryptoKeyPair;
+let small: CryptoKeyPair;
 let publicFirst: JsonWebKey;
 let publicSecond: JsonWebKey;
+let publicSmall: JsonWebKey;
 const now = () => Math.floor(Date.now() / 1000);
 const b64 = (value: Uint8Array) =>
   btoa(String.fromCharCode(...value))
@@ -28,16 +32,18 @@ const b64 = (value: Uint8Array) =>
 const json = (value: unknown) => b64(new TextEncoder().encode(JSON.stringify(value)));
 
 beforeAll(async () => {
-  const generate = () =>
+  const generate = (modulusLength = 2048) =>
     crypto.subtle.generateKey(
-      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      { name: "RSASSA-PKCS1-v1_5", modulusLength, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
       true,
       ["sign", "verify"],
     );
   first = (await generate()) as CryptoKeyPair;
   second = (await generate()) as CryptoKeyPair;
+  small = (await generate(1024)) as CryptoKeyPair;
   publicFirst = (await crypto.subtle.exportKey("jwk", first.publicKey)) as JsonWebKey;
   publicSecond = (await crypto.subtle.exportKey("jwk", second.publicKey)) as JsonWebKey;
+  publicSmall = (await crypto.subtle.exportKey("jwk", small.publicKey)) as JsonWebKey;
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -71,8 +77,9 @@ async function token(
 
 function mockKeys(keys = [{ ...publicFirst, kid: "first" }]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    expect(String(url)).toBe(JWKS);
-    expect(init?.redirect).toBe("error");
+    const native = new Request(url, init);
+    expect(native.url).toBe(JWKS);
+    expect(native.redirect).toBe("manual");
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.headers).toEqual({ Accept: "application/json" });
     return Response.json({ keys });
@@ -94,7 +101,7 @@ const request = (value: string, path = "/agent/assistant") =>
   });
 
 describe("Vercel workload verification", () => {
-  it("INV-4 INV-6: admits team and global issuers as one agent without a human principal or token in the identity", async () => {
+  it("INV-4 INV-6: admits team and global issuers through native Request validation without a human principal or token in the identity", async () => {
     const fetcher = mockKeys();
     const provider = auth();
     for (const iss of [claims().iss, "https://oidc.vercel.com"]) {
@@ -123,6 +130,13 @@ describe("Vercel workload verification", () => {
     { aud: ["https://vercel.com/assistant", "other"] },
     { project_id: "prj_other" },
     { owner_id: "team_other" },
+    {
+      owner_id: "team_other",
+      owner: "team_assistant",
+      iss: "https://oidc.vercel.com/team_assistant",
+      aud: "https://vercel.com/team_assistant",
+      sub: "owner:team_assistant:project:assistant:environment:production",
+    },
     { environment: "preview", sub: "owner:assistant:project:assistant:environment:preview" },
     { environment: "development", sub: "owner:assistant:project:assistant:environment:development" },
     { sub: "owner:assistant:project:other:environment:production" },
@@ -144,12 +158,11 @@ describe("Vercel workload verification", () => {
     mockKeys();
     const provider = auth();
     for (const changes of [
-      { exp: now() - 60 },
+      { iat: now() - 8000, nbf: now() - 8000, exp: now() - 800 },
       { nbf: now() + 60 },
       { iat: now() + 60 },
       { iat: now() + 8000 },
       { nbf: now() + 8000 },
-      { exp: now() - 60, iat: now() - 120 },
     ]) {
       expect((await provider.authorize(request(await token(changes)), BASE)).ok).toBe(false);
     }
@@ -168,7 +181,7 @@ describe("Vercel workload verification", () => {
       await token({}, { b64: false }),
       "a.b.c",
       "not-a-jwt",
-      "a".repeat(16_385),
+      await token({ padding: "x".repeat(16_384) }),
     ]) {
       const result = await provider.authorize(request(value), BASE);
       expect(result.ok).toBe(false);
@@ -179,10 +192,10 @@ describe("Vercel workload verification", () => {
     }
   });
 
-  it("INV-4: matches exact slugs and explicitly enabled environments", async () => {
+  it("INV-4: matches an immutable team ID, an exact project name and explicitly enabled environments", async () => {
     mockKeys();
     const provider = vercelAgentAuth([
-      { name: "assistant", vercel: { team: "assistant", project: "assistant", environments: ["preview"] } },
+      { name: "assistant", vercel: { team: "team_assistant", project: "assistant", environments: ["preview"] } },
     ])!;
     expect((await provider.authorize(request(await token()), BASE)).ok).toBe(false);
     expect(
@@ -223,6 +236,48 @@ describe("Vercel workload verification", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("INV-4 INV-7: returns retryable 503 on key-fetch cap overflow with a cold or expired cache", async () => {
+    const value = await token();
+    const timestamp = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    const fetcher = mockKeys();
+    for (const expired of [false, true]) {
+      clock.mockReturnValue(timestamp);
+      const provider = auth();
+      if (expired) {
+        expect((await provider.authorize(request(value), BASE)).ok).toBe(true);
+        clock.mockReturnValue(timestamp + 300_001);
+      }
+      let release!: () => void;
+      let started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const twoLoads = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let loads = 0;
+      fetcher.mockImplementation(async (url, init) => {
+        new Request(url, init);
+        if (++loads === 2) started();
+        await gate;
+        return Response.json({ keys: [{ ...publicFirst, kid: "first" }] });
+      });
+      const pending = [0, 1, 2].map(() => authorizeAgent(request(value), BASE, [provider], silentLogger));
+      await twoLoads;
+      release();
+      const results = await Promise.all(pending);
+      expect(results.map((result) => (result.ok ? 200 : result.response.status))).toEqual([200, 200, 503]);
+      const overflow = results[2]!;
+      if (!overflow.ok) expect(overflow.response.headers.get("Retry-After")).toBe("1");
+      expect(loads).toBe(2);
+      fetcher.mockImplementation(async (url, init) => {
+        new Request(url, init);
+        return Response.json({ keys: [{ ...publicFirst, kid: "first" }] });
+      });
+    }
+  });
+
   it.each(["empty", "too-many", "small", "private", "duplicate"])(
     "INV-4: rejects unusable or unbounded JWKS (%s)",
     async (kind) => {
@@ -233,12 +288,19 @@ describe("Vercel workload verification", () => {
           : kind === "too-many"
             ? Array.from({ length: 17 }, (_, i) => ({ ...key, kid: `${i}` }))
             : kind === "small"
-              ? [{ ...key, n: "AQAB" }]
+              ? [{ ...publicSmall, kid: "first" }]
               : kind === "private"
                 ? [{ ...key, d: "private" }]
                 : [key, key];
       mockKeys(keys);
-      expect((await auth().authorize(request(await token()), BASE)).ok).toBe(false);
+      expect(
+        (
+          await auth().authorize(
+            request(await token({}, {}, kind === "small" ? small.privateKey : first.privateKey)),
+            BASE,
+          )
+        ).ok,
+      ).toBe(false);
     },
   );
 
@@ -340,7 +402,10 @@ describe("Vercel agent configuration and endpoint isolation", () => {
     const declared = [...agents, { name: "other", vercel: { ...credential, project: "prj_other" } }];
     const app = deployment({ agents: declared, storage, accessTokens: accessTokens(storage) });
     try {
-      const oidc = await token();
+      const oidc = await token({
+        project: "assistant.example.com",
+        sub: "owner:assistant:project:assistant.example.com:environment:production",
+      });
       const cta = await issueAgentToken(storage, "assistant");
       for (const value of [oidc, cta]) {
         expect((await app.fetch(request(value))).status).toBe(200);
@@ -359,12 +424,19 @@ describe("Vercel agent configuration and endpoint isolation", () => {
       await app.close();
     }
     const only = createTestConnecta({
-      agents,
+      agents: [{ name: "assistant", vercel: { ...credential, project: "assistant.example.com" } }],
       connectors: [connector()],
       pools: { assistant: { tools: ["notes"], members: ["agent:assistant"] } },
     });
     try {
-      const response = await only.fetch(request(await token()));
+      const response = await only.fetch(
+        request(
+          await token({
+            project: "assistant.example.com",
+            sub: "owner:assistant:project:assistant.example.com:environment:production",
+          }),
+        ),
+      );
       expect(response.status).toBe(200);
       expect(await readJsonRpc(response)).toHaveProperty("result.tools");
       expect((await only.fetch(new Request(`${BASE}/mcp`))).status).toBe(401);
@@ -402,6 +474,20 @@ describe("Vercel agent configuration and endpoint isolation", () => {
       expect(human.recognizesCredential).not.toHaveBeenCalled();
       expect(getIdentity).not.toHaveBeenCalled();
       expect(fetcher).toHaveBeenCalledTimes(1);
+      const malformed = await authorize(
+        new Request(`${BASE}/mcp`, { headers: { Authorization: "Basic invalid" } }),
+        BASE,
+        [auth(), cloudflareAccessAuth()],
+        undefined,
+        true,
+        false,
+        silentLogger,
+      );
+      expect(malformed.ok).toBe(false);
+      if (!malformed.ok) {
+        expect(malformed.response.status).toBe(401);
+        expect(malformed.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="openid email"');
+      }
     } finally {
       await app.close();
     }
@@ -411,8 +497,12 @@ describe("Vercel agent configuration and endpoint isolation", () => {
     mockKeys();
     const events: ToolCallActivityEvent[] = [];
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const storage = memoryStorage();
     const app = createTestConnecta({
       agents,
+      auth: fakeClerkAuth(),
+      storage,
+      accessTokens: accessTokens(storage),
       connectors: [connector()],
       logger,
       pools: { assistant: { tools: ["notes"], members: ["agent:assistant"] } },
@@ -421,6 +511,7 @@ describe("Vercel agent configuration and endpoint isolation", () => {
           record: (event) => {
             events.push(event);
           },
+          list: async () => ({ events }),
         },
       }),
     });
@@ -445,6 +536,14 @@ describe("Vercel agent configuration and endpoint isolation", () => {
       expect((await readJsonRpc(response)).result.isError).not.toBe(true);
       expect(events).toHaveLength(1);
       expect(events[0]!.actor).toEqual({ kind: "vercel_oidc", id: "assistant", namespace: AGENT_NAMESPACE });
+      expect(actorLabel(events[0]!.actor)).toBe("assistant (Vercel workload)");
+      const ui = await app.fetch(
+        new Request(`${BASE}/ui/api/config`, { headers: { Authorization: "Bearer clerk-operator" } }),
+      );
+      expect(ui.status).toBe(200);
+      expect(await ui.json()).toMatchObject({
+        agents: [{ name: "assistant", token: { state: "none" }, lastSeenAt: events[0]!.occurredAt }],
+      });
       const recorded = JSON.stringify({ events, logs: Object.values(logger).flatMap((method) => method.mock.calls) });
       for (const secret of [value, "team_assistant", "prj_assistant", "owner:assistant", "private upstream error"]) {
         expect(recorded).not.toContain(secret);
@@ -459,6 +558,7 @@ describe("Vercel agent configuration and endpoint isolation", () => {
       [{ name: "assistant", vercel: { ...credential, environments: [] } }],
       [{ name: "assistant", vercel: { ...credential, environments: ["*"] } }],
       [{ name: "assistant", vercel: { ...credential, team: "https://private.invalid" } }],
+      [{ name: "assistant", vercel: { ...credential, team: "assistant" } }],
       [{ name: "assistant", vercel: { ...credential, team: "assistant\n" } }],
       [{ name: "assistant", vercel: { ...credential, project: "assistant\n" } }],
       [{ name: "assistant", vercel: { ...credential, projects: "private" } }],

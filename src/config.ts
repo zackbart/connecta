@@ -398,7 +398,7 @@ const connectaConfig = {
    * revoke; nothing outside code adds, renames, or rebinds an agent. Removing
    * a name stops its credentials on the next request. A string name requires
    * `accessTokens`; `{ name, vercel: { team, project, environments? } }` also
-   * accepts Vercel OIDC. Prefer immutable team_ and prj_ IDs. Environments
+   * accepts Vercel OIDC. Requires an immutable team_ ID; prefer a prj_ ID for the project. Environments
    * default to production. Both credential types may coexist.
    * An admitted agent carries `identity.agent` and has no principal, so
    * personal connectors are absent for it. Defaults to none.
