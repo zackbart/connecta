@@ -42,14 +42,92 @@ import type { ConnectorCredentialConfig, ConnectorCredentialValues } from "../..
 
 // Request contracts follow each operation's reference page; the hatch's index
 // is derived from these declarations, so they are the one operation list.
+// Success schemas describe the documented records leniently, for the manifest
+// and hatch search only: every key is optional and nothing decodes with them.
+const loose = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.Struct(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Schema.optionalKey(value)])));
+const Address = loose({
+  street_address: Schema.String,
+  city: Schema.String,
+  state: Schema.String,
+  postal: Schema.String,
+  country: Schema.String,
+});
+const OrganizationRecord = loose({
+  organization_id: Schema.String,
+  widget_id: Schema.String,
+  account_id: Schema.String,
+  created_date: Schema.String,
+  name: Schema.String,
+  phone_number: Schema.String,
+  website: Schema.String,
+  address: Address,
+  giving_types: Schema.Array(Schema.String),
+  giving_types_full: Schema.Array(loose({ id: Schema.String, name: Schema.String, status: Schema.String })),
+  bank: loose({
+    account_number_last4: Schema.String,
+    name: Schema.String,
+    country: Schema.String,
+    currency: Schema.String,
+  }),
+  legal: loose({
+    entity_type: Schema.String,
+    organization_name: Schema.String,
+    first_name: Schema.String,
+    last_name: Schema.String,
+    date_of_birth: Schema.String,
+  }),
+});
+const AccountRecord = loose({
+  account_id: Schema.String,
+  created_date: Schema.String,
+  email: Schema.String,
+  first_name: Schema.String,
+  last_name: Schema.String,
+  address: Address,
+  phone_number: Schema.String,
+});
+const PaymentMethodRecord = loose({
+  pm_id: Schema.String,
+  last_4_digits: Schema.String,
+  brand: Schema.String,
+  pm_type: Schema.String,
+  account_id: Schema.String,
+});
+const ChargeRecord = loose({
+  charge_id: Schema.String,
+  charge_status: Schema.String,
+  amount: Schema.String,
+  net_amount: Schema.String,
+  fees: Schema.String,
+  currency: Schema.String,
+  giving_type: Schema.String,
+  charge_date: Schema.String,
+  deposit_date: Schema.String,
+  recurring_transaction: Schema.Boolean,
+  fees_covered: Schema.Boolean,
+  memo: Schema.String,
+  organization: OrganizationRecord,
+  donor_account: AccountRecord,
+  payment_method: PaymentMethodRecord,
+});
+const RecurringRecord = loose({
+  recurring_id: Schema.String,
+  amount: Schema.String,
+  currency: Schema.String,
+  giving_type: Schema.String,
+  start_date: Schema.String,
+  term: Schema.String,
+  organization: OrganizationRecord,
+  donor_account: AccountRecord,
+  payment_method: Schema.String,
+});
 const Envelope = Schema.Struct({ status: Schema.optionalKey(Schema.String), type: Schema.optionalKey(Schema.String) });
-const Single = (id: string) =>
-  Schema.Struct({
-    ...Envelope.fields,
-    [id]: Schema.optionalKey(Schema.String),
-    object: Schema.optionalKey(Schema.Unknown),
-  });
-const Rows = Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(Schema.Unknown)) });
+const Single = (id: string, record: Schema.Top) =>
+  Schema.Struct({ ...Envelope.fields, [id]: Schema.optionalKey(Schema.String), object: Schema.optionalKey(record) });
+const Rows = (record: Schema.Top) =>
+  Schema.Struct({ ...Envelope.fields, data: Schema.optionalKey(Schema.Array(record)) });
+const Note = Schema.Struct({ ...Envelope.fields, note: Schema.optionalKey(Schema.String) });
 // Key annotations survive the form and query encodings the manifest renders.
 const described = <S extends Schema.Top>(schema: S, description: string) =>
   schema.pipe(Schema.annotateKey({ description }));
@@ -88,23 +166,23 @@ const AccountLogin = {
 // spells each operation as its page does.
 export const listOrganizations = get("listOrganizations", "/organizations-list", {
   query: PageQuery,
-  success: Rows,
+  success: Rows(OrganizationRecord),
 }).annotate(Summary, "List all organizations these keys manage");
 export const getOrganization = get("getOrganization", "/organizations/:organization_id", {
   params: id("organization_id"),
-  success: Single("organization_id"),
+  success: Single("organization_id", OrganizationRecord),
 }).annotate(Summary, "Retrieve an organization");
-export const listAccounts = get("listAccounts", "/accounts-list", { query: PageQuery, success: Rows }).annotate(
-  Summary,
-  "List donor accounts created via the API",
-);
+export const listAccounts = get("listAccounts", "/accounts-list", {
+  query: PageQuery,
+  success: Rows(AccountRecord),
+}).annotate(Summary, "List donor accounts created via the API");
 export const listAllAccounts = get("listAllAccounts", "/accounts-list-all", {
   query: PageQuery,
-  success: Rows,
+  success: Rows(AccountRecord),
 }).annotate(Summary, "List all donor accounts");
 export const getAccount = get("getAccount", "/accounts/:account_id", {
   params: id("account_id"),
-  success: Single("account_id"),
+  success: Single("account_id", AccountRecord),
 }).annotate(Summary, "Retrieve a donor account");
 export const listCharges = get("listCharges", "/charges-list", {
   // Field order is wire order: the filters, then the paging fields.
@@ -114,23 +192,23 @@ export const listCharges = get("listCharges", "/charges-list", {
     created_before: described(Schema.optionalKey(Integer), "Only charges created before this Unix time."),
     ...PageQuery,
   },
-  success: Rows,
+  success: Rows(ChargeRecord),
 }).annotate(Summary, "List charges (gifts) for an organization or donor");
 export const getCharge = get("getCharge", "/charges/:charge_id", {
   params: id("charge_id"),
-  success: Single("charge_id"),
+  success: Single("charge_id", ChargeRecord),
 }).annotate(Summary, "Retrieve a charge");
 export const listRecurring = get("listRecurring", "/recurring-list", {
   query: { ...ScopeQuery, ...PageQuery },
-  success: Rows,
+  success: Rows(RecurringRecord),
 }).annotate(Summary, "List recurring charges (gifts) for an organization or donor");
 export const getRecurring = get("getRecurring", "/recurring/:recurring_id", {
   params: id("recurring_id"),
-  success: Single("recurring_id"),
+  success: Single("recurring_id", RecurringRecord),
 }).annotate(Summary, "Retrieve a recurring charge");
 export const listPaymentMethods = get("listPaymentMethods", "/payment-methods-list", {
   query: { account_id: field("Donor account (user_…) that owns the payment methods.") },
-  success: Rows,
+  success: Rows(PaymentMethodRecord),
 }).annotate(Summary, "List a donor's payment methods");
 
 /**
@@ -147,7 +225,7 @@ export const TithelyApi = vendor(
   getAccount,
   post("createAccount", "/accounts", {
     payload: form(Schema.Struct({ ...AccountLogin, ...Contact })),
-    success: Single("account_id"),
+    success: Single("account_id", AccountRecord),
   }).annotate(Summary, "Create a donor account"),
   post("updateAccount", "/accounts/:account_id", {
     params: id("account_id"),
@@ -161,7 +239,7 @@ export const TithelyApi = vendor(
         ...Contact,
       }),
     ),
-    success: Single("account_id"),
+    success: Single("account_id", AccountRecord),
   }).annotate(Summary, "Update a donor account"),
   listCharges,
   getCharge,
@@ -176,7 +254,7 @@ export const TithelyApi = vendor(
         memo: optionalField("A memo or note for the gift."),
       }),
     ),
-    success: Single("charge_id"),
+    success: Single("charge_id", ChargeRecord),
   }).annotate(Summary, "Create a charge (gift) on a donor's stored payment method"),
   post("chargeOnce", "/charge-once", {
     payload: form(
@@ -192,12 +270,12 @@ export const TithelyApi = vendor(
         memo: optionalField("A memo or note for the gift."),
       }),
     ),
-    success: Single("charge_id"),
+    success: Single("charge_id", ChargeRecord),
   }).annotate(Summary, "Quick charge a donor once from a Tithely.js token, without an account"),
-  post("refundCharge", "/refunds/:charge_id", { params: id("charge_id"), success: Envelope }).annotate(
-    Summary,
-    "Refund a charge",
-  ),
+  post("refundCharge", "/refunds/:charge_id", {
+    params: id("charge_id"),
+    success: Single("charge_id", ChargeRecord),
+  }).annotate(Summary, "Refund a charge"),
   listRecurring,
   getRecurring,
   post("createRecurring", "/recurring", {
@@ -212,9 +290,9 @@ export const TithelyApi = vendor(
         start_date: described(Integer, "Unix time of the first charge."),
       }),
     ),
-    success: Single("recurring_id"),
+    success: Single("recurring_id", RecurringRecord),
   }).annotate(Summary, "Create a recurring charge (gift)"),
-  del("cancelRecurring", "/recurring/:recurring_id", { params: id("recurring_id"), success: Envelope }).annotate(
+  del("cancelRecurring", "/recurring/:recurring_id", { params: id("recurring_id"), success: Note }).annotate(
     Summary,
     "Cancel a recurring charge's future charges; refunds nothing",
   ),
@@ -222,7 +300,7 @@ export const TithelyApi = vendor(
   get("getPaymentMethod", "/payment-methods/:pm_id", {
     params: id("pm_id"),
     query: { account_id: field("Donor account (user_…) that owns the payment method.") },
-    success: Single("pm_id"),
+    success: Single("pm_id", PaymentMethodRecord),
   }).annotate(Summary, "Retrieve a payment method"),
   post("createPaymentMethod", "/payment-methods", {
     payload: form(
@@ -231,7 +309,7 @@ export const TithelyApi = vendor(
         token: field("Card or bank token from Tithely.js in the donor's browser."),
       }),
     ),
-    success: Single("pm_id"),
+    success: Single("pm_id", PaymentMethodRecord),
   }).annotate(Summary, "Create a payment method from a Tithely.js token"),
   post("updatePaymentMethod", "/payment-methods/:pm_id", {
     params: id("pm_id"),
@@ -245,12 +323,12 @@ export const TithelyApi = vendor(
         account_holder_type: optionalField("Bank account holder type: individual or company."),
       }),
     ),
-    success: Single("pm_id"),
+    success: Single("pm_id", PaymentMethodRecord),
   }).annotate(Summary, "Update a payment method"),
   del("deletePaymentMethod", "/payment-methods/:pm_id", {
     params: id("pm_id"),
     query: { account_id: field("Donor account (user_…) that owns the payment method.") },
-    success: Envelope,
+    success: Note,
   }).annotate(Summary, "Delete a payment method"),
 );
 

@@ -923,6 +923,10 @@
                 "named": {
                   "type": "string",
                   "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
                 }
               },
               "required": [
