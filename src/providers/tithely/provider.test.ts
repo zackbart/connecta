@@ -1,7 +1,9 @@
 // The Tithe.ly giving connection on the provider kit. Request shapes,
-// projections, and status mapping live in the characterization goldens; these
-// tests pin key-pair admission, the bank and legal boundary, the vendor shapes
-// that once parsed wrong, and the catalog and decoder agreeing on every input.
+// projections, and status mapping live in the characterization goldens, which
+// build one live, dropping connection; these tests pin key-pair admission and
+// the credential probe, the guide in every other mode, the bank and legal
+// boundary, the vendor shapes that once parsed wrong, and the catalog and
+// decoder agreeing on every input.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { configureGuardedTransport } from "../../guarded-transport.js";
@@ -13,6 +15,7 @@ import { tithelyTools } from "./tools.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import goldenCatalog from "../../../test/goldens/tithely/catalog.json";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
@@ -240,6 +243,79 @@ describe("keys and writes", () => {
     const error = await pending;
     expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect((error as Error).message).toContain("whether it took effect is unknown");
+  });
+});
+
+describe("connection modes the goldens do not build", () => {
+  it("INV-5: the probe tests the candidate keys, refusing a missing, swapped or empty pair before any request", async () => {
+    const stored = context({ publicKey: "pub_stored", privateKey: "pri_stored" });
+    stored.credential!.getAll = vi.fn(stored.credential!.getAll);
+    for (const [values, message] of [
+      [{}, "Both the Tithe.ly public key and private key are required."],
+      [{ publicKey: " ", privateKey: "pri_def456" }, "Both the Tithe.ly public key and private key are required."],
+      [
+        { publicKey: "pri_def456", privateKey: "pub_abc123" },
+        "The Tithe.ly keys are swapped: the pub_ key belongs in the public-key field and the pri_ key in the private-key field.",
+      ],
+    ] as const) {
+      expect(await connection().testCredentials!(values, stored)).toEqual({ ok: false, message });
+    }
+    expect(calls).toEqual([]);
+    for (const [environment, host] of [
+      ["live", "tithe.ly"],
+      ["test", "tithelydev.com"],
+    ] as const) {
+      calls.length = 0;
+      queue({ body: { status: "success", type: "List", data: [ORGANIZATION] } });
+      expect(await connection({ environment }).testCredentials!(KEYS, stored)).toEqual({
+        ok: true,
+        message: `Keys accepted by Tithe.ly (${environment}); first organization reached: Grace Church (org_1).`,
+      });
+      expect(calls).toEqual([
+        {
+          url: `https://${host}/api/v1/organizations-list?limit=1`,
+          method: "GET",
+          headers: { accept: "application/json", authorization: `Basic ${btoa("pub_abc123:pri_def456")}` },
+          body: undefined,
+        },
+      ]);
+    }
+    expect(stored.credential!.getAll).not.toHaveBeenCalled();
+  });
+
+  it("renders the guide, title and description in every environment, sensitive-field choice and instruction mode", () => {
+    const purpose = "Weekly giving reports for Grace Church";
+    for (const environment of ["live", "test"] as const) {
+      for (const sensitiveFields of ["drop", "return"] as const) {
+        for (const instructions of [undefined, "  Reduce to weekly totals.  "]) {
+          const live = environment === "live";
+          // The golden is the live, dropping guide without instructions; each mode changes one line of it.
+          let content = goldenCatalog.guide.content;
+          if (!live)
+            content = content.replace(
+              "Live Tithe.ly (tithe.ly): real donors and real money.",
+              "Test Tithe.ly (tithelydev.com): a test account; no real money moves.",
+            );
+          if (sensitiveFields === "return")
+            content = content.replace(
+              "  Every result, `raw: true` and the hatches included, leaves them out.\n",
+              "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n",
+            );
+          if (instructions) content += "\n## Account instructions\n\nReduce to weekly totals.\n";
+          const connector = connection({ environment, sensitiveFields, ...(instructions ? { instructions } : {}) });
+          expect(connector.usageGuide).toEqual({
+            content,
+            summary: goldenCatalog.guide.summary.replace("Live", live ? "Live" : "Test"),
+            required: true,
+          });
+          expect([connector.title, connector.description]).toEqual(
+            live
+              ? ["Tithe.ly Giving", `Tithe.ly giving — live donors and real money — ${purpose}`]
+              : ["Tithe.ly Giving (test)", `Tithe.ly giving (test environment, no real money) — ${purpose}`],
+          );
+        }
+      }
+    }
   });
 });
 
