@@ -16,6 +16,7 @@ import { unsentAfterUnauthorized } from "../write-outcome.js";
 import { Operation } from "../runtime/call.js";
 import { runEdge } from "../runtime/run.js";
 import type {
+  Connector,
   ConnectorContext,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
@@ -25,7 +26,7 @@ import type {
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
-import { Grant, grantFromOAuth, refreshOnce, type Write401Renewal } from "./oauth.js";
+import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
   Classification,
@@ -67,6 +68,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
   /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
   readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
+  /** Opt-in machine-grant renewal modes (see GrantRenewal); defaults renew as B.2 describes. */
+  readonly grantRenewal?: GrantRenewal;
   readonly authenticate:
     | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
     | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
@@ -87,6 +90,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
+  /**
+   * Record construction facts about the built connector, such as whose
+   * Workspace account it acts as. Runs once, before anything can serve it;
+   * its return value is ignored, so it can neither replace nor wrap it.
+   */
+  readonly tagConnector?: (connector: Connector, options: Readonly<O>) => void;
 }
 
 /** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
@@ -127,6 +136,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     oauthWrite401,
     grant,
     writeUnauthorized,
+    grantRenewal,
     authenticate,
     errors,
     safety,
@@ -135,6 +145,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     guide,
     hatch: declaredHatch,
     tools,
+    tagConnector,
     ...metadata
   } = definition;
   if (credential !== undefined && oauth !== undefined) {
@@ -143,6 +154,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
   if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
   if (writeUnauthorized && !grant) throw new Error("writeUnauthorized requires a machine grant declaration.");
+  if (grantRenewal && !grant) throw new Error("grantRenewal requires a machine grant declaration.");
+  const renewalModes = grantRenewal ? { ...grantRenewal } : undefined;
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new Error(`${metadata.title} maxResponseBytes must be a whole number of bytes >= 1.`);
   }
@@ -216,8 +229,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                         "downstream_oauth_required",
                       ),
                   }
-                : writeUnauthorized
-                  ? { writeUnauthorized }
+                : writeUnauthorized || renewalModes
+                  ? { ...renewalModes, ...(writeUnauthorized ? { writeUnauthorized } : {}) }
                   : undefined,
             )
           : guarded,
@@ -310,7 +323,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         },
       });
       const usageGuide = guide(options);
-      return tracksEveryRequest(
+      const connector = tracksEveryRequest(
         api(id, {
           ...(defaultCallAdmission
             ? {
@@ -334,6 +347,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           tools: [...builtTools, ...(hatchOptions ? hatch({ ...hatchOptions, connection }) : [])],
         }),
       );
+      tagConnector?.(connector, options);
+      return connector;
     },
   });
 }

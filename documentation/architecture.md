@@ -2029,6 +2029,40 @@ mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
 the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
 Reads replay once after renewal; writes are never resent.
 
+A machine grant may also declare `grantRenewal` modes, with an optional
+`Grant.discard(token)` that forgets exactly that refused token and keeps any
+newer one. `replayRejection: "answer"` discards the token a replayed read was
+refused with and hands that 401 to the vendor's status table, so the message
+comes from the bounded, sent-secret-redacted body instead of `rejected`.
+`writeRenewal: "discard"` discards a write's refused token without renewing:
+no token request is sent, nothing is recorded as renewed, the write's 401 is
+answered, and `settleWrite` decides its outcome and handoff. Neither mode
+resends a write, and the defaults are unchanged. Google Workspace uses both,
+because its delegated tokens are minted per call and a refused write only
+needs the next call to mint again.
+
+The Google Workspace layer (`src/providers/_shared/google/kit.ts`) puts the
+delegated service account on a machine grant. The subject resolves once per
+call from deployment config and the admitted caller, and the private token
+exchange keeps its in-memory cache, so only token strings and expiries cross
+requests. Each product declares its operations, and a value-safety resolver
+refuses any path it does not declare. Revision-guarded writes set the
+`revisionGuarded` request flag that Google's error table reads. For step 1, a
+catalog bridge builds kit `read` and `write` tools that keep each legacy
+declaration's annotations and schema bytes. `api()` validates every call
+against that exact input schema before the handler runs, so the bridge decodes
+arguments permissively; step 2 replaces those schemas with Effect declarations.
+The layer's request adapter keeps the legacy wording of a served write whose
+answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
+reports how far a failed request got. The core still decides every write's
+outcome.
+
+An optional `tagConnector(connector, options)` records construction facts
+about the built connector, once, before the registry can serve it. Its return
+value is ignored, so it cannot replace or wrap the connector. Google Workspace
+uses it to tag whose account the connector acts as, which the registry reads to
+hide a mapping-subject connector from agents in a pool without an owner.
+
 GitHub's finite REST tools use kit read/write builders and a confined
 Connection while its App authentication and scope-verification transport stays
 private. Its tokens are partitioned by App/key, installation, repository IDs,
