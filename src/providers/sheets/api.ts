@@ -68,15 +68,18 @@ const OPERATIONS = [
 ] as const;
 
 // These exact public wire names are structural inputs to the projections in
-// tools.ts. A private value equal to a name must not erase that member before
-// projection. Values, unknown keys and partial key matches remain redacted.
+// tools.ts and the shared Google failure classifier. A private value equal to
+// a name must not erase that member before it is read. Values, unknown keys
+// and partial key matches remain redacted.
 export const SheetsApi = {
   ...vendor({ name: "Google Sheets", manifestBase: "/v4" }, ...OPERATIONS),
   fixedKeys: {
+    errors: "Google error-reason array traversed by the shared failure classifier.",
+    reason: "Google error reason read by the shared rate-limit and scope classifiers.",
+    status: "Google error status read by the shared precondition and conflict classifiers.",
     spreadsheetId: "Public spreadsheet identifier member read by every result projection.",
     spreadsheetUrl: "Public spreadsheet URL member copied by metadata and create projections.",
     properties: "Public spreadsheet and sheet property envelope navigated by metadata and create projections.",
-    title: "Public spreadsheet and tab title member read inside the properties envelope.",
     locale: "Public spreadsheet locale member copied by the metadata projection.",
     timeZone: "Public spreadsheet time-zone member copied by the metadata projection.",
     sheets: "Public sheet array traversed by metadata and create projections.",
@@ -91,7 +94,6 @@ export const SheetsApi = {
     frozenColumnCount: "Public frozen-column count read by the sheet projection.",
     namedRanges: "Public named-range array traversed by the metadata projection.",
     namedRangeId: "Public named-range identifier copied by the metadata projection.",
-    name: "Public named-range name read by the metadata projection.",
     range: "Public GridRange envelope and returned A1 range member navigated by metadata and values projections.",
     startRowIndex: "Public GridRange start-row member converted to A1 notation.",
     startColumnIndex: "Public GridRange start-column member converted to A1 notation.",

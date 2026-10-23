@@ -298,6 +298,42 @@ describe("Sheets", () => {
           });
         }
       }
+      // Error-envelope keys feed classification before the final boundary.
+      // Private key collisions must keep rate-limit, precondition and scope advice.
+      for (const row of [
+        ...["reason", "errors", "error"].map((privateValue) => ({
+          privateValue,
+          error: { code: 403, message: "Quota exceeded", errors: [{ reason: "userRateLimitExceeded" }] },
+          expected: {
+            code: "rate_limited",
+            retryable: true,
+            message: expect.stringContaining("Google meters this API"),
+          },
+        })),
+        {
+          privateValue: "status",
+          error: { code: 400, message: "Precondition", status: "FAILED_PRECONDITION" },
+          expected: { code: "connector_call_failed", message: expect.stringContaining("precondition") },
+        },
+        {
+          privateValue: "reason",
+          error: { code: 403, message: "Scope refused", errors: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] },
+          expected: {
+            code: "provider_permission_denied",
+            message: expect.stringContaining("lacks a scope this call needs"),
+          },
+        },
+      ]) {
+        const ctx = caller();
+        requestSentSecrets(ctx).arguments(
+          { private: row.privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        stubGoogle(() => Response.json({ error: row.error }, { status: row.error.code }));
+        await expect(
+          connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"] }, ctx),
+        ).rejects.toMatchObject(row.expected);
+      }
     },
   );
 
