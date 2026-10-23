@@ -208,7 +208,7 @@ it separately for each model. The code arm passes only if:
 - it has **zero duplicate writes** and **zero export-once violations**;
 - no task's pass count drops by **3 or more of N paired trials**.
 
-The comparison prints PASS or FAIL and the reasons for complete 19-task batches.
+The comparison prints PASS or FAIL and the reasons for complete 18-task retained batches.
 Other task sets, including supersets with REST follow-ups, print diagnostic
 metrics and `Decision NOT EVALUATED`. Task drops are
 listed for triage. A missing/incomplete batch, unsupported skip or mismatched
@@ -216,7 +216,7 @@ settings/N/A set cannot establish a pass.
 This is the rule for this measurement, superseding the draft record's two-repeat
 pass bar. Live model runs and model-spend authorization belong to the orchestrator.
 
-Offline outcome regrades of the committed 0.29 files produce **Sonnet 30/34**
+Historical full-roster outcome regrades of the committed 0.29 files produced **Sonnet 30/34**
 with four N/A trials and **GPT-6-Luna 36/38**, with no unavailable checks. Sonnet
 matches the draft prediction. Luna exceeds its predicted 33/38: compared with
 the committed 29/38, two known-read trials gain passes, two direct host-refused
@@ -224,6 +224,10 @@ write attempts satisfy the same refusal outcome, two rich-output trials contain
 real emitted image/text blocks despite the wrong top-level route, and #770's
 value-mode retained-ID correction gains one paging pass. The two ambiguous
 join trials still fail. These are regrades of saved observations, not new runs.
+
+The current selftest regrades only retained tasks without changing those frozen
+files: **Sonnet 28/32** (four N/A trials) and **GPT-6-Luna 34/36**. Removed
+task trials remain historical evidence and have no current grader.
 
 Sanitized baseline exports replace actor emails with markers. Regrading maps
 only markers proven by complete saved audit rows for `prod-db` deletion or its

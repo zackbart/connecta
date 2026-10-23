@@ -1401,7 +1401,7 @@ for (const mutate of [
         mutate(trial);
         const report = compare(left, right);
         if (
-          !report.includes("code 35/38") ||
+          !report.includes("code 33/36") ||
           !report.includes(`${kind} 1`) ||
           !report.includes("Decision FAIL") ||
           !report.includes("infrastructure errors")
