@@ -1,6 +1,476 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "vercel",
+  "generated": {
+    "operations": [
+      "DELETE /ai-gateway/budgets",
+      "DELETE /ai-gateway/budgets/defaults",
+      "DELETE /ai-gateway/rules",
+      "DELETE /ai-gateway/virtual-model-configs",
+      "DELETE /ai-gateway/virtual-model-configs/{vmcSlug}",
+      "DELETE /storage/stores/blob/{id}",
+      "DELETE /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+      "DELETE /v1/access-groups/{idOrName}",
+      "DELETE /v1/bulk-redirects",
+      "DELETE /v1/connect/connectors/{connector}",
+      "DELETE /v1/connect/connectors/{connector}/projects/{projectId}",
+      "DELETE /v1/connect/networks/{networkId}",
+      "DELETE /v1/drains/{id}",
+      "DELETE /v1/env",
+      "DELETE /v1/global-config/{edgeConfigId}",
+      "DELETE /v1/global-config/{edgeConfigId}/schema",
+      "DELETE /v1/global-config/{edgeConfigId}/tokens",
+      "DELETE /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+      "DELETE /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items/{itemId}",
+      "DELETE /v1/integrations/configuration/{id}",
+      "DELETE /v1/integrations/log-drains/{id}",
+      "DELETE /v1/kms/issuers/{issuerId}",
+      "DELETE /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}",
+      "DELETE /v1/log-drains/{id}",
+      "DELETE /v1/networking/privatelink/endpoints/{endpointId}",
+      "DELETE /v1/organizations/{organizationId}/teams/{targetTeamId}",
+      "DELETE /v1/projects/{idOrName}/avatar",
+      "DELETE /v1/projects/{idOrName}/env",
+      "DELETE /v1/projects/{idOrName}/members/{uid}",
+      "DELETE /v1/projects/{idOrName}/rolling-release/config",
+      "DELETE /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+      "DELETE /v1/projects/{projectIdOrName}/feature-flags/sdk-keys/{hashKey}",
+      "DELETE /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+      "DELETE /v1/projects/{projectId}/routes",
+      "DELETE /v1/security/firewall/bypass",
+      "DELETE /v1/security/firewall/bypass/rules",
+      "DELETE /v1/security/firewall/config/{configVersion}",
+      "DELETE /v1/teams/{teamId}",
+      "DELETE /v1/teams/{teamId}/invites/{inviteId}",
+      "DELETE /v1/teams/{teamId}/members/{uid}",
+      "DELETE /v1/teams/{teamId}/microfrontends/{groupId}",
+      "DELETE /v1/user",
+      "DELETE /v1/vcr/repository/{idOrName}",
+      "DELETE /v1/vcr/repository/{idOrName}/images/{imageId}",
+      "DELETE /v1/vcr/repository/{idOrName}/permissions",
+      "DELETE /v1/vcr/repository/{idOrName}/permissions/all",
+      "DELETE /v1/webhooks/{id}",
+      "DELETE /v13/deployments/{id}",
+      "DELETE /v2/aliases/{aliasId}",
+      "DELETE /v2/domains/{domain}/records/{recordId}",
+      "DELETE /v2/projects/{projectIdOrName}/checks/{checkId}",
+      "DELETE /v2/sandboxes/drives/{name}",
+      "DELETE /v2/sandboxes/snapshots/{snapshotId}",
+      "DELETE /v2/sandboxes/{name}",
+      "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+      "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+      "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+      "DELETE /v3/user/tokens/{tokenId}",
+      "DELETE /v6/domains/{domain}",
+      "DELETE /v8/artifacts",
+      "DELETE /v8/certs/{id}",
+      "DELETE /v9/projects/{idOrName}",
+      "DELETE /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+      "DELETE /v9/projects/{idOrName}/domains/{domain}",
+      "DELETE /v9/projects/{idOrName}/env/{id}",
+      "GET /ai-gateway/budgets/defaults/list",
+      "GET /ai-gateway/budgets/list",
+      "GET /ai-gateway/rules",
+      "GET /ai-gateway/virtual-model-configs",
+      "GET /ai-gateway/virtual-model-configs/list",
+      "GET /ai-gateway/virtual-model-configs/{vmcSlug}",
+      "GET /domains/records/{recordId}",
+      "GET /storage/stores/{id}",
+      "GET /v1/access-groups",
+      "GET /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+      "GET /v1/access-groups/{idOrName}",
+      "GET /v1/access-groups/{idOrName}/members",
+      "GET /v1/access-groups/{idOrName}/projects",
+      "GET /v1/ai-gateway/routers",
+      "GET /v1/billing/charges",
+      "GET /v1/billing/contract-commitments",
+      "GET /v1/bulk-redirects",
+      "GET /v1/bulk-redirects/versions",
+      "GET /v1/connect/connectors/{connector}",
+      "GET /v1/connect/connectors/{connector}/projects/{projectId}",
+      "GET /v1/connect/networks",
+      "GET /v1/connect/networks/{networkId}",
+      "GET /v1/deployments/{deploymentId}/feature-flags",
+      "GET /v1/domains/{domain}/project-domains",
+      "GET /v1/drains",
+      "GET /v1/drains/{id}",
+      "GET /v1/env",
+      "GET /v1/env/{id}",
+      "GET /v1/events/types",
+      "GET /v1/global-config",
+      "GET /v1/global-config/{edgeConfigId}",
+      "GET /v1/global-config/{edgeConfigId}/backups",
+      "GET /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}",
+      "GET /v1/global-config/{edgeConfigId}/item/{edgeConfigItemKey}",
+      "GET /v1/global-config/{edgeConfigId}/items",
+      "GET /v1/global-config/{edgeConfigId}/schema",
+      "GET /v1/global-config/{edgeConfigId}/token/{token}",
+      "GET /v1/global-config/{edgeConfigId}/tokens",
+      "GET /v1/installations/{integrationConfigurationId}/account",
+      "GET /v1/installations/{integrationConfigurationId}/billing/invoices/{invoiceId}",
+      "GET /v1/installations/{integrationConfigurationId}/member/{memberId}",
+      "GET /v1/installations/{integrationConfigurationId}/resources",
+      "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+      "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+      "GET /v1/integrations/configuration/{id}",
+      "GET /v1/integrations/configuration/{id}/products",
+      "GET /v1/integrations/configurations",
+      "GET /v1/integrations/git-namespaces",
+      "GET /v1/integrations/integration/{integrationIdOrSlug}/products/{productIdOrSlug}/plans",
+      "GET /v1/integrations/search-repo",
+      "GET /v1/kms/issuers",
+      "GET /v1/kms/issuers/{issuerId}",
+      "GET /v1/log-drains",
+      "GET /v1/log-drains/{id}",
+      "GET /v1/microfrontends/groups",
+      "GET /v1/microfrontends/groups/{groupId}/projects",
+      "GET /v1/microfrontends/projects/{projectIdOrName}/production-mfe-config",
+      "GET /v1/microfrontends/{deploymentId}/config",
+      "GET /v1/networking/privatelink/endpoints",
+      "GET /v1/networking/privatelink/endpoints/{endpointId}",
+      "GET /v1/observability/manage/configuration/projects",
+      "GET /v1/organizations",
+      "GET /v1/organizations/{organizationId}",
+      "GET /v1/organizations/{organizationId}/teams",
+      "GET /v1/projects/traces",
+      "GET /v1/projects/{idOrName}/daemons",
+      "GET /v1/projects/{idOrName}/env/{id}",
+      "GET /v1/projects/{idOrName}/members",
+      "GET /v1/projects/{idOrName}/rolling-release",
+      "GET /v1/projects/{idOrName}/rolling-release/billing",
+      "GET /v1/projects/{idOrName}/rolling-release/config",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/flags",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}/versions",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/segments",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/settings",
+      "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",
+      "GET /v1/projects/{projectId}/promote/aliases",
+      "GET /v1/projects/{projectId}/routes",
+      "GET /v1/projects/{projectId}/routes/versions",
+      "GET /v1/query/web-analytics/events/aggregate",
+      "GET /v1/query/web-analytics/events/count",
+      "GET /v1/query/web-analytics/visits/aggregate",
+      "GET /v1/query/web-analytics/visits/count",
+      "GET /v1/registrar/domains/{domain}/auth-code",
+      "GET /v1/registrar/domains/{domain}/availability",
+      "GET /v1/registrar/domains/{domain}/contact-info/schema",
+      "GET /v1/registrar/domains/{domain}/contact-verification",
+      "GET /v1/registrar/domains/{domain}/price",
+      "GET /v1/registrar/domains/{domain}/transfer",
+      "GET /v1/registrar/orders/{orderId}",
+      "GET /v1/registrar/tlds/supported",
+      "GET /v1/registrar/tlds/{tld}",
+      "GET /v1/registrar/tlds/{tld}/price",
+      "GET /v1/security/firewall/attack-status",
+      "GET /v1/security/firewall/bypass",
+      "GET /v1/security/firewall/bypass/rules",
+      "GET /v1/security/firewall/config",
+      "GET /v1/security/firewall/config/{configVersion}",
+      "GET /v1/security/firewall/events",
+      "GET /v1/security/firewall/events/summary",
+      "GET /v1/teams/{teamId}/feature-flags/flags",
+      "GET /v1/teams/{teamId}/feature-flags/settings",
+      "GET /v1/teams/{teamId}/request/{userId}",
+      "GET /v1/vcr/repository",
+      "GET /v1/vcr/repository/{idOrName}",
+      "GET /v1/vcr/repository/{idOrName}/images",
+      "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}",
+      "GET /v1/vcr/repository/{idOrName}/permissions",
+      "GET /v1/vcr/repository/{idOrName}/tags",
+      "GET /v1/vcr/repository/{idOrName}/tags/{tag}",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/logs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-definitions",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-definitions/{taskDefinitionId}/runs/{taskRunAttempt}/logs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-runs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/logs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/task-logs",
+      "GET /v1/vercel-ci/invocations/{invocationId}/tree",
+      "GET /v1/vercel-ci/log-search",
+      "GET /v1/vercel-ci/repository-settings",
+      "GET /v1/vercel-ci/task-analyses/{analysisId}",
+      "GET /v1/vercel-ci/task-analyses/{analysisId}/tasks",
+      "GET /v1/webhooks",
+      "GET /v1/webhooks/{id}",
+      "GET /v10/projects",
+      "GET /v10/projects/{idOrName}/env",
+      "GET /v13/deployments/{idOrUrl}",
+      "GET /v2/",
+      "GET /v2/connect/connectors",
+      "GET /v2/connect/connectors/{connector}/projects",
+      "GET /v2/connect/projects/{projectId}/connectors",
+      "GET /v2/deployments/{deploymentId}/check-runs",
+      "GET /v2/deployments/{deploymentId}/check-runs/{checkRunId}",
+      "GET /v2/deployments/{id}/aliases",
+      "GET /v2/integrations/log-drains",
+      "GET /v2/observability/schema",
+      "GET /v2/observability/schema/{metricId}",
+      "GET /v2/projects/{projectIdOrName}/checks",
+      "GET /v2/projects/{projectIdOrName}/checks/{checkId}",
+      "GET /v2/projects/{projectIdOrName}/checks/{checkId}/runs",
+      "GET /v2/projects/{projectIdOrName}/feature-flags/flags",
+      "GET /v2/sandboxes",
+      "GET /v2/sandboxes/drives",
+      "GET /v2/sandboxes/drives/{nameOrId}",
+      "GET /v2/sandboxes/sessions",
+      "GET /v2/sandboxes/sessions/{sessionId}",
+      "GET /v2/sandboxes/sessions/{sessionId}/cmd",
+      "GET /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}",
+      "GET /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/logs",
+      "GET /v2/sandboxes/snapshots",
+      "GET /v2/sandboxes/snapshots/{snapshotId}",
+      "GET /v2/sandboxes/{name}",
+      "GET /v2/teams",
+      "GET /v2/teams/{teamId}",
+      "GET /v2/teams/{teamId}/feature-flags/flags",
+      "GET /v2/user",
+      "GET /v2/vercel-ci/branches",
+      "GET /v2/vercel-ci/invocations",
+      "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+      "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+      "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+      "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/tags/list",
+      "GET /v3/deployments/{idOrUrl}/events",
+      "GET /v3/events",
+      "GET /v3/teams/{teamId}/members",
+      "GET /v4/aliases",
+      "GET /v4/aliases/{idOrAlias}",
+      "GET /v5/domains",
+      "GET /v5/domains/{domain}",
+      "GET /v5/domains/{domain}/records",
+      "GET /v5/user/tokens/{tokenId}",
+      "GET /v6/deployments/{id}/files",
+      "GET /v6/domains/{domain}/config",
+      "GET /v6/user/tokens",
+      "GET /v7/deployments",
+      "GET /v8/artifacts/status",
+      "GET /v8/artifacts/{hash}",
+      "GET /v8/certs",
+      "GET /v8/certs/{id}",
+      "GET /v8/deployments/{id}/files/{fileId}",
+      "GET /v9/domains/{domain}/verification",
+      "GET /v9/projects/{idOrName}",
+      "GET /v9/projects/{idOrName}/custom-environments",
+      "GET /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+      "GET /v9/projects/{idOrName}/domains",
+      "GET /v9/projects/{idOrName}/domains/{domain}",
+      "HEAD /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+      "HEAD /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+      "HEAD /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+      "HEAD /v8/artifacts/{hash}",
+      "PATCH /ai-gateway/rules",
+      "PATCH /ai-gateway/virtual-model-configs",
+      "PATCH /ai-gateway/virtual-model-configs/{vmcSlug}",
+      "PATCH /aliases/{id}/protection-bypass",
+      "PATCH /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+      "PATCH /v1/bulk-redirects",
+      "PATCH /v1/connect/connectors/{connector}/trigger-destinations",
+      "PATCH /v1/connect/networks/{networkId}",
+      "PATCH /v1/deployments/{deploymentId}/integrations/{integrationConfigurationId}/resources/{resourceId}/actions/{action}",
+      "PATCH /v1/domains/records/{recordId}",
+      "PATCH /v1/drains/{id}",
+      "PATCH /v1/env",
+      "PATCH /v1/env/{id}/unlink/{projectId}",
+      "PATCH /v1/global-config/{edgeConfigId}/items",
+      "PATCH /v1/installations/{integrationConfigurationId}",
+      "PATCH /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+      "PATCH /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items/{itemId}",
+      "PATCH /v1/kms/issuers/{issuerId}",
+      "PATCH /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}",
+      "PATCH /v1/networking/privatelink/endpoints/{endpointId}",
+      "PATCH /v1/organizations/{organizationId}",
+      "PATCH /v1/projects/{idOrName}/protection-bypass",
+      "PATCH /v1/projects/{idOrName}/rolling-release/config",
+      "PATCH /v1/projects/{idOrName}/shared-connect-links",
+      "PATCH /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+      "PATCH /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+      "PATCH /v1/projects/{projectIdOrName}/feature-flags/settings",
+      "PATCH /v1/projects/{projectId}/microfrontends",
+      "PATCH /v1/projects/{projectId}/rollback/{deploymentId}/update-description",
+      "PATCH /v1/projects/{projectId}/routes/{routeId}",
+      "PATCH /v1/registrar/domains/{domain}/auto-renew",
+      "PATCH /v1/registrar/domains/{domain}/nameservers",
+      "PATCH /v1/security/firewall/config",
+      "PATCH /v1/teams/{teamId}/members/{uid}",
+      "PATCH /v1/teams/{teamId}/microfrontends/{groupId}",
+      "PATCH /v1/vercel-ci/repository-settings",
+      "PATCH /v12/deployments/{id}/cancel",
+      "PATCH /v2/connect/connectors/{connector}",
+      "PATCH /v2/deployments/{deploymentId}/check-runs/{checkRunId}",
+      "PATCH /v2/projects/{projectIdOrName}/checks/{checkId}",
+      "PATCH /v2/sandboxes/{name}",
+      "PATCH /v2/teams/{teamId}",
+      "PATCH /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+      "PATCH /v3/domains/{domain}",
+      "PATCH /v9/projects/{idOrName}",
+      "PATCH /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+      "PATCH /v9/projects/{idOrName}/domains/{domain}",
+      "PATCH /v9/projects/{idOrName}/env/{id}",
+      "POST /ai-gateway/rules",
+      "POST /ai-gateway/virtual-model-configs",
+      "POST /api-keys",
+      "POST /projects/{idOrName}/transfer-request",
+      "POST /speed-insights/toggle",
+      "POST /storage/stores/blob",
+      "POST /v1/access-groups",
+      "POST /v1/access-groups/{accessGroupIdOrName}/projects",
+      "POST /v1/access-groups/{idOrName}",
+      "POST /v1/billing/buy",
+      "POST /v1/bulk-redirects/restore",
+      "POST /v1/bulk-redirects/versions",
+      "POST /v1/connect/authorize/{connector}",
+      "POST /v1/connect/connectors",
+      "POST /v1/connect/connectors/{connector}/managed/eject",
+      "POST /v1/connect/connectors/{connector}/projects/{projectId}",
+      "POST /v1/connect/networks",
+      "POST /v1/connect/token/{connector}",
+      "POST /v1/drains",
+      "POST /v1/drains/test",
+      "POST /v1/edge-cache/dangerously-delete-by-src-images",
+      "POST /v1/edge-cache/dangerously-delete-by-tags",
+      "POST /v1/edge-cache/invalidate-by-src-images",
+      "POST /v1/edge-cache/invalidate-by-tags",
+      "POST /v1/env",
+      "POST /v1/global-config",
+      "POST /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}/restore",
+      "POST /v1/global-config/{edgeConfigId}/schema",
+      "POST /v1/global-config/{edgeConfigId}/token",
+      "POST /v1/installations/{integrationConfigurationId}/billing",
+      "POST /v1/installations/{integrationConfigurationId}/billing/balance",
+      "POST /v1/installations/{integrationConfigurationId}/billing/finalize",
+      "POST /v1/installations/{integrationConfigurationId}/billing/invoices",
+      "POST /v1/installations/{integrationConfigurationId}/billing/invoices/{invoiceId}/actions",
+      "POST /v1/installations/{integrationConfigurationId}/credentials/revoke",
+      "POST /v1/installations/{integrationConfigurationId}/credentials/rotate",
+      "POST /v1/installations/{integrationConfigurationId}/events",
+      "POST /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items",
+      "POST /v1/integrations/installations/{integrationConfigurationId}/resources/{resourceId}/connections",
+      "POST /v1/integrations/sso/token",
+      "POST /v1/kms/issuers",
+      "POST /v1/kms/issuers/{issuerId}/keys",
+      "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/activate",
+      "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/revoke",
+      "POST /v1/kms/issuers/{issuerId}/policies",
+      "POST /v1/kms/issuers/{issuerId}/sign/message",
+      "POST /v1/kms/issuers/{issuerId}/sign/token",
+      "POST /v1/log-drains",
+      "POST /v1/microfrontends/group",
+      "POST /v1/networking/privatelink/endpoints",
+      "POST /v1/organizations",
+      "POST /v1/organizations/{organizationId}/teams",
+      "POST /v1/projects/traces/session",
+      "POST /v1/projects/{idOrName}/avatar",
+      "POST /v1/projects/{idOrName}/daemons/{daemonName}/instances/{instanceId}/restart",
+      "POST /v1/projects/{idOrName}/domains/{domain}/move",
+      "POST /v1/projects/{idOrName}/members",
+      "POST /v1/projects/{idOrName}/rolling-release/approve-stage",
+      "POST /v1/projects/{idOrName}/rolling-release/complete",
+      "POST /v1/projects/{idOrName}/rolling-release/start",
+      "POST /v1/projects/{idOrName}/token",
+      "POST /v1/projects/{projectId}/pause",
+      "POST /v1/projects/{projectId}/rollback/{deploymentId}",
+      "POST /v1/projects/{projectId}/routes",
+      "POST /v1/projects/{projectId}/routes/generate",
+      "POST /v1/projects/{projectId}/routes/versions",
+      "POST /v1/projects/{projectId}/unpause",
+      "POST /v1/registrar/domains/availability",
+      "POST /v1/registrar/domains/buy",
+      "POST /v1/registrar/domains/price",
+      "POST /v1/registrar/domains/search",
+      "POST /v1/registrar/domains/{domain}/buy",
+      "POST /v1/registrar/domains/{domain}/renew",
+      "POST /v1/registrar/domains/{domain}/transfer",
+      "POST /v1/security/attack-mode",
+      "POST /v1/security/firewall/bypass",
+      "POST /v1/security/firewall/bypass/rules",
+      "POST /v1/security/firewall/config/generate-rule",
+      "POST /v1/security/firewall/config/{configVersion}/activate",
+      "POST /v1/storage/stores/integration/direct",
+      "POST /v1/teams",
+      "POST /v1/teams/{teamId}/dsync-roles",
+      "POST /v1/teams/{teamId}/members/teams/join",
+      "POST /v1/teams/{teamId}/request",
+      "POST /v1/vcr/repository",
+      "POST /v1/vcr/repository/{idOrName}/permissions",
+      "POST /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/retry",
+      "POST /v1/vercel-ci/task-analyses",
+      "POST /v1/vercel-ci/task-analyses/{analysisId}/pull-request",
+      "POST /v1/webhooks",
+      "POST /v10/projects/{idOrName}/domains",
+      "POST /v10/projects/{idOrName}/env",
+      "POST /v10/projects/{projectId}/promote/{deploymentId}",
+      "POST /v11/projects",
+      "POST /v13/deployments",
+      "POST /v2/deployments/{deploymentId}/check-runs",
+      "POST /v2/deployments/{id}/aliases",
+      "POST /v2/domains/{domain}/records",
+      "POST /v2/files",
+      "POST /v2/integrations/log-drains",
+      "POST /v2/observability/query",
+      "POST /v2/projects/{projectIdOrName}/checks",
+      "POST /v2/sandboxes",
+      "POST /v2/sandboxes/drives/{name}",
+      "POST /v2/sandboxes/drives/{name}/fork",
+      "POST /v2/sandboxes/sessions/{sessionId}/cmd",
+      "POST /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/kill",
+      "POST /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/stdin",
+      "POST /v2/sandboxes/sessions/{sessionId}/extend-timeout",
+      "POST /v2/sandboxes/sessions/{sessionId}/fs/mkdir",
+      "POST /v2/sandboxes/sessions/{sessionId}/fs/read",
+      "POST /v2/sandboxes/sessions/{sessionId}/fs/write",
+      "POST /v2/sandboxes/sessions/{sessionId}/network-policy",
+      "POST /v2/sandboxes/sessions/{sessionId}/snapshot",
+      "POST /v2/sandboxes/sessions/{sessionId}/stop",
+      "POST /v2/sandboxes/{name}/fork",
+      "POST /v2/teams/{teamId}/members",
+      "POST /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/",
+      "POST /v3/sandboxes",
+      "POST /v3/sandboxes/sessions/{sessionId}/snapshot",
+      "POST /v3/sandboxes/{name}/fork",
+      "POST /v3/user/tokens",
+      "POST /v4/sandboxes",
+      "POST /v7/domains",
+      "POST /v8/artifacts",
+      "POST /v8/artifacts/events",
+      "POST /v8/certs",
+      "POST /v9/domains/{domain}/claim",
+      "POST /v9/projects/{idOrName}/custom-environments",
+      "POST /v9/projects/{idOrName}/domains/{domain}/verify",
+      "POST /web/insights/toggle",
+      "PUT /ai-gateway/budgets",
+      "PUT /ai-gateway/budgets/defaults",
+      "PUT /domains/{domain}/records",
+      "PUT /projects/transfer-request/{code}",
+      "PUT /v1/bulk-redirects",
+      "PUT /v1/global-config/{edgeConfigId}",
+      "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+      "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+      "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/secrets",
+      "PUT /v1/observability/manage/configuration/projects/{projectIdOrName}",
+      "PUT /v1/projects/{idOrName}/daemons/{daemonName}/instances",
+      "PUT /v1/projects/{projectIdOrName}/feature-flags/flags",
+      "PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys",
+      "PUT /v1/projects/{projectIdOrName}/feature-flags/segments",
+      "PUT /v1/projects/{projectId}/routes",
+      "PUT /v1/security/firewall/config",
+      "PUT /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+      "PUT /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+      "PUT /v8/artifacts/{hash}",
+      "PUT /v8/certs"
+    ],
+    "evidence": {
+      "openapi.json": "sha256:076a955823818ca21000469e1826f80fd022335c831d8a3049b5e1276baa046c",
+      "value-safety.json": "sha256:7b3c4a9eb924a02c40d1ab2629f42b488106da9fe0ad3453d6ed9985d12bdc9e"
+    }
+  },
   "checks": [
     {
       "type": "endpoints",
@@ -9,64 +479,2782 @@
       },
       "endpoints": [
         {
-          "method": "GET",
-          "path": "/v2/teams",
+          "operation": "PUT /ai-gateway/budgets",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/upsert-ai-gateway-budget",
           "specRevision": "0.0.1",
-          "contract": "sha256:6179e51e4282c81b7b8a7fef94e6b51130b529df3161ad3442d6d912cf3eec93"
+          "contract": "sha256:a78a144217381ab4f188ed40112cb27f89962ccc385911c2a2b3f65f64a12d65"
         },
         {
-          "method": "GET",
-          "path": "/v2/user",
+          "operation": "DELETE /ai-gateway/budgets",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/archive-ai-gateway-budget",
           "specRevision": "0.0.1",
-          "contract": "sha256:9b64f0ad27a507e39849355078cae0c48e6cf5ccfe77570fbd6275f86789c493"
+          "contract": "sha256:34c4886edae41ab8fab9661057ba5ba07866129fce2a084cda6b2f228680f023"
         },
         {
-          "method": "GET",
-          "path": "/v3/deployments/{idOrUrl}/events",
+          "operation": "PUT /ai-gateway/budgets/defaults",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/upsert-ai-gateway-budget-default",
           "specRevision": "0.0.1",
-          "contract": "sha256:fbeedd856cfdb853fdcd969ce973c7a899f064d59625dfba9e19ba4ac4eabf03"
+          "contract": "sha256:d02eada90e6b3b997b7a196b8cb8c5d9fda9914aace3c8a8a955bc9338d3d25a"
         },
         {
-          "method": "GET",
-          "path": "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",
+          "operation": "DELETE /ai-gateway/budgets/defaults",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/archive-ai-gateway-budget-default",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5a84b61355a679113205b81ae1a05bb24ab750ec9da1c4a931471053a865fcac"
+        },
+        {
+          "operation": "GET /ai-gateway/budgets/defaults/list",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/list-ai-gateway-budget-defaults",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1ce473f2df01b2b4ec7bce85d12b5ece1b8495c54ba0d8a81a4a6d361396f6f5"
+        },
+        {
+          "operation": "GET /ai-gateway/budgets/list",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/list-ai-gateway-budgets",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1a08ccde8560a21972c5627adbe3d08c44be6de19685cccd88f502f33aff791d"
+        },
+        {
+          "operation": "GET /ai-gateway/rules",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/list-rules",
+          "specRevision": "0.0.1",
+          "contract": "sha256:176b1f74ae54e14beb43cc544dd2db7521f54e31123323772935b33312506185"
+        },
+        {
+          "operation": "POST /ai-gateway/rules",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/create-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3fdccc9427e7a5f1593663c7070cdb2267ebabaf01fbc2080dcefab1d54cc1e9"
+        },
+        {
+          "operation": "PATCH /ai-gateway/rules",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/update-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:db9b5db6543f23f4c0771944152e2e4322359a600a4279b0ab0b8d02b8a96ba5"
+        },
+        {
+          "operation": "DELETE /ai-gateway/rules",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/delete-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:391f5d7ac0fe8871d706f5ac491bbbf9dd6ff2ae3bdc8041a9b9759994ad83ed"
+        },
+        {
+          "operation": "GET /ai-gateway/virtual-model-configs",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/get-virtual-model-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b453e3fc5c7592d66987bc7296cc031ffa4b7e6cceceeeebe6efd4d48481a753"
+        },
+        {
+          "operation": "POST /ai-gateway/virtual-model-configs",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/create-virtual-model-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ce002da0a076d712d77f838cc220ba2ca00d0db6c2efc61de512557f9589c7e3"
+        },
+        {
+          "operation": "PATCH /ai-gateway/virtual-model-configs",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/update-virtual-model-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:76c45982d452585c00656f45b6ac293d72e5a89cec3e78c89221d69982624ab8"
+        },
+        {
+          "operation": "DELETE /ai-gateway/virtual-model-configs",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/delete-virtual-model-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c91d2f0380488083440d098af95141c4c9dfe7c047304838c8342e83f4e3a256"
+        },
+        {
+          "operation": "GET /ai-gateway/virtual-model-configs/list",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/list-virtual-model-configs",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0e681664cceaed8451e4fff00f03287034e32a15541916e461f9ad19c230ec0d"
+        },
+        {
+          "operation": "GET /ai-gateway/virtual-model-configs/{vmcSlug}",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/get-virtual-model-config-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ec7225260c136d53070e8755ba473389b4c68ce9a4a8ef8dd99e7a5192f474f8"
+        },
+        {
+          "operation": "PATCH /ai-gateway/virtual-model-configs/{vmcSlug}",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/update-virtual-model-config-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:329b2937e7d4abb251137fcb0afb9e2eb9a1c5c2cc79a6c5b31395fe831acbf3"
+        },
+        {
+          "operation": "DELETE /ai-gateway/virtual-model-configs/{vmcSlug}",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/delete-virtual-model-config-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7bc2b973a140ee3bc8ce252b92ee1677949988d962539587df165443975d3382"
+        },
+        {
+          "operation": "PATCH /aliases/{id}/protection-bypass",
+          "page": "https://vercel.com/docs/rest-api/aliases/update-the-protection-bypass-for-a-url",
+          "specRevision": "0.0.1",
+          "contract": "sha256:949f706df3b51ad8056314f28086169a298e1ecd0684c9528b76a0342f9ca776"
+        },
+        {
+          "operation": "POST /api-keys",
+          "page": "https://vercel.com/docs/rest-api/untagged/createapikeys",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8c49384eb32d02b94ec7f13832456d413f845341d9cd9af902286f57033b2e40"
+        },
+        {
+          "operation": "GET /domains/records/{recordId}",
+          "page": "https://vercel.com/docs/rest-api/untagged/getdomainsrecordsbyrecordid",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9a39887f3722475e4bdfcbd672157d054cb4380fd0e13487ee549319c310d5b3"
+        },
+        {
+          "operation": "PUT /domains/{domain}/records",
+          "page": "https://vercel.com/docs/rest-api/untagged/replacedomainsbydomainrecords",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0bb35e98ba6624bdf0192bfd6ba6e87b575d57e7b69bcc8ddec2d40e0b09b59c"
+        },
+        {
+          "operation": "PUT /projects/transfer-request/{code}",
+          "page": "https://vercel.com/docs/rest-api/projects/accept-project-transfer-request",
+          "specRevision": "0.0.1",
+          "contract": "sha256:24e16d8344f075497599594b20eddefddc317fa5590f66c13ab03d681a10f0e9"
+        },
+        {
+          "operation": "POST /projects/{idOrName}/transfer-request",
+          "page": "https://vercel.com/docs/rest-api/projects/create-project-transfer-request",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e3e95cee24411054925fc34bc008c96be742096523356b02b1585d17b733f955"
+        },
+        {
+          "operation": "POST /speed-insights/toggle",
+          "page": "https://vercel.com/docs/rest-api/untagged/createspeedinsightstoggle",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2fd6937093b004748f0ed1ab5920dbc86103e0cef600210454da5c1c62d2c3c9"
+        },
+        {
+          "operation": "POST /storage/stores/blob",
+          "page": "https://vercel.com/docs/rest-api/storage/create-a-blob-store",
+          "specRevision": "0.0.1",
+          "contract": "sha256:271a286732ca0f90670129405c2f6a849d0873fa7bb3207bcb8b74df220392b4"
+        },
+        {
+          "operation": "DELETE /storage/stores/blob/{id}",
+          "page": "https://vercel.com/docs/rest-api/storage/delete-a-blob-store",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b0de9186577b386c2a682756bab5641e8c919aa63117056e22b7f1d1d17bcadf"
+        },
+        {
+          "operation": "GET /storage/stores/{id}",
+          "page": "https://vercel.com/docs/rest-api/storage/get-a-store",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0fe0f68efa05fe59c7c5f3e0ae710eed346c476c37de9ec4764f8916b2528058"
+        },
+        {
+          "operation": "GET /v1/access-groups",
+          "page": "https://vercel.com/docs/rest-api/access-groups/list-access-groups-for-a-team-project-or-member",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bd5da2a2eec9b26ac9cc7cfde0fe771516b616da7cd04918993c69d5b54ce7ff"
+        },
+        {
+          "operation": "POST /v1/access-groups",
+          "page": "https://vercel.com/docs/rest-api/access-groups/creates-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:11d99a046938a7ac383d867207e73e410562dac4daff162ff86767dd72f4b12f"
+        },
+        {
+          "operation": "POST /v1/access-groups/{accessGroupIdOrName}/projects",
+          "page": "https://vercel.com/docs/rest-api/access-groups/create-an-access-group-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:56942009ebb1999a4fc82a233d384a8684054daffb1a070dd37fc9e55ef6a586"
+        },
+        {
+          "operation": "GET /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/reads-an-access-group-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7435b90b74348ee93458935fc8804749a768b5ae0724f54573f5dffc95679d08"
+        },
+        {
+          "operation": "PATCH /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/update-an-access-group-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8f6627885d4091dc1b2502b88c1307f14a78047b5caa2674cdb86fbca8d41069"
+        },
+        {
+          "operation": "DELETE /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/delete-an-access-group-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:719cc5e5d8e041ccdb2ed25d432e9c6764ee121aaf6942f1a3356349758aa452"
+        },
+        {
+          "operation": "GET /v1/access-groups/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/reads-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bc125f95d73a6a7939b6c3a9b4f5e0366ccfddac3410773f4b7629d92cdaf9f1"
+        },
+        {
+          "operation": "POST /v1/access-groups/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/update-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f19f4df5fb1f2be304ee44c2c0c950258a40c2e9afbb997aeebd6401990d1730"
+        },
+        {
+          "operation": "DELETE /v1/access-groups/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/access-groups/deletes-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e5ca7722f48d396ff604dc8a62f8da12911b6ca61aefb82ac4a288bba0f21e1d"
+        },
+        {
+          "operation": "GET /v1/access-groups/{idOrName}/members",
+          "page": "https://vercel.com/docs/rest-api/access-groups/list-members-of-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:22ab7a9e829424f98c1f0f503d86af5a2fc2f90e0009d1cd07e35ded70f91fc6"
+        },
+        {
+          "operation": "GET /v1/access-groups/{idOrName}/projects",
+          "page": "https://vercel.com/docs/rest-api/access-groups/list-projects-of-an-access-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:26876b1432df390688df60457e76b99e80a11e5dfb466d3b66f72fa66a52e5a3"
+        },
+        {
+          "operation": "GET /v1/ai-gateway/routers",
+          "page": "https://vercel.com/docs/rest-api/ai-gateway/list-ai-gateway-routers",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3df3b78d1c2cd0d521e9aced9f65d98dd2289a60ea19f4a4404065323542158a"
+        },
+        {
+          "operation": "POST /v1/billing/buy",
+          "page": "https://vercel.com/docs/rest-api/billing/purchase-credits",
+          "specRevision": "0.0.1",
+          "contract": "sha256:553d106fd89530acd4c07e0003dac1252df39899deb7fb7762d04439a556c002"
+        },
+        {
+          "operation": "GET /v1/billing/charges",
+          "page": "https://vercel.com/docs/rest-api/billing/list-focus-billing-charges",
+          "specRevision": "0.0.1",
+          "contract": "sha256:103e6cfb61322414a305293fba5d857d5606196ac4552a76807006da0dfa76ec"
+        },
+        {
+          "operation": "GET /v1/billing/contract-commitments",
+          "page": "https://vercel.com/docs/rest-api/billing/list-focus-contract-commitments",
+          "specRevision": "0.0.1",
+          "contract": "sha256:11caf0811d0ce4a1f187174c96f61a215dc20f4d4e915f3108648f96d7108764"
+        },
+        {
+          "operation": "GET /v1/bulk-redirects",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/gets-project-level-redirects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b88790d631ee14ab7bd315a8da235647da98f1908f6066162db8a076ee9eaa1b"
+        },
+        {
+          "operation": "PUT /v1/bulk-redirects",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/stages-new-redirects-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:32240415385b611253825a6609087c7a3d33629ea74e2f0190bcb63d13d8cdfa"
+        },
+        {
+          "operation": "PATCH /v1/bulk-redirects",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/edit-a-project-level-redirect",
+          "specRevision": "0.0.1",
+          "contract": "sha256:45dd0546595d813fb20c2664048a677bfcc0ad0aac0a5112471268a97de76344"
+        },
+        {
+          "operation": "DELETE /v1/bulk-redirects",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/delete-project-level-redirects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:86c2f8e052888fe08b5683bb542aadb0b594117d969aa97668faf7a4acf55d7b"
+        },
+        {
+          "operation": "POST /v1/bulk-redirects/restore",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/restore-staged-project-level-redirects-to-their-production-version",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0189a6fd1240cc898b5cebd33925d2e858dc670d9365d4d14e85a4f2e6e0c79d"
+        },
+        {
+          "operation": "GET /v1/bulk-redirects/versions",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/get-the-version-history-for-a-project-s-redirects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:24f2283282d88fe78107537ad9ad785cef6d6b1532498be6ad117b7b49146f22"
+        },
+        {
+          "operation": "POST /v1/bulk-redirects/versions",
+          "page": "https://vercel.com/docs/rest-api/bulk-redirects/promote-a-staging-version-to-production-or-restore-a-previous-production-version",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f67251dd6bbb6cac0c22ba43925a81b0966adead24e6147c12a30ead3a99f8e6"
+        },
+        {
+          "operation": "POST /v1/connect/authorize/{connector}",
+          "page": "https://vercel.com/docs/rest-api/connect/create-a-connect-authorization-request",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c9631a59192a8dc97836c80bb68de687b65ea91f2b8fba6aee9079f89b50668e"
+        },
+        {
+          "operation": "POST /v1/connect/connectors",
+          "page": "https://vercel.com/docs/rest-api/connect/create-a-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c242a3912ce8d102f771683d20c809b7405c47b3b4d462b27509ab23b77a41e2"
+        },
+        {
+          "operation": "GET /v1/connect/connectors/{connector}",
+          "page": "https://vercel.com/docs/rest-api/connect/get-a-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fa4b0d74cdf543aeab21c1316defb4856ee9137db336b0778d04e0edb4a0d014"
+        },
+        {
+          "operation": "DELETE /v1/connect/connectors/{connector}",
+          "page": "https://vercel.com/docs/rest-api/connect/delete-a-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:00d93ead732b434c9fd0015346922c46d7c4e3774dc4bbd4a52c8cbe4f37b73d"
+        },
+        {
+          "operation": "POST /v1/connect/connectors/{connector}/managed/eject",
+          "page": "https://vercel.com/docs/rest-api/connect/eject-a-managed-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3514e8592b118ae7700d9fe2f256e2f2382e5fca9d8b0f3481adc78e66a7d401"
+        },
+        {
+          "operation": "GET /v1/connect/connectors/{connector}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/connect/get-a-connector-project-connection",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aa5741388a187e6c83782704ea64e3e7aa15ed9b27b671e181869e9a84befe61"
+        },
+        {
+          "operation": "POST /v1/connect/connectors/{connector}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/connect/create-or-update-a-connector-project-connection",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0887e9c167df3b3b80c424332cb0868d4c46b48631a16d2dd9ca3677c0934629"
+        },
+        {
+          "operation": "DELETE /v1/connect/connectors/{connector}/projects/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/connect/disconnect-a-connector-from-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cc8f65c771133946a61da113bdccce94287248306aa30f37ff7841ff4ab442ec"
+        },
+        {
+          "operation": "PATCH /v1/connect/connectors/{connector}/trigger-destinations",
+          "page": "https://vercel.com/docs/rest-api/connect/update-connector-trigger-destinations",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bf2a36b1be896f48242f11f87123ad265981377881a57d8074056ce56ad6c08f"
+        },
+        {
+          "operation": "GET /v1/connect/networks",
+          "page": "https://vercel.com/docs/rest-api/networking/list-secure-compute-networks",
+          "specRevision": "0.0.1",
+          "contract": "sha256:57c1e914d0cccb667fb80bd931a5e6da500dfb3a2987a9fcad6ffaba1aa7e374"
+        },
+        {
+          "operation": "POST /v1/connect/networks",
+          "page": "https://vercel.com/docs/rest-api/networking/create-a-secure-compute-network",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9bcff690714006c58cc485706b719e93980df5ce05de3d6e0d16bc4fa34facc5"
+        },
+        {
+          "operation": "GET /v1/connect/networks/{networkId}",
+          "page": "https://vercel.com/docs/rest-api/networking/read-a-secure-compute-network",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e50c717aeb20a67e9b8fb0b4f851b2c4fe301e10e0e55aef7fb9bba5a8c910d9"
+        },
+        {
+          "operation": "PATCH /v1/connect/networks/{networkId}",
+          "page": "https://vercel.com/docs/rest-api/networking/update-a-secure-compute-network",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1e232bd45e55125bbe007bd8da528ce673cc68b5fa123dc8e00f7ee0df75b110"
+        },
+        {
+          "operation": "DELETE /v1/connect/networks/{networkId}",
+          "page": "https://vercel.com/docs/rest-api/networking/delete-a-secure-compute-network",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ebdf76e550f4ddfad52c0a1e8cec0a7d0315fd4b8b1a7a9b9632645522128e14"
+        },
+        {
+          "operation": "POST /v1/connect/token/{connector}",
+          "page": "https://vercel.com/docs/rest-api/connect/get-a-connect-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aa9482eaf7c9b430b8659933781a38346281302b67d71f3c46624508fed49cf9"
+        },
+        {
+          "operation": "GET /v1/deployments/{deploymentId}/feature-flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/retrieve-the-feature-flags-of-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3d7c0fb243882783521d79c9fbda79a120d9f3df36c564e66dcae04942a11b11"
+        },
+        {
+          "operation": "PATCH /v1/deployments/{deploymentId}/integrations/{integrationConfigurationId}/resources/{resourceId}/actions/{action}",
+          "page": "https://vercel.com/docs/rest-api/deployments/update-deployment-integration-action",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8e9fa68e316f07341d9c68a6b0d0702ac99ae6bcd7a81adcb4f06ec5fd1d0b19"
+        },
+        {
+          "operation": "PATCH /v1/domains/records/{recordId}",
+          "page": "https://vercel.com/docs/rest-api/dns/update-an-existing-dns-record",
+          "specRevision": "0.0.1",
+          "contract": "sha256:879c9f08123e449235745129c439759cac8c9be007625486371671979120db11"
+        },
+        {
+          "operation": "GET /v1/domains/{domain}/project-domains",
+          "page": "https://vercel.com/docs/rest-api/domains/list-project-domains-by-apex-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e753d5b058e2fd7e416d82a48da04e9c070508594606c83ceebdb3bbb00003e3"
+        },
+        {
+          "operation": "GET /v1/drains",
+          "page": "https://vercel.com/docs/rest-api/drains/retrieve-a-list-of-all-drains",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9e2adf6e9f36290e81d9ef1df954eb067308819ccfca7c846ebfdfe26f205858"
+        },
+        {
+          "operation": "POST /v1/drains",
+          "page": "https://vercel.com/docs/rest-api/drains/create-a-new-drain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1f138a709332e75a982f5a460ba2a02c487d69675d4fd9856a322ebb7fc31de4"
+        },
+        {
+          "operation": "POST /v1/drains/test",
+          "page": "https://vercel.com/docs/rest-api/drains/validate-drain-delivery-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:496909ca548ee5f03b9227220f408134ce815d493aec6ef95489dc11bb86d0a4"
+        },
+        {
+          "operation": "GET /v1/drains/{id}",
+          "page": "https://vercel.com/docs/rest-api/drains/find-a-drain-by-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f18b12735b689a41e19a48a966384e9547f00c29918a78512d9641106cede8db"
+        },
+        {
+          "operation": "PATCH /v1/drains/{id}",
+          "page": "https://vercel.com/docs/rest-api/drains/update-an-existing-drain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:11f97f20e5a67235ef30fd713ce5a927106116895a13cc862dcb6fd3e289a587"
+        },
+        {
+          "operation": "DELETE /v1/drains/{id}",
+          "page": "https://vercel.com/docs/rest-api/drains/delete-a-drain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
+        },
+        {
+          "operation": "POST /v1/edge-cache/dangerously-delete-by-src-images",
+          "page": "https://vercel.com/docs/rest-api/edge-cache/dangerously-delete-by-source-image",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c5316087a915793bbb881f3ab6dcd0e654743722e3201f9786634bfc59682f3e"
+        },
+        {
+          "operation": "POST /v1/edge-cache/dangerously-delete-by-tags",
+          "page": "https://vercel.com/docs/rest-api/edge-cache/dangerously-delete-by-tag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5d4e0951afeb28eabd33b425edf99e35812e68cfcf87fc33cea8ca0aa8202d49"
+        },
+        {
+          "operation": "POST /v1/edge-cache/invalidate-by-src-images",
+          "page": "https://vercel.com/docs/rest-api/edge-cache/invalidate-by-source-image",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2d73c8506f09c4d890542268717d0d901dff2b31a084fa38712851f700033228"
+        },
+        {
+          "operation": "POST /v1/edge-cache/invalidate-by-tags",
+          "page": "https://vercel.com/docs/rest-api/edge-cache/invalidate-by-tag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:200abcf22eb8f99fbd73a3b387a96f502a5d238d60b73762b3573df98644f9b6"
+        },
+        {
+          "operation": "GET /v1/env",
+          "page": "https://vercel.com/docs/rest-api/environment/lists-all-shared-environment-variables-for-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dfdf8166fb07d602a5b5212b15bab1c1201edfa98043f2e6bcc7c6476abb95fe"
+        },
+        {
+          "operation": "POST /v1/env",
+          "page": "https://vercel.com/docs/rest-api/environment/create-one-or-more-shared-environment-variables",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e2f3971dce295bfe43cbc64dacb82afb9f4c01a2909f5e0ca5563764ed7b09db"
+        },
+        {
+          "operation": "PATCH /v1/env",
+          "page": "https://vercel.com/docs/rest-api/environment/updates-one-or-more-shared-environment-variables",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a716f0929129bc4da176d2e0d10ba18e5ae380a153325e34a37b8fa787f21347"
+        },
+        {
+          "operation": "DELETE /v1/env",
+          "page": "https://vercel.com/docs/rest-api/environment/delete-one-or-more-env-var",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cc3b02ca0c223f87714f2682ade3213055879a9775efc8dcadd05c3549d70bf4"
+        },
+        {
+          "operation": "GET /v1/env/{id}",
+          "page": "https://vercel.com/docs/rest-api/environment/retrieve-the-decrypted-value-of-a-shared-environment-variable-by-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8d92d55abcf40f3de9d4fe94fd742d8234c45219aca3a6462971237fbe09bd54"
+        },
+        {
+          "operation": "PATCH /v1/env/{id}/unlink/{projectId}",
+          "page": "https://vercel.com/docs/rest-api/environment/disconnects-a-shared-environment-variable-for-a-given-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5eb88a42bd8785e1d7ce16b7ba973f891b15a5779b31014d0cd1b36c548024ed"
+        },
+        {
+          "operation": "GET /v1/events/types",
+          "page": "https://vercel.com/docs/rest-api/user/list-event-types",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9017d8fb6ca9ecf3c9393967fa472700f3b57be5c13c30aae70cbc5be8c84f62"
+        },
+        {
+          "operation": "GET /v1/global-config",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-configs",
+          "specRevision": "0.0.1",
+          "contract": "sha256:333027fbb3ed45ecc23dcd3e0fd90e617f7a69c2825628fa2e01291a9ca79c1b"
+        },
+        {
+          "operation": "POST /v1/global-config",
+          "page": "https://vercel.com/docs/rest-api/global-config/create-a-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:99085f0c2c4fde38669d0ef6c58eb415c6bd85a5e53d4898ef05b604a6951d57"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-a-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e262c4c24accb520e9be1336ae07c319fad2a972fdc037d071e9cc366881776d"
+        },
+        {
+          "operation": "PUT /v1/global-config/{edgeConfigId}",
+          "page": "https://vercel.com/docs/rest-api/global-config/update-a-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dd0af182444c31a2554c037ec10f2ff85411d16fff9a0c81b88750d39a271d48"
+        },
+        {
+          "operation": "DELETE /v1/global-config/{edgeConfigId}",
+          "page": "https://vercel.com/docs/rest-api/global-config/delete-a-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:988a5e5951bc9caa8a7c8b0f79e2042b397e18fe8eb993de9ea8783db27794f9"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/backups",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-config-backups",
+          "specRevision": "0.0.1",
+          "contract": "sha256:57b1575e7d17e0735fe67ce808552848b8d3ff6169a0cda006ed17fafa5e7088"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-config-backup",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d77430a1387cc86515bffdd9d2ee4a39eed897804e988163cb49712f94593df5"
+        },
+        {
+          "operation": "POST /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}/restore",
+          "page": "https://vercel.com/docs/rest-api/global-config/restore-global-config-backup",
+          "specRevision": "0.0.1",
+          "contract": "sha256:02ef78967dc06743bcaa8f6e6ad8168f9599079f8e3194694208fc440b1fa7ff"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/item/{edgeConfigItemKey}",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-a-global-config-item",
+          "specRevision": "0.0.1",
+          "contract": "sha256:01ccf975579679fe364f6c1dae4c9ed7ef8ca52ecf2ad745d5a86eab0a041ec2"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/items",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-config-items",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a4e5ccac441961bb1c8dc4b6e2df0f6ec8353b357cff6a9d31a9d742f5ec1b09"
+        },
+        {
+          "operation": "PATCH /v1/global-config/{edgeConfigId}/items",
+          "page": "https://vercel.com/docs/rest-api/global-config/update-global-config-items-in-batch",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1985ffd53edb66900d89b4d2003bacb70b6da2739e372a3a114d83b709ca2435"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/schema",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-config-schema",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f825947baf39eb60f802b06fe8161ca036afc1721a0d7b414bada4401339f412"
+        },
+        {
+          "operation": "POST /v1/global-config/{edgeConfigId}/schema",
+          "page": "https://vercel.com/docs/rest-api/global-config/update-global-config-schema",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ee24f8854915fb4e8579c818e213576cc5be875572989b6724915bee71fea32d"
+        },
+        {
+          "operation": "DELETE /v1/global-config/{edgeConfigId}/schema",
+          "page": "https://vercel.com/docs/rest-api/global-config/delete-a-global-config-s-schema",
+          "specRevision": "0.0.1",
+          "contract": "sha256:988a5e5951bc9caa8a7c8b0f79e2042b397e18fe8eb993de9ea8783db27794f9"
+        },
+        {
+          "operation": "POST /v1/global-config/{edgeConfigId}/token",
+          "page": "https://vercel.com/docs/rest-api/global-config/create-a-global-config-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cc818f9e0b31293de4f8b070736c1793e3381d022b986dbccb425b5b7fd10c84"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/token/{token}",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-global-config-token-meta-data",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d2e715886c9e4032d1a90ec2d70fec1d1cddaa4e617f2f2fea5eeee7ac613f56"
+        },
+        {
+          "operation": "GET /v1/global-config/{edgeConfigId}/tokens",
+          "page": "https://vercel.com/docs/rest-api/global-config/get-all-tokens-of-a-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:923265f3eb5dfdb55e3eb07ca5fecf602c60fd0a60452658bd3b0202d38cbbd7"
+        },
+        {
+          "operation": "DELETE /v1/global-config/{edgeConfigId}/tokens",
+          "page": "https://vercel.com/docs/rest-api/global-config/delete-one-or-more-global-config-tokens",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aa13986fc24515ecd2c5ec3afd6adc1ae8bf3ea73e6f1598544e15864e16a306"
+        },
+        {
+          "operation": "PATCH /v1/installations/{integrationConfigurationId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/update-installation",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9d709758c7c80badfe6d3546a5b4e40cd0ed0d402222142907e94aa012f01b33"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/account",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-account-information",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f43faa04bf0438e9343aa4c4d05ada1b1e096b35d7438e77821ffaabcb3e5e11"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/billing",
+          "page": "https://vercel.com/docs/rest-api/marketplace/submit-billing-data",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a93332a5c0d93f53c55bf80623fdf7b22b9e84ed76b8704158a1dc38657c8d3c"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/billing/balance",
+          "page": "https://vercel.com/docs/rest-api/marketplace/submit-prepayment-balances",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c43827cd39d734a6ede881ad9326d26359812cd57e621dbff81d1bd2171754a9"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/billing/finalize",
+          "page": "https://vercel.com/docs/rest-api/marketplace/finalize-installation",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cb9290f84eb24e2b6d60e1834deb447339af5ebcd925a0ee0e120459aeb222c3"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/billing/invoices",
+          "page": "https://vercel.com/docs/rest-api/marketplace/submit-invoice",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0126290468751f6522785d8ad10926cfd5591cfa4c13cd52bcb87e593fdc774d"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/billing/invoices/{invoiceId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-invoice",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0c2dcdc9a74425227a3e1fbef2d1fb5526f6f2a4e971e83ffa4074f85693f647"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/billing/invoices/{invoiceId}/actions",
+          "page": "https://vercel.com/docs/rest-api/marketplace/invoice-actions",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b1474e60cdf8892207aea4c9b1adcb618758029d948931e9424884dac47ed761"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/credentials/revoke",
+          "page": "https://vercel.com/docs/rest-api/marketplace/revoke-installation-credential",
+          "specRevision": "0.0.1",
+          "contract": "sha256:117f2634e94bd058e3f1df60e6ffc6fc5fe261990c90057cb717528928ec8f85"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/credentials/rotate",
+          "page": "https://vercel.com/docs/rest-api/marketplace/rotate-installation-credential",
+          "specRevision": "0.0.1",
+          "contract": "sha256:368b4303dccb34850c7b67c2375dc611bd3cda6adf9067b292927682a23fa2c7"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/events",
+          "page": "https://vercel.com/docs/rest-api/marketplace/create-event",
+          "specRevision": "0.0.1",
+          "contract": "sha256:811f36fbc9c21765219dd01e5c4cec4d7379e62670a025ca33ed771283b84d52"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/member/{memberId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-member-information",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ce34b0443784c5fa04e442d1e9252a9224eeb0e7b1d6b1297a00a400adacdd68"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/resources",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-integration-resources",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2039b06e0c3c32c5473cd6f67d126e7e1959454dc7fcfd2de372b91f9185ff71"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-integration-resource",
+          "specRevision": "0.0.1",
+          "contract": "sha256:248d9aced42a2d94031fe3a077454fc1a598b29ca51394afe9ac9bc0c2f65db3"
+        },
+        {
+          "operation": "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/import-resource",
+          "specRevision": "0.0.1",
+          "contract": "sha256:da0b98e305f6fdf273ff2454234d120c580d453496281fab6399c92ff749b26b"
+        },
+        {
+          "operation": "PATCH /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/update-resource",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2377c5d048d0e6119243c504d307831730c42f4229abc0240f12e00a4e629fbf"
+        },
+        {
+          "operation": "DELETE /v1/installations/{integrationConfigurationId}/resources/{resourceId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/delete-integration-resource",
+          "specRevision": "0.0.1",
+          "contract": "sha256:35b0402933176f8cfb6fb6de9dc0e3eb56f8f3cd2e5a0bd86157d5ef53b2ac90"
+        },
+        {
+          "operation": "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-the-data-of-a-user-provided-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d183e9ce77572a154c8ec97716012998e743fc71939106a0d5c205e89024b567"
+        },
+        {
+          "operation": "HEAD /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+          "page": "https://vercel.com/docs/rest-api/marketplace/get-the-data-of-a-user-provided-global-config-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d183e9ce77572a154c8ec97716012998e743fc71939106a0d5c205e89024b567"
+        },
+        {
+          "operation": "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config",
+          "page": "https://vercel.com/docs/rest-api/marketplace/push-data-into-a-user-provided-global-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:013fccbfed603d767aa21b0a644f6c4f82eea59825a3bdc82226300eab90cc59"
+        },
+        {
+          "operation": "POST /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items",
+          "page": "https://vercel.com/docs/rest-api/marketplace/create-one-or-multiple-experimentation-items",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b0269b88247428c0af01539cce49489dc699c54cc1ec48ed655144c2dc29f520"
+        },
+        {
+          "operation": "PATCH /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items/{itemId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/patch-an-existing-experimentation-item",
+          "specRevision": "0.0.1",
+          "contract": "sha256:04cbdd9e87adf48d7b48b74a0f0225af4f34144ec65e6e9f2974dc433fe377ff"
+        },
+        {
+          "operation": "DELETE /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/items/{itemId}",
+          "page": "https://vercel.com/docs/rest-api/marketplace/delete-an-existing-experimentation-item",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a54ccffebf6e1abb308f0506f2d75253f7c3d0d098c7f88927837fa30f1e6b51"
+        },
+        {
+          "operation": "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/secrets",
+          "page": "https://vercel.com/docs/rest-api/marketplace/update-resource-secrets",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ed4fc37fce6d941714247b530a827c00076be0f6d4b46da9adbb9d6d8bbed960"
+        },
+        {
+          "operation": "GET /v1/integrations/configuration/{id}",
+          "page": "https://vercel.com/docs/rest-api/integrations/retrieve-an-integration-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dad244cf90a682e344a1366a35b03c9c4231743b382034d37896747109cc64e5"
+        },
+        {
+          "operation": "DELETE /v1/integrations/configuration/{id}",
+          "page": "https://vercel.com/docs/rest-api/integrations/delete-an-integration-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
+        },
+        {
+          "operation": "GET /v1/integrations/configuration/{id}/products",
+          "page": "https://vercel.com/docs/rest-api/integrations/list-products-for-integration-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:67adaf74f3335f6b882d9b7510be034d076a23ab8ab814413b8e491935eef72d"
+        },
+        {
+          "operation": "GET /v1/integrations/configurations",
+          "page": "https://vercel.com/docs/rest-api/integrations/get-configurations-for-the-authenticated-user-or-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1642df6f04c3a839bc2c9d5c6b963844e4dc571e84293ab08accea6ee5655a34"
+        },
+        {
+          "operation": "GET /v1/integrations/git-namespaces",
+          "page": "https://vercel.com/docs/rest-api/integrations/list-git-namespaces-by-provider",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bc5cf2136d9f9317ee87cbab91a264cfca07802ce0555a7cd899b3b7a5e9efc0"
+        },
+        {
+          "operation": "POST /v1/integrations/installations/{integrationConfigurationId}/resources/{resourceId}/connections",
+          "page": "https://vercel.com/docs/rest-api/integrations/connect-integration-resource-to-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9510582f5991d9f747f8f80ee9b1bd54cfced0f8bbe61908cd22a8e833164900"
+        },
+        {
+          "operation": "GET /v1/integrations/integration/{integrationIdOrSlug}/products/{productIdOrSlug}/plans",
+          "page": "https://vercel.com/docs/rest-api/integrations/list-integration-billing-plans",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5a716c5d5e17d9679ecdb61609196f484ea5df69f7aaf2c94bcaab73834b9f40"
+        },
+        {
+          "operation": "DELETE /v1/integrations/log-drains/{id}",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
+        },
+        {
+          "operation": "GET /v1/integrations/search-repo",
+          "page": "https://vercel.com/docs/rest-api/integrations/list-git-repositories-linked-to-namespace-by-provider",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5c43674c6e7dd2e287a3d7cd03a923a03c8a023f17475d7d26e668fa6d5cef36"
+        },
+        {
+          "operation": "POST /v1/integrations/sso/token",
+          "page": "https://vercel.com/docs/rest-api/authentication/sso-token-exchange",
+          "specRevision": "0.0.1",
+          "contract": "sha256:883cf0a65c696005e6b3ee71770331685b89e469db16dbd4db512e5b3518b206"
+        },
+        {
+          "operation": "GET /v1/kms/issuers",
+          "page": "https://vercel.com/docs/rest-api/kms/list-issuers",
+          "specRevision": "0.0.1",
+          "contract": "sha256:934c80ac072fa15cab8a41f3a2fe4ef65b4a3fc3583ee236a1746cc0eee70029"
+        },
+        {
+          "operation": "POST /v1/kms/issuers",
+          "page": "https://vercel.com/docs/rest-api/kms/create-an-issuer",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8592ed4319e02fe5bfbe2e7de1e6879ab0ee6f677aa5531d8a0b9582cd842134"
+        },
+        {
+          "operation": "GET /v1/kms/issuers/{issuerId}",
+          "page": "https://vercel.com/docs/rest-api/kms/get-an-issuer",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fe84ae1b6cb9a2603d6080765cd035a9b8081ae07fcbc2655701eb6e4e8345c6"
+        },
+        {
+          "operation": "PATCH /v1/kms/issuers/{issuerId}",
+          "page": "https://vercel.com/docs/rest-api/kms/update-an-issuer",
+          "specRevision": "0.0.1",
+          "contract": "sha256:060853179b4c2537b58fbd244decbea0f0a0f88fd9d503cf5f422915973c154c"
+        },
+        {
+          "operation": "DELETE /v1/kms/issuers/{issuerId}",
+          "page": "https://vercel.com/docs/rest-api/kms/delete-an-issuer",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a707ce75f23063f9b3057d9a43bf560b197e6bc13ab4602757fe7e0d90395cf6"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/keys",
+          "page": "https://vercel.com/docs/rest-api/kms/create-a-signing-key",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c0417136739cd7aa2d6de4b7c9cbc3553f2a79e8601a57c5d9353f3d6f691d15"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/activate",
+          "page": "https://vercel.com/docs/rest-api/kms/activate-a-signing-key",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aca57598facd354cc27862f8d4f853284cac12702ebe69906e1f93c858387824"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/revoke",
+          "page": "https://vercel.com/docs/rest-api/kms/revoke-a-signing-key",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9e5b480979d01e42eb5b8ea0c763604d844a06336402f35bdc2bfc5c5eb22bd6"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/policies",
+          "page": "https://vercel.com/docs/rest-api/kms/create-an-issuer-policy",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2245121557174e454c475c78d2676f5f252cfe82a8b34ef76870d7aefdbbb813"
+        },
+        {
+          "operation": "PATCH /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}",
+          "page": "https://vercel.com/docs/rest-api/kms/update-an-issuer-policy",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a0b8a9d6ead963b6b055d31a5be3ad0c8219d5d2f5a0ed929c7f55b87d463981"
+        },
+        {
+          "operation": "DELETE /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}",
+          "page": "https://vercel.com/docs/rest-api/kms/delete-an-issuer-policy",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9794fd21c48a53ac95bc45ee461a3cc17617183627e2c4e20ca11bdfed63673c"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/sign/message",
+          "page": "https://vercel.com/docs/rest-api/kms/sign-a-message",
+          "specRevision": "0.0.1",
+          "contract": "sha256:67de0fef391bcbf723a8a5a5847e0cfa7d49db5e6bf836bcb15d32d9fedda5a4"
+        },
+        {
+          "operation": "POST /v1/kms/issuers/{issuerId}/sign/token",
+          "page": "https://vercel.com/docs/rest-api/kms/sign-a-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fe123ad8d0a50a5145bbcd31ce8c7bba51eadf5ba1cb4338b2e940e8072ec060"
+        },
+        {
+          "operation": "GET /v1/log-drains",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0709134d4b0498b791590be4a242f1b637b546f59f59178726c1ee716b06b711"
+        },
+        {
+          "operation": "POST /v1/log-drains",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2e7a0b8ee88b815c7b2e9909b9077237001f61197e47da017151ce05762ea435"
+        },
+        {
+          "operation": "GET /v1/log-drains/{id}",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9f56e6377a2548d52740baec4ccc530591c07d279a8f45bd0637c0ffd704cc24"
+        },
+        {
+          "operation": "DELETE /v1/log-drains/{id}",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
+        },
+        {
+          "operation": "POST /v1/microfrontends/group",
+          "page": "https://vercel.com/docs/rest-api/microfrontends/create-a-microfrontends-group-with-applications",
+          "specRevision": "0.0.1",
+          "contract": "sha256:21e11322fb6c329fffb4e7d0f75cd8c2eee63c2e0ca25fd8b29c9b4be3b49caa"
+        },
+        {
+          "operation": "GET /v1/microfrontends/groups",
+          "page": "https://vercel.com/docs/rest-api/microfrontends/list-microfrontends-groups",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7b164da250d1da15525417795bb251fc6bf0c80892de6e7d632a10bcbf5014b9"
+        },
+        {
+          "operation": "GET /v1/microfrontends/groups/{groupId}/projects",
+          "page": "https://vercel.com/docs/rest-api/microfrontends/list-projects-in-a-microfrontends-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:16242b7aa5dd2dbb2cd708ac2b5eb27dd936eb1eb7b51b950767ca6fe1c5926e"
+        },
+        {
+          "operation": "GET /v1/microfrontends/projects/{projectIdOrName}/production-mfe-config",
+          "page": "https://vercel.com/docs/rest-api/microfrontends/get-microfrontends-config-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0541c3c90f36f629420476b8457f5481382e992958ce71319aa9db793756fc58"
+        },
+        {
+          "operation": "GET /v1/microfrontends/{deploymentId}/config",
+          "page": "https://vercel.com/docs/rest-api/microfrontends/get-microfrontends-config-for-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d1202ada210a9eae76d83dc9d650f18e1b6cd9067d5d09e19b3c9629a6e8474d"
+        },
+        {
+          "operation": "GET /v1/networking/privatelink/endpoints",
+          "page": "https://vercel.com/docs/rest-api/networking/list-privatelink-endpoints",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d626cf02a7071537cd4d1250513b1ba28ed7db35f41395870117a369f651aa83"
+        },
+        {
+          "operation": "POST /v1/networking/privatelink/endpoints",
+          "page": "https://vercel.com/docs/rest-api/networking/create-a-privatelink-endpoint",
+          "specRevision": "0.0.1",
+          "contract": "sha256:29f38e03664dc49f3e91072e9112ce8b0c4228657a8c6e79ecef0006b32e857d"
+        },
+        {
+          "operation": "GET /v1/networking/privatelink/endpoints/{endpointId}",
+          "page": "https://vercel.com/docs/rest-api/networking/read-a-privatelink-endpoint",
+          "specRevision": "0.0.1",
+          "contract": "sha256:444acde9f6d537a09a05265695ff13d6a5930abc7957bdb5df0ef705d1160b82"
+        },
+        {
+          "operation": "PATCH /v1/networking/privatelink/endpoints/{endpointId}",
+          "page": "https://vercel.com/docs/rest-api/networking/update-a-privatelink-endpoint",
+          "specRevision": "0.0.1",
+          "contract": "sha256:979cf67cf47e5741a43b1866d1c72359b97fd5d7ad2ef78e09f279bba4debf37"
+        },
+        {
+          "operation": "DELETE /v1/networking/privatelink/endpoints/{endpointId}",
+          "page": "https://vercel.com/docs/rest-api/networking/delete-a-privatelink-endpoint",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c97325f3d6adf30ae6e84fe4a3dfecf3ed6f6c4d2cc5db57776e74ad78683826"
+        },
+        {
+          "operation": "GET /v1/observability/manage/configuration/projects",
+          "page": "https://vercel.com/docs/rest-api/observability/lists-disabled-observability-plus-projects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:938563e7277cca065b982bd8ebcc268515975f2b2036100b110885f0b801d47a"
+        },
+        {
+          "operation": "PUT /v1/observability/manage/configuration/projects/{projectIdOrName}",
+          "page": "https://vercel.com/docs/rest-api/observability/updates-a-disabled-observability-plus-project-setting",
+          "specRevision": "0.0.1",
+          "contract": "sha256:065f0b13eb567f51c6f5fa05b3a3a07a297aa1fedb7fe0a7ca9fadf97d07e2de"
+        },
+        {
+          "operation": "GET /v1/organizations",
+          "page": "https://vercel.com/docs/rest-api/organizations/list-organizations",
+          "specRevision": "0.0.1",
+          "contract": "sha256:03c766c43018065e1923ce35b10f2bbaaf3ba925f3ce3f48feff424d8a347227"
+        },
+        {
+          "operation": "POST /v1/organizations",
+          "page": "https://vercel.com/docs/rest-api/organizations/create-an-organization",
+          "specRevision": "0.0.1",
+          "contract": "sha256:87c17b77e8b0b9e186d5f94996f285fc1571605f075d192f34c81c692f46625e"
+        },
+        {
+          "operation": "GET /v1/organizations/{organizationId}",
+          "page": "https://vercel.com/docs/rest-api/organizations/get-an-organization",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0a9d4069e4f63e34410284c746b2d2c2329690b17a71e122daf24e5550066a1d"
+        },
+        {
+          "operation": "PATCH /v1/organizations/{organizationId}",
+          "page": "https://vercel.com/docs/rest-api/organizations/update-an-organization",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b18664d59268d1437cc6bf70fefc269978ac430e77ee45aaca5d8383a83fd1b8"
+        },
+        {
+          "operation": "GET /v1/organizations/{organizationId}/teams",
+          "page": "https://vercel.com/docs/rest-api/organizations/list-organization-teams",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5ea0b403e31f931aefc2eaa1c5e087ce2c4af90e1d265a358b31890bef9e81b9"
+        },
+        {
+          "operation": "POST /v1/organizations/{organizationId}/teams",
+          "page": "https://vercel.com/docs/rest-api/organizations/create-or-add-team-to-organization",
+          "specRevision": "0.0.1",
+          "contract": "sha256:87934a36caeb69e78dedd459f6c25d0f6f8cf3ea470f7625a6a7f53b81c369d0"
+        },
+        {
+          "operation": "DELETE /v1/organizations/{organizationId}/teams/{targetTeamId}",
+          "page": "https://vercel.com/docs/rest-api/organizations/delete-team-from-organization",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9dca134c429984cc85051ae24ce187e267a497595899fabf08813483e89e276d"
+        },
+        {
+          "operation": "GET /v1/projects/traces",
+          "page": "https://vercel.com/docs/rest-api/projects/get-a-project-trace-by-request-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7a7c2c297b721083f5bc5550ab9b4ec5aefd1a032e39054cf5cf6cea77b889b6"
+        },
+        {
+          "operation": "POST /v1/projects/traces/session",
+          "page": "https://vercel.com/docs/rest-api/projects/create-a-trace-session-token-for-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e977d6f108af7504ed76975c93f479f1601897cf1473a2aad815650c3e0099c0"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/avatar",
+          "page": "https://vercel.com/docs/rest-api/projects/upload-a-project-avatar",
+          "specRevision": "0.0.1",
+          "contract": "sha256:05707545f7919fb4585508bee4387cc20b0a4e3ad04ed3d32ac8006607c3a744"
+        },
+        {
+          "operation": "DELETE /v1/projects/{idOrName}/avatar",
+          "page": "https://vercel.com/docs/rest-api/projects/delete-a-project-avatar",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1cd321f4e26e757555dc4beea19e2f77140a27581b52da92a78926c9c8db33b4"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/daemons",
+          "page": "https://vercel.com/docs/rest-api/daemons/get-project-daemons",
+          "specRevision": "0.0.1",
+          "contract": "sha256:35e7ab0ffd475194596b7f5b605479ec765969d02b313d21afb3a4d87227c1c7"
+        },
+        {
+          "operation": "PUT /v1/projects/{idOrName}/daemons/{daemonName}/instances",
+          "page": "https://vercel.com/docs/rest-api/daemons/override-a-project-daemon-s-instance-counts",
+          "specRevision": "0.0.1",
+          "contract": "sha256:50043361213a4d8c6037d68ae263f3634a1c4f2d242824b9934d31428cc0e533"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/daemons/{daemonName}/instances/{instanceId}/restart",
+          "page": "https://vercel.com/docs/rest-api/daemons/force-restart-a-project-daemon-instance",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9729ce009769fac3a8604e94867abe72966ea28c57ab909671bb259d006da03b"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/domains/{domain}/move",
+          "page": "https://vercel.com/docs/rest-api/projects/move-a-project-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ed867e9ba12dabd23684574e0f5ad3db4e4055b67fbf1fd29fc593a33e46db13"
+        },
+        {
+          "operation": "DELETE /v1/projects/{idOrName}/env",
+          "page": "https://vercel.com/docs/rest-api/projects/batch-remove-environment-variables",
+          "specRevision": "0.0.1",
+          "contract": "sha256:24bfc48c440ca7cda695ffffd98c9f9a3da03bdac2717db983f83b2194e68e3c"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/env/{id}",
+          "page": "https://vercel.com/docs/rest-api/projects/retrieve-the-decrypted-value-of-an-environment-variable-of-a-project-by-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0c87f862f8ff64a3e805f03a22dc56377a6cc897d172eebfdd389357b7ffb039"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/members",
+          "page": "https://vercel.com/docs/rest-api/projectmembers/list-project-members",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3b47d70c6267f902a3c0ff8bab459655a7e13cd7c51710877972949a0206e495"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/members",
+          "page": "https://vercel.com/docs/rest-api/projectmembers/adds-a-new-member-to-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6939fdfceeb9393586717ced25c9574f8027d3a116131c407c387301868e4160"
+        },
+        {
+          "operation": "DELETE /v1/projects/{idOrName}/members/{uid}",
+          "page": "https://vercel.com/docs/rest-api/projectmembers/remove-a-project-member",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1dc488b5a4b25250ff21bf834a8273f5a75f9be1c22306b3cf882c5f655eb064"
+        },
+        {
+          "operation": "PATCH /v1/projects/{idOrName}/protection-bypass",
+          "page": "https://vercel.com/docs/rest-api/projects/update-protection-bypass-for-automation",
+          "specRevision": "0.0.1",
+          "contract": "sha256:172a4fde6668170425df28df53a8f95b1745bcf83ccef33e1d6d4ae2601a4a04"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/rolling-release",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/get-the-active-rolling-release-information-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f6faf2cdb2b3de46f825db7838da948adb4e5c8fac8522d38f636d039bc4d1dd"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/rolling-release/approve-stage",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/update-the-active-rolling-release-to-the-next-stage-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e6edfc6df234c85ef97267f4c83e9bccb5960a55de30428cd6dd9be0feeaeeb4"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/rolling-release/billing",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/get-rolling-release-billing-status",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c6c3e1a17cfb47c3d63e08927868dbfdbc234a548ef1ccce62088a88a6771c1c"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/rolling-release/complete",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/complete-the-rolling-release-for-the-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:123ed8f6e89924f22dff9872cd72d0e8b9b5c1d9ac1c7b4aca3bb8dd6c8dcdf0"
+        },
+        {
+          "operation": "GET /v1/projects/{idOrName}/rolling-release/config",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/get-rolling-release-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3f3d9b665951b4e103589fe69780ebdfc9fd0de62e6870a5f6b89941fefc27db"
+        },
+        {
+          "operation": "PATCH /v1/projects/{idOrName}/rolling-release/config",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/update-the-rolling-release-settings-for-the-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5a78193921d2cc1357bcc93d3f87a512512a9b64ba5066dfd573668774b657e5"
+        },
+        {
+          "operation": "DELETE /v1/projects/{idOrName}/rolling-release/config",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/delete-rolling-release-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2e2668df5ae53987bf558571ac5853cd97a954b8f0bd784445c33335559499bd"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/rolling-release/start",
+          "page": "https://vercel.com/docs/rest-api/rolling-release/start-a-rolling-release-for-the-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:123ed8f6e89924f22dff9872cd72d0e8b9b5c1d9ac1c7b4aca3bb8dd6c8dcdf0"
+        },
+        {
+          "operation": "PATCH /v1/projects/{idOrName}/shared-connect-links",
+          "page": "https://vercel.com/docs/rest-api/networking/configures-static-ips-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5641fcda75cc03c098ceb9b90b44375b57ba175f6518c155d8cacb2b4f1ccc06"
+        },
+        {
+          "operation": "POST /v1/projects/{idOrName}/token",
+          "page": "https://vercel.com/docs/rest-api/projects/generate-a-project-oidc-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:59bf1731021acb421e9d732e1e9d869b9c3191b2c287dabadf9ad75eac545d3c"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-flags-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e86f04d7be7ff498a23fdbc39c44a039ddf9b5b412c60a4c13db17fefeb60d19"
+        },
+        {
+          "operation": "PUT /v1/projects/{projectIdOrName}/feature-flags/flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/create-a-flag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:12b47d2429d749aadfa4f4e907ecc4138d0704010983e39ea116248d66e371bf"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/get-a-flag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:84a6085f680c4f270b73f950ddaac1dbb3041e2187b7682907c22dd362195afc"
+        },
+        {
+          "operation": "PATCH /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/update-a-flag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:73daea1f009e6447d92a0f9f92524f2dae0cbf3c8a30f003e08f272e25baf21d"
+        },
+        {
+          "operation": "DELETE /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/delete-a-flag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:27da82cd8b28467e85409087d60dba991c23ce068e55b64a1e004edeff4d774e"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}/versions",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-flag-versions",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dbb90d091defc41f5d8bed8597b77bdfbfb2275b757932e553f3c45438c2a8cf"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/get-all-sdk-keys",
+          "specRevision": "0.0.1",
+          "contract": "sha256:74fa306b152008094d44ae0670353f1bf0263c151b07daf99b84be735909f6e4"
+        },
+        {
+          "operation": "PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/create-an-sdk-key",
+          "specRevision": "0.0.1",
+          "contract": "sha256:58e525d84eb7dc3d1fb1c2933b36bffd6cfc88f132dd723e0eb58e8ad914342a"
+        },
+        {
+          "operation": "DELETE /v1/projects/{projectIdOrName}/feature-flags/sdk-keys/{hashKey}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/delete-an-sdk-key",
+          "specRevision": "0.0.1",
+          "contract": "sha256:78964de2748788f648fb2889e461872af7a1f89184edca478ea557d4251442ed"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/segments",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-segments",
+          "specRevision": "0.0.1",
+          "contract": "sha256:73366a99715da50e0eaf216c76e4ea188cdcc42016999afe9f4be6f9c31317dc"
+        },
+        {
+          "operation": "PUT /v1/projects/{projectIdOrName}/feature-flags/segments",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/create-a-segment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:635cf71a36064e7a4c9e1fec32f7a7e6ca69f226b74f2f1e84c04c49fc264e2d"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/get-a-segment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d39beb5a841a43f00dd9c829dc07d5f0ddcad0b58f3652bfbaf010de51faf583"
+        },
+        {
+          "operation": "PATCH /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/update-a-segment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1548b0d61f2d3169f9f899c35fb3542d7f561a4cf1c4495d5e96e7afdf05d359"
+        },
+        {
+          "operation": "DELETE /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/delete-a-segment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:21798da006167b017a4ef354a943e0b6fabb513ed82f5b88240c7f7d831f8162"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/settings",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/get-project-flag-settings",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d6c03138fadaa9af3b3011ec05f4c58f182709f824ea4d374134b3d137c42205"
+        },
+        {
+          "operation": "PATCH /v1/projects/{projectIdOrName}/feature-flags/settings",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/update-project-flag-settings",
+          "specRevision": "0.0.1",
+          "contract": "sha256:92d72c7ade3174c3e62e17a1497559d6aae791c6dd63bfbef8953395173d260d"
+        },
+        {
+          "operation": "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",
+          "page": "https://vercel.com/docs/rest-api/logs/get-logs-for-a-deployment",
           "specRevision": "0.0.1",
           "contract": "sha256:277157a1c7de04d7f8e062d90a6925bb83293cbd761babb9bdd498e614bc96cd"
         },
         {
-          "method": "GET",
-          "path": "/v10/projects/{idOrName}/env",
+          "operation": "PATCH /v1/projects/{projectId}/microfrontends",
+          "page": "https://vercel.com/docs/rest-api/projects/update-the-microfrontends-settings",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3c44fed93bee1daa044bccab17a305604eaca2b1b9680de68de3b97f5ba63542"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/pause",
+          "page": "https://vercel.com/docs/rest-api/projects/pause-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b7687b40c8d8ba5744d52b6001ad1932273d219ad151d7c0e7359c572a25e72c"
+        },
+        {
+          "operation": "GET /v1/projects/{projectId}/promote/aliases",
+          "page": "https://vercel.com/docs/rest-api/projects/gets-a-list-of-aliases-with-status-for-the-current-promote",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fbad4eb37b5e63a73e26a151482c4104000374b2895e577b2fc2363b57c28531"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/rollback/{deploymentId}",
+          "page": "https://vercel.com/docs/rest-api/projects/point-production-traffic-to-a-previous-production-deployment-by-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b0f835dfdb12ac4743a01e82ba40075ed75b17d3f1051d3f66dc42cfeacf8375"
+        },
+        {
+          "operation": "PATCH /v1/projects/{projectId}/rollback/{deploymentId}/update-description",
+          "page": "https://vercel.com/docs/rest-api/projects/updates-the-description-for-a-rollback",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ee8a8b2eaf38fb4561982079feba001570cfde7cc47c5f9adea468d7b9d40ae8"
+        },
+        {
+          "operation": "GET /v1/projects/{projectId}/routes",
+          "page": "https://vercel.com/docs/rest-api/project-routes/get-project-routing-rules",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ff4f2b4274eca4f06dc8c2744dce0c54ddf63d9a36911b164b2f9900467ea56a"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/routes",
+          "page": "https://vercel.com/docs/rest-api/project-routes/add-a-routing-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1dde60014f09c8f8eb7ed0f40a00478e206a6f9ce1f4bac294e3e1095c91c194"
+        },
+        {
+          "operation": "PUT /v1/projects/{projectId}/routes",
+          "page": "https://vercel.com/docs/rest-api/project-routes/stage-routing-rules",
+          "specRevision": "0.0.1",
+          "contract": "sha256:11ef013225b1d23f1db4268afb9193b3ef4cd48fbedb40ee0246491d1266b1e5"
+        },
+        {
+          "operation": "DELETE /v1/projects/{projectId}/routes",
+          "page": "https://vercel.com/docs/rest-api/project-routes/delete-routing-rules",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4ef29a1dc5d70f04153f10a446d242095ed546bd8c23110984873fea0df79e55"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/routes/generate",
+          "page": "https://vercel.com/docs/rest-api/project-routes/generate-a-routing-rule-from-natural-language",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7ad81756a44ea4ce98603e69960e5b805a3f165c63169bfa0ebadf7752be72f9"
+        },
+        {
+          "operation": "GET /v1/projects/{projectId}/routes/versions",
+          "page": "https://vercel.com/docs/rest-api/project-routes/get-routing-rule-version-history",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b8e4143c036c60061a20568fad0d86963e57061492fd8c621adc197683ec49b0"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/routes/versions",
+          "page": "https://vercel.com/docs/rest-api/project-routes/promote-restore-or-discard-a-routing-rule-version",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5bea6687d7d13c7b55277c4af61be275e7da6bc24b778673a2714fc1fb1aabc7"
+        },
+        {
+          "operation": "PATCH /v1/projects/{projectId}/routes/{routeId}",
+          "page": "https://vercel.com/docs/rest-api/project-routes/edit-a-routing-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d387181b1fa5aa05b58f99a59ec0d5749d446b3a29df338ae5869df054b1bdfc"
+        },
+        {
+          "operation": "POST /v1/projects/{projectId}/unpause",
+          "page": "https://vercel.com/docs/rest-api/projects/unpause-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b7687b40c8d8ba5744d52b6001ad1932273d219ad151d7c0e7359c572a25e72c"
+        },
+        {
+          "operation": "GET /v1/query/web-analytics/events/aggregate",
+          "page": "https://vercel.com/docs/rest-api/web-analytics/aggregates-custom-events",
+          "specRevision": "0.0.1",
+          "contract": "sha256:22bba7c56212e420b828ed888c770085a065ba76e808f266831ef1031ee6ba9d"
+        },
+        {
+          "operation": "GET /v1/query/web-analytics/events/count",
+          "page": "https://vercel.com/docs/rest-api/web-analytics/counts-custom-events",
+          "specRevision": "0.0.1",
+          "contract": "sha256:505ca87b925599ac614d6667809e27a170c8e477aa2bd72001c97cf06ff3ec95"
+        },
+        {
+          "operation": "GET /v1/query/web-analytics/visits/aggregate",
+          "page": "https://vercel.com/docs/rest-api/web-analytics/aggregates-page-views",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7344d30a2bd97290ce9711c2a040fca29742b6d53f1292106b2e71889fb439f8"
+        },
+        {
+          "operation": "GET /v1/query/web-analytics/visits/count",
+          "page": "https://vercel.com/docs/rest-api/web-analytics/counts-page-views",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d592b9cf067c94d30d13e23f39ac160a45dd7469e654c7bec5c06e58f475e7e6"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/availability",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-availability-for-multiple-domains",
+          "specRevision": "0.0.1",
+          "contract": "sha256:286d9dec0c2d230da6e8c76da7156f7b0455e17de81a13f2857668663406fa1a"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/buy",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/buy-multiple-domains",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f9f954db60884d9092a1725f271e777860ddd08eccc1f837ec743aef14abfb4d"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/price",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-price-data-for-multiple-domains",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1e77f27ce666fedcb41badf438dfbb11c4716c0f79669267370b71a8b72ed809"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/search",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-domain-availability-and-pricing",
+          "specRevision": "0.0.1",
+          "contract": "sha256:65d8727b28478bf357d8e39d8723a0dd1722db52afc659bc8fc01a3bbb55f567"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/auth-code",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-the-auth-code-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9e503fdc783e6bf8e044a753302fd7dcc877390c8be1cf2e445a52822189b014"
+        },
+        {
+          "operation": "PATCH /v1/registrar/domains/{domain}/auto-renew",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/update-auto-renew-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d89b29a282669efc9bd8e75fc18d5708fc8843fd8ccd557c8b537044193ffd30"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/availability",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-availability-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fc4b36460c92e9ede453d0d8ab2fd212ad1b7c45b836c2e187671e52ead07cf0"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/{domain}/buy",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/buy-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:922758e2f97f87b4f27ed76dc7d3f25ee4dceba0216e9f37405f9221c3d0f78c"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/contact-info/schema",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-contact-info-schema",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3a979a8a3cf0a77d17c6b9f46d93f9fe4d6e72cbe31972830a227436a26cd743"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/contact-verification",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-contact-verification-status-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3372d0b8c4662d14e7715b29113e6e9ccf1ba081a488492b23fac5d6eca19551"
+        },
+        {
+          "operation": "PATCH /v1/registrar/domains/{domain}/nameservers",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/update-nameservers-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0d2f48b262494a949acf1746d0df7ada84b0fbb3e6dbfec5fdd0be7769085796"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/price",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-price-data-for-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5b12a571bff88737369df50b9781be40b2c5e65b85d81d99ae38ded4c2de4807"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/{domain}/renew",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/renew-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9a7be431c4b6e50db14025a0ebc056f0ddaefbdb0d8184427610c6c3bb5817db"
+        },
+        {
+          "operation": "GET /v1/registrar/domains/{domain}/transfer",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-a-domain-s-transfer-status",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dfd24025b73949925923614ef712f3321003d213550d81103d15886b82f9e763"
+        },
+        {
+          "operation": "POST /v1/registrar/domains/{domain}/transfer",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/transfer-in-a-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8bd548ef9d0eaa9f7bf8b35b0fd526b9323aa64ce5550d4884e6be3e64477f20"
+        },
+        {
+          "operation": "GET /v1/registrar/orders/{orderId}",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-a-domain-order",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f7be9bf6b6eb43dbccd1289a4eaeeceb4ea6e0ca6e81f2a0c3df096d65b05196"
+        },
+        {
+          "operation": "GET /v1/registrar/tlds/supported",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-supported-tlds",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1d2dd1da7b460cd722b63efabc59126b4132221c9ee050d02d563532c61290db"
+        },
+        {
+          "operation": "GET /v1/registrar/tlds/{tld}",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-tld",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3546d805c0ee0b006f401d57ef7e7cb5f1a9e4e5ef59d4bd62b4180e602b30fe"
+        },
+        {
+          "operation": "GET /v1/registrar/tlds/{tld}/price",
+          "page": "https://vercel.com/docs/rest-api/domains-registrar/get-tld-price-data",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a6c4bae973f18da40d190e2f9dbf47c19995f78bdad8384a69987be158c44fe5"
+        },
+        {
+          "operation": "POST /v1/security/attack-mode",
+          "page": "https://vercel.com/docs/rest-api/security/update-attack-challenge-mode",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6372c9efacd19394e064072130264f0dd6658289b45a3be2388a97a7af47988d"
+        },
+        {
+          "operation": "GET /v1/security/firewall/attack-status",
+          "page": "https://vercel.com/docs/rest-api/security/read-active-attack-data",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fd7dbad2e3aba403a6e91bbe58c70f08e3a241d6f1aaa43a8d8ebfb4d6656a77"
+        },
+        {
+          "operation": "GET /v1/security/firewall/bypass",
+          "page": "https://vercel.com/docs/rest-api/security/read-system-bypass",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2372cfba104bee8af502c6648738db449f188022d40d2673790392cc91003f63"
+        },
+        {
+          "operation": "POST /v1/security/firewall/bypass",
+          "page": "https://vercel.com/docs/rest-api/security/create-system-bypass-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c8f42f17a36a92601b22219b88f0aab8a5b90314dbbd39a053f547b6aaf7446e"
+        },
+        {
+          "operation": "DELETE /v1/security/firewall/bypass",
+          "page": "https://vercel.com/docs/rest-api/security/remove-system-bypass-rule",
+          "specRevision": "0.0.1",
+          "contract": "sha256:347b0fb0e681f14d6f3e5c6f5f3557d635f403359ed63648b65f8457c5a3c917"
+        },
+        {
+          "operation": "GET /v1/security/firewall/bypass/rules",
+          "page": "https://vercel.com/docs/rest-api/security/get-conditional-firewall-bypasses",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cf1c664ebb753c72ec3cafc5a562e5ed721a486bf786b64dd8e167bf875cc088"
+        },
+        {
+          "operation": "POST /v1/security/firewall/bypass/rules",
+          "page": "https://vercel.com/docs/rest-api/security/create-conditional-firewall-bypass",
+          "specRevision": "0.0.1",
+          "contract": "sha256:67ee957be31de52b6ff966a2645ff0b545b67d5421943ef599b44619a45f7de4"
+        },
+        {
+          "operation": "DELETE /v1/security/firewall/bypass/rules",
+          "page": "https://vercel.com/docs/rest-api/security/delete-conditional-firewall-bypass",
+          "specRevision": "0.0.1",
+          "contract": "sha256:92d3cf37bfd32ad486cffea5f18fa10ffdd917ef618d3c733cc636d6c299b5c3"
+        },
+        {
+          "operation": "GET /v1/security/firewall/config",
+          "page": "https://vercel.com/docs/rest-api/security/returns-activated-waf-config",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ab2b055cac7348abfab80efab4206d00d7bb1a2d5c8f797372c5c55febdd313f"
+        },
+        {
+          "operation": "PUT /v1/security/firewall/config",
+          "page": "https://vercel.com/docs/rest-api/security/put-firewall-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a456b34692a39e4651c9da76fea3a0a8debb8c2bd748c9b013d3bcc8b8ef5270"
+        },
+        {
+          "operation": "PATCH /v1/security/firewall/config",
+          "page": "https://vercel.com/docs/rest-api/security/update-firewall-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b5bab6ec447eb0eb4282c7b6d0707625c97812d95590f0eb2534645a0b067b6b"
+        },
+        {
+          "operation": "POST /v1/security/firewall/config/generate-rule",
+          "page": "https://vercel.com/docs/rest-api/security/generate-a-firewall-rule-from-natural-language",
+          "specRevision": "0.0.1",
+          "contract": "sha256:352cba5965d364207ed97b090afd9ad44880d9d660b2eb07ea34274e7e072096"
+        },
+        {
+          "operation": "GET /v1/security/firewall/config/{configVersion}",
+          "page": "https://vercel.com/docs/rest-api/security/read-firewall-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d8307ceba933a9241e831a830a3ec33417e6e2d2d0bce04c72f7d184215c3999"
+        },
+        {
+          "operation": "DELETE /v1/security/firewall/config/{configVersion}",
+          "page": "https://vercel.com/docs/rest-api/security/returns-activated-waf-config-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3f6900b5fb154312e87832a165850bd988f86770bef4323c6c86522f848d2701"
+        },
+        {
+          "operation": "POST /v1/security/firewall/config/{configVersion}/activate",
+          "page": "https://vercel.com/docs/rest-api/security/returns-activated-waf-config-2",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ff88e7356c5d7156d7206c97b0c67da86aee4693c79bf599b7f7d869e8776aab"
+        },
+        {
+          "operation": "GET /v1/security/firewall/events",
+          "page": "https://vercel.com/docs/rest-api/security/read-firewall-actions-by-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5346c71a34e1b75d88c9b440374ccb7c2214311bc73f3c35cab48d3c8ff83ad5"
+        },
+        {
+          "operation": "GET /v1/security/firewall/events/summary",
+          "page": "https://vercel.com/docs/rest-api/security/read-firewall-actions-summary-by-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:003a920bc0de37141ae97706f8e13f1c520424fc4e979214591a7b904c7227d1"
+        },
+        {
+          "operation": "POST /v1/storage/stores/integration/direct",
+          "page": "https://vercel.com/docs/rest-api/integrations/create-integration-store-free-and-paid-plans",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c4e23cdf9a8003638ee7c30f0dd5a115b8c704b7a0abcc663ce7d33aaf0446b7"
+        },
+        {
+          "operation": "POST /v1/teams",
+          "page": "https://vercel.com/docs/rest-api/teams/create-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2936a068a4a74b5182407bd778ebff5e9704dedeb8e5259321640d141a564272"
+        },
+        {
+          "operation": "DELETE /v1/teams/{teamId}",
+          "page": "https://vercel.com/docs/rest-api/teams/delete-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9627d5c1cd05096c87bad80caa176054405ef1720b3c0014fa3085bcd42dec17"
+        },
+        {
+          "operation": "POST /v1/teams/{teamId}/dsync-roles",
+          "page": "https://vercel.com/docs/rest-api/teams/update-team-directory-sync-role-mappings",
+          "specRevision": "0.0.1",
+          "contract": "sha256:39110a0d7eca47ad01e530ea97ba1cf252ed9c961f088c1eac536428324657aa"
+        },
+        {
+          "operation": "GET /v1/teams/{teamId}/feature-flags/flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-all-flags-for-a-team-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0123bb03f7a86ceb94d50bf190a754f60c7dc9d5bf1bea84dc08016effb58940"
+        },
+        {
+          "operation": "GET /v1/teams/{teamId}/feature-flags/settings",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-team-project-flag-settings",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6b96dff4d820be2275700f7c652038cc3d62000bdfcb562f6d6dfe82712325f9"
+        },
+        {
+          "operation": "DELETE /v1/teams/{teamId}/invites/{inviteId}",
+          "page": "https://vercel.com/docs/rest-api/teams/delete-a-team-invite-code",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ed2b02d92988bb117ef899a18e6dc3023b4428e535eba01ac9e14774e39821ad"
+        },
+        {
+          "operation": "POST /v1/teams/{teamId}/members/teams/join",
+          "page": "https://vercel.com/docs/rest-api/teams/join-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:392ddf4ad0ad32f081a79c1b66456ab917f75e358913cfbb0600203185b7f383"
+        },
+        {
+          "operation": "PATCH /v1/teams/{teamId}/members/{uid}",
+          "page": "https://vercel.com/docs/rest-api/teams/update-a-team-member",
+          "specRevision": "0.0.1",
+          "contract": "sha256:71c9b89d884dd200d6e07efdb861a5fda15725431d9472539845c4f9f88d5a2e"
+        },
+        {
+          "operation": "DELETE /v1/teams/{teamId}/members/{uid}",
+          "page": "https://vercel.com/docs/rest-api/teams/remove-a-team-member",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ddf69096efdf21d933fe42872850df14db9991fbfef1406765a132b5a3cccd35"
+        },
+        {
+          "operation": "PATCH /v1/teams/{teamId}/microfrontends/{groupId}",
+          "page": "https://vercel.com/docs/rest-api/teams/update-a-microfrontends-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:64d448c41664bc7f19aba3867e46e2b41a191f2522de9c27a061f774eaec3a92"
+        },
+        {
+          "operation": "DELETE /v1/teams/{teamId}/microfrontends/{groupId}",
+          "page": "https://vercel.com/docs/rest-api/teams/delete-a-microfrontends-group",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9532c4ccbd14dd496a41368537a776f1f5d8e20b37dd3bbb665b9e07f64f75d4"
+        },
+        {
+          "operation": "POST /v1/teams/{teamId}/request",
+          "page": "https://vercel.com/docs/rest-api/teams/request-access-to-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cde4a670a6f8f9dfcbbb9957beb0c126ad105892a6971553054c04f8bb92af2a"
+        },
+        {
+          "operation": "GET /v1/teams/{teamId}/request/{userId}",
+          "page": "https://vercel.com/docs/rest-api/teams/get-access-request-status",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2ed1bada6e9867ca002a7344df32e17cfb100097399bb74fe5018a9df38ed096"
+        },
+        {
+          "operation": "DELETE /v1/user",
+          "page": "https://vercel.com/docs/rest-api/user/delete-user-account",
+          "specRevision": "0.0.1",
+          "contract": "sha256:78a99f28854f316864330b29e57eff7f12fcc9c403c614fdd3d909e76cf981e1"
+        },
+        {
+          "operation": "GET /v1/vcr/repository",
+          "page": "https://vercel.com/docs/rest-api/vcr/list-repositories",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fa494aebdfcb38a06a8ae41a541dbab8eac6c8925a7fa7e9e2511ec34f5f4552"
+        },
+        {
+          "operation": "POST /v1/vcr/repository",
+          "page": "https://vercel.com/docs/rest-api/vcr/create-a-repository",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d09485eb4dade53bdb5635e80cfbebfc6ae564e6c1317847b922014c5839dd6d"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/vcr/get-a-repository",
+          "specRevision": "0.0.1",
+          "contract": "sha256:27c61e880c68a44406be573c7a45e7d64775513a6bae1e66014b10af9ba5379e"
+        },
+        {
+          "operation": "DELETE /v1/vcr/repository/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/vcr/delete-a-repository",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e2af1adaa7e874bdf56d0ac28493f38072fedd19dae379ba4719944bfa090ae8"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}/images",
+          "page": "https://vercel.com/docs/rest-api/vcr/list-repository-images",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7634c5fde2e3a1f95e55956599adab415168960cb603291ff2fb3a54f551fc9e"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}",
+          "page": "https://vercel.com/docs/rest-api/vcr/get-a-repository-image",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aebcf3380c90424b2a0d026466c459a222604ebfb193799c3725881794e104ff"
+        },
+        {
+          "operation": "DELETE /v1/vcr/repository/{idOrName}/images/{imageId}",
+          "page": "https://vercel.com/docs/rest-api/vcr/delete-a-repository-image",
+          "specRevision": "0.0.1",
+          "contract": "sha256:38e84be6ea2071e619855f3cf5eeadfc48be22642a0b066c7fbf6057b7206197"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}/permissions",
+          "page": "https://vercel.com/docs/rest-api/vcr/list-repository-permissions",
+          "specRevision": "0.0.1",
+          "contract": "sha256:413de1c89bbdd6c85a10f6974c0d79b30cfeb118c553064896b2bfe7f4844d59"
+        },
+        {
+          "operation": "POST /v1/vcr/repository/{idOrName}/permissions",
+          "page": "https://vercel.com/docs/rest-api/vcr/add-a-repository-permission",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6f3cbe43a32cbca6eb7e9f3f7ad24a67011ff486f24786b06e291e8e325a595b"
+        },
+        {
+          "operation": "DELETE /v1/vcr/repository/{idOrName}/permissions",
+          "page": "https://vercel.com/docs/rest-api/vcr/remove-a-repository-permission",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4311c925651c5f8710428bbd7eb2b600cc7ba43a3916e63a05eac815a428af44"
+        },
+        {
+          "operation": "DELETE /v1/vcr/repository/{idOrName}/permissions/all",
+          "page": "https://vercel.com/docs/rest-api/vcr/clear-all-repository-permissions",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0cc852ceab2e3f5a40628f2c35f3efb3c16ebd53d8bd714e460fd3bb4299dc8d"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}/tags",
+          "page": "https://vercel.com/docs/rest-api/vcr/list-repository-tags",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d27547ac145e39fe29ebc58d09ee3ea1a89cb178fa3624b02e9dc1d235d65960"
+        },
+        {
+          "operation": "GET /v1/vcr/repository/{idOrName}/tags/{tag}",
+          "page": "https://vercel.com/docs/rest-api/vcr/get-a-repository-tag",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dc99f5da46d79f4346f297dd3dc7e8fba0bc2737720ffda1392cc13379dc1b38"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-all-attempts-for-an-invocation",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9152badd7c54f81e8c10fb3ca78393d28803e9306c9a392c83d6abedf97ef042"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-a-specific-invocation-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:58cb90e6eac170d771b1842dfd6e3fe028f1f0920d81468f7d8a9099fdfc9b2b"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-job-definitions-for-an-invocation-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6d3c67463850c6364540efe57a9b02e02db5676b28c3434b7148ab8dece8e0f2"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-a-specific-job-definition",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b0c58db6788672b9ecf5dc44e108ed28eacb921c30f7f2a6c05294a63c6bf342"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-all-runs-for-a-job-definition",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a2ad49f2665e1824791732a1b8f553d54b1b89cc7f31277d4ea140692b4af614"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-a-specific-job-run-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ccdf7b2760db868ff9d8e6ded17aed669f4967436672313be598c0dadeca93ad"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/logs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-log-lines-for-a-specific-job-run-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:619a178e463c60f5a847f6fbb53fde74a5d0a92093b65180cc8a281ccb78ddad"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-definitions",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-all-task-definitions-for-a-job-run",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a70c0026a0b203214ab1d058b09ddb4599581d3d1d6bab0f392caef6d37febd4"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-definitions/{taskDefinitionId}/runs/{taskRunAttempt}/logs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-log-lines-for-a-specific-task-run-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e7473df82e958caaca9d15d0d51597bdd23b1117231d6a5f473df8a58f4bfe2e"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/job-definitions/{jobDefinitionId}/runs/{runAttempt}/task-runs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-task-runs-for-a-job-run",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fe00b390c78e60c6b4a277b8a17f79fef4bc6c4f27c7e63eeede236e94dde000"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/logs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-log-lines-for-an-invocation-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c61678fe9daa5a24e9b92bebd870c246dd9b73b9c6479cd6bb14ad28c2d158dc"
+        },
+        {
+          "operation": "POST /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/retry",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/retry-a-terminal-vercel-ci-invocation-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ee0625d8ada5c1a67e087497dda6e7f9a4cd2dd38c4951690a0702babb31d38a"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/attempts/{attempt}/task-logs",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-log-lines-for-the-tasks-of-an-invocation-attempt",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8660b12c446ad456ad812eac730c1af726bd00bb28fb1f27a96c6ec174f35708"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/invocations/{invocationId}/tree",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-an-invocation-with-its-jobs-and-tasks",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f282761da5652aca75baac489ec062c45123dfc08aea03b470ba591e1e56cc8b"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/log-search",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/search-the-task-logs-of-several-invocation-attempts",
+          "specRevision": "0.0.1",
+          "contract": "sha256:0e2f68fc3f62c3c8bccc625eca847e597ef7d0ca1e542f2c28ac0f91e486ff57"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/repository-settings",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-vercel-ci-settings-for-a-connected-repository",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e6632d0f5286b60995f39daa867ab7eb67d176adcddb21fad0315b0ac47ae0ad"
+        },
+        {
+          "operation": "PATCH /v1/vercel-ci/repository-settings",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/enable-or-disable-vercel-ci-for-a-connected-repository",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7f7e11722f76fe59cb8377a5b4998198c3e680a2f7dc424e11f5654e0aec3a2e"
+        },
+        {
+          "operation": "POST /v1/vercel-ci/task-analyses",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/start-an-asynchronous-vercel-ci-task-analysis",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7e3f351ec78556aa66eb953b80c82a75f75b1dfc0552a4071419eeb86b71c99d"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/task-analyses/{analysisId}",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/get-the-current-status-of-a-vercel-ci-task-analysis",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4b4d653a168b80fdd64a2ef5e07c3f5ce60d119fca428679c6a8cb8f639143a8"
+        },
+        {
+          "operation": "POST /v1/vercel-ci/task-analyses/{analysisId}/pull-request",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/create-a-github-pull-request-that-adds-vercel-ci-tags-for-the-completed-analysis",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5a13a5d8764e6bf4c018c05693f9708fbee8d19abd4526c834bf512408e7e717"
+        },
+        {
+          "operation": "GET /v1/vercel-ci/task-analyses/{analysisId}/tasks",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-discovered-tasks-for-a-completed-vercel-ci-task-analysis",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8ec57953424275481ed6bf5fc25ad88a88cc0ccda067007995ea6c359cb2649b"
+        },
+        {
+          "operation": "GET /v1/webhooks",
+          "page": "https://vercel.com/docs/rest-api/webhooks/get-a-list-of-webhooks",
+          "specRevision": "0.0.1",
+          "contract": "sha256:98aefcfd8e966b586ac0d1a6e3e9c346da65bb7389234daa0fede41040def6a4"
+        },
+        {
+          "operation": "POST /v1/webhooks",
+          "page": "https://vercel.com/docs/rest-api/webhooks/creates-a-webhook",
+          "specRevision": "0.0.1",
+          "contract": "sha256:8aaff93cd91859a12a7aad10734d96d254bf5319de541b810030a55cc33638b8"
+        },
+        {
+          "operation": "GET /v1/webhooks/{id}",
+          "page": "https://vercel.com/docs/rest-api/webhooks/get-a-webhook",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5117c0e68080d3aadc324c0f99ef912283d1cb44e5774877bf373b34ae14df90"
+        },
+        {
+          "operation": "DELETE /v1/webhooks/{id}",
+          "page": "https://vercel.com/docs/rest-api/webhooks/deletes-a-webhook",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
+        },
+        {
+          "operation": "GET /v10/projects",
+          "page": "https://vercel.com/docs/rest-api/projects/retrieve-a-list-of-projects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2beea7f1b0fed3b87c2237923d1a46a6365d501484d118574a022bf59e2bd659"
+        },
+        {
+          "operation": "POST /v10/projects/{idOrName}/domains",
+          "page": "https://vercel.com/docs/rest-api/projects/add-a-domain-to-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a41fb79cbd0ddd7ba52d9b041ca6c636aa60a1065210ca6019449685c2bb9633"
+        },
+        {
+          "operation": "GET /v10/projects/{idOrName}/env",
+          "page": "https://vercel.com/docs/rest-api/projects/retrieve-the-environment-variables-of-a-project-by-id-or-name",
           "specRevision": "0.0.1",
           "contract": "sha256:89af0066d381d445808d51c4508a0264f359d54209a75724c010afbe7a42c219"
         },
         {
-          "method": "POST",
-          "path": "/v10/projects/{idOrName}/env",
+          "operation": "POST /v10/projects/{idOrName}/env",
+          "page": "https://vercel.com/docs/rest-api/projects/create-one-or-more-environment-variables",
           "specRevision": "0.0.1",
           "contract": "sha256:369c0569a468cc2bc9d15d66c1be8b0b242dbd132b253ff0f5f50fbf1b3cdd20"
         },
         {
-          "method": "PATCH",
-          "path": "/v9/projects/{idOrName}/env/{id}",
+          "operation": "POST /v10/projects/{projectId}/promote/{deploymentId}",
+          "page": "https://vercel.com/docs/rest-api/projects/point-production-traffic-to-a-given-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:087cb47af9f3500691b55680414f9664a60e4eafa27842cf4324dcf7518fbfa2"
+        },
+        {
+          "operation": "POST /v11/projects",
+          "page": "https://vercel.com/docs/rest-api/projects/create-a-new-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:be436aba5186913ed2b3c6bb99b95d52da4da0360ca77c8447bf90af320515ca"
+        },
+        {
+          "operation": "PATCH /v12/deployments/{id}/cancel",
+          "page": "https://vercel.com/docs/rest-api/deployments/cancel-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aaa79b66d176b1d0a0488d5ca490375d4bdb4467b47ae1ffb75ebaf5f07921c2"
+        },
+        {
+          "operation": "POST /v13/deployments",
+          "page": "https://vercel.com/docs/rest-api/deployments/create-a-new-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:872bd42605b733a1ac36fecf73fe60e01d08608b37661eea4a21c1a84571fe61"
+        },
+        {
+          "operation": "GET /v13/deployments/{idOrUrl}",
+          "page": "https://vercel.com/docs/rest-api/deployments/get-a-deployment-by-id-or-url",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9b5eb938979e42928db0827597ad97a2e0442e29f6eb6f2c7d7dd64e7d58d930"
+        },
+        {
+          "operation": "DELETE /v13/deployments/{id}",
+          "page": "https://vercel.com/docs/rest-api/deployments/delete-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:41d4413d7865ed00540aabddb79130b658362e59d480a9a0cbf2e2f3719c0c5e"
+        },
+        {
+          "operation": "GET /v2/",
+          "page": "https://vercel.com/docs/rest-api/vcr/check-registry-api-version-support",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d816f483cf3729ac04da536d1ace4cbfd9b9cfe98e2c85cda32ac3e3fa2c47c4"
+        },
+        {
+          "operation": "DELETE /v2/aliases/{aliasId}",
+          "page": "https://vercel.com/docs/rest-api/aliases/delete-an-alias",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6342b4207224cefd70f2e85ab7e23529bb9e99d5f8455a9f3cc4eb3933c0db89"
+        },
+        {
+          "operation": "GET /v2/connect/connectors",
+          "page": "https://vercel.com/docs/rest-api/connect/list-connectors",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bbcd65f90646aab6409133e87eef2d4d399ff0302270bff11b818c4bc43f535a"
+        },
+        {
+          "operation": "PATCH /v2/connect/connectors/{connector}",
+          "page": "https://vercel.com/docs/rest-api/connect/update-a-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2541ecf88b2d91dd0661153a8e3787c46e05489eca5ca0739cd6ac41644da4af"
+        },
+        {
+          "operation": "GET /v2/connect/connectors/{connector}/projects",
+          "page": "https://vercel.com/docs/rest-api/connect/list-projects-for-a-connector",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6b35e01d53564de8689f42cde4b5fa8e11510c7b843ebbf6dd5408a8487037ae"
+        },
+        {
+          "operation": "GET /v2/connect/projects/{projectId}/connectors",
+          "page": "https://vercel.com/docs/rest-api/connect/list-connectors-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fe320ad8924077816f22f994230ed5dbc9297a812678ea848e5912f9770336ab"
+        },
+        {
+          "operation": "GET /v2/deployments/{deploymentId}/check-runs",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/list-check-runs-for-a-deployment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bd9dbc152cd549b8b8df04dd887d04e4715402aa8dc29efb4ffffb93ed3e981b"
+        },
+        {
+          "operation": "POST /v2/deployments/{deploymentId}/check-runs",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/create-a-check-run",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d2e555c07a41ac2d3af2c5c52b0161db25f2ed2fae90e8ba62b7af5d02892be1"
+        },
+        {
+          "operation": "GET /v2/deployments/{deploymentId}/check-runs/{checkRunId}",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/get-a-check-run",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3a8d62fcafcd729ff1071088ebcad9d44ce77445751a9080bb3f5fa7729b60e2"
+        },
+        {
+          "operation": "PATCH /v2/deployments/{deploymentId}/check-runs/{checkRunId}",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/update-a-check-run",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5ce2f6f8df858d969639bc1bd99b7965b2ffc0603b826935108385a7255440ff"
+        },
+        {
+          "operation": "GET /v2/deployments/{id}/aliases",
+          "page": "https://vercel.com/docs/rest-api/aliases/list-deployment-aliases",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e7108390d0943fba99daf8d58b9804537245d988e8208877e82204eaaa651c07"
+        },
+        {
+          "operation": "POST /v2/deployments/{id}/aliases",
+          "page": "https://vercel.com/docs/rest-api/aliases/assign-an-alias",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1e886f21443041748e964466701d0e0344063bbf2f8b1fde2f51e0a33f9d0ebf"
+        },
+        {
+          "operation": "POST /v2/domains/{domain}/records",
+          "page": "https://vercel.com/docs/rest-api/dns/create-a-dns-record",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fc8a253d786b8ff59e02f025249e0e319fb4c5594d36ed735f26b309b21dfcc2"
+        },
+        {
+          "operation": "DELETE /v2/domains/{domain}/records/{recordId}",
+          "page": "https://vercel.com/docs/rest-api/dns/delete-a-dns-record",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d6270d5254692b7e795e2e2f4bb1fb18f7df5741f85a347469ac782a2ad7cfa0"
+        },
+        {
+          "operation": "POST /v2/files",
+          "page": "https://vercel.com/docs/rest-api/deployments/upload-deployment-files",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ab19b64cbd590109345cf49143b224ca3765d77bf9de737451413babe34e5221"
+        },
+        {
+          "operation": "GET /v2/integrations/log-drains",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:38b00887519bdff3238d34f928cefeefc10900930ee2a61a23ce30317b382bf5"
+        },
+        {
+          "operation": "POST /v2/integrations/log-drains",
+          "page": "https://openapi.vercel.sh/",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7aaf0cfbee1b388d2dc5130f417025c5d082393bea4afb63de351f2b59c33713"
+        },
+        {
+          "operation": "POST /v2/observability/query",
+          "page": "https://vercel.com/docs/rest-api/untagged/createobservabilityquery",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d9421355f24b5cbfc335f044816ec77d3a4b831567c449891ca4abd5cf77f3d5"
+        },
+        {
+          "operation": "GET /v2/observability/schema",
+          "page": "https://vercel.com/docs/rest-api/untagged/getobservabilityschema",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5f0cabf45b33d697359b163d20347e558f386ece0074533e931a74f616624e6c"
+        },
+        {
+          "operation": "GET /v2/observability/schema/{metricId}",
+          "page": "https://vercel.com/docs/rest-api/untagged/getobservabilityschemabymetricid",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f8f23ceb2feb30e04e6fd0045aacb10c8ac3df1ded3a666b6ccc6d8f835cb47d"
+        },
+        {
+          "operation": "GET /v2/projects/{projectIdOrName}/checks",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/list-all-checks-for-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ce0636a18c9d423c4648bbeb59bcff21bc707f72970cf947abb9f40fb355603a"
+        },
+        {
+          "operation": "POST /v2/projects/{projectIdOrName}/checks",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/create-a-check",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b6429037ca1c6953a7a1212284f6d98eb2e4afbdd94b45586d33955cd49c95b3"
+        },
+        {
+          "operation": "GET /v2/projects/{projectIdOrName}/checks/{checkId}",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/get-a-check",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b4f8086b846f9e9c3d717257d50468bd6f8fb30bc2090d6786abfde63f005281"
+        },
+        {
+          "operation": "PATCH /v2/projects/{projectIdOrName}/checks/{checkId}",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/update-a-check",
+          "specRevision": "0.0.1",
+          "contract": "sha256:60cbeeaca949bad194477d2c1e8bf7a059990bf8b01030751f3de7c27a2f9e77"
+        },
+        {
+          "operation": "DELETE /v2/projects/{projectIdOrName}/checks/{checkId}",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/delete-a-check",
+          "specRevision": "0.0.1",
+          "contract": "sha256:f33bcd3229cb7e542b9c65046b59233df69826663a53e8a4e864ee0562e5a64e"
+        },
+        {
+          "operation": "GET /v2/projects/{projectIdOrName}/checks/{checkId}/runs",
+          "page": "https://vercel.com/docs/rest-api/checks-v2/list-runs-for-a-check",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2c94def1428ca068713997e76cb803318425fec376253018691d135979d6dcd6"
+        },
+        {
+          "operation": "GET /v2/projects/{projectIdOrName}/feature-flags/flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-flags",
+          "specRevision": "0.0.1",
+          "contract": "sha256:67042609b0efec692a555292888918f971fff95da878c6f21f4857fb5f8870a4"
+        },
+        {
+          "operation": "GET /v2/sandboxes",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/list-sandboxes",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3b97393e0a490dece1b4f80e37bedaee382aec034a74ac21555bda1eba9905c6"
+        },
+        {
+          "operation": "POST /v2/sandboxes",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-named-sandbox",
+          "specRevision": "0.0.1",
+          "contract": "sha256:660b33f42c717c87945a5526f3182b5024a1a1b8c7a700d971843b5e8c92dfcf"
+        },
+        {
+          "operation": "GET /v2/sandboxes/drives",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/list-drives",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9bef299e055be1aee7f564ab3802f94b0e71dbea9ccad6308c5012428957cc95"
+        },
+        {
+          "operation": "GET /v2/sandboxes/drives/{nameOrId}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-a-drive",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a9c14620fde887d37b88d4bb4820dd6ab29a902800a39aab74fc0695b5e30c77"
+        },
+        {
+          "operation": "POST /v2/sandboxes/drives/{name}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-or-create-a-drive",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b8c318ff02c047d279966f04c657c11df688ce3eeb58ea5bee1a7ea1b4092545"
+        },
+        {
+          "operation": "DELETE /v2/sandboxes/drives/{name}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/delete-a-drive",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4a8518c2f0837fb72b82d1b263f51595cd7192451c820b90b7b5a77aacdda84a"
+        },
+        {
+          "operation": "POST /v2/sandboxes/drives/{name}/fork",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/fork-a-drive",
+          "specRevision": "0.0.1",
+          "contract": "sha256:400859577b88d84d8dd40ec4946de01a1a76adc728071babb902ccf855d03e4d"
+        },
+        {
+          "operation": "GET /v2/sandboxes/sessions",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/list-sessions",
+          "specRevision": "0.0.1",
+          "contract": "sha256:66718b82e27c1fd92fa003e2884e071c4898843a9f38233d92430f63d5eab279"
+        },
+        {
+          "operation": "GET /v2/sandboxes/sessions/{sessionId}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-a-session",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5e31e1eebd90f9c4ad3e8243d30f8068c890d14ad3a636f94602f95bfe01dd17"
+        },
+        {
+          "operation": "GET /v2/sandboxes/sessions/{sessionId}/cmd",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/list-commands",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e01a44ada0e6da964529624822ae02cafad1b9a1b765e31658edf729e726103d"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/cmd",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/execute-a-command",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4634bc0b93c7bf8eb3c3bc8f0f600217c321262493c15f4a8ca1cd36e7b83b2a"
+        },
+        {
+          "operation": "GET /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-a-command",
+          "specRevision": "0.0.1",
+          "contract": "sha256:2c7ac02b96aa329d0f16cfa4b1305dbd36362773eea70cb72b689dde881cc04e"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/kill",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/kill-a-command",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e8e9abca1faceda98a838012743d4722a9c157bd0c5168c0b41d319a60820150"
+        },
+        {
+          "operation": "GET /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/logs",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/stream-command-logs",
+          "specRevision": "0.0.1",
+          "contract": "sha256:010abe573a48c200ddcb7cdffc78c895d5a1bcfa46f9f8c99a452c7738291b1d"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/cmd/{cmdId}/stdin",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/write-to-command-stdin",
+          "specRevision": "0.0.1",
+          "contract": "sha256:952301290c287b746f763a778420f41ede47a92beb56a1e2b4354d7a127607fb"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/extend-timeout",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/extend-session-timeout",
+          "specRevision": "0.0.1",
+          "contract": "sha256:99decbd2edb7ec22fdf67e506d3f339ac261ee1c2bd2a1e8680d0e5ebd1989ad"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/fs/mkdir",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-directory",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1cb372dd57bd23c9dfcc2b7aef349df8b81937e76b59aa66a5f119432ee41551"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/fs/read",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/read-a-file",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fa917093732081ae62660296ecac109c597d957a750a5bb8ace4164fa208991a"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/fs/write",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/write-files",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ecaf88d12645a2ba1f700b9cf823574bdc974d1ce7289b69f208749b5bfb3684"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/network-policy",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/update-network-policy",
+          "specRevision": "0.0.1",
+          "contract": "sha256:eb05036c7c8a4fb2ed81118b72a16d42b1c7fa16d2f8123de7a1a6a7379405ea"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/snapshot",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-snapshot",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9c2e30255afad51a0cdeb4ee4f5878ad9b01cce0cd7d59a998b96f3b964aa615"
+        },
+        {
+          "operation": "POST /v2/sandboxes/sessions/{sessionId}/stop",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/stop-a-session",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e1cd2072dbcda6ae5e817d5a9707e9d49d6f4c9c06e487c59aaa01d0e7f91684"
+        },
+        {
+          "operation": "GET /v2/sandboxes/snapshots",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/list-snapshots",
+          "specRevision": "0.0.1",
+          "contract": "sha256:55ec700fcfdc892b1ebd80962942f9334934d6fdafa5a90bf6d96f906e021807"
+        },
+        {
+          "operation": "GET /v2/sandboxes/snapshots/{snapshotId}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-a-snapshot",
+          "specRevision": "0.0.1",
+          "contract": "sha256:349b607a3374b5fca1dab3df20485a06921486f81d70dc096005b611729cb85b"
+        },
+        {
+          "operation": "DELETE /v2/sandboxes/snapshots/{snapshotId}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/delete-a-snapshot",
+          "specRevision": "0.0.1",
+          "contract": "sha256:349b607a3374b5fca1dab3df20485a06921486f81d70dc096005b611729cb85b"
+        },
+        {
+          "operation": "GET /v2/sandboxes/{name}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/get-a-named-sandbox",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5e22931a7f12017a4e3657d7038cbe3376fe6f1789303632d107e061d6457e02"
+        },
+        {
+          "operation": "PATCH /v2/sandboxes/{name}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/update-a-sandbox",
+          "specRevision": "0.0.1",
+          "contract": "sha256:086a3b876de9b5ecbf8b193f274b9abf3eb8b7619ebb44ec45497bae6756cc06"
+        },
+        {
+          "operation": "DELETE /v2/sandboxes/{name}",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/delete-a-sandbox",
+          "specRevision": "0.0.1",
+          "contract": "sha256:57925680e170c8c517dc3a30415555dfcd20338d6f9a94c670bcccc0f34e7208"
+        },
+        {
+          "operation": "POST /v2/sandboxes/{name}/fork",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/fork-a-named-sandbox",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dc18e3f237279b18bcf1ca38f492fc6be9b466d406aec07ab4445912d696b129"
+        },
+        {
+          "operation": "GET /v2/teams",
+          "page": "https://vercel.com/docs/rest-api/teams/list-all-teams",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6179e51e4282c81b7b8a7fef94e6b51130b529df3161ad3442d6d912cf3eec93"
+        },
+        {
+          "operation": "GET /v2/teams/{teamId}",
+          "page": "https://vercel.com/docs/rest-api/teams/get-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b7014dd7a69f82e6408f9254e13e34a639e7b347d17c11359c23e7b9ea4b6ea6"
+        },
+        {
+          "operation": "PATCH /v2/teams/{teamId}",
+          "page": "https://vercel.com/docs/rest-api/teams/update-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:43baa1ddc998631e41666e8f82d8aa4b44b5432a977b56fe2fcb51ca632c0ef1"
+        },
+        {
+          "operation": "GET /v2/teams/{teamId}/feature-flags/flags",
+          "page": "https://vercel.com/docs/rest-api/feature-flags/list-all-flags-for-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:340c719fc75573e960c1f02a99ef44bd3f1ad8655a6f7661669c8ae491c20602"
+        },
+        {
+          "operation": "POST /v2/teams/{teamId}/members",
+          "page": "https://vercel.com/docs/rest-api/teams/invite-a-user",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3e46b21e4d0cbbcb12c3c50cb395c423c87ac6dd9facead48bfdc385414603f0"
+        },
+        {
+          "operation": "GET /v2/user",
+          "page": "https://vercel.com/docs/rest-api/user/get-the-user",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9b64f0ad27a507e39849355078cae0c48e6cf5ccfe77570fbd6275f86789c493"
+        },
+        {
+          "operation": "GET /v2/vercel-ci/branches",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-vercel-ci-branch-suggestions-for-a-team",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7e5fc5b8e24ee7d85bd031372a92011262548c8442d288e864409056fa222761"
+        },
+        {
+          "operation": "GET /v2/vercel-ci/invocations",
+          "page": "https://vercel.com/docs/rest-api/vercel-ci/list-invocations-for-a-team-optionally-filtered-by-repository-and-invocation-metadata",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b379103da22289227474ff8e6ffe9cc6d00b53b08a96eead3c673c6493d53306"
+        },
+        {
+          "operation": "POST /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/",
+          "page": "https://vercel.com/docs/rest-api/vcr/start-a-blob-upload",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c60bacc3ccd40fffd2de45d6d310fac391f99357f86ffb8aa88da0f712661c43"
+        },
+        {
+          "operation": "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+          "page": "https://vercel.com/docs/rest-api/vcr/get-blob-upload-status",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c7fdaad97ff32a7ee5b02ecf0cfbebd3d28ac6e60eb6e045dfe317b80755d842"
+        },
+        {
+          "operation": "PUT /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+          "page": "https://vercel.com/docs/rest-api/vcr/complete-a-blob-upload",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5b11d38b32310e7b44b605ee19b23bd383337cd34a639b5acd90555b8532f8df"
+        },
+        {
+          "operation": "PATCH /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+          "page": "https://vercel.com/docs/rest-api/vcr/upload-a-blob-chunk",
+          "specRevision": "0.0.1",
+          "contract": "sha256:174626f9fedfda54a11a0b7d0732f0130947956de440b8e9850355440d25467d"
+        },
+        {
+          "operation": "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/uploads/{uuid}",
+          "page": "https://vercel.com/docs/rest-api/vcr/cancel-a-blob-upload",
+          "specRevision": "0.0.1",
+          "contract": "sha256:c7fdaad97ff32a7ee5b02ecf0cfbebd3d28ac6e60eb6e045dfe317b80755d842"
+        },
+        {
+          "operation": "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+          "page": "https://vercel.com/docs/rest-api/vcr/download-a-blob",
+          "specRevision": "0.0.1",
+          "contract": "sha256:43dcc4ba219fb1dc8f5065867f1dd572a589f3b35e6008b0b4e55e58f8e5fc8e"
+        },
+        {
+          "operation": "HEAD /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+          "page": "https://vercel.com/docs/rest-api/vcr/check-if-a-blob-exists",
+          "specRevision": "0.0.1",
+          "contract": "sha256:68a7792038a8e94ece6eac9320ee5681f7b386611653b848d01f40bd07ca774b"
+        },
+        {
+          "operation": "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/blobs/{digest}",
+          "page": "https://vercel.com/docs/rest-api/vcr/delete-a-blob",
+          "specRevision": "0.0.1",
+          "contract": "sha256:43dcc4ba219fb1dc8f5065867f1dd572a589f3b35e6008b0b4e55e58f8e5fc8e"
+        },
+        {
+          "operation": "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+          "page": "https://vercel.com/docs/rest-api/vcr/pull-an-image-manifest",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3cf20634450f1b28aed378255aa814c9bf96932c22517b4e8e8fc2e2ef12f92c"
+        },
+        {
+          "operation": "HEAD /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+          "page": "https://vercel.com/docs/rest-api/vcr/check-if-a-manifest-exists",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b88885479b63271485bb5bfcdf2206b919fdf88c3fa3ad8917d3b6dab7424502"
+        },
+        {
+          "operation": "PUT /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+          "page": "https://vercel.com/docs/rest-api/vcr/push-an-image-manifest",
+          "specRevision": "0.0.1",
+          "contract": "sha256:5656a24d3770feb5fc3bd61a35f6d2c243339cee3cf9b16716446ce0204cbadf"
+        },
+        {
+          "operation": "DELETE /v2/{teamSlug}/{projectSlug}/{repositoryName}/manifests/{reference}",
+          "page": "https://vercel.com/docs/rest-api/vcr/delete-an-image-manifest",
+          "specRevision": "0.0.1",
+          "contract": "sha256:073da540480e3881bf1874993a071294689bee3010d608be94b55e1810defae0"
+        },
+        {
+          "operation": "GET /v2/{teamSlug}/{projectSlug}/{repositoryName}/tags/list",
+          "page": "https://vercel.com/docs/rest-api/vcr/list-image-tags",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ecbf0a7f3e09687a953bf172dbe11c6868821e9e82090b82d27ba1c7aa5d90f0"
+        },
+        {
+          "operation": "GET /v3/deployments/{idOrUrl}/events",
+          "page": "https://vercel.com/docs/rest-api/deployments/get-deployment-events",
+          "specRevision": "0.0.1",
+          "contract": "sha256:fbeedd856cfdb853fdcd969ce973c7a899f064d59625dfba9e19ba4ac4eabf03"
+        },
+        {
+          "operation": "PATCH /v3/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/domains/update-or-move-apex-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:46e84a2b2af53f9ddf2e574923decdfbea9f6a57e5ac221f0bd6c15081e5a602"
+        },
+        {
+          "operation": "GET /v3/events",
+          "page": "https://vercel.com/docs/rest-api/user/list-user-events",
+          "specRevision": "0.0.1",
+          "contract": "sha256:794e99b3957367b96432e27a7d1bc326285e5e92862cb67abfeb7cadd2c502eb"
+        },
+        {
+          "operation": "POST /v3/sandboxes",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-named-sandbox-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:65e8ab551a6d5d4fa9b3effc4b1e4f6598654f0013dfc885385cce5f34945a8b"
+        },
+        {
+          "operation": "POST /v3/sandboxes/sessions/{sessionId}/snapshot",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-snapshot-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9c2e30255afad51a0cdeb4ee4f5878ad9b01cce0cd7d59a998b96f3b964aa615"
+        },
+        {
+          "operation": "POST /v3/sandboxes/{name}/fork",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/fork-a-named-sandbox-1",
+          "specRevision": "0.0.1",
+          "contract": "sha256:af3ae0d492c8e488e5e6bb25cb13693acac4cb1e5f4496628d972d283a04929a"
+        },
+        {
+          "operation": "GET /v3/teams/{teamId}/members",
+          "page": "https://vercel.com/docs/rest-api/teams/list-team-members",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ab0156547cf124da9e1f76eed05fcc3234bead0671f2bfd548decf2cf0b83566"
+        },
+        {
+          "operation": "POST /v3/user/tokens",
+          "page": "https://vercel.com/docs/rest-api/authentication/create-an-auth-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:64a7f4c0f2572a64a37f3e2a325e2e8c848f8c60c3bad97043138c46f9cae312"
+        },
+        {
+          "operation": "DELETE /v3/user/tokens/{tokenId}",
+          "page": "https://vercel.com/docs/rest-api/authentication/delete-an-authentication-token",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6e1e76be94e00cce738f0c553e9b59d648fe5ce65becb8bc30274c2d6b8faf59"
+        },
+        {
+          "operation": "GET /v4/aliases",
+          "page": "https://vercel.com/docs/rest-api/aliases/list-aliases",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dc13750d202164665df5942e3ac4dc2e2af121206ea13295c59d06a47b79f6db"
+        },
+        {
+          "operation": "GET /v4/aliases/{idOrAlias}",
+          "page": "https://vercel.com/docs/rest-api/aliases/get-an-alias",
+          "specRevision": "0.0.1",
+          "contract": "sha256:731dfb3258e9f83c9cb06b41df0281c36a25077b3844bce3f0b21e26fc84fa8b"
+        },
+        {
+          "operation": "POST /v4/sandboxes",
+          "page": "https://vercel.com/docs/rest-api/sandboxes/create-a-named-sandbox-2",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e849a9ed6d649309d2d0c98eac0d3ed8ba4b9ae06b11fd24b290d306c2705724"
+        },
+        {
+          "operation": "GET /v5/domains",
+          "page": "https://vercel.com/docs/rest-api/domains/list-all-the-domains",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d2ad3b398b9ba1dbe9f98812d59efc55b2e581fedfa31810f9b1601f707aaca4"
+        },
+        {
+          "operation": "GET /v5/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/domains/get-information-for-a-single-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:9bac77bfb9c098e87baee25e83cb16fb91617abb90ef9c8c24455830d2438c01"
+        },
+        {
+          "operation": "GET /v5/domains/{domain}/records",
+          "page": "https://vercel.com/docs/rest-api/dns/list-existing-dns-records",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b8634746a2f15ac994a200340254ede84bb92f96bb1029d4c1888dc37a8a6790"
+        },
+        {
+          "operation": "GET /v5/user/tokens/{tokenId}",
+          "page": "https://vercel.com/docs/rest-api/authentication/get-auth-token-metadata",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d8d5f1bd59934270eac50e7919d02c012dd0b78f8d5b697bc2c01b909551a484"
+        },
+        {
+          "operation": "GET /v6/deployments/{id}/files",
+          "page": "https://vercel.com/docs/rest-api/deployments/list-deployment-files",
+          "specRevision": "0.0.1",
+          "contract": "sha256:32cf5d885e9e1e7c7919f71c315e21b0dcd1482430f56d518b600bc9d663ddde"
+        },
+        {
+          "operation": "DELETE /v6/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/domains/remove-a-domain-by-name",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e0e23faf4927c99271bc8eeb00533baff38c536db198a1c24b99a63a8d143602"
+        },
+        {
+          "operation": "GET /v6/domains/{domain}/config",
+          "page": "https://vercel.com/docs/rest-api/domains/get-a-domain-s-configuration",
+          "specRevision": "0.0.1",
+          "contract": "sha256:deca38e4f0eb9350b3a1a0708a7935fd7542e4c9d88f0fdced7b26c2751ad09e"
+        },
+        {
+          "operation": "GET /v6/user/tokens",
+          "page": "https://vercel.com/docs/rest-api/authentication/list-auth-tokens",
+          "specRevision": "0.0.1",
+          "contract": "sha256:6cba4a57bad3675a666837f71f8d75e29acdc967ac8cfc7ce901b47e431301d9"
+        },
+        {
+          "operation": "GET /v7/deployments",
+          "page": "https://vercel.com/docs/rest-api/deployments/list-deployments",
+          "specRevision": "0.0.1",
+          "contract": "sha256:416f86a25b4befdf7da48cf41f0841d3efd999a0ed3c21e0e7f994cc2860bed2"
+        },
+        {
+          "operation": "POST /v7/domains",
+          "page": "https://vercel.com/docs/rest-api/domains/add-an-existing-domain-to-the-vercel-platform",
+          "specRevision": "0.0.1",
+          "contract": "sha256:aaa44366c061442b786c7f3cb06fbdbf859deb0870614f92bfcca066776effc0"
+        },
+        {
+          "operation": "POST /v8/artifacts",
+          "page": "https://vercel.com/docs/rest-api/artifacts/query-information-about-an-artifact",
+          "specRevision": "0.0.1",
+          "contract": "sha256:191f09eef128f58de163c023c35d7d351b5c7a2435b8bc482c3841c652a05ef0"
+        },
+        {
+          "operation": "DELETE /v8/artifacts",
+          "page": "https://vercel.com/docs/rest-api/artifacts/delete-all-cache-artifacts",
+          "specRevision": "0.0.1",
+          "contract": "sha256:08eb48d397ae70b8866bafe29e2702c586dfd38438c20ef291b6df3254d68c67"
+        },
+        {
+          "operation": "POST /v8/artifacts/events",
+          "page": "https://vercel.com/docs/rest-api/artifacts/record-an-artifacts-cache-usage-event",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ecd0cc7b2e7aea2bf5af4857990f59b2e05ef3ac26ee8fcdf048b8666c5116b2"
+        },
+        {
+          "operation": "GET /v8/artifacts/status",
+          "page": "https://vercel.com/docs/rest-api/artifacts/get-status-of-remote-caching-for-this-principal",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d42eb34e289458981e0e72d4d5ab48e02581458b5b9ac9fea2d63aef05655cae"
+        },
+        {
+          "operation": "GET /v8/artifacts/{hash}",
+          "page": "https://vercel.com/docs/rest-api/artifacts/download-a-cache-artifact",
+          "specRevision": "0.0.1",
+          "contract": "sha256:24f45b6a42f80fda2b4efff6654bc469e56121848baa2c7c0b987f10b5290822"
+        },
+        {
+          "operation": "HEAD /v8/artifacts/{hash}",
+          "page": "https://vercel.com/docs/rest-api/artifacts/check-if-a-cache-artifact-exists",
+          "specRevision": "0.0.1",
+          "contract": "sha256:58640e23d0d9e4f92b853429b513f7d95c1fe9ce1330244406c054da04a95a91"
+        },
+        {
+          "operation": "PUT /v8/artifacts/{hash}",
+          "page": "https://vercel.com/docs/rest-api/artifacts/upload-a-cache-artifact",
+          "specRevision": "0.0.1",
+          "contract": "sha256:779863def331ffbad3c102a3cb656776edffb0b9ca7b38bfe60dcf0f52cde985"
+        },
+        {
+          "operation": "GET /v8/certs",
+          "page": "https://vercel.com/docs/rest-api/certs/get-certs",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d918054065fb69f3953d6984f625a5e784161520fa81e91ea2229ffa16d2a6f2"
+        },
+        {
+          "operation": "POST /v8/certs",
+          "page": "https://vercel.com/docs/rest-api/certs/issue-a-new-cert",
+          "specRevision": "0.0.1",
+          "contract": "sha256:d77ad9b9e348af90f8e3b9b9936f6114751fa3edd6676810b2a87ac4bb2757c3"
+        },
+        {
+          "operation": "PUT /v8/certs",
+          "page": "https://vercel.com/docs/rest-api/certs/upload-a-cert",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1261214a0da8e78352d9398bb5694726a38945a60eaa55720bf5ae0c26992334"
+        },
+        {
+          "operation": "GET /v8/certs/{id}",
+          "page": "https://vercel.com/docs/rest-api/certs/get-cert-by-id",
+          "specRevision": "0.0.1",
+          "contract": "sha256:eff6a9ab879e1099a49de77e1d96820dbed8085dee9614eae8f24ed0189b9ee2"
+        },
+        {
+          "operation": "DELETE /v8/certs/{id}",
+          "page": "https://vercel.com/docs/rest-api/certs/remove-cert",
+          "specRevision": "0.0.1",
+          "contract": "sha256:92b66c3cc29e1a96e729f09a3d6d5286b9b50784d7353663cb04a6ef3da9d740"
+        },
+        {
+          "operation": "GET /v8/deployments/{id}/files/{fileId}",
+          "page": "https://vercel.com/docs/rest-api/deployments/get-deployment-file-contents",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bc87c16c2aa34b13af6063c20a3cb7defd947a71f00785c4a328ffa85dc9a00b"
+        },
+        {
+          "operation": "POST /v9/domains/{domain}/claim",
+          "page": "https://vercel.com/docs/rest-api/domains/claim-domain-ownership",
+          "specRevision": "0.0.1",
+          "contract": "sha256:31920095acdabecd2c93ccb96bb8340e733db83ecf78f70d1b53c7d497e66f55"
+        },
+        {
+          "operation": "GET /v9/domains/{domain}/verification",
+          "page": "https://vercel.com/docs/rest-api/domains/get-domain-verification-record",
+          "specRevision": "0.0.1",
+          "contract": "sha256:674934b824816833409a3aa2dffc22c29108519c40ba258c5a71794b48d01ce5"
+        },
+        {
+          "operation": "GET /v9/projects/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/projects/find-a-project-by-id-or-name",
+          "specRevision": "0.0.1",
+          "contract": "sha256:12834d51d8b61d41c305c0131190df633cc5399d8029fcc593556f50309fd82b"
+        },
+        {
+          "operation": "PATCH /v9/projects/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/projects/update-an-existing-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:be6c0914fce5b105680526c9c0e3b15b91d1d2e2a2090da74662011a6913443c"
+        },
+        {
+          "operation": "DELETE /v9/projects/{idOrName}",
+          "page": "https://vercel.com/docs/rest-api/projects/delete-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:79a58abf220518fe060c190663af226ad68d27df6cb76c8b9ba0cfeaf4d2b9a7"
+        },
+        {
+          "operation": "GET /v9/projects/{idOrName}/custom-environments",
+          "page": "https://vercel.com/docs/rest-api/environment/retrieve-custom-environments",
+          "specRevision": "0.0.1",
+          "contract": "sha256:1a32f024c5ed272803a15eab617eb2d401cff719648f8128ce60d9d9339e65aa"
+        },
+        {
+          "operation": "POST /v9/projects/{idOrName}/custom-environments",
+          "page": "https://vercel.com/docs/rest-api/environment/create-a-custom-environment-for-the-current-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:e445f6bfe004938b28e0b05824340e65e1080608d101fd086668de270bafc881"
+        },
+        {
+          "operation": "GET /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+          "page": "https://vercel.com/docs/rest-api/environment/retrieve-a-custom-environment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ecdd663479da5ea428344c326af1b8ca0a33428cc7c43604042b7eb37adae1f3"
+        },
+        {
+          "operation": "PATCH /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+          "page": "https://vercel.com/docs/rest-api/environment/update-a-custom-environment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:4ef55b69737e9ad5cd5af2d0f84e53c62d5f09d366464dfd5e041fe6d62e8c5c"
+        },
+        {
+          "operation": "DELETE /v9/projects/{idOrName}/custom-environments/{environmentSlugOrId}",
+          "page": "https://vercel.com/docs/rest-api/environment/remove-a-custom-environment",
+          "specRevision": "0.0.1",
+          "contract": "sha256:7298e696275215dd26944c755dde66d403ca06ca95434c54f1b68cd70a576ffa"
+        },
+        {
+          "operation": "GET /v9/projects/{idOrName}/domains",
+          "page": "https://vercel.com/docs/rest-api/projects/retrieve-project-domains-by-project-by-id-or-name",
+          "specRevision": "0.0.1",
+          "contract": "sha256:a9d34690d44f4a2614a5711886a29f23c03c24e769fe79c1c9569c0701440930"
+        },
+        {
+          "operation": "GET /v9/projects/{idOrName}/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/projects/get-a-project-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:44fbb93c8eef5fe91859d5aa9c02b72ab114084fdb40d297c0fd0095c2a45a9f"
+        },
+        {
+          "operation": "PATCH /v9/projects/{idOrName}/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/projects/update-a-project-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:eb441bc730ba6ea28919eaea00221a8408ecfa85722ba5dca8842b5d57474832"
+        },
+        {
+          "operation": "DELETE /v9/projects/{idOrName}/domains/{domain}",
+          "page": "https://vercel.com/docs/rest-api/projects/remove-a-domain-from-a-project",
+          "specRevision": "0.0.1",
+          "contract": "sha256:cf73839ee932602c00a1b1882c9bb2a2a2b4c4901e597cd517abb893ce6f85f9"
+        },
+        {
+          "operation": "POST /v9/projects/{idOrName}/domains/{domain}/verify",
+          "page": "https://vercel.com/docs/rest-api/projects/verify-project-domain",
+          "specRevision": "0.0.1",
+          "contract": "sha256:366900558cfa65f3145c4824935a6834bf21daece06e72a4d36c4b6646353578"
+        },
+        {
+          "operation": "PATCH /v9/projects/{idOrName}/env/{id}",
+          "page": "https://vercel.com/docs/rest-api/projects/edit-an-environment-variable",
           "specRevision": "0.0.1",
           "contract": "sha256:4b3f2750b254069abc5be22580135ad335d581dc075c0d70e718fe7e359959bd"
         },
         {
-          "method": "DELETE",
-          "path": "/v9/projects/{idOrName}/env/{id}",
+          "operation": "DELETE /v9/projects/{idOrName}/env/{id}",
+          "page": "https://vercel.com/docs/rest-api/projects/remove-an-environment-variable",
           "specRevision": "0.0.1",
           "contract": "sha256:d6588fd053b7d376ba70042b94503ade24a869ed316afa38cc11c245915a315b"
         },
         {
-          "method": "POST",
-          "path": "/v2/files",
+          "operation": "POST /web/insights/toggle",
+          "page": "https://vercel.com/docs/rest-api/untagged/createwebinsightstoggle",
           "specRevision": "0.0.1",
-          "contract": "sha256:ab19b64cbd590109345cf49143b224ca3765d77bf9de737451413babe34e5221"
+          "contract": "sha256:2fd6937093b004748f0ed1ab5920dbc86103e0cef600210454da5c1c62d2c3c9"
         }
       ]
     },
     {
       "type": "openapi-index",
-      "source": "openapi.source.json"
+      "source": "evidence/openapi.json"
     }
   ]
 }

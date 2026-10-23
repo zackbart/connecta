@@ -1,25 +1,23 @@
-import { skill } from "./skill.generated.js";
-/**
- * No `@vercel/sdk` on purpose — not a dependency and not an optional peer.
- * Direct fetch keeps the root Workers-safe and avoids shipping the SDK's
- * generated model graph. The token connector reads a pinned operation index
- * compiled from Vercel's published OpenAPI document (https://openapi.vercel.sh/,
- * unversioned, so pinned by content hash in `openapi.source.json`);
- * `pnpm run providers:check --provider vercel` reports when the live document
- * moves, and `src/providers/vercel/drift.json` also records the contract digest
- * of every endpoint a named tool is written against.
- */
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { apiConnector } from "../../connectors/api-connector.js";
-import { tracksEveryRequest } from "../../provider-call.js";
-import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
-import { restTools } from "../_shared/rest/tools.js";
-import { VERCEL_API_BASE_URL, vercelRest } from "./rest.js";
-
-export { VERCEL_API_BASE_URL } from "./rest.js";
-
+import { defineApiProvider } from "../../http/provider.js";
+import { CALL_ADMISSION } from "../../provider.js";
+import type { ConnectorCallAdmissionPolicy } from "../../types.js";
+import { removedHostedMcp } from "../_shared/rest/dispatch.js";
+import {
+  authenticate,
+  MAX_RESPONSE_BYTES,
+  READ_CAP_MS,
+  probe,
+  result,
+  safety,
+  vercelErrors,
+  VercelApi,
+  usageGuide,
+} from "./api.js";
+import { VERCEL_API_BASE_URL } from "./lib/config.js";
+import { vercelTools } from "./tools.js";
+import { skill } from "./skill.generated.js";
+export { VERCEL_API_BASE_URL } from "./lib/config.js";
 interface VercelCommonOptions {
   /** Human-readable display name; defaults identify the implementation. */
   title?: string;
@@ -51,23 +49,6 @@ export interface VercelTokenOptions extends VercelCommonOptions {
 
 export type VercelOptions = VercelTokenOptions;
 
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-function tokenUsageGuide(purpose: string, teamId: string | undefined, instructions: string | undefined): string {
-  const { key, shared } = skill.fragments;
-  const scope = teamId
-    ? `This connection defaults to team \`${teamId}\`: operations that accept a team get it unless a call passes \`teamId\` (or \`slug\`), and \`teamId: null\` targets the token owner's personal account.`
-    : "This connection defaults to the token owner's personal account. Call `list_teams`, then pass `teamId` for team-owned resources.";
-  return `# Vercel usage
-
-Connecta's REST connector to the Vercel API with one access token. Account purpose: ${purpose}
-
-${scope}${key}${shared}${instructionsSection(instructions)}`;
-}
-
 const COMMON = {
   ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly"),
   callAdmission: CALL_ADMISSION,
@@ -89,38 +70,10 @@ const VERCEL_OPTIONS = variants(
   ["oauth"],
 );
 
-function vercelToken(id: string, options: Readonly<VercelTokenOptions>, provider: ProviderContext): Connector {
-  const teamId = typeof options.teamId === "string" ? options.teamId.trim() || undefined : undefined;
-  const baseUrl = options.baseUrl ?? VERCEL_API_BASE_URL;
-  const rest = vercelRest({ baseUrl, teamId });
-  return tracksEveryRequest(
-    apiConnector(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? "Vercel",
-      description: `Vercel account and deployments: ${options.purpose}`,
-      credential: {
-        label: "Vercel access token",
-        description:
-          "Access token from Vercel Account Settings → Tokens. Choose the personal account or team scope this deployment needs and set an expiration date. The connector never sends it anywhere except api.vercel.com or the configured baseUrl proxy.",
-        placeholder: "Paste Vercel access token",
-      },
-      testCredential: rest.testCredential,
-      usageGuide: {
-        content: tokenUsageGuide(options.purpose, teamId, options.instructions),
-        summary:
-          "One access token over REST: search operations, read details, then read or write. Value-safe env vars.",
-        required: true,
-      },
-      tools: [...restTools(rest.vendor), ...rest.tools],
-    }),
-  );
-}
-
-/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
-export const vercel = defineProvider<VercelOptions>({
+/** Maintained API connection. Hosted MCP uses a separate generic connection. */
+export const vercel = defineApiProvider<VercelOptions>({
   name: "vercel",
   title: "Vercel",
-  kind: "api",
   readme: "Vercel",
   bundle: {
     "baselineGzip": 228431,
@@ -129,5 +82,26 @@ export const vercel = defineProvider<VercelOptions>({
   },
   skill,
   options: VERCEL_OPTIONS,
-  create: byAuth<VercelOptions>({ oauth: removedHostedMcp, token: vercelToken }),
+  vendor: VercelApi,
+  baseUrl: (options) => {
+    if (options.auth.type !== "token") removedHostedMcp();
+    return options.baseUrl ?? VERCEL_API_BASE_URL;
+  },
+  description: (options) => `Vercel account and deployments: ${options.purpose}`,
+  maxResponseBytes: MAX_RESPONSE_BYTES,
+  timeoutMs: READ_CAP_MS,
+  headers: { Accept: "application/json" },
+  credential: {
+    label: "Vercel access token",
+    description:
+      "Access token from Vercel Account Settings → Tokens. Choose the personal account or team scope this deployment needs and set an expiration date. The connector never sends it anywhere except api.vercel.com or the configured baseUrl proxy.",
+    placeholder: "Paste Vercel access token",
+  },
+  authenticate,
+  safety,
+  errors: vercelErrors,
+  result,
+  probe,
+  guide: usageGuide,
+  tools: vercelTools,
 });
