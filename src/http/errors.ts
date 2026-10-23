@@ -418,7 +418,7 @@ function ok(status: number | undefined): boolean {
 function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
-  options: Pick<MapOptions, "withholds" | "signal">,
+  options: Pick<MapOptions, "withholds" | "signal" | "dispatches">,
 ): ConnectorCallError {
   switch (failure._tag) {
     case "Refusal":
@@ -449,15 +449,34 @@ function verdict(
     case "UnreadableBody":
       return new ConnectorCallError("connector_call_failed", vendor.unreadable, { retryable: false });
     case "StatusFailure":
-      return statusVerdict(failure, vendor, options.withholds?.(failure.operation) === true);
+      return statusVerdict(
+        failure,
+        vendor,
+        options.withholds?.(failure.operation) === true,
+        options.dispatches.some((dispatch) => dispatch.failure === failure && !dispatch.write),
+      );
   }
 }
 
-function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): ConnectorCallError {
+function statusVerdict(
+  failure: StatusFailure,
+  vendor: VendorErrors<any>,
+  withheld: boolean,
+  read: boolean,
+): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
   const { facts, headers } = input;
   // Classification first, over facts and headers only.
-  const { code, retryable, retryAfterMs: wait, current, words, advice } = classified(input, vendor);
+  // The transport already applied the core's positive-read method/header rule.
+  // A 421 advises an explicit retry only for that request; no resend happens here.
+  const {
+    code,
+    retryable,
+    retryAfterMs: wait,
+    current,
+    words,
+    advice,
+  } = failure.status === 421 && read ? { code: "unavailable" as const, retryable: true } : classified(input, vendor);
   // Then the wording. The body reaches `detail` only when this operation's
   // value-safety review lets its vendor text through.
   const detail = vendor.detail({
