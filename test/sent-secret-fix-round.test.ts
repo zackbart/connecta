@@ -1,6 +1,7 @@
 // Security-review regressions for original-span matching, all derived copies,
 // normalization/extraction, tiny tails, and cross-request paging stability.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
@@ -82,6 +83,13 @@ describe("bounded reads match original spans", () => {
 });
 
 describe("every Notion representation", () => {
+  beforeEach(() => {
+    configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(undefined);
+  });
+
   it.each(echoForms(SECRET))(
     "INV-5: truncated %s text is safe in titles, selected properties, search, query, and raw branches",
     async (_name, form) => {

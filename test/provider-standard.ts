@@ -29,7 +29,6 @@ export const PENDING = {
     "github",
     "gmail",
     "mixpanel",
-    "notion",
     "sheets",
     "slides",
     "vercel",

@@ -1,7 +1,7 @@
 // Notion's reviewed value-safety table (#801), on the shared mechanism in
 // `../_shared/rest/value-safety.ts`: every operation the detector flags in
-// the pinned spec (`value-safety.candidates.json`) has one verdict here, and
-// `value-safety.node.test.ts` runs the shared harness over it.
+// the pinned spec (`evidence/value-safety.json`) has one verdict here, and
+// `provider.safety.node.test.ts` runs the shared harness over it.
 //
 // Notion's API returns little that is a credential: an integration token
 // never appears in a response. The OAuth endpoints mint, introspect, and
