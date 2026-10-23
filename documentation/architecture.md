@@ -2083,10 +2083,19 @@ Drive's two-request reads also declare fixed steps: `get_file_content` uses
 `metadata` and `content`, and non-root `list_folder_items` uses `folder` and
 `files`. These reads still send both GETs when deployment classification
 serves them as writes; each step can leave only once.
+Gmail declares separate initial and body-download steps for `get_message`,
+`get_draft`, and `get_attachment`; `search_threads` and `list_drafts` name
+each of up to 25 summary reads, and `get_thread` names each stored body in
+Gmail's 100-message conversation limit. Serving these reads as writes keeps
+every request available once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
-outcome.
+outcome. Gmail's auxiliary draft and reply lookups pass both `effect: "read"`
+and a construction-declared step: the guarded client's early reservation uses
+that named slot, while the ledger marks the request auxiliary. A failed lookup
+keeps its read verdict and cannot make an unsent draft write unknown.
+
 Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
 kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
 and create/append recovery advice. Its projections and the Google failure
@@ -2227,6 +2236,31 @@ type routes a body around ResultSafety as one string or as bytes; a body that
 is not JSON is then unreadable. Value safety's own decisions on values fail
 closed the same way (see "Value safety for REST vendors").
 
+A vendor may declare `encodedFields`: exact dotted JSON paths with whole
+array segments (`payload.parts[*].body.data`), `encoding: "base64url"`, an
+optional `sizePath` addressing the same array elements, and a one-line review.
+Construction freezes the declaration. Before ordinary whole-answer redaction,
+the kit decodes each valid field and redacts its decoded text and bytes through
+the same request-secret service. Unchanged fields retain their original
+spelling; changed fields retain the original alphabet and padding style when
+re-encoded. Both standard and URL-safe alphabets are accepted with valid padding. Invalid base64url stays on
+the ordinary redaction path. A declared size is checked against the original
+decoded byte length first; a mismatch also retains ordinary redaction. Size
+values stay unchanged. This never exempts the encoded field or its surrounding
+JSON from the generic redaction pass.
+
+Result hooks alone may call `encodedFieldProvenance(answer, concretePath)`.
+Its private WeakMap is keyed by the parsed, redacted answer; each frozen
+entry holds only `originalLength`, optional `sizeValid`, and `changed`.
+Provenance contains no content and is never serialized into facts, messages
+or logs. Gmail copies this metadata privately for its decoded body containers:
+text renders after redaction and before cuts, while changed binary content is
+withheld in full. Its original byte counts still govern attachment validation.
+Vendors without this declaration retain the existing parsing path.
+Gmail refuses to update a draft whose Content-Disposition or any header name
+was redacted, because it cannot prove that rebuilding the message would retain
+its headers and attachments.
+
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
 Transport diagnostics use the vendor error label rather than the provider
@@ -2252,7 +2286,10 @@ an object with required properties; its decoder is unchanged. Closed empty
 input records render `properties: {}` and `required: []` explicitly.
 
 A vendor may set `manifestBase` to prefix its documented operation paths.
-Transport paths remain relative to the confined base URL. The catalog renderer
+The prefix accepts literal path segments and whole `{param}` segments whose
+names contain only letters, digits and underscores. It is concatenated verbatim
+for the manifest; transport paths remain relative to the confined base URL,
+with no parameter interpolation. The catalog renderer
 collapses unions of bare object and array branches into a type array; branches
 with additional constraints retain `anyOf`.
 

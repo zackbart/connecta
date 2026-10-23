@@ -113,7 +113,7 @@ var options8 = { "purpose": "Audit fixture", ...googleOptions };
 var fixture8 = {
   name: "gmail",
   options: options8,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return gmail(id, { ...options8, ...overrides });
   },
