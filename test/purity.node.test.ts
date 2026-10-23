@@ -182,6 +182,7 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
     // emitted JavaScript, so a type import cannot become a value import later
     // without this test noticing.
     const reached = importGraph(join(SRC, "provider.ts"));
+    expect(reached.has(join(SRC, "config-schema.ts"))).toBe(true);
     for (const file of reached) {
       expect(file.startsWith(join(SRC, "connectors")), file).toBe(false);
       expect(file.startsWith(join(SRC, "runtime")), file).toBe(false);

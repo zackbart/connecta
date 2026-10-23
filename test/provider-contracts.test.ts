@@ -30,8 +30,22 @@ it.each([
   ["Mixpanel default", () => mixpanel("analytics", { purpose: "Analytics" } as never)],
   ["Mixpanel MCP", () => mixpanel("analytics", { purpose: "Analytics", via: "mcp" } as never)],
 ])("INV-11: %s requires the generic hosted replacement at construction", (_name, construct) => {
-  expect(construct).toThrow("remoteMcp()");
+  expect(construct).toThrow("requires remoteMcp()");
   expect(construct).toThrow("ConnectaConfig.classification");
+});
+
+it.each([
+  ["Stripe", () => stripe("billing", { purpose: "Billing" } as never), '"apiKey"'],
+  ["Vercel", () => vercel("hosting", { purpose: "Hosting" } as never), '"token"'],
+  [
+    "Cloudflare",
+    () => cloudflare("infrastructure", { purpose: "Infrastructure" } as never),
+    '"apiToken", "globalApiKey"',
+  ],
+  ["Notion", () => notion("notes", { purpose: "Notes" } as never), '"token"'],
+])("INV-11: %s missing auth lists only API choices", (_name, construct, choices) => {
+  expect(construct).toThrow(`one of ${choices}.`);
+  expect(construct).not.toThrow(/oauth/);
 });
 
 it.each([

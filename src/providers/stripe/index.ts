@@ -116,15 +116,20 @@ ${instructionsSection(instructions)}`;
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options stripe() accepts, selected by `auth.type`; see `assertKnownOptions`. */
-const STRIPE_OPTIONS = variants(["auth", "type"], {
-  // The never-typed keys stay out of the shape, so the walk refuses them by name.
-  oauth: { ...COMMON, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
-  apiKey: optionsOf<StripeApiKeyOptions>()({
-    ...COMMON,
-    ...keys("mode", "connectedAccount"),
-    auth: optionsOf<StripeApiKeyOptions["auth"]>()(keys("type")),
-  }).shape,
-});
+const STRIPE_OPTIONS = variants(
+  ["auth", "type"],
+  {
+    // The never-typed keys stay out of the shape, so the walk refuses them by name.
+    oauth: { ...COMMON, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
+    apiKey: optionsOf<StripeApiKeyOptions>()({
+      ...COMMON,
+      ...keys("mode", "connectedAccount"),
+      auth: optionsOf<StripeApiKeyOptions["auth"]>()(keys("type")),
+    }).shape,
+  },
+  undefined,
+  ["oauth"],
+);
 
 function stripeApiKey(id: string, options: Readonly<StripeApiKeyOptions>, provider: ProviderContext): Connector {
   const mode = options.mode;
@@ -175,7 +180,7 @@ export const stripe = defineProvider<StripeOptions>({
   bundle: {
     "baselineGzip": 232089,
     "note":
-      "./providers/stripe remeasures at 232,089 B gzip (#801), from 170,771 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Stripe operation index (638 operations; request details to depth 2, without descriptions or enums over 50 values; 37,918 B gzip as source). Details were shrunk before its former cap moved: the first full index measured 81 KB gzip. Reported against this baseline, not capped (#899).",
+      "./providers/stripe was measured at 232,089 B gzip (#801), from 170,771 B on main: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Stripe operation index (638 operations; request details to depth 2, without descriptions or enums over 50 values; 37,918 B gzip as source). Details were shrunk before its former cap moved: the first full index measured 81 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
   },
   skill,
   options: STRIPE_OPTIONS,

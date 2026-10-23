@@ -77,7 +77,7 @@ export const mixpanel = defineProvider<MixpanelOptions>({
   readme: "Mixpanel",
   bundle: {
     baselineGzip: 205500,
-    note: "./providers/mixpanel (#823) adds the REST connector, guarded transport, shared operation index and value-safety engine alongside the unchanged hosted MCP client. The nine-operation reviewed subset was shrunk to depth 3 without descriptions before remeasuring: operations.ts is 1355 B gzip. The provider remeasures at about 205500 B gzip, compared with the 131378 B MCP-only baseline; reported against this baseline, not capped (#899). No new runtime dependencies.",
+    note: "./providers/mixpanel retains its 205,500 B gzip baseline from #823, which included the former hosted client alongside the REST connector, guarded transport, shared operation index and value-safety engine. C.0c removes the hosted MCP half. The nine-operation reviewed subset was shrunk to depth 3 without descriptions before that measurement: operations.ts is 1355 B gzip. Reported against this baseline, not capped (#899). No new runtime dependencies.",
   },
   skill,
   options: MIXPANEL_OPTIONS,

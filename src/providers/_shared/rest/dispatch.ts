@@ -27,6 +27,7 @@ export function byAuth<O extends AuthTyped>(
     if (!create) {
       throw new Error(
         `auth.type must be one of ${Object.keys(cases)
+          .filter((name) => cases[name as keyof AuthCases<O>] !== removedHostedMcp)
           .map((name) => JSON.stringify(name))
           .join(", ")}.`,
       );
@@ -37,6 +38,6 @@ export function byAuth<O extends AuthTyped>(
 
 export function removedHostedMcp(): never {
   throw new Error(
-    "Hosted MCP connections require remoteMcp() with ConnectaConfig.classification; use a distinct id beside the API connector.",
+    "remoteMcp() with ConnectaConfig.classification for hosted MCP connections; use a distinct id beside the API connector.",
   );
 }

@@ -459,9 +459,6 @@ export class Registry implements RegistryView {
             "Shorten it or omit it to derive one.",
         );
       }
-      // Validated here, before any request (INV-11), and read once per
-      // connector object.
-
       this.connectors.set(c.id, c);
       if (c.callAdmission !== undefined) {
         this.callAdmission.set(c.id, new ConnectorCallAdmissionController(c.id, c.callAdmission));

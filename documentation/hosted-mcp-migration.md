@@ -31,10 +31,12 @@ former settings as of 2026-10-23, not a promise about current vendor availabilit
    `instructions` and do not reconstruct the old maintained vendor guide,
    summary, required-guide setting, slot label, or default title. Choose
    explicit descriptive labels and retain needed account/region context.
-6. Retain operator-authored classification settings only after checking them
-   against the live catalog. Never copy a deleted provider's review map or
-   schema pins into `classify`, `classification`, or another override map.
-   Those release reviews are retired, not deployment policy.
+6. Check classification settings against the live catalog. Tools the retired
+   review held as write or destructive must stay non-read. When live hints
+   mark them read, an exact `"write"` or `"hidden"` override in
+   `ConnectaConfig.classification` is allowed and expected. Never copy a
+   retired review map wholesale, migrate schema pins, or use historical
+   verdicts to broaden access.
 
 For example, an existing connector named `crm` remains `crm`. Substitute its
 preserved URL from the table and its existing auth settings in this deployment
@@ -127,6 +129,9 @@ The explicit admission policy reproduces the former fixed hosted default:
 25 calls/second and four concurrent calls, even for a live account. Preserve
 it when migrating; generic connections supply no Stripe admission default.
 Discover account selectors and current classifications before account-scoped use.
+Keep `stripe_analytics` non-read: it can create asynchronous query runs, even
+when used to analyze existing data. If live hints mark it read, set an exact
+`"write"` or `"hidden"` deployment override.
 
 ### Vercel
 
@@ -149,6 +154,23 @@ const hostingHosted = remoteMcp("hosting_hosted", {
   description: "Authorized hosting teams", authScope: "shared",
   auth: { type: "oauth" },
 });
+```
+
+Preserve non-read exposure for `filter_project_envs` and `get_project_env`,
+which can return decrypted environment values; `get_access_to_vercel_url`,
+whose returned URL is a credential; and `cancel_deployment`, which changes an
+existing deployment. If live hints mark any of them read, set a `"write"` or
+`"hidden"` override. For example, add this map to the surrounding deployment:
+
+```ts
+classification: {
+  hosting_hosted: {
+    filter_project_envs: "hidden",
+    get_project_env: "hidden",
+    get_access_to_vercel_url: "hidden",
+    cancel_deployment: "write",
+  },
+},
 ```
 
 ### Cloudflare
@@ -201,6 +223,10 @@ const notesHosted = remoteMcp("notes_hosted", {
 The example explicitly selects personal ownership; preserve the old setting
 when replacing an existing connection. Generic hosted results do not inherit
 the integration connector's URL redaction or file safety rules.
+Keep confirmation-flag destructive tools such as `notion-delete-databases`
+and `notion-delete-pages` non-read. An optional confirmation flag does not
+make the whole tool read-only. If live hints mark them read, set exact
+`"write"` or `"hidden"` deployment overrides.
 
 ### Mixpanel
 
@@ -240,6 +266,9 @@ scheme ends in `Basic`, producing `Authorization: Bearer Basic <base64(pair)>`.
 Ordinary `Basic` or `Bearer <pair>` is not equivalent. Preserve an explicit old
 header/scheme instead of overriding it with these historical defaults.
 The API connector still uses its own service-account HTTP framing and admission.
+Keep `Get-Experiment` non-read: its optional compute flags can persist refreshed
+result caches and auto-conclude an experiment. If live hints mark it read, set
+an exact `"write"` or `"hidden"` deployment override.
 
 ### GitHub
 
@@ -381,8 +410,10 @@ classification: {
 `"write"` selects the host approval path. `"hidden"` omits the tool from search
 and describe and refuses guessed-name calls, including programs. An absent
 runtime tool leaves its override dormant, with one operator warning per catalog
-change; the override applies if that exact name returns. Never copy the retired
-preset's review into this map or promote tools merely to recover their old route.
+change; the override applies if that exact name returns. Use `"write"` or
+`"hidden"` to keep formerly reviewed writes and destructive tools non-read
+when live hints would expose them as reads. Never copy a retired review map
+wholesale or use it to broaden access or merely recover an old route.
 
 An override does not change replay safety. A call is write-like when either its
 effective class or its source class is write. The source class uses only the server's annotations: missing hints or

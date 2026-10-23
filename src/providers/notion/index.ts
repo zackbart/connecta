@@ -69,7 +69,7 @@ export interface NotionTokenOptions extends NotionCommonOptions {
   defaultPageSize?: number;
 }
 
-/** `auth` selects the implementation: hosted MCP over OAuth, or REST with a token. */
+/** Notion's maintained REST connector uses integration-token auth. */
 export type NotionOptions = NotionTokenOptions;
 
 function instructionsSection(instructions: string | undefined): string {
@@ -93,16 +93,21 @@ Workspace purpose: ${purpose}${key}${shared}${instructionsSection(instructions)}
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options notion() accepts, selected by `auth.type`; see `assertKnownOptions`. */
-const NOTION_OPTIONS = variants(["auth", "type"], {
-  // The never-typed keys stay out of the shape, so the walk refuses them by name.
-  oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
-  token: optionsOf<NotionTokenOptions>()({
-    ...COMMON,
-    callAdmission: CALL_ADMISSION,
-    ...keys("credentialLabel", "defaultPageSize"),
-    auth: optionsOf<NotionTokenOptions["auth"]>()(keys("type")),
-  }).shape,
-});
+const NOTION_OPTIONS = variants(
+  ["auth", "type"],
+  {
+    // The never-typed keys stay out of the shape, so the walk refuses them by name.
+    oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
+    token: optionsOf<NotionTokenOptions>()({
+      ...COMMON,
+      callAdmission: CALL_ADMISSION,
+      ...keys("credentialLabel", "defaultPageSize"),
+      auth: optionsOf<NotionTokenOptions["auth"]>()(keys("type")),
+    }).shape,
+  },
+  undefined,
+  ["oauth"],
+);
 
 function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider: ProviderContext): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
@@ -143,7 +148,7 @@ export const notion = defineProvider<NotionOptions>({
   bundle: {
     "baselineGzip": 211946,
     "note":
-      "./providers/notion remeasures at 211,946 B gzip (#801), against a 145,300 B baseline: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. Reported against this baseline, not capped (#899).",
+      "./providers/notion was measured at 211,946 B gzip (#801), against a 145,300 B baseline: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
   },
   skill,
   options: NOTION_OPTIONS,

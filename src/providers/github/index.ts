@@ -24,7 +24,7 @@ export const github = defineProvider<GitHubOptions>({
   skill,
   bundle: {
     baselineGzip: 164063,
-    note: "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; reported against this baseline, not capped (#899).",
+    note: "./providers/github retains its initial 164,063 B gzip baseline for size comparison. C.0c removes the hosted MCP half; the entry now carries portable GitHub App signing, scoped routing and six REST tools. Reported against this baseline, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,

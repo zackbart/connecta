@@ -171,22 +171,27 @@ const KEY_COMMON = keys("accountId", "zoneId", "baseUrl", "maxConcurrency");
 const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
 
 /** The closed options cloudflare() accepts, selected by `auth.type`; see `assertKnownOptions`. */
-const CLOUDFLARE_OPTIONS = variants(["auth", "type"], {
-  oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
-  apiToken: optionsOf<CloudflareApiTokenOptions>()({
-    ...COMMON,
-    ...KEY_COMMON,
-    pin: PIN,
-    auth: optionsOf<CloudflareApiTokenOptions["auth"]>()(keys("type")),
-  }).shape,
-  globalApiKey: optionsOf<CloudflareGlobalApiKeyOptions>()({
-    ...COMMON,
-    ...KEY_COMMON,
-    ...keys("unpinned"),
-    pin: PIN,
-    auth: optionsOf<CloudflareGlobalApiKeyOptions["auth"]>()(keys("type")),
-  }).shape,
-});
+const CLOUDFLARE_OPTIONS = variants(
+  ["auth", "type"],
+  {
+    oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
+    apiToken: optionsOf<CloudflareApiTokenOptions>()({
+      ...COMMON,
+      ...KEY_COMMON,
+      pin: PIN,
+      auth: optionsOf<CloudflareApiTokenOptions["auth"]>()(keys("type")),
+    }).shape,
+    globalApiKey: optionsOf<CloudflareGlobalApiKeyOptions>()({
+      ...COMMON,
+      ...KEY_COMMON,
+      ...keys("unpinned"),
+      pin: PIN,
+      auth: optionsOf<CloudflareGlobalApiKeyOptions["auth"]>()(keys("type")),
+    }).shape,
+  },
+  undefined,
+  ["oauth"],
+);
 
 function idsOf(id: string, value: unknown, path: string): string[] | undefined {
   if (value === undefined) return undefined;
@@ -295,7 +300,7 @@ export const cloudflare = defineProvider<CloudflareOptions>({
   readme: "Cloudflare",
   bundle: {
     baselineGzip: 334055,
-    note: "./providers/cloudflare remeasures at 334,055 B gzip (#801), from 151,186 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before its former cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table adds about 12 KB. The value-safety consolidation (#801) moved the spec-derived candidate record out of the index and grew the table by 259 verdicts, a net +3,646 B (337,701 B), inside its former cap. Reported against this baseline, not capped (#899).",
+    note: "./providers/cloudflare was measured at 334,055 B gzip (#801), from 151,186 B on main: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before its former cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table adds about 12 KB. The value-safety consolidation (#801) moved the spec-derived candidate record out of the index and grew the table by 259 verdicts, a net +3,646 B (337,701 B), inside its former cap. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,
