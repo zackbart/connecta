@@ -69,8 +69,8 @@ export const breeze = defineApiProvider<BreezeOptions>({
   skill,
   options: BREEZE_OPTIONS,
   bundle: {
-    baselineGzip: 20637,
-    note: "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. Reported against this baseline, not capped (#899).",
+    baselineGzip: 324520,
+    note: "./providers/breeze remeasures at 324,520 B gzip in C.1 (decision 0010), Node 22 CI static at 835f5947: the provider now runs on the Effect provider kit with reviewed text bodies. This replaces the historical 20,637 B guarded-fetch baseline. Reported against this baseline, not capped (#899).",
   },
   displayTitle: (options) => `Breeze ChMS (${normalizeSubdomain(options.subdomain)})`,
   description: (options) =>
