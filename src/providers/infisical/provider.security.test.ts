@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../../guarded-transport.js";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialVault } from "../../credentials.js";
 import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
@@ -64,7 +65,12 @@ const RESULT_CASES = new Set([
   "list_secrets explicit value and comment read",
 ]);
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

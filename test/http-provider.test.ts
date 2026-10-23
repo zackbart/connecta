@@ -403,6 +403,39 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(signal?.aborted).toBe(true);
   }
+
+  // A custom probe may use a private transport, so none of these defects has
+  // a kit dispatch from which the visibility policy could be recovered.
+  for (const hook of ["run", "describe", "failure"] as const) {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const connector = defineApiProvider({
+      ...definition,
+      probe: {
+        ...definition.probe,
+        run: () =>
+          Signal.use((value) => {
+            signal = value;
+            return hook === "run"
+              ? Effect.die(defect)
+              : hook === "failure"
+                ? Effect.fail(new Refusal({ error: defect }))
+                : Effect.succeed({});
+          }),
+        describe: () => {
+          throw defect;
+        },
+        failure: () => {
+          throw defect;
+        },
+      },
+    })("tickets", { purpose: "Support" });
+    const result = connector.testCredentials!({ value: "candidate" }, connectorContext());
+    await expect(result).rejects.toThrow("A provider hook withholding vendor text failed.");
+    await expect(result).rejects.not.toBeInstanceOf(ConnectorCallError);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(signal?.aborted).toBe(true);
+  }
   const fetch = vi.fn(async () => Response.json({}));
   vi.stubGlobal("fetch", fetch);
   const writeProbe = defineApiProvider({

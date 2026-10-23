@@ -2020,13 +2020,43 @@ caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
 
+The optional `grant(options)` factory supplies a renewable machine-login
+`Grant`, exclusive with static OAuth. It is built outside caller contexts;
+each send binds the active call to its token, refresh and rejected effects.
+Infisical uses credential-bound login flights shared within one request, while
+only token strings and expiry cross requests. An optional `writeUnauthorized`
+mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
+the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
+Reads replay once after renewal; writes are never resent.
+
+The optional `probe.run(connection, options)` program replaces the operation
+probe when authentication needs a different read or a private login transport.
+It is built once at provider construction outside caller contexts, using the
+confined Connection and validated options. Execution uses the same anonymous,
+uncharged candidate services, accounting, settlement, failure mapping and
+finalizer. An empty write-capacity map refuses Connection writes before dispatch.
+Every defect from a run probe or its hooks uses the generic withheld notice,
+even without a kit dispatch, because a private transport leaves no kit visibility
+evidence. An open operation probe retains its original defect.
+
 The REST bridge in `src/providers/_shared/rest/kit.ts` retains pinned index
 validation and legacy hatch schemas while the kit owns tool leases, fixed write
 capacity, transport, failures and result safety. It verifies schema equality
 before restoring legacy catalog key order. `indexedVendor` derives operation
 metadata from the index and builds the full manifest lazily; the typed client
-contains only named operations and probes. Manifest/index operation-set equality
-is checked independently of drift digests, which still use full vendor contracts.
+contains only named operations and probes. Bulk indexed declarations preserve
+the OpenAPI brace paths verbatim and carry explicit parameter Schemas. They
+serve the manifest only: typed sends refuse an undeclared operation name,
+and indexed hatches dispatch through `sendPath`. Parameter names outside
+`[A-Za-z0-9_-]+` fail construction. Manifest/index operation-set equality is
+checked independently of drift digests, which still use full vendor contracts.
+
+`restKitTools` may declare a `writeSteps` map whose values are `"once"`.
+Construction freezes the map; every named step sends at most once and an
+undeclared step is refused before dispatch. Omitting it retains the single
+implicit write step. Auxiliary ownership reads in a write call retain that
+call's write classification and consume their declared lookup steps, so the
+resource write cannot be resent.
 
 Reviewed response policies can select text using only the redacted, normalized
 Content-Type. A separate `binaryBodies` review opts into bounded byte reads.
@@ -2042,6 +2072,14 @@ failure (for example, an accepted key lacking account-read permission). Public
 routing/version headers remain request or constant headers, never authentication
 secrets. An optional positive `timeoutMs` retains a vendor's request and body
 deadline. A path request opting into `emptyForm: true` retains an explicitly empty form on the wire; other empty form declarations keep their previous omission.
+
+`PathRequest.rawBody` accepts a string, `Uint8Array` or `FormData`; it is
+exclusive with JSON, form, `emptyForm` and item/bulk identities. Conflicting
+combinations fail construction where possible and otherwise refuse before
+dispatch. Framing uses Effect's text, byte-array or form-data body helpers.
+An explicit Content-Type is preserved exactly; multipart callers omit it so
+fetch generates its boundary. This field does not change classification,
+write-step accounting or the sent-secret set, and existing size ceilings apply.
 
 A send may opt into a success-only `prefix` read with a byte ceiling, an optional
 tighter time limit and a boolean chunk-stop callback. Failure responses retain
@@ -2102,8 +2140,8 @@ result handling, reviewed value safety and the deployment privacy projection
 before paging or provider projections can read it. Read methods beyond GET
 and HEAD require a review. Construction fixes each write step's capacity;
 the guarded transport reserves it before preparation and the shared core
-decides the whole call's write outcome. Upload builders and byte-body request
-shapes wait for the Google Drive migration in C.7.
+decides the whole call's write outcome. Dedicated upload builders wait for
+the Google Drive migration in C.7.
 
 Reviewed path calls resolve their actual method and path through an indexed
 safety adapter; a provider-supplied template cannot bypass the policy.
@@ -2368,8 +2406,8 @@ compiling and configuring the real thing.
   The recorders are the guarded transport (dispatch, status, declaration
   match, mapped verdict), `ctx.fetch` (dispatch, status), static OAuth
   (status, verdict, renewal), Google (per-attempt entry, renewal of a read's
-  replay), Infisical (renewal, through `answeredRequest`), the kit (core
-  ledger entry, status, `recordUnauthorized`, refresh-once renewal),
+  replay), the kit (core ledger entry, status, `recordUnauthorized`,
+  refresh-once renewal, including Infisical's machine-login `Grant`),
   `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
   logical call, status, the verdict, and renewal by comparing the
   `Authorization` of the resend the SDK attempts), and `api()` itself (one
@@ -2409,8 +2447,10 @@ compiling and configuring the real thing.
   custom delegation and copied init objects remain conservative.
   Remote MCP captures
   each physical read's entry before awaiting its response; a later send
-  cannot overwrite it. Infisical's response identity and Google's init
-  identity only identify the request whose credential was renewed.
+  cannot overwrite it. The kit's response identity and Google's init identity
+  identify the request whose credential was renewed. The legacy guarded-fetch
+  `answeredRequest` helper has no production caller; tests retain it to exercise
+  renewal provenance outside the kit.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the

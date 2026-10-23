@@ -25,7 +25,7 @@ import type {
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
-import { Grant, grantFromOAuth, refreshOnce } from "./oauth.js";
+import { Grant, grantFromOAuth, refreshOnce, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
   Classification,
@@ -61,6 +61,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
+  /** Renewable machine login, constructed outside every caller context. Exclusive with static OAuth. */
+  readonly grant?: (
+    options: Readonly<O>,
+  ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
+  /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
+  readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
   readonly authenticate:
     | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
     | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
@@ -119,6 +125,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     credential,
     oauth,
     oauthWrite401,
+    grant,
+    writeUnauthorized,
     authenticate,
     errors,
     safety,
@@ -133,6 +141,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
+  if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
+  if (writeUnauthorized && !grant) throw new Error("writeUnauthorized requires a machine grant declaration.");
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new Error(`${metadata.title} maxResponseBytes must be a whole number of bytes >= 1.`);
   }
@@ -172,6 +182,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       }
       const configured = transport?.(options);
+      const machineGrant = grant?.(options);
       const guarded = guardedClient({
         provider: errors.provider,
         baseUrl: baseUrl(options),
@@ -185,7 +196,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       });
       const connected = connect(
         vendor,
-        oauth
+        oauth || machineGrant
           ? refreshOnce(
               guarded,
               oauthWrite401
@@ -205,7 +216,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                         "downstream_oauth_required",
                       ),
                   }
-                : undefined,
+                : writeUnauthorized
+                  ? { writeUnauthorized }
+                  : undefined,
             )
           : guarded,
         {
@@ -217,7 +230,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const authorize = <A>(
         work: Effect.Effect<A, HttpFailure, CallServices | Grant>,
       ): Effect.Effect<A, HttpFailure, CallServices> =>
-        work.pipe(Effect.provideServiceEffect(Grant, oauth ? callGrant : Effect.succeed(missingGrant)));
+        work.pipe(
+          Effect.provideServiceEffect(Grant, machineGrant ?? (oauth ? callGrant : Effect.succeed(missingGrant))),
+        );
       const connection: Connection = {
         ...connected,
         send: (...args) => authorize(connected.send(...args)),
@@ -272,7 +287,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
             ),
             Effect.catchDefect((defect) => {
               try {
-                if (!map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
+                // Custom probes may send outside this ledger, so always withhold their defects.
+                if (!probe.run && !map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
                   return Effect.die(defect);
               } catch {
                 // A broken visibility hook cannot authorize exposing a defect's text.
