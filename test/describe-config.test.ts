@@ -186,6 +186,8 @@ describe("describeConfig", () => {
               { kind: "human", namespace: "https://clerk.example.com", id: "user_support" },
             ],
             readOnly: false,
+            surface: "meta",
+            executeCode: true,
             owner: "support@workspace.example",
             description: "Support tier: tickets only.",
           },

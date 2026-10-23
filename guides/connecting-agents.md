@@ -38,7 +38,9 @@ before saving those credentials or connecting accounts.
 - **The authentication method.** Ask how the AI app will receive the agent
   credential privately; keep it out of prompts and source files.
 - **The tools and accounts.** Know which actions are available, whose account
-  they use, and whether changes are allowed.
+  they use, and whether changes are allowed. In 0.35.0, a pool can offer
+  [native tools](../documentation/meta-tools.md#tool-presentation) for apps
+  with their own tool search.
 - **The approval policy.** Find out whether writes ask a person or run unattended.
 - **A safe first test.** Agree on a small read, such as listing one ticket,
   and the result you expect.

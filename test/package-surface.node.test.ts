@@ -173,6 +173,16 @@ describe("public package boundary", () => {
     ]);
   });
 
+  it("INV-13: keeps Eve outside the core package", () => {
+    // The deployment supplies eve; declaring even an optional peer makes pnpm
+    // resolve it into every install of this repository.
+    for (const field of [packageJson.dependencies, packageJson.devDependencies, packageJson.peerDependencies]) {
+      expect(field).not.toHaveProperty("eve");
+    }
+    expect(packageJson.exports).not.toHaveProperty("./eve");
+    expect(packageJson.dependencies).not.toHaveProperty("@zackbart/connecta-eve");
+  });
+
   it("INV-13: keeps the Workers executor an optional peer with a published range", () => {
     // Every Cloudflare deployment installs `@cloudflare/codemode` by hand, and
     // until #376 the only range anywhere in the package was a devDependency

@@ -28,8 +28,14 @@ export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs 
  * comes from deployment config for the pool the request was admitted through;
  * nothing a request sends reaches it.
  */
-export function endpointInstructions(description?: string): string {
-  return description === undefined ? CONNECTA_INSTRUCTIONS : `${CONNECTA_INSTRUCTIONS} This endpoint: ${description}`;
+export function endpointInstructions(description?: string, native?: { executeCode: boolean }): string {
+  const instructions = native ? nativeInstructions(native.executeCode) : CONNECTA_INSTRUCTIONS;
+  return description === undefined ? instructions : `${instructions} This endpoint: ${description}`;
+}
+
+/** Instructions for pools whose host searches the listed native tools. */
+export function nativeInstructions(executeCode: boolean): string {
+  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? "combine work in execute_code using the program addresses in tool descriptions." : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? "connecta.result in execute_code" : "read_result"}. skills lists guidance.`;
 }
 
 export { USAGE_SKILL } from "./usage-guide.js";

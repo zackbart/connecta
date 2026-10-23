@@ -41,6 +41,7 @@ const WORKERS_SUITES = [
   "test/remote-mcp.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
+  "test/native-tools.test.ts",
   "test/unhandled-rejections.test.ts",
   // Native response reads can print sensitive downstream text below JS sinks.
   // workerd-native-output.node.test.ts also invokes these three by filename.
@@ -60,7 +61,7 @@ const WORKERS_SUITES = [
   // Mixed suites use Vitest tags: only their native boundary cases rerun here.
   // Brace globs tolerate deleted files without enrolling other suites.
   "test/{http-kit,http-hatch,http-provider}.test.ts",
-  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
+  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness,auth-elicitation,downstream-input}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the

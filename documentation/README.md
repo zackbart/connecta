@@ -18,6 +18,7 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | Issue, rotate, or revoke an agent token  | [Manage an agent token](./auth.md#issue-rotate-or-revoke-an-agent-token)                                                            |
 | Upgrade between versions                 | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |
 | Diagnose with `connecta doctor`          | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                           |
+| Connect a client with tool search        | [Native tool surface](./meta-tools.md#native-tool-surface), [Eve agents](./meta-tools.md#eve-agents)                                |
 
 For removed hosted presets and the former hosted modes of Stripe, Vercel,
 Cloudflare, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).

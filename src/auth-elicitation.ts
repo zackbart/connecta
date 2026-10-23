@@ -47,6 +47,7 @@ interface AuthRequestState {
   connector: string;
   tool: string;
   address?: string;
+  wireTool: string;
   digest: string;
   round: number;
   expiresAt: number;
@@ -128,6 +129,7 @@ export class AuthElicitation {
       (state.round as number) < 1 ||
       (state.round as number) > MAX_ROUNDS ||
       !["call_tool", "call_destructive_tool", "execute_code", "authorize_connector"].includes(String(state.tool)) ||
+      typeof state.wireTool !== "string" ||
       typeof state.digest !== "string" ||
       !/^[a-f0-9]{64}$/.test(state.digest) ||
       !Array.isArray(state.browserNonces) ||
@@ -144,7 +146,7 @@ export class AuthElicitation {
       (state.address !== undefined && typeof state.address !== "string")
     )
       return invalidState();
-    if (context.mcpReq.method !== "tools/call" || context.http?.req?.headers.get("Mcp-Name") !== state.tool)
+    if (context.mcpReq.method !== "tools/call" || context.http?.req?.headers.get("Mcp-Name") !== state.wireTool)
       return invalidState();
     return state as unknown as AuthRequestState;
   }
@@ -198,18 +200,28 @@ export class AuthElicitation {
     }
   }
 
+  bind(context: ServerContext): void {
+    this.downstream.bind(context);
+  }
+
   async run(
     tool: string,
     args: Record<string, unknown>,
     context: ServerContext,
     operation: () => Promise<ToolResult>,
   ): Promise<ToolResult | InputRequiredResult> {
-    this.downstream.bind(context);
+    this.bind(context);
     const prior = context.mcpReq.requestState<AuthRequestState | DownstreamRequestState>();
     if (prior?.version === 2) return this.downstream.resume(prior, tool, args, context, operation);
     const previous = prior;
     const requestDigest = previous ? await digest(tool, args) : undefined;
-    if (previous && (previous.tool !== tool || previous.digest !== requestDigest || previous.address !== args.address))
+    if (
+      previous &&
+      (previous.wireTool !== context.http?.req?.headers.get("Mcp-Name") ||
+        previous.tool !== tool ||
+        previous.digest !== requestDigest ||
+        previous.address !== args.address)
+    )
       return failure("invalid_request_state", "Invalid or expired requestState");
     const response = context.mcpReq.inputResponses?.[INPUT_KEY];
     if (previous && object(response) && !["accept", "decline", "cancel"].includes(String(response.action))) {
@@ -354,6 +366,7 @@ export class AuthElicitation {
       connector: id,
       tool,
       ...(typeof args.address === "string" ? { address: args.address } : {}),
+      wireTool: context.http?.req?.headers.get("Mcp-Name") ?? tool,
       digest: requestDigest ?? (await digest(tool, args)),
       round: (previous?.round ?? 0) + 1,
       expiresAt: previous?.expiresAt ?? Date.now() + TTL_MS,

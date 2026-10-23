@@ -2827,3 +2827,8 @@ Reviewed numeric error-body paths expose finite, nonnegative numbers only.
 Nonblank numeric strings may be converted; empty or blank strings are absent.
 The original text never reaches classification. These paths are also captured
 at construction and cannot change error-withholding policy.
+
+Native pools resolve names through a shared claimant index for listing and
+calling, then use the existing invocation routes. Native recovery adapts only
+Connecta error envelopes in `src/native-recovery.ts`; provider dispatch and
+continuation enforcement stay in their existing owners.

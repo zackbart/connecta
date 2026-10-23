@@ -244,32 +244,57 @@ async function doctor() {
     fetch: doctorFetch,
   });
   let negotiatedVersion;
+  let native = false;
+  let executeCode = true;
   try {
     await client.connect(transport);
     negotiatedVersion = client.getNegotiatedProtocolVersion();
     const listed = await client.listTools({}, { timeout: DOCTOR_TIMEOUT_MS });
     const actual = listed.tools.map((tool) => tool.name).sort();
-    const expected = [...META_TOOL_NAMES].sort();
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    const surface = listed.tools.find((tool) => tool.name === "skills")?._meta?.["dev.connecta/surface"];
+    native = surface?.surface === "native";
+    executeCode = !native || surface.executeCode === true;
+    if (native && surface.catalogErrors?.length)
+      throw new Error(
+        `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
+      );
+    const expected = native
+      ? ["skills", executeCode ? "execute_code" : "read_result"].sort()
+      : [...META_TOOL_NAMES].sort();
+    if (
+      native
+        ? expected.some((name) => !actual.includes(name)) ||
+          [
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            executeCode ? "read_result" : "execute_code",
+          ].some((name) => actual.includes(name))
+        : JSON.stringify(actual) !== JSON.stringify(expected)
+    ) {
       throw new Error(
         `Unexpected MCP surface. Expected ${expected.join(", ")}; received ` +
           `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
       );
     }
 
-    const executed = await client.callTool(
-      {
-        name: "execute_code",
-        arguments: { code: "async () => 42" },
-      },
-      undefined,
-      { timeout: DOCTOR_TIMEOUT_MS },
-    );
-    const executionResult = executed.structuredContent ?? JSON.parse(executed.content?.[0]?.text ?? "null");
-    if (executed.isError || executionResult?.result !== 42) {
-      throw new Error(
-        `${executorName ? `${executorName} execution` : "execute_code"} check ` + `failed: ${JSON.stringify(executed)}`,
+    if (executeCode) {
+      const executed = await client.callTool(
+        {
+          name: "execute_code",
+          arguments: { code: "async () => 42" },
+        },
+        undefined,
+        { timeout: DOCTOR_TIMEOUT_MS },
       );
+      const executionResult = executed.structuredContent ?? JSON.parse(executed.content?.[0]?.text ?? "null");
+      if (executed.isError || executionResult?.result !== 42) {
+        throw new Error(
+          `${executorName ? `${executorName} execution` : "execute_code"} check ` +
+            `failed: ${JSON.stringify(executed)}`,
+        );
+      }
     }
   } finally {
     await client.close();
@@ -277,8 +302,8 @@ async function doctor() {
 
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
-      `${executorName ? `${executorName} executed` : "code executed"}, ` +
-      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}.`,
+      `${executeCode ? (executorName ? `${executorName} executed` : "code executed") : "code disabled"}, ` +
+      `${native ? "native tool surface" : `prescribed ${META_TOOL_NAMES.length}-tool surface`}, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}.`,
   );
 }
 

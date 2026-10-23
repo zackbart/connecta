@@ -108,6 +108,11 @@ function resolvePools(
     if (pool.members.length === 0) {
       throw new ConfigError(`${path} is empty; a pool serves only its members, so list at least one.`);
     }
+    if (pool.executeCode !== undefined && pool.surface !== "native") {
+      throw new ConfigError(
+        `ConnectaConfig.pools.${name}.executeCode needs surface: "native"; the meta surface always includes execute_code.`,
+      );
+    }
     // A pool inherits the deployment value unless it sets its own, either way.
     resolved.set(
       name,
@@ -117,6 +122,7 @@ function resolvePools(
         members: Object.freeze(resolveMembers(pool.members, path, members)),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
         ...(pool.description !== undefined ? { description: pool.description.trim() } : {}),
+        ...(pool.surface === "native" ? { native: { executeCode: pool.executeCode ?? true } } : {}),
       }),
     );
   }

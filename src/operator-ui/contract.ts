@@ -52,6 +52,8 @@ export interface OperatorPoolV2 {
   /** `/agent/<name>`. */
   agentPath: string;
   readOnly: boolean;
+  surface: "meta" | "native";
+  executeCode: boolean;
   /** Workspace address agents act as; null in the member view. */
   owner: string | null;
   /** The pool's declared tools, unfiltered. */

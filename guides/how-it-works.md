@@ -88,13 +88,13 @@ the conversation.
 | `authorize_connector`   | Request the permitted account-connection handoff.                            |
 | `skills`                | Read guidance for using a connection.                                        |
 
-An alternative under development, **native tools**, would let apps with
-their own tool search find the service actions directly.
+In 0.35.0, **native tools** let apps with their own tool search find service
+actions directly. The operator chooses the pool's presentation.
 
 ```mermaid
 flowchart TB
     Meta["Default · meta-tools<br/>Connecta helps find the action"] --> Checks
-    Native["Under development · native tools<br/>the app finds the action"] --> Checks
+    Native["Optional · native tools<br/>the app finds the action"] --> Checks
     Checks["Same access checks"] --> Service["Service action"]
 ```
 
@@ -113,8 +113,8 @@ tools, and cannot create connections, choose another identity, or obtain
 service credentials. Limits keep it from running indefinitely or returning
 unbounded data.
 
-One discovered read can use a direct call. Finding an unfamiliar action,
-combining several calls, or reducing a large answer belongs in a program.
+With meta-tools, one discovered read can use a direct call. Finding an unfamiliar
+action, combining several calls, or reducing a large answer belongs in a program.
 On a writable endpoint, a program may also change data. The AI app decides
 whether to ask for approval before running it.
 

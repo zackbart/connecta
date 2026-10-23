@@ -58,6 +58,7 @@ const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
 export type ActivityCallSource =
   | "catalog_refresh"
+  | "native"
   | "call_tool"
   | "call_destructive_tool"
   // Read-only history. Nothing emits `batch_call` since issue #273 removed the

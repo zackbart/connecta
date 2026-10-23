@@ -110,7 +110,13 @@ test.beforeAll(async () => {
     // pages-user is the default maintainer, and so sees every connector and
     // pool (#837); it is also support's one member.
     pools: {
-      support: { tools: ["github.read"], readOnly: true, members: ["pages-user"] },
+      support: {
+        surface: "native",
+        executeCode: false,
+        tools: ["github.read"],
+        readOnly: true,
+        members: ["pages-user"],
+      },
     },
     accessTokens: accessTokens(storage),
     activity: activityHistory({
@@ -238,6 +244,7 @@ test("legacy pages and connector tabs replace their URL and preserve handoff que
     await page.goto(origin + oldPath + "?keep=1");
     await expect(page).toHaveURL(origin + path + "?keep=1");
     await expect(page.getByRole("heading", { name: heading!, exact: true })).toBeVisible();
+    if (path === "/endpoints") await expect(page.getByText("native · code off", { exact: true })).toBeVisible();
   }
   for (const hash of ["config", "auth", "diagnostics"]) {
     await page.goto(origin + `/connectors/github?h=signed#${hash}`);

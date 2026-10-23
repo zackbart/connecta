@@ -1,3 +1,4 @@
+import { nativeRecovery } from "./native-recovery.js";
 import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
@@ -1760,7 +1761,8 @@ const executeDescription = (
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
   readOnly: boolean,
-) => `${readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+  native = false,
+) => `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -1824,6 +1826,8 @@ export function registerExecuteTool(
     readOnly?: boolean | undefined;
     /** Writes one program may send on a writable endpoint. Default 10. */
     maxWrites?: number | undefined;
+    /** A native pool: the lead sentence names direct tool calls instead of call_tool. */
+    native?: boolean | undefined;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -1867,6 +1871,7 @@ export function registerExecuteTool(
         connectors,
         maxWrites,
         ctx.readOnly === true,
+        ctx.native === true,
       ),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
@@ -1877,7 +1882,7 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    (args, extra) => {
+    async (args, extra) => {
       if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
       const run = () =>
         underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
@@ -1885,7 +1890,8 @@ export function registerExecuteTool(
             signal,
           }),
         );
-      return ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run();
+      const result = await (ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run());
+      return ctx.native ? (nativeRecovery(result, true) as typeof result) : result;
     },
   );
 }

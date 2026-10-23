@@ -28,6 +28,7 @@ import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { endpointInstructions } from "../skills.js";
+import { NATIVE_TOOLS_LIST_TTL_MS, NativeSurface, nativeRequestHint, type NativeRequestHint } from "../native-tools.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
@@ -401,7 +402,9 @@ function serveMcp(
   // The modern handler tears its own down after the exchange; the legacy
   // transport never does, and neither may stay wired to an ended request.
   const servers: McpServer[] = [];
-  const createServer = (): McpServer => {
+  // A native pool lists its downstream tools directly (pools.<name>.surface).
+  const native = pool !== undefined ? opts.pools.get(pool)?.native : undefined;
+  const createServer = async (hint?: NativeRequestHint): Promise<McpServer> => {
     const authElicitation = new AuthElicitation({
       vault: opts.config.vault,
       publicUrl: opts.config.publicUrl,
@@ -435,17 +438,18 @@ function serveMcp(
       // Instructions differ per endpoint only by the admitted pool's
       // description. Every cache hint below is private, so a client keeps
       // what it learned per endpoint URL and never shares it across them.
-      instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined),
+      instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined, native),
       inputRequired: { legacyShim: false },
       requestState: { verify: (state, context) => authElicitation.verify(state, context) },
       cacheHints: {
         "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
         "tools/list": {
-          ttlMs: 3_600_000,
+          ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
           cacheScope: "private",
         },
       },
     });
+    servers.push(server);
     const activity: ActivityRequestContext | undefined = opts.config.activity?.store
       ? {
           sink: opts.config.activity?.store,
@@ -468,7 +472,9 @@ function serveMcp(
       probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
       ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
     });
-    registerMetaTools(server, registry, {
+    const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
+    const nativeRoute = registerMetaTools(server, registry, {
+      native: diagnostics,
       authElicitation,
       client,
       baseUrl,
@@ -485,21 +491,39 @@ function serveMcp(
       requestSignal,
       ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
     });
-    registerExecuteTool(server, registry, {
-      authElicitation,
-      client,
-      baseUrl,
-      requestScope,
-      executor: opts.executor,
-      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
-      logger: opts.config.logger,
-      ...(activity ? { activity } : {}),
-      requestSignal,
-      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
-      ...executeLimits(opts.config),
-      readOnly,
-    });
-    servers.push(server);
+    if (!native || native.executeCode) {
+      registerExecuteTool(server, registry, {
+        authElicitation,
+        client,
+        baseUrl,
+        requestScope,
+        executor: opts.executor,
+        defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+        logger: opts.config.logger,
+        ...(activity ? { activity } : {}),
+        requestSignal,
+        ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+        ...executeLimits(opts.config),
+        readOnly,
+        native: native !== undefined,
+      });
+    }
+    if (native && nativeRoute && hint) {
+      await new NativeSurface(registry, {
+        baseUrl,
+        executeCode: native.executeCode,
+        route: nativeRoute,
+        bind: (context) => authElicitation.bind(context),
+        catalogErrors: diagnostics!.catalogErrors,
+        logger: opts.config.logger,
+        requestScope,
+        requestSignal,
+        probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+        discoveryConcurrency: opts.config.discovery.concurrency,
+        readOnly,
+        ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+      }).register(server, hint);
+    }
     return server;
   };
 
@@ -509,14 +533,17 @@ function serveMcp(
     // user-land legacy branch with the same transport setting while the modern
     // branch uses the fetch-native handler.
     if (!(await isLegacyRequest(request, undefined, SDK_BODY_BOUND))) {
-      const response = await createMcpHandler(createServer, {
-        ...SDK_BODY_BOUND,
-        legacy: "reject",
-        // Keep the SDK's validation and prevent it from opening an SSE stream.
-        // Its capacity error below becomes our permanent unsupported method.
-        maxSubscriptions: 0,
-        onerror: (error) => logFailure(opts.config.logger, "MCP handler error", failureRecord({}, error), "error"),
-      }).fetch(request);
+      const response = await createMcpHandler(
+        async () => createServer(native ? await nativeRequestHint(request, true) : undefined),
+        {
+          ...SDK_BODY_BOUND,
+          legacy: "reject",
+          // Keep the SDK's validation and prevent it from opening an SSE stream.
+          // Its capacity error below becomes our permanent unsupported method.
+          maxSubscriptions: 0,
+          onerror: (error) => logFailure(opts.config.logger, "MCP handler error", failureRecord({}, error), "error"),
+        },
+      ).fetch(request);
       if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
         const body = await response.clone().json();
         if (
@@ -538,7 +565,7 @@ function serveMcp(
     }
 
     // Fresh server + transport per legacy request, stateless and JSON-shaped.
-    const server = createServer();
+    const server = await createServer(native ? await nativeRequestHint(request, false) : undefined);
     const transport = new WebStandardStreamableHTTPServerTransport({
       ...SDK_BODY_BOUND,
       enableJsonResponse: true,

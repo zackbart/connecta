@@ -31,6 +31,7 @@ const OUTCOME_CLASSES: Readonly<Record<string, readonly string[]>> = {
 };
 
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  native: "Native",
   call_tool: "Direct",
   call_destructive_tool: "Approved",
   execute_code: "Program",

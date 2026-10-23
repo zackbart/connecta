@@ -252,6 +252,7 @@ export type WriteDecision =
 
 export interface InvocationContext<T> {
   source: ActivityCallSource;
+  activitySource?: "native" | undefined;
   /** The owning program retains these credentials only until its run ends. */
   sentSecrets?: SentSecrets;
   /** The endpoint refuses every write. Resolved by the host route; default writable. */
@@ -402,7 +403,7 @@ export class InvocationService {
           connectorId: identity.connectorId,
           toolName,
           address: `${identity.connectorId}.${toolName}`,
-          source: context.source,
+          source: context.activitySource ?? context.source,
           outcome,
           ...(activityTarget?.connector.authScope === "personal" ? { personal: true } : {}),
           durationMs: Date.now() - started,
@@ -651,7 +652,7 @@ export class InvocationService {
                 connector: target.connector.id,
                 // Named only when the catalog listed it (src/operator-record.ts).
                 tool: resolved?.definition,
-                source: context.source,
+                source: context.activitySource ?? context.source,
                 attempts,
                 durationMs: Date.now() - started,
                 // Every refusal reaching `failed` is one connecta built: a

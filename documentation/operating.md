@@ -7,7 +7,12 @@ and credentials are the deployment operator's responsibility; use
 
 ## Choose the call path
 
-Connecta exposes six top-level tools. Read [the tool table](./meta-tools.md#the-six-tools)
+A [native pool](./meta-tools.md#native-tool-surface) lists individual operations.
+Use your host's tool search, call a known operation directly, and follow its
+repair or authorization handoff. Use `execute_code` for combined work when
+listed; without code, page results through the listed `read_result` tool.
+
+Meta endpoints expose six top-level tools. Read [the tool table](./meta-tools.md#the-six-tools)
 for exact arguments and result envelopes. Follow the endpoint's supplied
 instructions and `skills` usage guide for deployment-specific context.
 
