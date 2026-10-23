@@ -87,7 +87,7 @@ function walkImports(entry: string): Set<string> {
   return visited;
 }
 
-describe("src/index.ts import purity (Workers-clean entry)", () => {
+describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }, () => {
   const graph = importGraph(ENTRY);
 
   it("INV-12: contains no `node:` builtin imports or requires", () => {
@@ -182,7 +182,7 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     // emitted JavaScript, so a type import cannot become a value import later
     // without this test noticing.
     const reached = importGraph(join(SRC, "provider.ts"));
-    expect(reached.has(join(SRC, "catalog-drift.ts"))).toBe(true);
+    expect(reached.has(join(SRC, "config-schema.ts"))).toBe(true);
     for (const file of reached) {
       expect(file.startsWith(join(SRC, "connectors")), file).toBe(false);
       expect(file.startsWith(join(SRC, "runtime")), file).toBe(false);

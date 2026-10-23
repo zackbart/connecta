@@ -1,89 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectorContext, ToolDef } from "../../types.js";
-import { servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { ConnectorCallError } from "../../errors.js";
-
-const mocks = vi.hoisted(() => ({
-  listTools: vi.fn<() => Promise<ToolDef[]>>(),
-  remoteMcp: vi.fn(),
-}));
-
-vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
-  // Only the hosted constructor is stubbed; the REST connector never touches it.
-  ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
-  remoteMcp: mocks.remoteMcp,
-}));
+import type { ConnectorContext } from "../../types.js";
 
 import { STRIPE_API_BASE_URL, stripe } from "./index.js";
-import { catalogReviewOf, detectCatalogDrift, observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
-import { hostedTools } from "./fixtures.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
 const LIVE = { purpose: "Revenue for the real business", auth: { type: "apiKey" }, mode: "production" } as const;
-
-describe("stripe() over OAuth", () => {
-  beforeEach(() => {
-    mockRemoteMcp(mocks);
-  });
-
-  it("INV-1: matches all 16 hosted schemas and retains only the documented account-info review absent live", async () => {
-    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
-    const review = catalogReviewOf(connector)!;
-    expect(review.tools.size).toBe(17);
-    expect(hostedTools).toHaveLength(16);
-    for (const tool of hostedTools) {
-      const recorded = review.tools.get(tool.name)?.schemaDigest;
-      expect(recorded, tool.name).toBeDefined();
-      expect(recorded, tool.name).toBe(
-        await vettedSchemaDigest(tool, recorded!.startsWith("sha256:") ? "legacy" : "sets-v1"),
-      );
-    }
-    expect(review.tools.get("get_stripe_account_info")).toEqual({ verdict: "read-only" });
-    mocks.listTools.mockResolvedValue(structuredClone(hostedTools));
-    const tools = await servedTools(connector);
-    for (const tool of tools) {
-      expect(tool.classification, tool.name).toBe(tool.annotations?.readOnlyHint === true ? "read" : "write");
-    }
-    expect(observedCatalogDrift(connector)).toMatchObject({
-      unclassifiedTools: 0,
-      unservedTools: 1,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    });
-    expect(await detectCatalogDrift(review, [...hostedTools, { name: "get_stripe_account_info" }])).toEqual({
-      unclassifiedTools: 0,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    });
-  });
-
-  it("INV-1: keeps money movement, recipient setup, Atlas, and generic writes destructive despite read claims", async () => {
-    const names = [
-      "convert_currency",
-      "send_money",
-      "transfer_money",
-      "setup_recipient",
-      "atlas_company_formation",
-      "stripe_api_write",
-    ];
-    mocks.listTools.mockResolvedValue(
-      hostedTools
-        .filter((tool) => names.includes(tool.name))
-        .map((tool) => ({
-          ...structuredClone(tool),
-          annotations: { readOnlyHint: true, destructiveHint: false },
-        })),
-    );
-    const tools = await servedTools(stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } }));
-    expect(tools).toHaveLength(names.length);
-    for (const tool of tools) {
-      expect(tool.classification, tool.name).toBe("write");
-      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: false, destructiveHint: true });
-    }
-  });
-});
 
 interface Sent {
   url: URL;
@@ -98,7 +21,6 @@ describe("stripe() over an API key", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
-    mockRemoteMcp(mocks);
     sent = [];
     respond = () => Response.json({ object: "list", data: [], has_more: false });
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

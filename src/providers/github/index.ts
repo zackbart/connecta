@@ -1,19 +1,14 @@
-import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
 import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
-import { redactSentSecrets } from "../../sent-secrets.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
-import type { Connector, ConnectorContext, ToolClassification } from "../../types.js";
 import { AppAuth, type GitHubApp } from "./auth.js";
-import { HOSTED_CLASSIFICATION, HOSTED_ROUTES, hostedTarget } from "./hosted.js";
 import { restConnector } from "./rest.js";
 import { parseScopes, ScopePolicy, type GitHubScope } from "./scope.js";
 import { skill } from "./skill.generated.js";
 
 export type { GitHubApp } from "./auth.js";
 export type { GitHubScope } from "./scope.js";
-export const GITHUB_MCP_ENDPOINT = "https://api.githubcopilot.com/mcp/";
 
 export interface GitHubOptions extends ProviderOptions {
   app: GitHubApp;
@@ -21,29 +16,15 @@ export interface GitHubOptions extends ProviderOptions {
   scopes: readonly GitHubScope[];
 }
 
-const CLASSIFICATION: ToolClassification = {
-  unlisted: "hide",
-  tools: {
-    ...HOSTED_CLASSIFICATION.tools,
-    list_scopes: "read",
-    search_scoped: "read",
-    create_release: "write",
-    update_release: "destructive",
-    delete_release: "destructive",
-    merge_pull_request: "destructive",
-  },
-};
-
 /** One GitHub App, multiple owner installations, explicit org/repo grants. */
 export const github = defineProvider<GitHubOptions>({
   name: "github",
   title: "GitHub",
-  kind: "composed",
+  kind: "api",
   skill,
-  classify: CLASSIFICATION,
   bundle: {
     baselineGzip: 164063,
-    note: "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; reported against this baseline, not capped (#899).",
+    note: "./providers/github retains its initial 164,063 B gzip baseline for size comparison. C.0c removes the hosted MCP half; the entry now carries portable GitHub App signing, scoped routing and six REST tools. Reported against this baseline, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,
@@ -64,38 +45,6 @@ export const github = defineProvider<GitHubOptions>({
       summary: "GitHub App scopes, installation routing, confined search and workflow-file limits.",
       required: true,
     });
-    // Each operation owns its token-bound client, transport and callback.
-    // It closes them before returning; no shared header or client mutation.
-    const hosted = (token: string, classify: ToolClassification = HOSTED_CLASSIFICATION): Connector =>
-      remoteMcp(id, {
-        url: GITHUB_MCP_ENDPOINT,
-        requireHttps: true,
-        redirects: "none",
-        classify,
-        auth: {
-          type: "request",
-          token: async () => token,
-          headers: {
-            "X-MCP-Toolsets": "repos,git,issues,pull_requests,actions,labels",
-            "X-MCP-Tools": Object.keys(HOSTED_ROUTES).join(","),
-          },
-        },
-      });
-    const withHosted = async <T>(
-      token: string,
-      ctx: ConnectorContext,
-      run: (connector: Connector) => Promise<T>,
-    ): Promise<T> => {
-      const client = hosted(token);
-      try {
-        return await run(client);
-      } catch (error) {
-        if (error instanceof ConnectorCallError && error.code === "auth_required") await auth.rejectToken(token);
-        throw redactSentSecrets(ctx, error);
-      } finally {
-        await client.closeScope?.(ctx);
-      }
-    };
     const credential =
       options.app.privateKey === undefined
         ? {
@@ -105,66 +54,30 @@ export const github = defineProvider<GitHubOptions>({
             fields: [{ name: "privateKey", label: "Private key PEM", inputType: "password" as const }],
           }
         : undefined;
-    // Each call goes to one hosted or REST boundary, whose verdict stands.
+    // Each call goes to its REST boundary, whose write-outcome verdict stands.
     return delegatesEachCall({
       id,
       title: options.title ?? "GitHub",
+      // Preserve the REST tools' existing MCP result envelope.
       kind: "mcp",
       authScope: "shared",
       ...provider.connectorOptions,
       ...(credential ? { credential } : {}),
-      classification: provider.classify,
       description: `GitHub App access to ${policy.summary()}.`,
       usageGuide,
       describe: () => ({
         source: { kind: "custom" },
-        endpoint: { origin: "https://api.githubcopilot.com", path: "/mcp/" },
+        endpoint: { origin: "https://api.github.com", path: "/" },
         auth: { mode: "request", header: "Authorization", scheme: "Bearer" },
       }),
+      staticTools: rest.staticTools!,
       async listTools(ctx) {
-        // Catalog discovery authenticates only a configured scope, with read
-        // permissions. Fetch one complete vendor catalog and preserve schemas.
-        const first = policy.scopes[0]!;
-        const owner = first.org ?? first.repo!.split("/")[0]!;
-        const repos = first.repo ? [first.repo.split("/")[1]!] : undefined;
-        const token = await auth.token(
-          owner,
-          repos,
-          {
-            contents: "read",
-            issues: "read",
-            pull_requests: "read",
-            actions: "read",
-            checks: "read",
-            statuses: "read",
-          },
-          ctx,
-        );
-        const facts = await withHosted(token, ctx, (client) => client.listTools(ctx));
-        const complement = await rest.listTools(ctx);
-        // Names not reviewed never leave this boundary, including collisions
-        // with the REST complement. The registry alone applies verdicts.
-        return [...facts.filter((tool) => Object.hasOwn(HOSTED_ROUTES, tool.name)), ...complement];
+        return rest.listTools(ctx);
       },
       async callTool(name, args, ctx, callOptions) {
-        if (Object.hasOwn(HOSTED_ROUTES, name)) {
-          // The argument, scope, method, and workflow checks, then the
-          // installation-token mint, all before the write's tools/call
-          // exists: their refusals are known failures (ledger provenance).
-          let token: string;
-          try {
-            const route = hostedTarget(name, args, policy);
-            token = await auth.repo(route.target, route.permissions, ctx);
-          } catch (error) {
-            throw knownProviderFailure(error);
-          }
-          return withHosted(token, ctx, (client) =>
-            Reflect.apply(client.callTool, client, [name, args, ctx, callOptions]),
-          );
-        }
-        if (!Object.hasOwn(CLASSIFICATION.tools, name))
+        if (!rest.staticTools?.some((tool) => tool.name === name))
           throw knownProviderFailure(
-            new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist."),
+            new ConnectorCallError("invalid_args", "This GitHub tool is not in the REST tool set."),
           );
         const result = await Reflect.apply(restCall, rest, [name, args, ctx, callOptions]);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };

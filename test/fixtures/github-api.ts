@@ -1,10 +1,9 @@
 import { vi } from "vitest";
 import { z } from "zod";
+import { github,type GitHubOptions } from "../../src/providers/github/index.js";
+import type { ConnectorContext } from "../../src/types.js";
 import { httpDownstream } from "./downstream-mcp.js";
 import { connectorContext } from "./misc.js";
-import { HOSTED_ROUTES } from "../../src/providers/github/hosted.js";
-import { github, GITHUB_MCP_ENDPOINT, type GitHubOptions } from "../../src/providers/github/index.js";
-import type { ConnectorContext } from "../../src/types.js";
 
 const keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
 const der = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keys.privateKey) as ArrayBuffer);
@@ -42,14 +41,12 @@ export function apiFixture() {
     { id: 33, account: { login: "unconfigured", type: "Organization" }, repository_selection: "all", suspended_at: null },
   ];
   let respond: ((request: Exchange) => Promise<Response | undefined> | Response | undefined) | undefined;
-  let mcpError = false;
-  let protocol = "";
   const mcp = httpDownstream((server) => {
-    for (const name of [...Object.keys(HOSTED_ROUTES), "create_repository", "fork_repository", "new_upstream_read", "list_scopes"]) {
+    for (const name of ["get_file_contents"]) {
       server.registerTool(name, { description: `Use ${name}`, inputSchema: z.object({ owner: z.string().optional(), repo: z.string().optional() }).passthrough(), annotations: { readOnlyHint: true } },
-        async () => mcpError ? { isError: true, content: [{ type: "text", text: SENTINEL }] } : { content: [{ type: "text", text: '{"ok":true}' }], structuredContent: { ok: true } });
+        async () => ({ content: [{ type: "text", text: '{"ok":true}' }], structuredContent: { ok: true } }));
     }
-  }, { url: GITHUB_MCP_ENDPOINT });
+  }, { url: "https://api.githubcopilot.com/mcp/" });
   const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const body: any = request.method === "POST" || request.method === "PUT" || request.method === "PATCH" ? await request.clone().json() : undefined;
@@ -58,20 +55,6 @@ export function apiFixture() {
     const custom = await respond?.(exchange);
     if (custom) return custom;
     if (exchange.url.origin === "https://api.githubcopilot.com") {
-      if (body?.method === "server/discover") protocol = String(body.params?.protocolVersions?.[0] ?? "modern");
-      if (body?.method === "tools/call") {
-        const bearer = exchange.headers.get("authorization")!.slice(7);
-        const token = [...tokens, ...resolverTokens].find((entry) => entry.value === bearer);
-        const args = body.params.arguments;
-        const name = `${args.owner}/${args.repo}`.toLowerCase();
-        const repo = repositories.find((entry) => entry.full_name === name) ?? repositories.find((entry) => entry.id === redirects.get(name));
-        const owner = token?.installation === "11" || token?.installation === "44" ? "acme" : "other";
-        // Model GitHub API authorization inside the hosted server, including
-        // redirects, renames, transfers and a replacement at the old name.
-        if (token && (!repo || !repo.full_name.startsWith(`${owner}/`) || !token.body.repository_ids?.includes(repo.id))) {
-          return Response.json({ jsonrpc: "2.0", id: body.id, result: { isError: true, content: [{ type: "text", text: SENTINEL }] } });
-        }
-      }
       return mcp.fetch(request.url, { method: request.method, headers: request.headers, ...(init?.body !== undefined ? { body: init.body } : {}), ...(init?.signal ? { signal: init.signal } : {}) });
     }
     if (exchange.url.pathname === "/app/installations") return Response.json(installations);
@@ -96,7 +79,7 @@ export function apiFixture() {
   });
   vi.stubGlobal("fetch", fetchStub);
   return {
-    requests, tokens, resolverTokens, fetchStub, get protocol() { return protocol; },
+    requests, tokens, resolverTokens, fetchStub,
     repositories(value: typeof repositories) { repositories = value; },
     rename(id: number, fullName: string) {
       const repo = repositories.find((entry) => entry.id === id)!;
@@ -105,6 +88,5 @@ export function apiFixture() {
     },
     installations(value: any[]) { installations = value; },
     respond(callback: typeof respond) { respond = callback; },
-    mcpError() { mcpError = true; },
   };
 }

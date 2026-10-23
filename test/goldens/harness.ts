@@ -1081,7 +1081,6 @@ async function catalog(capture: Capture): Promise<unknown> {
       title: connector.title,
       description: connector.description,
       ...(connector.credential ? { credential: connector.credential } : {}),
-      ...(connector.classification ? { classification: connector.classification } : {}),
       guide: { summary: connectorGuideSummary(connector), content: connectorGuide(connector) },
       tools: tools.map(toolRecord),
     };

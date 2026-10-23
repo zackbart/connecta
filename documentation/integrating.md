@@ -109,34 +109,25 @@ pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
-For minimal Stripe OAuth/API-key examples with and without connector `readOnly`, see [Stripe setup](./provider-auth-migration.md#stripe). With an API key, prefer a restricted `rk_` key with only read permissions for read-only access; Stripe enforces it too.
+Stripe, Notion, Vercel, Cloudflare, and Mixpanel now vendor only their APIs.
+Keep their existing API auth choices; Mixpanel requires `via: "api"`.
+GitHub retains its six App-authenticated REST tools. For hosted OAuth, regional
+Mixpanel servers, or GitHub's hosted server, add a distinct `remoteMcp()` entry
+using the [hosted MCP migration guide](./hosted-mcp-migration.md).
 
-Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
-server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector
-with an operator-managed key. Notion requires `auth` the same way:
-`{ type: "oauth" }` acts as the signed-in user over Notion's hosted MCP, and
-`{ type: "token" }` acts as an internal integration over Connecta's REST
-connector. Cloudflare requires `auth` too: `{ type: "oauth" }` reaches its
-hosted MCP server, and `{ type: "apiToken" }` or `{ type: "globalApiKey" }`
-reaches Connecta's REST connector, with an optional `pin` of accounts and zones
-(required for a Global API Key unless `unpinned: true`). Vercel requires `auth`
-as well: `{ type: "oauth" }` reaches Vercel's hosted MCP server, and
-`{ type: "token" }` with an optional `teamId` reaches Connecta's REST connector
-with an operator-managed access token. Vercel admits only reviewed and approved
-MCP clients to its hosted server, an operational gate outside Connecta. See the
-[provider auth migration](./provider-auth-migration.md).
-To use both implementations of one provider, configure two connector ids with
-independent credentials.
+For Stripe API-key setup, see [Stripe setup](./provider-auth-migration.md).
+Prefer a restricted `rk_` key with only read permissions for read-only access;
+Stripe enforces it too.
 
-Both Notion auth variants accept optional `callAdmission`. For a token
-connector it replaces the whole per-runtime default of 180 calls per minute
+Notion's API token connector accepts optional `callAdmission`. It replaces the
+whole per-runtime default of 180 calls per minute
 and 3 concurrent. Notion's [request limits](https://developers.notion.com/reference/request-limits)
 allow 600 requests per minute per connection on Business and Enterprise and
 180 on other plans. A separate workspace-wide limit is shared by all
 connections. Size an override for other runtime traffic and tools that make
 multiple HTTP requests. Only an omitted or `undefined` policy selects the
 default; malformed policies, including `false`, `null`, `0`, and `""`, throw
-at construction on both auth variants.
+at construction.
 
 Planning Center's `excludeApps` removes whole products from a connection, for
 example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
@@ -273,30 +264,20 @@ applies if that exact name returns. Unknown static tool names fail construction.
 No argument can change these rules. A write-to-read override changes exposure
 and approval. Replay and failure decisions treat a call as a write when either its
 effective class or its source class is write. The source class is the verified
-provider review, where one exists during migration, otherwise the server annotations;
+server annotations;
 deployment overrides never change it. A write gets one wire attempt across
 OAuth renewal, reconnect, transport and authorization recovery, including program re-runs. After possible dispatch, its
 failure also reports an unknown outcome with no retry or wait advice; a proven
 unsent failure retains its own recovery advice. Connector `readOnly` remains
 optional and composes with endpoint policy.
 
-Remote catalogs evolve. Discovery, direct calls, and program calls all enforce
-classification against the current catalog. `classify` and existing provider
-reviews remain supported during migration; schema changes can invalidate a
-reviewed read. Exact deployment classification overrides take precedence. See
-[reviewed classification](./architecture.md#providers-and-reviewed-classification)
-for precedence, schema digests, and `unlisted: "hide"`. Review the behavior
-before declaring a read, and do not use classification to bypass provider target
-scopes or caller grants.
-
-A reviewed name is required by default for drift comparison. Mark a tool
-`optional: true` only when the downstream can omit it because of plan,
-feature, or permission gating. For example, a remote `crm` connector can use
-`classify: { tools: { list_accounts: "read", list_customers: { verdict: "read",
-optional: true } } }`. Absence of `list_customers` then adds no unserved count;
-when present, its verdict, annotations, and any pinned schema are still checked.
-A missing schema pin means that tool's schema has not been verified against a
-review. Zero schema changes alone does not establish a matching schema.
+Remote catalogs evolve. Discovery, direct calls, and programs enforce the
+current annotations and `ConnectaConfig.classification` overrides. A leftover
+`classify` option throws at construction and names that map. Provider reviews,
+schema pins, `optional`, and `unlisted: "hide"` are removed. Missing or
+contradictory hints make the source class write, even when an override makes
+the effective class read. Review behavior before setting a read override;
+classification does not replace downstream scopes or caller grants.
 
 ## A hand-written HTTP capability
 
@@ -384,5 +365,5 @@ and [provider construction](https://github.com/zackbart/connecta/blob/main/src/p
 [Remote tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp.test.ts),
 [API tests](https://github.com/zackbart/connecta/blob/main/test/api-connector.test.ts),
 [provider contracts](https://github.com/zackbart/connecta/blob/main/test/provider-contracts.test.ts),
-and [classification tests](https://github.com/zackbart/connecta/blob/main/test/classified-decorators.test.ts)
+and the [write-once tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp-write-once.test.ts)
 check shared behavior. Provider-specific tests remain beside each provider.

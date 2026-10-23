@@ -53,6 +53,8 @@ interface Variants {
   readonly key: readonly string[];
   readonly cases: Readonly<Record<string, Shape>>;
   readonly otherwise?: string;
+  /** Migration guards that throw rather than construct; omit them from valid choices. */
+  readonly rejected?: readonly string[];
 }
 
 type InputOf<F> = F extends Field<infer In, unknown, boolean> ? In : never;
@@ -301,12 +303,18 @@ export function variants(
   key: string | readonly string[],
   cases: Readonly<Record<string, Shape>>,
   otherwise?: string,
+  rejected?: readonly string[],
 ): Field<unknown, unknown, true> {
   const path = typeof key === "string" ? [key] : [...key];
   if (path.length === 0) throw new Error("variants() requires a discriminant key.");
   return {
     ...opaque(),
-    variants: { key: path, cases, ...(otherwise !== undefined ? { otherwise } : {}) },
+    variants: {
+      key: path,
+      cases,
+      ...(otherwise !== undefined ? { otherwise } : {}),
+      ...(rejected ? { rejected } : {}),
+    },
   };
 }
 
@@ -349,7 +357,9 @@ export function assertKnownOptions<T>(value: T, path: string, field: AnyField): 
   if (read.unknown.length === 0) return read.value as T;
   return fail(
     `Unknown option${read.unknown.length === 1 ? "" : "s"}: ${read.unknown.join(", ")}. ` +
-      "Check the spelling against the factory's options type.",
+      (read.unknown.some((key) => key.endsWith(".classify"))
+        ? "classify was removed; use ConnectaConfig.classification."
+        : "Check the spelling against the factory's options type."),
   );
 }
 
@@ -452,6 +462,7 @@ function inspectRecord(value: object, path: string, field: AnyField): Inspected 
 function selectShape(inspected: Inspected, path: string, variants: Variants): Shape {
   const at = `${path}.${variants.key.join(".")}`;
   const valid = Object.keys(variants.cases)
+    .filter((name) => !variants.rejected?.includes(name))
     .map((name) => JSON.stringify(name))
     .join(", ");
   // Walk the key path one plain object at a time, reading descriptors only.

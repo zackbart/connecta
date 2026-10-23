@@ -72,7 +72,7 @@ describe("discriminated factory options", () => {
   const url = "https://mcp.example/mcp";
   const headers = { "X-Key": SECRET };
   const MCP_AUTH = '"request", "headers", "credential", "oauth"';
-  const STRIPE_AUTH = '"oauth", "apiKey"';
+  const STRIPE_AUTH = '"apiKey"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
   // checked nothing and the factory, finding no known `type`, built the
@@ -96,7 +96,7 @@ describe("discriminated factory options", () => {
       `remoteMcp("docs").auth.type is required: one of ${MCP_AUTH}.`,
     ],
     [
-      // 0.28 defaulted some providers to REST; a silent OAuth default would be a trap.
+      // A missing auth selector must fail instead of choosing a connector.
       "a provider's required auth when omitted",
       () => stripe("billing", loose({ purpose: "Revenue" })),
       `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,

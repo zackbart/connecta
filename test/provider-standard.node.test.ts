@@ -147,31 +147,29 @@ function legacy(): ProviderFacts {
 
 const DIGEST = `sha256:${"0".repeat(64)}`;
 
-/** A dual provider folder that meets every rule. */
+/** An API provider folder that meets every rule. */
 function standard(): ProviderFacts {
   const files: Record<string, string> = {
-    "index.ts": 'export const acme = defineProvider({ kind: "dual", create: byAuth({ oauth: hosted, apiKey: kit }) });',
+    "index.ts": 'export const acme = defineProvider({ kind: "api", create: kit });',
     "api.ts": "",
     "tools.ts": "",
-    "hosted.ts": "",
     "safety.ts": "",
     "SKILL.md":
       '---\n{ "name": "acme", "instructionsHeading": "Acme instructions" }\n---\n\n## Identity first\n\n' +
-      "Resolve a customer id before any write.\n\n<!-- when: hosted -->\nSelect the account first.\n<!-- end -->\n",
+      "Resolve a customer id before any write.\n\n<!-- when: account -->\nSelect the account first.\n<!-- end -->\n",
     "drift.json": JSON.stringify({
       version: 2,
       provider: "acme",
       generated: {
         operations: ["GET /customers", "POST /customers"],
-        hosted: ["get_customer", "list_customers"],
-        evidence: { "catalog.json": DIGEST, "openapi.json": DIGEST, "value-safety.json": DIGEST },
+        evidence: { "openapi.json": DIGEST, "value-safety.json": DIGEST },
       },
       checks: [
         { type: "openapi-index", source: "evidence/openapi.json" },
         {
           type: "manual",
-          source: "https://acme.example/mcp",
-          reason: "The catalog needs a login.",
+          source: "https://acme.example/reference",
+          reason: "Review the REST reference.",
           lastVerified: "2026-10-20",
         },
       ],
@@ -182,12 +180,6 @@ function standard(): ProviderFacts {
     "provider.test.ts": "",
     "provider.safety.node.test.ts": "// Node-only: reads evidence files.",
     "lib/graphql.ts": "",
-    "evidence/catalog.json": JSON.stringify({
-      capturedAt: "2026-10-19",
-      method: "tools/list",
-      source: "https://acme.example/mcp",
-      tools: [{ name: "get_customer" }, { name: "list_customers" }],
-    }),
     "evidence/openapi.json": JSON.stringify({
       url: "https://acme.example/openapi.json",
       revision: "v1",
@@ -198,11 +190,11 @@ function standard(): ProviderFacts {
   };
   return {
     name: "acme",
-    kind: "dual",
+    kind: "api",
     display: "Acme",
     files: Object.keys(files).sort(),
     read: (path) => files[path],
-    blockKeys: ["api", "hosted"],
+    blockKeys: ["api", "account"],
   };
 }
 
@@ -228,7 +220,7 @@ describe("the provider standard's rules", () => {
     }
   });
 
-  it("holds when-blocks to declared keys on their own lines, and dual guides to hosted and api", () => {
+  it("holds when-blocks to declared keys on their own lines", () => {
     const folder = standard();
     const guide = (body: string, facts: Partial<ProviderFacts> = {}) =>
       guideViolations(
@@ -240,19 +232,16 @@ describe("the provider standard's rules", () => {
         },
         "## Acme\n",
       );
-    expect(guide("\n## Ids\n\n<!-- when: hosted -->\nSelect the account.\n<!-- end -->\n")).toEqual([]);
+    expect(guide("\n## Ids\n\n<!-- when: account -->\nSelect the account.\n<!-- end -->\n")).toEqual([]);
     expect(guide("\n<!-- when: region -->\nUS only.\n<!-- end -->\n")).toEqual([
       "G2: SKILL.md uses the undeclared when-block key region",
     ]);
-    expect(guide("\nText <!-- when: hosted -->inline<!-- end -->\n")).toContain(
+    expect(guide("\nText <!-- when: account -->inline<!-- end -->\n")).toContain(
       "G2: a when-block marker stands alone on its line",
     );
-    expect(guide("\n<!-- when: hosted -->\n<!-- when: api -->\n<!-- end -->\n")).toContain(
+    expect(guide("\n<!-- when: account -->\n<!-- when: api -->\n<!-- end -->\n")).toContain(
       "G2: SKILL.md when-blocks must open and close in turn, unnested",
     );
-    expect(guide("\n## Ids\n", { blockKeys: ["hosted"] })).toEqual([
-      "G2: a dual provider declares the hosted and api block keys",
-    ]);
     expect(guide("\n## Ids\n", { kind: "api", blockKeys: [] })).toEqual([]);
   });
 
@@ -267,14 +256,14 @@ describe("the provider standard's rules", () => {
     [
       "invalid evidence digest",
       (drift: { generated: { evidence: Record<string, string>; extra?: boolean } }) => {
-        drift.generated.evidence["catalog.json"] = "broken";
+        drift.generated.evidence["openapi.json"] = "broken";
       },
       "D2: generated.evidence holds one sha256",
     ],
     [
       "missing evidence key",
       (drift: { generated: { evidence: Record<string, string>; extra?: boolean } }) => {
-        delete drift.generated.evidence["catalog.json"];
+        delete drift.generated.evidence["openapi.json"];
       },
       "D2: generated.evidence holds one sha256",
     ],

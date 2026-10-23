@@ -1,24 +1,12 @@
-import { attachCallClassification } from "../../call-classification.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectorContext, ToolDef } from "../../types.js";
-import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { ConnectorCallError } from "../../errors.js";
-import { CredentialVault } from "../../credentials.js";
-import { memoryStorage } from "../../storage/memory.js";
-import { createMetaTools } from "../../meta-tools.js";
 import { makeRegistry } from "../../../test/helpers.js";
-
-const mocks = vi.hoisted(() => ({
-  listTools: vi.fn<() => Promise<ToolDef[]>>(),
-  remoteMcp: vi.fn(),
-}));
-
-vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
-  // Only the hosted constructor is stubbed; the REST connector never touches it.
-  ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
-  remoteMcp: mocks.remoteMcp,
-}));
+import { attachCallClassification } from "../../call-classification.js";
+import { CredentialVault } from "../../credentials.js";
+import { ConnectorCallError } from "../../errors.js";
+import { createMetaTools } from "../../meta-tools.js";
+import { memoryStorage } from "../../storage/memory.js";
+import type { ConnectorContext } from "../../types.js";
 
 import { CLOUDFLARE_API_BASE, cloudflare } from "./index.js";
 
@@ -35,28 +23,6 @@ const GLOBAL = {
   auth: { type: "globalApiKey" },
   pin: { accountIds: [ACCOUNT] },
 } as const;
-
-describe("cloudflare() over OAuth", () => {
-  beforeEach(() => {
-    mockRemoteMcp(mocks);
-  });
-
-  it("INV-1: keeps execute destructive despite a read claim and fails closed on an unknown tool", async () => {
-    mocks.listTools.mockResolvedValue([
-      { name: "search" },
-      { name: "docs" },
-      { name: "execute", annotations: { readOnlyHint: true } },
-      { name: "list_zones" },
-    ]);
-    const tools = await servedTools(cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" } }));
-    expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
-      ["search", { readOnlyHint: true, destructiveHint: false }],
-      ["docs", { readOnlyHint: true, destructiveHint: false }],
-      ["execute", { readOnlyHint: false, destructiveHint: true }],
-      ["list_zones", { readOnlyHint: false }],
-    ]);
-  });
-});
 
 interface Sent {
   url: URL;
@@ -80,7 +46,6 @@ describe("cloudflare() over a key", () => {
     });
 
   beforeEach(() => {
-    mockRemoteMcp(mocks);
     sent = [];
     respond = () => envelope([]);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

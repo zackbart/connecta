@@ -1,81 +1,23 @@
-import type { ReactNode } from "react";
 import { useLocation } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import type { UiConnector } from "../model.js";
 import {
   confirmCopy,
   connectorLoadFailureCopy,
-  driftCounts,
-  driftState,
-  driftSummary,
   formatDate,
-  registrationPathLabel,
   problemCopy,
   problemTone,
+  registrationPathLabel,
   safeHttpHref,
   type OperatorState,
 } from "../view.js";
 import { productName } from "./config.js";
-import { CredentialCard } from "./credentials.js";
-import {
-  Badge,
-  Callout,
-  ConfirmBar,
-  FixPrompt,
-  NoticeLine,
-  Pill,
-  StateBlock,
-  SummaryRow,
-  focusableId,
-} from "./parts.js";
-import { Icon } from "./icons.js";
 import { sinceLabel } from "./connectors.js";
+import { CredentialCard } from "./credentials.js";
+import { Icon } from "./icons.js";
+import { Badge, Callout, ConfirmBar, FixPrompt, NoticeLine, StateBlock, SummaryRow, focusableId } from "./parts.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
-
-const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
-  clean: "No drift",
-  warning: "Drift",
-  unavailable: "Drift not observed",
-};
-
-/**
- * What the last catalog refresh saw, as counts. There is no drill-down and
- * nothing to expand: a tool name or a schema on this panel would turn an
- * operator page into the payload surface the drift model refuses to be
- * ([#343](https://github.com/zackbart/connecta/issues/343)). Absence is its own
- * state — a runtime that has refreshed nothing says so rather than showing four
- * reassuring zeros.
- */
-function DriftPanel({ connector }: { connector: UiConnector }) {
-  const drift = connector.catalogDrift;
-  const state = driftState(drift);
-  return (
-    <>
-      {/* Kept outside the counted panel, so the panel stays counts only. */}
-      <div id={`drift-${connector.id}`} className={`connector-drift drift-${state}`} data-drift={state}>
-        <div className="drift-head">
-          <Pill status={state === "warning" ? "attention" : state === "clean" ? "healthy" : "neutral"}>
-            {DRIFT_HEADING[state]}
-          </Pill>
-          <span className="meta">{driftSummary(drift)}</span>
-        </div>
-        {state === "unavailable" ? null : (
-          <ul className="metric-grid">
-            {driftCounts(drift).map(({ key, label, count }) => (
-              <li key={key} className={count > 0 ? "metric flagged" : "metric"}>
-                <span className="metric-label">{label}</span>
-                <span className="metric-value">{count}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      {state === "warning" ? (
-        <FixPrompt kind="catalog_drift" connectorId={connector.id} name={connector.title || connector.id} />
-      ) : null}
-    </>
-  );
-}
 
 function AuthActions({
   connector,
@@ -323,7 +265,6 @@ export function ConnectorDiagnostics({
           />
         ) : null}
       </dl>
-      {connector ? <DriftPanel connector={connector} /> : <StateBlock busy>Diagnostics are loading.</StateBlock>}
       {connector?.resourceTemplateRefusals?.length ? (
         <div className="refusals">
           <span className="meta">Resource refusals</span>

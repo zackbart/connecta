@@ -91,8 +91,8 @@ export interface ToolDef {
   outputSchema?: JsonSchema;
   /**
    * Standard MCP tool behavior hints plus provider-specific extensions.
-   * The registry classifies these after deployment overrides and provider
-   * review. Only a stored read verdict may use call_tool; program writes
+   * The registry classifies tools using deployment overrides and annotations.
+   * Only a stored read verdict may use call_tool; program writes
    * require a writable endpoint. Approval belongs to the host.
    */
   annotations?: ToolAnnotations;
@@ -249,81 +249,6 @@ export interface ConnectorContext {
 
 type ConnectorStatusState = "ok" | "auth_required" | "credential_required" | "error";
 
-/**
- * What a reviewed downstream tool does. `"read"` is observational. `"write"`
- * changes state without destroying any that already exists, such as a create.
- * `"destructive"` modifies or removes existing state, including an upsert that
- * can overwrite. Both writes leave the read-only path; `"destructive"` also
- * asserts `destructiveHint`, which shapes the approval copy a human reads.
- */
-export type ToolVerdict = "read" | "write" | "destructive";
-
-/** One reviewed tool, with the evidence that justifies its verdict. */
-export interface ReviewedTool {
-  readonly verdict: ToolVerdict;
-  /** Why the verdict holds when the name or downstream annotations do not say. */
-  readonly reason?: string;
-  /**
-   * `sha256-sets-v1:<hex>` digest of the reviewed input/output schemas.
-   * Legacy `sha256:<hex>` pins retain literal array ordering.
-   * Omit until a review has actually read them; an invented digest reports
-   * drift that never happened. When the live schema no longer matches it, or
-   * it cannot be checked, the verdict lapses and the tool is served as a write.
-   */
-  readonly schemaDigest?: string;
-  /** Absence is expected under plan, feature, or permission gating. */
-  readonly optional?: boolean;
-}
-
-/**
- * A reviewed classification of a downstream MCP catalog, keyed by exact tool
- * name. Plain data, validated at construction, so the same record classifies
- * live tools and feeds the drift check. A connector carries it as
- * `Connector.classification`, and the registry applies it on every read.
- *
- * It fails closed. A name it does not list keeps only an explicit downstream
- * read annotation; silence and contradiction classify as writes. A listed read
- * fills downstream silence but never overrules an explicit write annotation.
- * A listed write or destructive tool stays a write whatever the downstream
- * claims. A listed tool whose `schemaDigest` no longer matches is a write.
- */
-export interface ToolClassification {
-  /** Hide every name absent from tools, including tools claiming to be reads. */
-  readonly unlisted?: "hide";
-  readonly tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
-}
-
-/**
- * How far a downstream catalog has moved away from the manifest a release
- * reviewed. Counts and nothing else: names, schemas, and prose stay out
- * of every surface this rides on, so a drift report can never become a payload
- * ([#343](https://github.com/zackbart/connecta/issues/343)).
- */
-export interface CatalogDriftCounts {
-  /** Downstream tools dropped because their names contain C0, DEL, or C1. */
-  droppedTools?: number;
-  /** Live tools no release classified. Each one fails closed at call time. */
-  unclassifiedTools: number;
-  /** Required reviewed names this catalog no longer serves. */
-  unservedTools: number;
-  /** Explicit downstream annotations that contradict a vetted verdict. */
-  annotationConflicts: number;
-  /** Tools whose reviewed schema digest no longer matches what arrived. */
-  schemaChanges: number;
-}
-
-/** One drift observation, taken while serving a catalog refresh. */
-export interface CatalogDriftReport extends CatalogDriftCounts {
-  /** False when this listing has no reviewed classification to compare. */
-  reviewedBaseline?: boolean;
-  /** Whether all pinned schemas could be checked on this observation. */
-  verification?: "complete" | "unavailable";
-  /** Live reviewed tools with and without recorded schema digests. */
-  schemaCoverage?: { pinned: number; unpinned: number };
-  /** When the observation was taken; never when a probe was scheduled. */
-  observedAt: string;
-}
-
 /** The last agent-facing catalog read this runtime served for one connector. */
 export interface CatalogAccessObservation {
   /** Fresh means the read used a live or unexpired catalog; stale means SWR. */
@@ -361,7 +286,6 @@ export interface ConnectorStatus {
    * observation is not persisted the way the catalog is, so absence means this
    * isolate or process has seen nothing, not that nothing drifted.
    */
-  catalogDrift?: CatalogDriftReport;
   /**
    * The last agent-facing catalog read in this runtime. This payload-free
    * observation is not persisted and operator reads do not replace it.
@@ -447,35 +371,6 @@ export interface Connector {
    * fetched lazily over the network and are not known at construction time.
    */
   staticTools?: ToolDef[];
-  /**
-   * Optional reviewed classification of the tools `listTools` returns: data
-   * the registry applies, never something the connector applies itself.
-   * `remoteMcp({ classify })` and maintained providers set it to a
-   * deep-frozen record; a custom connector may set one too. It is validated
-   * when a registry first reads it (INV-11), and read once per connector
-   * object. A connector that sets it lists raw downstream tools; the
-   * registry caches and persists only that listing, and classifies it on
-   * every read with this record, so no cache layer carries a verdict.
-   * Connectors with `staticTools` cannot set it: annotate those directly.
-   *
-   * A wrapper that rebuilds a connector must forward this field to keep the
-   * review. `{ ...connector }`, `Object.assign`, and `Object.create` keep it;
-   * a forwarding class that omits it serves an unreviewed connector, whose
-   * downstream annotations are its own claims and fail closed when absent.
-   * Deployment-level classifier overrides, keyed by connector id
-   * and tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
-   * regardless of wrapping.
-   */
-  readonly classification?: ToolClassification | undefined;
-  /**
-   * Optional: the drift this connector saw the last time it listed tools,
-   * or undefined when it has not listed any yet. A getter over an
-   * observation, never a probe: calling it makes no request, touches no
-   * credential, and returns counts only. Ignored for a connector with a
-   * `classification`, whose drift the registry observes itself, against
-   * that record, while serving a refresh the deployment already asked for.
-   */
-  catalogDrift?(): CatalogDriftReport | undefined;
   /**
    * Optional: what this connector is, for `Connecta.describeConfig()` and the
    * operator surfaces built on it — where it points, how it authenticates,
@@ -606,7 +501,7 @@ export interface ConnectorToolDescription {
   annotations?: ToolAnnotations;
   inputSchema?: JsonSchema;
   outputSchema?: JsonSchema;
-  /** Present on registry descriptions after overrides and provider review (INV-1). */
+  /** Present on registry descriptions after overrides and annotations (INV-1). */
   classification?: "read" | "write";
 }
 

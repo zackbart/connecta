@@ -12,8 +12,8 @@ import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
 import { credentialTestRule, describeUndeclaredCredentialFields, storedCredentialShape } from "../credential-rules.js";
-import type { CredentialManagementCapability, UiConnector, UiData, UiTool } from "../operator-ui/model.js";
 import { failureRecord, failureStatus, logFailure, recordedToolName, statusFailure } from "../operator-record.js";
+import type { CredentialManagementCapability, UiConnector, UiData, UiTool } from "../operator-ui/model.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
@@ -236,9 +236,6 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           tools,
           // Counts only, and only when a refresh in this runtime produced them.
           // `Registry.withCatalogObservations` rebuilt the report through
-          // `boundedCatalogDrift`, so what lands here cannot carry a name or a
-          // schema even if the plugin seam returned one.
-          ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
           ...(status.catalogAccess ? { catalogAccess: status.catalogAccess } : {}),
           ...(status.resourceTemplateRefusals ? { resourceTemplateRefusals: status.resourceTemplateRefusals } : {}),
           ...(status.state === "auth_required" && c.startAuth && options.mayManage?.(c.id) && options.oauthConnectUrl

@@ -79,18 +79,13 @@ function hatchLine(name, hatch) {
  * The generated `## Conventions` (decision 0011): what the provider's
  * declarations mean for an agent. `kit` is the definition's `ProviderKitFacts`
  * (page size and hatch verdicts arrive with the provider kit); `withheld` says
- * the folder holds a reviewed value-safety table. A dual provider's API and
- * hosted conventions stand in its `api` and `hosted` blocks.
+ * the folder holds a reviewed value-safety table.
  */
-export function renderConventions({ name, kind, kit, withheld, keys = [] }) {
-  if (!["mcp", "api", "dual"].includes(kind))
-    fail(name, `a standard provider's kind is mcp, api, or dual, not ${kind}`);
-  if (kind === "dual" && !(keys.includes("api") && keys.includes("hosted"))) {
-    fail(name, "G2: a dual provider declares the hosted and api block keys");
-  }
+export function renderConventions({ name, kind, kit, withheld }) {
+  if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
   const api = [];
   const tail = [];
-  if (kind !== "mcp") {
+  {
     const pageSize = kit?.pageSize;
     if (pageSize !== undefined) {
       if (!Number.isSafeInteger(pageSize.default) || pageSize.default < 1 || !Number.isSafeInteger(pageSize.max)) {
@@ -115,17 +110,6 @@ export function renderConventions({ name, kind, kit, withheld, keys = [] }) {
   }
   const writes =
     "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it.";
-  const hosted =
-    kind === "api"
-      ? []
-      : [
-          "- **Hosted tools:** the hosted catalog varies by plan and permission, so search it rather than assume a " +
-            "tool exists. A tool without a reviewed classification counts as a write unless it declares itself read-only.",
-        ];
-  const block = (key, lines) => (lines.length === 0 ? [] : [`<!-- when: ${key} -->`, ...lines, "<!-- end -->"]);
-  const lines =
-    kind === "dual"
-      ? [...block("api", api), writes, ...block("api", tail), ...block("hosted", hosted)]
-      : [...api, writes, ...tail, ...hosted];
+  const lines = [...api, writes, ...tail];
   return `## Conventions\n\n${lines.join("\n")}`;
 }

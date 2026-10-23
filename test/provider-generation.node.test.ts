@@ -271,8 +271,8 @@ describe("provider folder generation", () => {
 });
 
 interface StandardOptions {
-  kind?: "api" | "mcp" | "dual";
-  /** TypeScript spread into the definition: blocks, kit, classify. */
+  kind?: "api";
+  /** TypeScript spread into the definition: blocks and kit. */
   definition?: string;
   skill?: string;
   checks?: unknown[];
@@ -351,11 +351,7 @@ describe("decision 0011 guides and drift records", () => {
       { skill: "<!-- when: region -->\nUS only.\n<!-- end -->\n" },
       "G2: SKILL.md uses the when-block region, which blocks.keys omits",
     ],
-    [
-      "a dual guide without hosted and api keys",
-      { kind: "dual" as const, definition: 'classify: { tools: { list_items: "read" } },' },
-      "G2: a dual provider declares the hosted and api block keys",
-    ],
+
     [
       "an endpoint row the manifest does not send",
       {

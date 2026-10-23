@@ -65,13 +65,12 @@ export const PENDING = {
 
 /** Independent of optional H-convention metadata; omission must never skip the S checks. */
 export async function authoredTools(
-  kind: string,
+  _kind: string,
   fixture: { readonly name: string; readonly createAuthored?: () => Pick<Connector, "listTools"> } | undefined,
   context: ConnectorContext,
 ): Promise<readonly ToolFacts[] | undefined> {
-  if (kind === "mcp") return undefined;
   if (!fixture?.createAuthored)
-    throw new Error(`S: ${fixture?.name ?? kind} needs an offline createAuthored() fixture`);
+    throw new Error(`S: ${fixture?.name ?? _kind} needs an offline createAuthored() fixture`);
   const tools = await fixture.createAuthored().listTools(context);
   if (!tools.length)
     throw new Error(`S: ${fixture.name} createAuthored() must expose every authored tool, not an empty catalog`);
@@ -105,7 +104,6 @@ const ROOT_FILES = new Set([
   "index.ts",
   "api.ts",
   "tools.ts",
-  "hosted.ts",
   "safety.ts",
   "SKILL.md",
   "drift.json",
@@ -114,20 +112,12 @@ const ROOT_FILES = new Set([
   "openapi.generated.ts",
 ]);
 const TEST_FILE = /^provider(?:\.[a-z][a-z0-9-]*)?(?:\.node)?\.test\.ts$/;
-const EVIDENCE_FILES = new Set([
-  "catalog.json",
-  "openapi.json",
-  "openapi.document.json",
-  "value-safety.json",
-  "review.md",
-]);
+const EVIDENCE_FILES = new Set(["openapi.json", "openapi.document.json", "value-safety.json", "review.md"]);
 /** Evidence whose bytes `providers:generate` hashes into drift.json. */
 const KIND_FILES: Readonly<Record<string, { required: string[]; forbidden: string[] }>> = {
   api: { required: ["api.ts", "tools.ts"], forbidden: ["hosted.ts"] },
-  mcp: { required: ["hosted.ts"], forbidden: ["api.ts", "tools.ts", "safety.ts", "openapi.generated.ts"] },
-  dual: { required: ["api.ts", "tools.ts", "hosted.ts"], forbidden: [] },
 };
-const CHECK_TYPES = new Set(["endpoints", "versioned-endpoints", "openapi-index", "mcp-docs", "manual"]);
+const CHECK_TYPES = new Set(["endpoints", "versioned-endpoints", "openapi-index", "manual"]);
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -144,13 +134,6 @@ function parse(text: string | undefined): unknown {
   } catch {
     return undefined;
   }
-}
-
-function sortedUnique(values: unknown): values is string[] {
-  return (
-    Array.isArray(values) &&
-    values.every((value, index) => typeof value === "string" && (index === 0 || values[index - 1]! < value))
-  );
 }
 
 function day(value: unknown, today: string): boolean {
@@ -186,13 +169,14 @@ export function layoutViolations(provider: ProviderFacts): string[] {
     }
   }
   const kind = KIND_FILES[provider.kind];
-  if (!kind) found.push(`L2: kind "${provider.kind}" is not "mcp", "api", or "dual"`);
+  if (!kind) found.push(`L2: kind "${provider.kind}" is not "api"`);
   for (const file of kind?.required ?? []) if (!has(file)) found.push(`L2: kind "${provider.kind}" needs ${file}`);
   for (const file of kind?.forbidden ?? []) if (has(file)) found.push(`L2: kind "${provider.kind}" has no ${file}`);
   const index = provider.read("index.ts") ?? "";
   if (/\basProviderFactory\s*\(/.test(index)) found.push("L3: index.ts uses asProviderFactory, not defineProvider");
   if (/\binputSchema\b/.test(index)) found.push("L3: index.ts defines tools; they belong in tools.ts");
-  if (/\bremoteMcp\s*\(/.test(index)) found.push("L3: index.ts configures remoteMcp(); that belongs in hosted.ts");
+  if (/\bremoteMcp\s*\(/.test(index))
+    found.push("L3: index.ts configures remoteMcp(); hosted servers use generic remoteMcp() entries");
   for (const file of ["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "skill.generated.ts"]) {
     if (!has(file)) found.push(`L4: missing ${file}`);
   }
@@ -204,7 +188,7 @@ export function layoutViolations(provider: ProviderFacts): string[] {
 }
 
 /** E: fixed evidence names and formats. */
-export function evidenceViolations(provider: ProviderFacts, today: string): string[] {
+export function evidenceViolations(provider: ProviderFacts, _today: string): string[] {
   const found: string[] = [];
   const has = (path: string) => provider.files.includes(path);
   for (const file of provider.files) {
@@ -212,39 +196,6 @@ export function evidenceViolations(provider: ProviderFacts, today: string): stri
     const name = file.slice("evidence/".length);
     if (!EVIDENCE_FILES.has(name) && !name.startsWith("pages/"))
       found.push(`E1: ${file} is not a standard evidence name`);
-  }
-  if ((provider.kind === "mcp" || provider.kind === "dual") && !has("evidence/catalog.json")) {
-    found.push("E2: a hosted implementation needs evidence/catalog.json");
-  }
-  if (has("evidence/catalog.json")) {
-    const catalog = parse(provider.read("evidence/catalog.json"));
-    const tools = record(catalog) && Array.isArray(catalog["tools"]) ? (catalog["tools"] as unknown[]) : undefined;
-    if (
-      !record(catalog) ||
-      !day(catalog["capturedAt"], today) ||
-      (catalog["method"] !== "tools/list" && catalog["method"] !== "documentation") ||
-      typeof catalog["source"] !== "string" ||
-      !catalog["source"].trim() ||
-      !tools?.length ||
-      !sortedUnique(tools.map((tool) => (record(tool) ? tool["name"] : undefined)))
-    ) {
-      found.push("E3: evidence/catalog.json needs capturedAt, method, source, and tools sorted by unique name");
-    }
-  }
-  const catalog = parse(provider.read("evidence/catalog.json"));
-  if (record(catalog) && Array.isArray(catalog["tools"])) {
-    for (const tool of catalog["tools"]) {
-      if (!record(tool) || tool["annotations"] === undefined) continue;
-      const annotations = tool["annotations"];
-      if (
-        !record(annotations) ||
-        ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].some(
-          (hint) => hint in annotations && typeof annotations[hint] !== "boolean",
-        )
-      ) {
-        found.push(`E3: evidence/catalog.json ${tool["name"]} behavioral hints must be booleans when present`);
-      }
-    }
   }
   if (has("evidence/openapi.json")) {
     const pin = parse(provider.read("evidence/openapi.json"));
@@ -347,8 +298,7 @@ export function driftViolations(
         found.push(`D3: ${at} manual check needs lastVerified as a past YYYY-MM-DD date`);
       }
     }
-    if (keys.has("reviewed"))
-      found.push(`D4: ${at} hand-keeps a reviewed list; use generated.hosted or evidence/catalog.json`);
+    if (keys.has("reviewed")) found.push(`D4: ${at} hand-keeps a reviewed list; hosted reviews were removed`);
     if (check["type"] === "endpoints" || check["type"] === "versioned-endpoints") {
       const entries = Array.isArray(check["endpoints"]) ? check["endpoints"] : [];
       if (
@@ -400,9 +350,6 @@ export function guideViolations(provider: ProviderFacts, documentation: string):
   if (open) found.push("G2: SKILL.md leaves a when-block open");
   for (const key of keys) {
     if (!provider.blockKeys?.includes(key)) found.push(`G2: SKILL.md uses the undeclared when-block key ${key}`);
-  }
-  if (provider.kind === "dual" && !["hosted", "api"].every((key) => provider.blockKeys?.includes(key))) {
-    found.push("G2: a dual provider declares the hosted and api block keys");
   }
   if (/^# /m.test(body)) found.push("G3: SKILL.md headings start at ##; the renderer writes the title");
   if (/^## Conventions\s*$/m.test(body)) found.push("G3: the Conventions section is generated, not written");

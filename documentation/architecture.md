@@ -1194,10 +1194,9 @@ factory) walk their own options the same way, against shapes the compiler
 checks against their option types (`optionsOf<T>()`). Provider definitions
 declare their closed `options` shape; `defineProvider()` validates it by the
 same descriptor walk before `create` reads a value and stamps the definition
-name onto `describe().source.provider`. `classify` is accepted by the remote
-shape and validated by the shared reviewed-classification validator. Custom
-connectors remain opaque, including their `classification` field, which the
-registry validates. Checks
+name onto `describe().source.provider`. Hosted MCP uses generic runtime discovery;
+`classify` is rejected at construction in favor of `ConnectaConfig.classification`.
+Custom connectors remain opaque and classify from annotations. Checks
 that need the connector set — pool members, exact classification overrides, a
 connector's own `maxResultBytes` — throw from `src/index.ts` and the registry
 under the same policy. `storage` stays opaque, but its check requires `list`
@@ -1245,42 +1244,19 @@ call. The [provider guide](https://github.com/zackbart/connecta/blob/main/src/pr
 value-read conventions.
 
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
-name, title, kind (`"mcp"`, `"api"`, `"composed"`, or `"dual"`), a maintained skill, an
-optional reviewed classification, a closed `options` shape declared with
-`optionsOf<O>()`, and a synchronous `create`. The root exports the option-shape
-combinators and `PROVIDER_COMMON` so provider authors use the same validation
-path. The factory refuses undeclared keys and accessors before reading any
-option, copies plain data, preserves behaviour objects, then validates common
-values (purpose, title, instructions, `authScope`) before `create` runs, and renders the guide: heading, the
-connection context `create` supplies, the maintained text, then deployment
-instructions, which append and never replace. `src/provider.ts` imports neither
-transport, so an `api()` provider gains no MCP client or Effect graph from it
-(`test/purity.node.test.ts`). The factory carries its `definition`, which build and
-check tools read instead of keeping provider lists. Providers
-live in their own folders. Hosted implementations, including the
-MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
-`remoteMcp({ classify })`. The migrated API-only factories retain an internal
-adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement.
-A `"dual"` provider selects one implementation at construction, usually through `auth`
-([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):
-`variants(["auth", "type"], …)` closes each case's options, and
-`byAuth()` in `src/providers/_shared/rest/dispatch.ts` sends OAuth to
-`hostedOAuth()` (`remoteMcp()`, OAuth only, the reviewed classification) and a
-key to Connecta's REST connector. Stripe, Notion, Cloudflare, and Vercel require `auth`. Mixpanel is also dual,
-with explicit `via: "mcp" | "api"` and MCP as the unchanged default: service accounts
-reach both implementations, so auth cannot distinguish them. API mode requires
-operator-managed service-account credentials and never falls back to MCP.
-Mixpanel uses the same REST transport, operation matching and value-safety engine
-for a narrow reviewed subset. Its official contracts are YAML and app identity
-has no published response schema, so its guide and drift record carry explicit
-manual review evidence instead of claiming a machine-checkable JSON pin.
+name, title, `kind: "api"`, maintained skill, closed `options` shape and a
+synchronous `create`. Common values are checked before construction and the
+factory stamps its provider name onto `describe().source.provider`. API
+implementations and their contract evidence remain vendored. Hosted MCP servers
+use generic `remoteMcp()` entries; provider reviews and hosted defaults are
+removed. Legacy hosted selectors fail at construction with the generic migration
+path. GitHub retains only its six scope-enforced REST tools.
 
 [Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
 sets the provider standard the providers above are migrating to. It fixes
 one folder layout per kind and fixed evidence names. `drift.json` gets a
 generated block and the guide a generated Conventions section, and every
-`api()` surface gets one agent-facing shape. It also folds `"composed"` into
-`"dual"` with an optional tool-ownership map. Each provider migrates in two
+`api()` surface gets one agent-facing shape. Each provider migrates in two
 PRs: onto the kit with unchanged output, then onto the standard surface.
 `PENDING` in `test/provider-standard.ts` lists the providers that have not
 landed each step, and this section describes their current shapes.
@@ -1289,8 +1265,7 @@ standard, and `test/provider-conventions.test.ts` checks the surface rules on
 Node. `providers:generate` writes the standard's derived parts and
 refuses a provider past step 1 that breaks the `drift.json` rules, or one past
 step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
-(operations from the kit's `ProviderKitFacts`, hosted names from the reviewed
-classification, evidence digests), and a guide's `## Conventions`, rendered
+(operations from the kit's `ProviderKitFacts` and evidence digests), and a guide's `## Conventions`, rendered
 from the definition's declarations into `skill.generated.ts`.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
 with the definition's `blocks`. `providers:check` reads both record versions,
@@ -1502,89 +1477,17 @@ verdict count.
 `RestVendor.valueSafety` is required, so a new REST vendor cannot ship without
 a table.
 
-`remoteMcp({ classify })` is the public way to declare what a downstream's
-tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
-reason?, schemaDigest?, optional? } }, unlisted?: "hide" }`, validated at construction. It fails closed
-(INV-1): a reviewed read fills silence but yields to an explicit write
-annotation, a reviewed write stays a write whatever the downstream claims, an
-unlisted tool is a read only when it says so, and a reviewed tool whose
-`schemaDigest` no longer matches, or cannot be checked, is a write on discovery
-and every invocation path until a release reviews it again. A digest covers
-the whole schema; one too large to hash whole is unchecked. `unlisted: "hide"`
-removes every unreviewed name, even an explicitly annotated read, on every
-registry read, including persisted catalogs. `remoteMcp` also refuses direct
-calls to unlisted names before authentication. Tool classification does not
-authorize targets; providers such as GitHub check arguments and configured
-scopes separately before minting credentials.
-
-Connectors report facts; the registry is the only classifier. A reviewed
-connector carries its review as data, the deep-frozen
-`Connector.classification`, and its `listTools` returns the downstream's
-listing unclassified. The registry validates the field when it first reads a
-connector (INV-11) and classifies the intake-redacted facts on every read into
-fresh objects. Remote MCP caches the underlying SDK response before connector
-decorators; decorators run again on every read. Neither a cache layer nor a
-decorator holding a served or listed tool can carry a verdict. The request-scoped catalog also owns a deep copy
-and returns fresh copies to discovery and invocation. Each connector call
-receives a separate deep copy of its definition, so mutations cannot change
-classification, schemas, or write accounting later in the same program.
-A restart applies the current review to cached SDK facts. Retired registry
-manifest versions 2 and 3 are ignored and expire on their original TTL.
-During listings the registry counts drift against the same record. Optional
-reviewed tools do not count as unserved when gated out. Reports carry an explicit
-reviewed-baseline fact, counts of live reviewed tools with and without schema
-pins, and complete/unavailable schema verification. A digest failure replaces
-the previous observation rather than retaining a stale clean result (INV-1,
-INV-6). Observation and classification share the same verification result for each
-listing; classification still fails closed.
-
-Reports are in-memory only, weakly keyed by connector and a registry-owned
-catalog partition token. The partition uses the same admitted principal,
-subject, caller identity, authenticated flag and pool as catalog caching, plus
-connector id and endpoint URLs. Personal registries do not share tokens with
-each other or the root. Each registry retains at most 1,024 tokens; eviction or
-restart yields no observation, never another subject's counts. No new storage
-key or durable catalog record is introduced.
-
-New schema pins use `sha256-sets-v1:<hex>`. Canonicalization sorts object keys
-and schema `required`, `enum`, and `type` arrays, including schema-valued
-legacy dependencies. Tuple arrays and JSON data
-inside defaults, constants, enum members and examples retain order. Existing
-`sha256:<hex>` pins continue using the original key-sorted, literal-array
-algorithm; their reviewed digests are unchanged. Migrating a legacy pin requires
-reviewing the complete schemas and recording a new versioned digest. Legacy
-pins may still report conservative drift for array reordering until migrated.
-The iterative digest retains the whole-schema node ceiling in both formats.
-
-Contributor evidence: `test/provider-schema-pins.test.ts` checks every provider
-construction case in the generated roster. Every pinned digest requires a
-complete captured schema that passes runtime verification; changed input or
-output schemas must fail it. The guard also exercises both digest prefixes.
-
-The maintainer `scripts/drift-check.mjs` compares published inventories with
-provider evidence. Table inventories can require `inventory.accessColumn` and
-record `reviewedAccess` (`read` or `write`, with destructive verdicts recorded
-as write). These access snapshots must agree with the provider's runtime
-classification. A documented access change or disappearance of a reviewed explicit Access
-value is advisory drift, never an
-automatically accepted verdict. An explicit access value makes an
-`acknowledgedUnclassified` entry stale: report it and resume reporting that
-unreviewed tool as an addition. Missing tools and already reviewed names also
-invalidate such acknowledgements. Duplicate explicit access values must agree;
-a blank duplicate does not erase an explicit value elsewhere. Missing required
-columns in any tool table, unknown access values and conflicting rows are provider-local parser
-findings. The internal `withVettedCatalog()`
-helper has been removed. Public provider `*_VETTED_CATALOG` exports remain
-deprecated aliases derived from each definition
-(`test/classified-decorators.test.ts`).
-
-Wrappers must forward `classification` to keep the review. `{ ...connector }`,
-`Object.assign`, and `Object.create` keep it. A forwarding class that omits it
-serves an unreviewed connector: the downstream's annotations are its own
-claims and fail closed when absent, and nothing it persists carries safety.
-Phase 2's deployment-level classifier overrides, keyed by connector id and
-tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
-regardless of wrapping.
+Remote MCP tools classify from server annotations and deployment policy.
+Only `readOnlyHint === true` with `destructiveHint !== true` establishes a
+source read; missing or contradictory hints mean write. Deployment overrides
+in `ConnectaConfig.classification` choose effective `read`, `write`, or `hidden`.
+They cannot relax source replay safety. Effective or source write makes a call
+write-like on every resend and recovery path. Source classifications travel in
+private metadata with host-owned tool clones and stay out of persisted catalogs.
+A leftover `classify` throws and names `ConnectaConfig.classification`.
+There are no hosted review maps, pins, drift comparisons or review UI fields.
+Catalog refresh activity still compares successive accepted catalog fingerprints
+and reports only added, removed and changed counts in the caller's partition.
 
 #### Characterization goldens
 
@@ -2199,7 +2102,6 @@ src/
   server.ts           route ordering, HTTPS upgrade, security wrapper
   routes/             one file per surface; shared.ts holds the auth gate
   skills.ts           MCP instructions, the usage skill, connector guides
-  catalog-drift.ts    reviewed classifications and the drift counts a refresh produces
   provider.ts         defineProvider(): the one maintained-provider shape
   activity.ts         optional history factory and best-effort recorder
   auth/               Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
@@ -2447,7 +2349,7 @@ compiling and configuring the real thing.
   invocation withdraws the mark and the write is unknown.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
-  `tools/call` is sent, and GitHub's hosted target check and token mint.
+  `tools/call` is sent, and GitHub's REST target check and token mint.
   `remoteMcp()` applies the rule to direct and served writes alike: once
   `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
   or a failed output validation is unknown; only an HTTP 4xx (not 408) on the
