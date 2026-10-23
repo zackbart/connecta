@@ -38,3 +38,7 @@ A superseded record points to its replacement issue, PR, or record in its prose.
 [0014](./0014-api-tool-shape.md) sets the vendored API tool shape for each
 provider's step 2: a coverage hatch, curated tools and optional generated
 per-operation catalogs.
+
+[0015](./0015-native-tools-and-agent-identity.md) proposes native tools for
+clients with tool search, an Eve adapter package, and optional Vercel workload
+identity alongside agent tokens.
