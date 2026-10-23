@@ -76,7 +76,7 @@ const inputs = new WeakMap<ApiTool, Input>();
 function originalOrder<A>(decoded: A, original: unknown): A {
   const copies = new WeakMap<object, unknown>();
   const copy = (value: unknown, source: unknown): unknown => {
-    if (value === null || typeof value !== "object") return value;
+    if (value === source || value === null || typeof value !== "object") return value;
     if (copies.has(value)) return copies.get(value);
     if (Array.isArray(value)) {
       const out: unknown[] = [];

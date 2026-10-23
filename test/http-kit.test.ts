@@ -871,7 +871,17 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
       output: Schema.Unknown,
       run: (args) => Effect.succeed(args),
     });
-    const orderedConnector = apiConnector("ordered", { tools: [preserve, unchanged] });
+    let deep: unknown = "leaf";
+    for (let depth = 0; depth < 12_000; depth++) deep = { nested: [deep] };
+    const passthrough = read(connection, {
+      name: "passthrough_order",
+      description: "Preserve decoded pass-through subtrees without traversing them.",
+      input: Schema.Struct({ value: Schema.Unknown }),
+      inputOrder: "original",
+      output: Schema.Boolean,
+      run: (args) => Effect.succeed(args.value === deep),
+    });
+    const orderedConnector = apiConnector("ordered", { tools: [preserve, unchanged, passthrough] });
     for (const args of [
       { second: "two", rows: [{ b: "bee", a: "aye" }], first: "one" },
       { rows: [{ a: "aye", b: "bee" }], first: "one", second: "two" },
@@ -888,6 +898,7 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     await expect(
       orderedConnector.callTool("ordered", { first: "one", second: 2, rows: [] }, context()),
     ).rejects.toBeDefined();
+    await expect(orderedConnector.callTool("passthrough_order", { value: deep }, context())).resolves.toBe(true);
     delete steps["write"];
     steps["extra"] = "once";
     const connector = apiConnector("acme", { tools });
