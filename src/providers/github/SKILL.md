@@ -36,31 +36,13 @@ scopes and access. A repo entry overrides and may narrow its parent org entry.
 An org grant covers current and future repositories, as long as the installation
 keeps All repositories selected.
 
-Every hosted call requires explicit `owner` and `repo`. Connecta checks scope
-and write access before reading the key or minting a token, and narrows each
-repo call's token with `repository_ids` and the reviewed permissions.
-An internal metadata-only installation token resolves names through GitHub's
-installation repository list; it never authenticates hosted calls or search.
-Expiry and misses refresh the name lookup without rebinding configured grants.
-Use discovery or the configured name to refresh a rename before using its new
-name; names that cannot map to a configured grant fail before operation tokens
-are minted. Cross-owner
-PR heads, cross-repository issue parents, opaque comment/review-thread IDs and
-symlink writes are refused. The first release acts as the App; personal OAuth
-attribution is planned separately. Classification describes behavior; scope
-checks authorize targets whether or not the endpoint is read-only.
+Repository identity is resolved through GitHub's installation repository list.
+REST calls enforce configured scope and write access and narrow tokens with
+repository IDs and operation permissions. The connection exposes only
+`list_scopes`, `search_scoped`, `create_release`, `update_release`,
+`delete_release`, and `merge_pull_request`.
 
 ## Tools and paging
-
-Hosted schemas and results come from GitHub. Reviewed reads cover files,
-commits, branches, tags, releases, issues, labels, PR details/diffs/reviews,
-and Actions workflows/runs/jobs. Reviewed writes cover issues, comments, PR
-creation/updates/reviews, branches, file edits and Actions dispatch/rerun/cancel.
-Compound `issue_write` is always a write, including update/close. Review methods
-are limited to create/submit_pending/delete_pending; resolve/unresolve by opaque thread ID are
-not exposed. Scope-changing tools, repo creation/forks, deletion/transfer,
-administration, secrets and Copilot delegation are absent. Unknown upstream
-tools, arguments and methods require review before use.
 
 Use `search_scoped` for repositories, issues, PRs or code across installations.
 Supply literal words and an optional subset of configured org/repo selectors.
@@ -73,7 +55,7 @@ partitions. Issue and PR results resolve their repository URL to an ID before
 any result is returned.
 Installation tokens do not override GitHub's own code-search access restrictions.
 
-REST complements own `create_release`, `update_release`, `delete_release` and
+REST tools own `create_release`, `update_release`, `delete_release` and
 `merge_pull_request`. Publishing a draft is `update_release({ draft: false })`.
 Merge requires an expected head SHA, a same-repository head/base and explicit
 workflow-write access on the effective scope. GitHub atomically guards only the

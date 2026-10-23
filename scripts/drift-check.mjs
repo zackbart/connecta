@@ -1,14 +1,13 @@
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
-// Version 2 (decision 0011, D; scripts/drift-record.mjs) reads hosted names
-// from `generated.hosted` and
+// Version 2 (decision 0011, D; scripts/drift-record.mjs) reads
 // endpoint rows keyed by an `operation` from `generated.operations`. Version 1
 // stays readable for providers that have not landed their step 1.
 // Reports are advisory (exit 0), including parser/network failures and required
 // manual reviews. --strict exits 1 for findings; invocation errors exit 2.
 // Only --record with an explicit --provider selection updates endpoint digests,
 // revisions and latest-published evidence. It never changes pins, check config,
-// hosted reviewed names/annotations, or runtime code. MCP schemas remain live tools/list.
+// or runtime code.
 import { createHash } from "node:crypto";
 import { STALE_AFTER_DAYS, serializeDrift } from "./drift-record.mjs";
 import {
@@ -23,7 +22,6 @@ import {
 } from "./drift-validate.mjs";
 import { openApiEvidence, readOpenApiSource, sha256 } from "./generate-openapi.mjs";
 import { discoverProviders } from "./providers.mjs";
-import { readVercelInventory } from "./vercel-inventory.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,18 +32,16 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
 /**
  * @typedef {{type: "endpoints", specification: object, endpoints: object[], scopes?: string[]} |
  * {type: "versioned-endpoints", specifications: object, endpoints: object[]} |
- * {type: "mcp-docs", setup: string, inventory?: object, endpoints: string[], reviewed: string[], reviewedAccess?: Record<string, "read" | "write">} |
  * {type: "manual", source: string, rationale: string, evidence?: object} |
  * {type: "openapi-index", source: "openapi.source.json"}} DriftCheck
  * @typedef {{version: 1, provider: string, checks: DriftCheck[]}} DriftRecord
  *
  * Version 2 changes these, and every checker reads a v2 check through
  * `checkView` in the version-1 shape above: `manual` names `reason` and a
- * `lastVerified` day; `mcp-docs` names no `reviewed`
- * list (it is `generated.hosted`); endpoint rows carry `operation` (and
+ * `lastVerified` day; endpoint rows carry `operation` (and
  * `page` for ReadMe operation pages) in place of `method` and `path`;
  * `openapi-index` reads `evidence/openapi.json`.
- * @typedef {{version: 2, provider: string, generated: {operations: string[], hosted: string[], evidence: Record<string, string>}, checks: object[]}} DriftRecordV2
+ * @typedef {{version: 2, provider: string, generated: {operations: string[], evidence: Record<string, string>}, checks: object[]}} DriftRecordV2
  */
 
 /**
@@ -66,13 +62,9 @@ function usage(message) {
       "usage: pnpm run drift:check [options]",
       "",
       "  --specs                  only compare touched endpoints with published specs",
-      "  --docs                   only compare MCP docs and connection metadata",
       "  --provider <id>          limit to one provider (repeatable)",
       "  --spec <id>=<file|url>   read a provider's published spec from here",
       "                           (planning-center: --spec planning-center/<app>=…)",
-      "  --tool-reference <id>=<file|url>",
-      "                           read its MCP tool reference here",
-      "  --setup-reference <id>=<file|url>",
       "                           read its official MCP setup documentation here",
       "  --manual                 only report required manual vendor reviews",
       "  --provider-dir <path>    provider folders (default src/providers)",
@@ -88,13 +80,10 @@ function usage(message) {
 function parseArguments(argv) {
   const options = {
     specs: false,
-    docs: false,
     manual: false,
     strict: false,
     providers: [],
     specSources: new Map(),
-    toolReferenceSources: new Map(),
-    setupReferenceSources: new Map(),
     providerDirectory: defaultProviderDirectory,
     record: false,
     json: false,
@@ -108,7 +97,6 @@ function parseArguments(argv) {
       return value;
     };
     if (argument === "--specs") options.specs = true;
-    else if (argument === "--docs") options.docs = true;
     else if (argument === "--manual") options.manual = true;
     else if (argument === "--strict") options.strict = true;
     else if (argument === "--record") options.record = true;
@@ -116,31 +104,19 @@ function parseArguments(argv) {
     else if (argument === "--provider") options.providers.push(next());
     else if (argument === "--provider-dir" || argument === "--manifest-dir")
       options.providerDirectory = resolvePath(next());
-    else if (argument === "--spec" || argument === "--tool-reference" || argument === "--setup-reference") {
+    else if (argument === "--spec") {
       const value = next();
       const separator = value.indexOf("=");
       if (separator < 1 || separator === value.length - 1) usage(`${argument} expects <provider>=<file or url>`);
-      const target =
-        argument === "--spec"
-          ? options.specSources
-          : argument === "--tool-reference"
-            ? options.toolReferenceSources
-            : options.setupReferenceSources;
-      target.set(value.slice(0, separator), value.slice(separator + 1));
+      options.specSources.set(value.slice(0, separator), value.slice(separator + 1));
     } else usage(`unknown argument: ${argument}`);
   }
-  if (!options.specs && !options.docs && !options.manual) {
+  if (!options.specs && !options.manual) {
     options.specs = true;
-    options.docs = true;
     options.manual = true;
   }
-  // The providers:check alias selects both automated modes; include manual reviews there too.
-  if (options.specs && options.docs) options.manual = true;
   if (options.specSources.size > 0 && !options.specs) {
     usage("--spec requires --specs when a check mode is selected explicitly");
-  }
-  if ((options.toolReferenceSources.size > 0 || options.setupReferenceSources.size > 0) && !options.docs) {
-    usage("--tool-reference and --setup-reference require --docs when a check mode is selected explicitly");
   }
   if (options.record && options.providers.length === 0) {
     usage("--record requires an explicit --provider selection; baselines are never updated implicitly");
@@ -166,7 +142,6 @@ function errorFinding(error) {
 function checkMode(type) {
   if (type === "endpoints" || type === "versioned-endpoints" || type === "openapi-index") return "specs";
   if (type === "manual") return "manual";
-  if (type === "mcp-docs") return "docs";
   return "records";
 }
 
@@ -209,12 +184,7 @@ async function discoverRecords(directory) {
 
 function validateSelection(options, providers) {
   const known = new Map(providers.map((entry) => [entry.provider, entry]));
-  const requested = [
-    ...options.providers,
-    ...[...options.specSources.keys()].map((key) => key.split("/")[0]),
-    ...options.toolReferenceSources.keys(),
-    ...options.setupReferenceSources.keys(),
-  ];
+  const requested = [...options.providers, ...[...options.specSources.keys()].map((key) => key.split("/")[0])];
   for (const provider of requested) {
     const entry = known.get(provider);
     if (!entry) usage(`unknown provider: ${provider}`);
@@ -243,15 +213,6 @@ function validateSelection(options, providers) {
         usage(`${provider} publishes one specification per product; name it --spec ${provider}/<app>=<file|url>`);
       if (!Object.hasOwn(check.specifications ?? {}, app)) usage(`unknown ${provider} product: ${app}`);
     } else if (app) usage(`${provider} publishes one specification; name it --spec ${provider}=<file|url>`);
-  }
-  for (const provider of new Set([...options.toolReferenceSources.keys(), ...options.setupReferenceSources.keys()])) {
-    const entry = known.get(provider);
-    if (entry.error) continue;
-    const check = entry.record.checks.find((item) => item?.type === "mcp-docs");
-    if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
-    if (!check) usage(`${provider} has no MCP reference check`);
-    if (options.toolReferenceSources.has(provider) && !check.inventory)
-      usage(`${provider} has no public tool inventory`);
   }
   if (options.record) {
     for (const provider of requested) {
@@ -804,208 +765,6 @@ async function loadPublished(provider, label, source) {
   return text;
 }
 
-function documentedSection(markdown, inventory) {
-  const start = inventory.start ? markdown.indexOf(inventory.start) : 0;
-  if (start < 0) throw new ParserError(`tool reference no longer contains section ${inventory.start}`);
-  const afterStart = markdown.slice(start + (inventory.start?.length ?? 0));
-  if (!inventory.end) return afterStart;
-  const end = afterStart.indexOf(inventory.end);
-  if (end < 0) throw new ParserError(`tool reference no longer contains section ${inventory.end}`);
-  return afterStart.slice(0, end);
-}
-
-/** Exact tool names from a provider's documented inventory section. */
-function documentedToolNames(markdown, inventory) {
-  const section = documentedSection(markdown, inventory);
-  const candidate = /^[A-Za-z](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$/;
-  if (inventory.format === "headings") {
-    return [...section.matchAll(/^### ([^\r\n]+)$/gm)]
-      .map((match) => match[1].replaceAll("\\_", "_").trim())
-      .filter((name) => candidate.test(name))
-      .sort();
-  }
-  if (inventory.format === "inline" || inventory.format === "inline-calls") {
-    const names = [...section.matchAll(/`([^`]+)`/g)]
-      .map((match) => match[1].trim())
-      .map((name) => (inventory.format === "inline-calls" ? name.replace(/\(\)$/, "") : name))
-      .filter((name) => candidate.test(name))
-      .filter((name) => (inventory.prefix === undefined ? true : name.startsWith(inventory.prefix)));
-    return [...new Set(names)].sort();
-  }
-  const names = [];
-  for (const line of section.split("\n")) {
-    if (!line.startsWith("|")) continue;
-    const name = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]).find((value) => candidate.test(value));
-    if (name !== undefined) names.push(name);
-  }
-  return [...new Set(names)].sort();
-}
-
-/** Access is vendor evidence, never inferred from tool names or descriptions. */
-function documentedToolAccess(markdown, inventory) {
-  const access = new Map();
-  if (inventory.format !== "table") return access;
-  let toolColumn = -1;
-  let accessColumn = -1;
-  let found = false;
-  const clean = (cell) => cell.replaceAll(/[`*_]/g, "").trim().toLowerCase();
-  for (const line of documentedSection(markdown, inventory).split("\n")) {
-    if (!line.trimStart().startsWith("|")) {
-      toolColumn = -1;
-      accessColumn = -1;
-      continue;
-    }
-    const cells = line
-      .trim()
-      .replace(/^\||\|$/g, "")
-      .split("|")
-      .map((cell) => cell.trim());
-    const header = cells.map(clean);
-    const column = header.indexOf((inventory.accessColumn ?? "Access").toLowerCase());
-    const toolHeader = header.findIndex((cell) => cell === "tool" || cell === "tool name");
-    if (inventory.accessColumn && toolHeader >= 0 && column < 0)
-      throw new ParserError(`tool table no longer contains ${inventory.accessColumn} column`);
-    if (column >= 0) {
-      toolColumn = toolHeader;
-      if (inventory.accessColumn && toolColumn < 0)
-        throw new ParserError("access table no longer contains Tool column");
-      accessColumn = column;
-      found ||= toolColumn >= 0;
-      continue;
-    }
-    if (toolColumn < 0 || accessColumn < 0) continue;
-    const name = /^`([A-Za-z][A-Za-z0-9_-]*)`$/.exec(cells[toolColumn] ?? "")?.[1];
-    if (!name) continue;
-    const value = clean(cells[accessColumn] ?? "");
-    if (!value) continue;
-    if (value !== "read" && value !== "write")
-      throw new ParserError(`tool reference has unknown access for ${name}: ${value}`);
-    if (access.has(name) && access.get(name) !== value)
-      throw new ParserError(`tool reference has conflicting access for ${name}`);
-    access.set(name, value);
-  }
-  if (inventory.accessColumn && !found)
-    throw new ParserError(`tool reference no longer contains ${inventory.accessColumn} and Tool columns`);
-  return access;
-}
-
-async function checkDocumentedProvider(provider, defaults, options) {
-  const runtime = defaults;
-  const sources = {
-    setup: options.setupReferenceSources.get(provider) ?? defaults.setup,
-    tools: options.toolReferenceSources.get(provider) ?? defaults.inventory?.url,
-  };
-  const categorized = defaults.inventory?.format === "vercel-categories";
-  const [setup, inventory] = await Promise.all([
-    loadPublished(provider, "official MCP setup reference", sources.setup),
-    sources.tools === undefined
-      ? Promise.resolve(undefined)
-      : categorized
-        ? readVercelInventory(sources.tools, defaults.inventory.categories).catch((error) => {
-            throw new UnavailableError(error.message);
-          })
-        : loadPublished(provider, "MCP tool reference", sources.tools),
-  ]);
-  const documented =
-    inventory === undefined
-      ? undefined
-      : categorized
-        ? inventory.names
-        : documentedToolNames(inventory, defaults.inventory);
-  if (documented !== undefined && documented.length === 0) {
-    throw new ParserError(`${provider}'s MCP tool reference contained no recognizable tool names`);
-  }
-  const reviewed = [...runtime.reviewed].sort();
-  const reviewedSet = new Set(reviewed);
-  const documentedSet = new Set(documented ?? []);
-  const access =
-    inventory === undefined || categorized ? new Map() : documentedToolAccess(inventory, defaults.inventory);
-  const acknowledgements = defaults.inventory?.acknowledgedUnclassified ?? [];
-  const staleAcknowledgements = acknowledgements.filter(
-    (name) => access.has(name) || reviewedSet.has(name) || !documentedSet.has(name),
-  );
-  const acknowledged = new Set(acknowledgements.filter((name) => !staleAcknowledgements.includes(name)));
-  const added = (documented ?? []).filter((name) => !reviewedSet.has(name) && !acknowledged.has(name));
-  const intentionallyUnclassified = (documented ?? []).filter(
-    (name) => !reviewedSet.has(name) && acknowledged.has(name),
-  );
-  const acknowledgedRemoved = new Set(categorized ? (defaults.inventory?.acknowledgedRemoved ?? []) : []);
-  // Capture coverage is broader than the runtime classifier. A documented
-  // tool left to live annotations must still report its future removal.
-  const baseline = categorized
-    ? [...new Set([...reviewed, ...Object.values(defaults.inventory.categories ?? {}).flat()])].sort()
-    : reviewed;
-  const removed =
-    documented === undefined
-      ? []
-      : baseline.filter((name) => !documentedSet.has(name) && !acknowledgedRemoved.has(name));
-
-  if (categorized) {
-    for (const name of removed) {
-      if (!Object.values(defaults.inventory.categories ?? {}).some((names) => names.includes(name)))
-        throw new UnavailableError(
-          `Vercel inventory unavailable/incomplete: no known category for removed tool ${name}; needs review`,
-        );
-    }
-  }
-
-  const findings = [];
-  for (const name of staleAcknowledgements)
-    findings.push({
-      kind: "stale-unclassified-acknowledgement",
-      detail: `${name}: acknowledgement no longer applies${access.has(name) ? `; docs declare ${access.get(name)} access` : ""}`,
-    });
-  for (const [name] of Object.entries(defaults.reviewedAccess ?? {})) {
-    if (documentedSet.has(name) && !access.has(name))
-      findings.push({
-        kind: "documented-access-missing",
-        detail: `${name}: docs no longer declare the reviewed access value`,
-      });
-  }
-  for (const [name, documentedAccess] of access) {
-    const reviewedAccess = defaults.reviewedAccess?.[name];
-    if (reviewedAccess !== undefined && reviewedAccess !== documentedAccess)
-      findings.push({
-        kind: "documented-access-changed",
-        detail: `${name}: docs declare ${documentedAccess}, reviewed ${reviewedAccess}`,
-      });
-    else if (reviewedSet.has(name) && reviewedAccess === undefined)
-      findings.push({
-        kind: "documented-access-unreviewed",
-        detail: `${name}: docs declare ${documentedAccess}; no reviewed access evidence`,
-      });
-  }
-  for (const endpoint of runtime.endpoints) {
-    if (!setup.includes(endpoint) && !setup.includes(endpoint.replace(/\/$/, ""))) {
-      findings.push({
-        kind: "mcp-endpoint",
-        detail: `official setup documentation does not name Connecta's endpoint ${endpoint}`,
-      });
-    }
-  }
-  if (!setup.toLowerCase().includes("oauth")) {
-    findings.push({
-      kind: "mcp-auth",
-      detail: "official setup documentation does not mention OAuth",
-    });
-  }
-
-  return {
-    provider,
-    toolReference: sources.tools,
-    setupReference: sources.setup,
-    inventoryChecked: documented !== undefined,
-    documentedTools: documented?.length,
-    ...(categorized ? { inventoryPages: inventory.pages } : {}),
-    added,
-    removed,
-    intentionallyUnclassified,
-    findings,
-    schemaAuthority: "live-tools-list",
-    schemasVendored: false,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
@@ -1023,39 +782,9 @@ function printSpec(result, recorded) {
   if (recorded) console.log(`  recorded     ${recorded}`);
 }
 
-function printDocs(result) {
-  console.log(
-    result.inventoryChecked
-      ? `${result.provider} MCP docs: ${result.documentedTools} documented tools`
-      : `${result.provider} MCP docs: setup metadata only; no official tool inventory`,
-  );
-  for (const tool of result.added) {
-    console.log(`  unclassified ${tool}`);
-  }
-  for (const tool of result.removed) {
-    console.log(`  not documented ${tool} (kept from release review)`);
-  }
-  for (const tool of result.intentionallyUnclassified) {
-    console.log(
-      `  fail-closed   ${tool} (${result.inventoryPages ? "reviewed capture; live annotations remain authoritative" : "official access class is blank"})`,
-    );
-  }
-  for (const finding of result.findings) {
-    console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
-  }
-  if (result.added.length + result.removed.length + result.findings.length === 0) {
-    console.log(
-      result.inventoryChecked
-        ? "  documented additions are classified; connection metadata matches"
-        : "  connection metadata matches",
-    );
-  }
-  console.log("  schemas      live tools/list remains authoritative; no MCP schema is vendored");
-}
-
 function findingCount(report) {
   let total = 0;
-  for (const result of [...report.specs, ...report.docs, ...report.manual, ...report.records]) {
+  for (const result of [...report.specs, ...report.manual, ...report.records]) {
     total += result.findings.length + (result.added?.length ?? 0) + (result.removed?.length ?? 0);
   }
   return total;
@@ -1066,7 +795,7 @@ async function main() {
   const providers = await discoverRecords(options.providerDirectory);
   validateSelection(options, providers);
   if (providers.length === 0) usage(`no drift records found in ${options.providerDirectory}`);
-  const report = { specs: [], docs: [], manual: [], records: [] };
+  const report = { specs: [], manual: [], records: [] };
   for (const entry of providers) {
     const { provider, path, record } = entry;
     if (options.providers.length > 0 && !options.providers.includes(provider)) continue;
@@ -1134,9 +863,6 @@ async function main() {
             findings: result.findings,
             ...(options.record && recordable ? { recordedTo: path } : {}),
           });
-        } else if (mode === "docs") {
-          const result = await checkDocumentedProvider(provider, check, options);
-          report.docs.push({ ...result, check: index });
         } else {
           const age = v2 ? daysSince(check.lastVerified) : 0;
           report.manual.push({
@@ -1184,10 +910,6 @@ async function main() {
         );
         for (const finding of result.findings) console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
       } else if (result.endpoints !== undefined) printSpec(result, result.recordedTo);
-      else printFailure(result);
-    }
-    for (const result of report.docs) {
-      if (result.added) printDocs(result);
       else printFailure(result);
     }
     for (const result of [...report.manual, ...report.records]) printFailure(result);

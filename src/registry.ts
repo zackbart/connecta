@@ -1,23 +1,53 @@
-import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
+import { Clock, Duration, Effect, Random } from "effect";
 import { activityRequest } from "./activity-request.js";
 import type { CatalogDriftActivityContext } from "./activity.js";
 import {
+  aggregateCallAdmissionSnapshots,
+  ConnectorCallAdmissionController,
+  type CallAdmissionPermit,
+  type ConnectorCallAdmissionSnapshot,
+} from "./call-admission.js";
+import {
   attachCatalogCache,
   catalogExpiry,
-  customCatalogFallback,
-  storeCustomCatalogFallback,
   catalogFetchedAt,
+  customCatalogFallback,
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
+  storeCustomCatalogFallback,
   type CatalogToolFingerprint,
 } from "./catalog-cache.js";
+import { carryCatalogFreshness, markCatalogFreshness } from "./catalog-freshness.js";
+import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
-import { Clock, Duration, Effect, Random } from "effect";
+import type { ConnectorCaller } from "./connector-caller.js";
 import type { CredentialVault } from "./credential-contract.js";
+import { storedCredentialShape } from "./credential-rules.js";
+import { ConnectorCallError } from "./errors.js";
+import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
+import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
+import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
+import { ObservedOutputSchemas } from "./result-shapes.js";
+import { operationView, settleOnClose } from "./runtime/call.js";
+import { runEdge } from "./runtime/run.js";
+import { type Storage } from "./runtime/services.js";
+import { SharedRead } from "./runtime/shared-read.js";
+import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
+import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
+import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
+import {
+  jsonCodec,
+  OAUTH_HANDOFF_TTL_SECONDS,
+  oauthHandoffKeys,
+  resultKeys,
+  scopes,
+  stashExpiryKeys,
+  stashLedgerKeys,
+} from "./storage/keys.js";
+import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
+import { carryToolClassification, classifyTool } from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
-  CatalogDriftReport,
   Connector,
   ConnectorContext,
   ConnectorStatus,
@@ -25,47 +55,8 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
-import { storedCredentialShape } from "./credential-rules.js";
-import { ConnectorCallError } from "./errors.js";
-import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
-import {
-  ConnectorCallAdmissionController,
-  aggregateCallAdmissionSnapshots,
-  type CallAdmissionPermit,
-  type ConnectorCallAdmissionSnapshot,
-} from "./call-admission.js";
-import {
-  boundedCatalogDrift,
-  catalogReviewOf,
-  classifyCatalog,
-  observeReviewedDrift,
-  type CatalogSchemaVerification,
-  observedCatalogDrift,
-} from "./catalog-drift.js";
-import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
-import { ObservedOutputSchemas } from "./result-shapes.js";
-import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
-import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
-import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
-import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
-import type { ConnectorCaller } from "./connector-caller.js";
-import { operationView, settleOnClose } from "./runtime/call.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
 import { workspaceSubjectOf } from "./workspace-subject.js";
-import { runEdge } from "./runtime/run.js";
-import { SharedRead } from "./runtime/shared-read.js";
-import { type Storage } from "./runtime/services.js";
-import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
-import {
-  jsonCodec,
-  OAUTH_HANDOFF_TTL_SECONDS,
-  oauthHandoffKeys,
-  resultKeys,
-  scopes,
-  stashLedgerKeys,
-  stashExpiryKeys,
-} from "./storage/keys.js";
-import { carryToolClassification, classifyTool } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
@@ -122,7 +113,7 @@ export function resolveMaxResultBytes(value: number | undefined, inherited: numb
   return value !== undefined && isValidMaxResultBytes(value) ? value : inherited;
 }
 
-/** Freeze registry-owned facts so review digest memoization remains valid. */
+/** Freeze registry-owned catalog facts before caching. */
 function frozenFacts(tools: ToolDef[]): ToolDef[] {
   const pending: unknown[] = [tools];
   while (pending.length > 0) {
@@ -470,11 +461,7 @@ export class Registry implements RegistryView {
       }
       // Validated here, before any request (INV-11), and read once per
       // connector object.
-      if (catalogReviewOf(c) && c.staticTools) {
-        throw new Error(
-          `Connector "${c.id}" declares both staticTools and a classification; ` + "annotate static tools directly.",
-        );
-      }
+
       this.connectors.set(c.id, c);
       if (c.callAdmission !== undefined) {
         this.callAdmission.set(c.id, new ConnectorCallAdmissionController(c.id, c.callAdmission));
@@ -829,19 +816,6 @@ export class Registry implements RegistryView {
     return partition;
   }
 
-  private catalogDriftOf(connector: Connector, baseUrl: string, scope?: RegistryScope): CatalogDriftReport | undefined {
-    const partition = this.catalogObservationPartition(connector.id, baseUrl, scope);
-    const observed = partition ? observedCatalogDrift(connector, partition) : undefined;
-    // Plugin reports cannot establish a reviewed baseline or schema coverage
-    // that this registry has not checked. Personal plugin seams have no subject
-    // parameter and must never bypass the partition above.
-    const fallback =
-      !observed && !catalogReviewOf(connector) && connector.authScope !== "personal"
-        ? connector.catalogDrift?.()
-        : undefined;
-    return boundedCatalogDrift(observed ?? (fallback ? { ...fallback, reviewedBaseline: false } : undefined));
-  }
-
   /** Reject queued/future downstream admission; active permits release safely. */
   closeCallAdmission(): void {
     this.callAdmissionClosed = true;
@@ -1039,11 +1013,10 @@ export class Registry implements RegistryView {
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
-  ): Promise<{ tools: ToolDef[]; verification: CatalogSchemaVerification | undefined }> {
+  ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools)
-      return { tools: markCatalogFreshness(connector.staticTools, Infinity), verification: undefined };
+    if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
     const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
     let listed: ToolDef[];
     try {
@@ -1069,15 +1042,6 @@ export class Registry implements RegistryView {
     }
     const facts = frozenFacts(structuredClone(tools));
     const accepted = this.acceptToolNames(facts);
-    const review = catalogReviewOf(connector);
-    const verification = await observeReviewedDrift(
-      connector,
-      review,
-      accepted,
-      this.opts.logger,
-      this.catalogObservationPartition(id, baseUrl, scope, true)!,
-      facts.length - accepted.length,
-    );
     if (catalogFetchedAt(ctx) === undefined) {
       try {
         await storeCustomCatalogFallback(ctx, id, facts);
@@ -1097,7 +1061,7 @@ export class Registry implements RegistryView {
       state: freshUntil > Date.now() ? "fresh" : "stale",
       observedAt: new Date().toISOString(),
     });
-    return { tools: markCatalogFreshness(accepted, freshUntil), verification };
+    return markCatalogFreshness(accepted, freshUntil);
   }
 
   /** The served catalog excludes control-character names; raw caches stay complete. */
@@ -1108,11 +1072,8 @@ export class Registry implements RegistryView {
 
   /**
    * One connector's catalog as served: the cached downstream facts, classified
-   * on every read by the connector's `classification`, into fresh objects.
-   * Safety is derived here and nowhere else, so no cache layer can carry a
-   * stale verdict — from an older review, an older release, or a stale
-   * fallback — and nothing a caller or decorator does to a served tool reaches
-   * the next read.
+   * on every read by annotations and deployment overrides, into fresh objects.
+   * No cache or caller mutation can carry a stale verdict into the next read.
    */
   private async loadTools(
     id: string,
@@ -1121,26 +1082,18 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    const { tools, verification } = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
+    const tools = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
     const overrides = this.classification[id];
     this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
     const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
-    const review = catalogReviewOf(connector);
-    const verdicts =
-      overrides &&
-      Object.fromEntries(
-        Object.entries(overrides).filter((entry): entry is [string, "read" | "write"] => entry[1] !== "hidden"),
-      );
-    const served = review
-      ? await classifyCatalog(review, id, visible, this.opts.logger, verdicts, verification)
-      : visible.map((tool) => this.publishUnreviewedTool(id, tool));
+    const served = visible.map((tool) => this.publishTool(id, tool));
     return carryCatalogFreshness(tools, served);
   }
 
-  private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
+  private publishTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
     return carryToolClassification(tool, {
       ...structuredClone(tool),
@@ -1162,7 +1115,7 @@ export class Registry implements RegistryView {
     const tools = this.connectors.get(id)?.staticTools;
     return tools
       ?.filter((tool) => this.classification[id]?.[tool.name] !== "hidden")
-      .map((tool) => this.publishUnreviewedTool(id, tool));
+      .map((tool) => this.publishTool(id, tool));
   }
 
   private validateClassification(
@@ -1260,20 +1213,16 @@ export class Registry implements RegistryView {
   /** Pure lookup shared by status probes and operator catalog refreshes. */
   withCatalogObservations(
     id: string,
-    baseUrl: string,
+    _baseUrl: string,
     status: ConnectorStatus,
-    scope?: RegistryScope,
+    _scope?: RegistryScope,
   ): ConnectorStatus {
     const connector = this.connectors.get(id);
     if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
-    const report = this.catalogDriftOf(connector, baseUrl, scope);
     const access = this.catalogAccess.get(id);
     // Connector.status is an open plugin seam. Rebuild its public fields so
     // it cannot smuggle payload or another partition's observations (INV-6).
-    return Object.assign(boundedStatus(status), {
-      ...(report ? { catalogDrift: report } : {}),
-      ...(access ? { catalogAccess: { ...access } } : {}),
-    });
+    return Object.assign(boundedStatus(status), access ? { catalogAccess: { ...access } } : {});
   }
 
   /** Best-effort connector status for the operator UI. */

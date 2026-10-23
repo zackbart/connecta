@@ -1,6 +1,5 @@
-import type { Connector, ConnectorContext, ToolDef } from "./types.js";
-import { vettedSchemaDigest } from "./catalog-drift.js";
 import { cloneTool, sourceClassification } from "./tool-safety.js";
+import type { Connector, ConnectorContext, ToolDef } from "./types.js";
 
 // Only built-in factories register local credential checks. This hook is not
 // part of Connector, and a replacement callTool cannot inherit its proof.
@@ -58,7 +57,7 @@ function requestFor(scope: object): RequestInvocations {
 /** Bind the verdict, annotation facts and schemas used for this call. */
 export async function classificationDigest(definition: ToolDef): Promise<string> {
   try {
-    const schema = await vettedSchemaDigest(definition);
+    const schema = { inputSchema: definition.inputSchema, outputSchema: definition.outputSchema };
     const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const bytes = new TextEncoder().encode(
       JSON.stringify({

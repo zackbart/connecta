@@ -1,8 +1,4 @@
-// The one shape every maintained provider takes. Deliberately transport-free:
-// it imports neither `remoteMcp()` nor `api()`, so an `api()` provider does not
-// acquire the MCP client, OAuth, or Effect graph by using it, and a hosted
-// provider does not acquire `api()`. Its runtime imports validate plain
-// options and reviewed classification, with no I/O.
+// Transport-free maintained API provider definitions and construction validation.
 import {
   array,
   assertKnownOptions,
@@ -15,7 +11,6 @@ import {
   whole,
   type Field,
 } from "./config-schema.js";
-import { reviewedClassification } from "./catalog-drift.js";
 import { aliasCallIdentity } from "./provider-call-facts.js";
 import type {
   Connector,
@@ -24,16 +19,7 @@ import type {
   ConnectorDescription,
   ConnectorRollingWindowBudget,
   ConnectorUsageGuide,
-  ToolClassification,
 } from "./types.js";
-
-/**
- * How a provider reaches its vendor: the vendor's hosted MCP server, an
- * `api()` connector over the vendor's HTTP API, one connector composing both
- * with an explicit operation ownership map, or `"dual"`: configuration selects the implementation, usually by `auth.type`. Mixpanel
- * uses explicit `via` because service accounts reach both implementations.
- */
-export type ProviderKind = "mcp" | "api" | "composed" | "dual";
 
 /** Options every provider accepts, validated before `create` runs. */
 export interface ProviderOptions {
@@ -142,7 +128,7 @@ export interface ProviderSkill {
 /**
  * The closed key set of a guide's `<!-- when: <key> -->` blocks and the pure
  * selector that picks a connection's keys from its options (decision 0011,
- * G2). A dual provider declares `hosted` and `api`.
+ * G2). Select only the blocks this API configuration uses.
  */
 export interface ProviderGuideBlocks<O> {
   readonly keys: readonly string[];
@@ -184,8 +170,6 @@ export interface ProviderGuideInput {
 
 /** What `defineProvider()` hands `create` after validating its options. */
 export interface ProviderContext {
-  /** The definition's reviewed classification, for `remoteMcp({ classify })`. */
-  readonly classify?: ToolClassification;
   /**
    * Common connector options the deployment set, and only those, ready to
    * spread into `remoteMcp()` or `api()` options.
@@ -209,7 +193,7 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   name: string;
   /** Vendor display name, and the default guide heading. */
   title: string;
-  kind: ProviderKind;
+  kind: "api";
   skill: ProviderSkill;
   /** Maintained display name in the generated README inventory. */
   readme?: string;
@@ -222,14 +206,6 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   };
   /** Closed factory options, declared with `optionsOf<O>()` for key parity. */
   options: Field<unknown, unknown>;
-  /**
-   * Reviewed classification of the vendor's hosted MCP catalog. Hosted,
-   * composed, and dual providers pass it to `remoteMcp({ classify })` through
-   * `ProviderContext.classify`, so the verdicts that classify live tools and
-   * the record a drift check reads cannot disagree. `api()` providers annotate
-   * each tool they author and must omit it.
-   */
-  classify?: ToolClassification;
   /** Required when the guide holds `<!-- when: <key> -->` blocks. */
   blocks?: ProviderGuideBlocks<O>;
   /** Set by the provider kit; see `ProviderKitFacts`. */
@@ -249,7 +225,6 @@ export interface ProviderFactory<O extends ProviderOptions> {
 }
 
 const PROVIDER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed", "dual"]);
 const BLOCK_KEY = /^[a-z][a-z0-9:-]*$/;
 /** A when-block marker, alone on its line. */
 const BLOCK_MARKER = /^<!--\s*(?:when:\s*([a-z][a-z0-9:-]*)|end)\s*-->$/;
@@ -318,17 +293,12 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
   if (!nonEmpty(definition.title)) {
     throw new Error(`${label} requires a non-empty title.`);
   }
-  if (!KINDS.has(definition.kind)) {
-    throw new Error(`${label} kind must be "mcp", "api", "composed", or "dual".`);
-  }
+  if (definition.kind !== "api") throw new Error(`${label} kind must be "api".`);
   if (!nonEmpty(definition.skill?.content) || !nonEmpty(definition.skill.instructionsHeading)) {
     throw new Error(`${label} skill requires non-empty content and instructionsHeading.`);
   }
-  if (definition.classify !== undefined && definition.kind === "api") {
-    throw new Error(
-      `${label} is an api() provider; annotate each authored tool instead of classifying a hosted catalog.`,
-    );
-  }
+  if (Object.hasOwn(definition, "classify"))
+    throw new Error(`${label} classify was removed; use ConnectaConfig.classification.`);
   if (!definition.options?.shape && !definition.options?.variants) {
     throw new Error(`${label} requires a closed options shape from optionsOf().`);
   }
@@ -352,11 +322,7 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
   for (const key of used) {
     if (!blocks?.keys.includes(key)) throw new Error(`${label} skill uses the when-block "${key}" its blocks omit.`);
   }
-  // A validated, deep-frozen copy. The definition is what build and check
-  // tools read and what every later connector classifies with, so nothing
-  // reachable from it may change a verdict after review: neither the
-  // caller's original object nor a write through `factory.definition`.
-  const classify = definition.classify === undefined ? undefined : reviewedClassification(definition.classify, label);
+  // Freeze definition facts consumed by construction, generation and checks.
   if (typeof definition.create !== "function") {
     throw new Error(`${label} requires a create function.`);
   }
@@ -367,7 +333,6 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
       ...(definition.skill.fragments ? { fragments: Object.freeze(definition.skill.fragments) } : {}),
     }),
     ...(definition.bundle ? { bundle: Object.freeze({ ...definition.bundle }) } : {}),
-    ...(classify !== undefined ? { classify } : {}),
     ...(blocks ? { blocks: Object.freeze({ keys: Object.freeze([...blocks.keys]), select: blocks.select }) } : {}),
     ...(definition.kit ? { kit: kitFacts(definition.kit) } : {}),
   });
@@ -396,7 +361,6 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
       const resolved: Readonly<O> = { ...options, purpose: options.purpose.trim() };
       const instructions = options.instructions?.trim();
       const connector = frozen.create(id, resolved, {
-        ...(frozen.classify !== undefined ? { classify: frozen.classify } : {}),
         connectorOptions: {
           ...(options.readOnly !== undefined ? { readOnly: options.readOnly } : {}),
           ...(options.authScope !== undefined ? { authScope: options.authScope } : {}),
@@ -432,8 +396,7 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
       }
       return connector;
     });
-  // Frozen whole: build and check tools read `definition` to learn what the
-  // factory classifies, so neither replacing nor deleting it may take effect.
+  // Build and check tools rely on this definition remaining attached.
   return Object.freeze(Object.assign(factory, { definition: frozen }));
 }
 
@@ -459,7 +422,7 @@ export function asProviderFactory<O extends ProviderOptions>(
 /**
  * Build a maintained provider's connector: refuse unknown options and
  * accessors by path before the builder reads any of them, then stamp the
- * provider onto its description, so the operator surface can say "Linear"
+ * provider onto its description, so the operator surface can say "Stripe"
  * rather than "remote MCP". This is the same construction path defineProvider
  * uses; existing constructors retain their provider-specific option policy.
  */
@@ -488,7 +451,7 @@ function asProvider<O extends ProviderOptions, C extends Connector>(
   const ownReadOnly = Object.getOwnPropertyDescriptor(connector, "readOnly");
   // Keep the receiver of prototype methods (including private fields). When
   // the description cannot be replaced, inherit the whole connector instead
-  // of copying it: decorators may inherit their id, methods, and review.
+  // of copying it: decorators may inherit their id and methods.
   const stamped =
     Object.isExtensible(connector) &&
     (!ownDescribe || ownDescribe.configurable) &&

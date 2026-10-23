@@ -42,24 +42,20 @@ export function validateRecord(record, name) {
 }
 
 /** D2 checks; folder context also verifies provider kind and evidence-file coverage. */
-export function generatedProblems(recordValue, { kind, files } = {}) {
+export function generatedProblems(recordValue, { files } = {}) {
   const found = [];
   const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   const sortedUnique = (value) =>
     Array.isArray(value) && value.every((item, i) => typeof item === "string" && (i === 0 || value[i - 1] < item));
   const SHA256 = /^sha256:[0-9a-f]{64}$/;
-  const HASHED_EVIDENCE = ["catalog.json", "openapi.json", "openapi.document.json", "value-safety.json"];
+  const HASHED_EVIDENCE = ["openapi.json", "openapi.document.json", "value-safety.json"];
   const generated = recordValue.generated;
-  if (!record(generated) || Object.keys(generated).some((key) => !["operations", "hosted", "evidence"].includes(key))) {
-    found.push("D2: drift.json needs a generated block of operations, hosted, and evidence only");
+  if (!record(generated) || Object.keys(generated).some((key) => !["operations", "evidence"].includes(key))) {
+    found.push("D2: drift.json needs a generated block of operations and evidence only");
   } else {
     const operations = generated["operations"];
-    if (kind !== "mcp" && !(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
+    if (!(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
       found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
-    }
-    const hosted = generated["hosted"];
-    if (!sortedUnique(hosted) || (kind === "api" ? hosted.length !== 0 : kind !== undefined && hosted.length === 0)) {
-      found.push("D2: generated.hosted lists served hosted names, sorted; api providers have no hosted names");
     }
     const evidence = generated["evidence"];
     const expected = files && HASHED_EVIDENCE.filter((name) => files.includes(`evidence/${name}`));
@@ -96,7 +92,7 @@ function validateV2Check(record, check, today) {
   walk(check);
   require(!keys.has("rationale") &&
     !keys.has("reviewedAt"), "version 2 renames rationale to reason and reviewedAt to lastVerified");
-  require(!keys.has("reviewed"), "version 2 keeps no reviewed list: hosted names are generated.hosted");
+  require(!keys.has("reviewed"), "version 2 keeps no reviewed list: hosted reviews were removed");
   if (check.type === "manual") {
     const day = check.lastVerified;
     require(typeof check.source === "string" &&
@@ -106,12 +102,6 @@ function validateV2Check(record, check, today) {
       /^\d{4}-\d{2}-\d{2}$/.test(day) &&
       new Date(`${day}T00:00:00Z`).toISOString().startsWith(day) &&
       day <= today, "manual check requires lastVerified as a past YYYY-MM-DD day");
-  }
-  if (check.type === "mcp-docs") {
-    const hosted = new Set(record.generated.hosted);
-    require(Object.keys(check.reviewedAccess ?? {}).every((name) =>
-      hosted.has(name),
-    ), "reviewed access must name generated hosted tools");
   }
   if (check.type === "endpoints" || check.type === "versioned-endpoints") {
     require(Array.isArray(check.endpoints) && check.endpoints.length > 0, "endpoint check requires touched endpoints");
@@ -131,7 +121,7 @@ function validateV2Check(record, check, today) {
 
 /**
  * A check as the version-1 checkers read it. Version 2 keeps no hand-typed
- * lists, so its hosted names, endpoint rows and reference pages come from
+ * lists, so its endpoint rows and reference pages come from
  * the generated block and the rows.
  * `today` is the `YYYY-MM-DD` day a manual check is checked
  * against.
@@ -140,9 +130,6 @@ export function checkView(record, check, { today = new Date().toISOString().slic
   if (record.version !== DRIFT_VERSION) return check;
   validateV2Check(record, check, today);
   if (check.type === "manual") return { ...check, rationale: check.reason };
-  if (check.type === "mcp-docs") {
-    return { ...check, reviewed: record.generated.hosted };
-  }
   if (check.type === "endpoints" || check.type === "versioned-endpoints") {
     const endpoints = check.endpoints.map(({ operation, ...row }) => ({ ...parseOperation(operation), ...row }));
     const pages = check.specification?.format === "readme-operation-pages";
@@ -174,47 +161,6 @@ export function validateCheck(check, recording, version = 1) {
   if (check.type === "openapi-index") {
     const pin = version === DRIFT_VERSION ? "evidence/openapi.json" : "openapi.source.json";
     require(check.source === pin, `OpenAPI index check reads ${pin}`);
-    return;
-  }
-  if (check.type === "mcp-docs") {
-    require(nonempty(check.setup) &&
-      strings(check.endpoints) &&
-      strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
-    if (check.reviewedAccess !== undefined) {
-      require(check.reviewedAccess !== null &&
-        typeof check.reviewedAccess === "object" &&
-        !Array.isArray(check.reviewedAccess) &&
-        Object.entries(check.reviewedAccess).every(
-          ([name, access]) => check.reviewed.includes(name) && (access === "read" || access === "write"),
-        ), "reviewed access must map reviewed names to read or write");
-    }
-    if (check.inventory !== undefined) {
-      const inventory = check.inventory;
-      require(nonempty(inventory.url) &&
-        ["headings", "inline", "inline-calls", "table", "vercel-categories"].includes(
-          inventory.format,
-        ), "inventory requires URL and supported parser format");
-      for (const key of ["start", "end", "prefix", "accessColumn"])
-        require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
-      require(inventory.categories === undefined ||
-        (inventory.format === "vercel-categories" &&
-          inventory.categories !== null &&
-          typeof inventory.categories === "object" &&
-          !Array.isArray(inventory.categories) &&
-          Object.entries(inventory.categories).every(
-            ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
-          )), "inventory categories must map category slugs to known tool names");
-      require(inventory.acknowledgedRemoved === undefined ||
-        (inventory.format === "vercel-categories" &&
-          strings(inventory.acknowledgedRemoved) &&
-          inventory.acknowledgedRemoved.every((name) =>
-            check.reviewed.includes(name),
-          )), "acknowledged removed names must be unique reviewed names");
-      require(inventory.acknowledgedUnclassified === undefined ||
-        strings(
-          inventory.acknowledgedUnclassified,
-        ), "acknowledged unclassified names must be unique non-empty strings");
-    }
     return;
   }
   require(check.type === "endpoints" ||

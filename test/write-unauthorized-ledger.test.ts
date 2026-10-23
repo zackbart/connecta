@@ -532,19 +532,13 @@ describe("remote MCP records its writes in the same ledger", () => {
     expect(counts.sends).toBe(1);
   });
 
-  it.each([
-    [false, false],
-    [false, true],
-    [true, false],
-    [true, true],
-  ])(
-    "INV-9: GitHub's write answered 401 keeps Q8, served, direct and past the deadline (hosted: %s, stalled body: %s)",
-    async (hosted, stall) => {
+  it.each([false, true])(
+    "INV-9: GitHub's REST write answered 401 keeps Q8, served, direct and past the deadline (stalled body: %s)",
+    async (stall) => {
       for (const how of stall ? (["served"] as const) : (["served", "direct"] as const)) {
         const fixture = apiFixture();
         let stopBody: (() => void) | undefined;
-        const target = (request: { url: URL; body?: { method?: string } }) =>
-          hosted ? request.body?.method === "tools/call" : request.url.pathname === "/repos/acme/one/releases";
+        const target = (request: { url: URL }) => request.url.pathname === "/repos/acme/one/releases";
         fixture.respond((request) => {
           if (!target(request)) return undefined;
           return new Response(
@@ -560,10 +554,8 @@ describe("remote MCP records its writes in the same ledger", () => {
           );
         });
         const connector = github();
-        const tool = hosted ? "create_branch" : "create_release";
-        const args = hosted
-          ? { owner: "acme", repo: "one", branch: "review" }
-          : { owner: "acme", repo: "one", tag_name: "v1" };
+        const tool = "create_release";
+        const args = { owner: "acme", repo: "one", tag_name: "v1" };
         let outcome: Outcome;
         if (how === "direct") {
           outcome = await connector.callTool(tool, args, githubContext()).then(

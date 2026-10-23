@@ -349,7 +349,9 @@ export function assertKnownOptions<T>(value: T, path: string, field: AnyField): 
   if (read.unknown.length === 0) return read.value as T;
   return fail(
     `Unknown option${read.unknown.length === 1 ? "" : "s"}: ${read.unknown.join(", ")}. ` +
-      "Check the spelling against the factory's options type.",
+      (read.unknown.some((key) => key.endsWith(".classify"))
+        ? "classify was removed; use ConnectaConfig.classification."
+        : "Check the spelling against the factory's options type."),
   );
 }
 

@@ -1,6 +1,6 @@
 ---
 name: add-provider
-description: Add, migrate, or change a maintained connecta provider under decision 0011's provider standard (one layout per kind, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
+description: Add, migrate, or change a maintained connecta provider under decision 0011's provider standard (API layout, fixed evidence, generated drift and guide sections, one agent-facing shape), with classification, value safety, fixtures, bundle baselines, and vendor-contract drift evidence.
 ---
 
 # Add, migrate, or change a maintained provider
@@ -44,42 +44,36 @@ See AGENTS.md Verification.
 - **A change to a provider still in `PENDING`** keeps its current shape. See
   [Changing a provider that has not migrated](#changing-a-provider-that-has-not-migrated-transitional).
 
-## Choose the kind (K)
+## API providers only
 
-Use the vendor's hosted MCP server (`mcp`) when it covers the connection's
-auth, scopes, and subject isolation; otherwise build on the kit (`api`); use
-`dual` when some connections need each. Covers means:
+[Decision 0012](../../../decisions/0012-hosted-mcp-runtime-discovery.md)
+supersedes 0011's hosted-provider rules. Maintained providers vendor APIs only,
+with `kind: "api"`. Hosted MCP servers use generic `remoteMcp()` deployment
+entries; never add provider presets, review maps, schema pins, hosted captures,
+hosted drift checks, or hosted guide blocks. The installed operator procedure
+is `documentation/hosted-mcp-migration.md`.
 
-- **auth:** it takes a credential connecta can hold under the connection's
-  ownership, and fails with an ordinary `auth_required`;
-- **scopes:** it can be held to the granted access, including any field the
-  deployment must drop, because connecta never reshapes hosted results (P1);
-- **subject isolation:** each connection reaches only its own account or
-  subject.
-
-A `dual` provider selects one implementation per connection from its options
-(`variants(["auth", "type"], …)` with `byAuth()`, or Mixpanel's `via`), or
-serves both from one connector through an `owners` map of tool name to
-`"hosted" | "api"`. A hosted tool missing from the map is never served.
-There is no `composed` kind; GitHub's step 1 removes it.
+Remote source classification uses only fail-closed server annotations. Deployment
+policy belongs in `ConnectaConfig.classification`; `classify` is rejected at
+construction. Legacy hosted selectors must name that generic replacement and
+must never silently select an API credential.
 
 ## The folder (L)
 
-| Path                                         | Kinds         | Holds                                                                                                                                                                                                      |
-| -------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                                   | all           | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                             |
-| `api.ts`                                     | `api`, `dual` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                         |
-| `tools.ts`                                   | `api`, `dual` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                          |
-| `hosted.ts`                                  | `mcp`, `dual` | `remoteMcp()` configuration and the reviewed classification                                                                                                                                                |
-| `safety.ts`                                  | `api`, `dual` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                          |
-| `SKILL.md`                                   | all           | Agent-facing domain guidance (G)                                                                                                                                                                           |
-| `drift.json`                                 | all           | Version 2 (D)                                                                                                                                                                                              |
-| `evidence/`                                  | all           | Fixed names (E)                                                                                                                                                                                            |
-| `fixtures.ts`                                | all           | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
-| `provider.test.ts`                           | all           | The provider suite; `provider.node.test.ts` only when Node is required                                                                                                                                     |
-| `provider.<topic>.test.ts`                   | all           | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
-| `skill.generated.ts`, `openapi.generated.ts` |               | Generated; never edit                                                                                                                                                                                      |
-| `lib/*.ts`                                   | all           | Any other implementation module                                                                                                                                                                            |
+| Path                                         | Kinds | Holds                                                                                                                                                                                                      |
+| -------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                                   | `api` | One `defineProvider` (directly or through the kit's `defineApiProvider`): options, kind, guide context, wiring                                                                                             |
+| `api.ts`                                     | `api` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch verdicts                                                                                                         |
+| `tools.ts`                                   | `api` | Kit tools and projections; it may import area modules from `lib/`                                                                                                                                          |
+| `safety.ts`                                  | `api` | Optional: the reviewed value-safety table, its `absent` acknowledgements, the embedded-URL review                                                                                                          |
+| `SKILL.md`                                   | `api` | Agent-facing domain guidance (G)                                                                                                                                                                           |
+| `drift.json`                                 | `api` | Version 2 (D)                                                                                                                                                                                              |
+| `evidence/`                                  | `api` | Fixed names (E)                                                                                                                                                                                            |
+| `fixtures.ts`                                | `api` | `fixture`: name, credential-free options, mode cases, `create()`, and convention data (allowed verbs, justified nested-description exceptions, auth category); runs on Node and against the packed tarball |
+| `provider.test.ts`                           | `api` | The provider suite; `provider.node.test.ts` only when Node is required                                                                                                                                     |
+| `provider.<topic>.test.ts`                   | `api` | Optional further suites, such as `provider.safety.node.test.ts`                                                                                                                                            |
+| `skill.generated.ts`, `openapi.generated.ts` |       | Generated; never edit                                                                                                                                                                                      |
+| `lib/*.ts`                                   | `api` | Any other implementation module                                                                                                                                                                            |
 
 - `index.ts` never uses `asProviderFactory`, defines a tool, calls
   `remoteMcp()`, or builds guide text. Preserve the public
@@ -88,24 +82,21 @@ There is no `composed` kind; GitHub's step 1 removes it.
   public provider.
 - A Node-only suite starts with `// Node-only: <reason>`. Tests and fixtures do
   not ship; generated skill strings do.
-- Every `api`/`dual` fixture exports `createAuthored()` returning a connector
-  whose nonempty catalog contains every Connecta-authored tool, offline on
-  both runtimes. This is required even without H-convention metadata; hosted
-  tools remain vendor-owned. Today's `composed` GitHub supplies its REST
-  complement until step 1 folds it into `dual`.
+- Every fixture exports `createAuthored()` returning a connector whose nonempty
+  catalog contains every Connecta-authored tool, offline on both runtimes.
+  This is required even without H-convention metadata.
 - Characterization goldens live in `test/goldens/<name>/`, never in the
   provider folder. `goldens:update [provider]` rewrites them on Node.
 
 ## Evidence (E)
 
-| Name                             | Holds                                                                                                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `evidence/catalog.json`          | Hosted catalog capture: `{ capturedAt, method: "tools/list" \| "documentation", source, tools }`, tools sorted by name. Required for `mcp` and `dual`. |
-| `evidence/openapi.json`          | The OpenAPI pin: `url`, `revision`, `digest`, optional `latest`, `options`, `vendored`                                                                 |
-| `evidence/openapi.document.json` | The reviewed document, only when the pin says `vendored: true`                                                                                         |
-| `evidence/value-safety.json`     | Candidates written by `providers:spec`; never edit                                                                                                     |
-| `evidence/pages/`                | `recording.json` and the public pages a drift parser reads offline                                                                                     |
-| `evidence/review.md`             | Contributor narrative: verdict reasons, gaps, documentation-derived facts                                                                              |
+| Name                             | Holds                                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------- |
+| `evidence/openapi.json`          | The OpenAPI pin: `url`, `revision`, `digest`, optional `latest`, `options`, `vendored` |
+| `evidence/openapi.document.json` | The reviewed document, only when the pin says `vendored: true`                         |
+| `evidence/value-safety.json`     | Candidates written by `providers:spec`; never edit                                     |
+| `evidence/pages/`                | `recording.json` and the public pages a drift parser reads offline                     |
+| `evidence/review.md`             | Contributor narrative: verdict reasons, gaps, documentation-derived facts              |
 
 Nothing else goes in `evidence/`. Never fetch credentials or call operational
 tools to capture evidence.
@@ -116,8 +107,7 @@ Humans write sources, reasons, and dates; tools write lists and digests.
 
 - `version: 2` and `provider: "<name>"`.
 - `generated` (`operations` from the definition's `kit.operations`, the kit's
-  `manifest(vendor)`; `hosted` from the reviewed classification's names; one
-  `sha256` per `evidence/` catalog, pin, document and candidates file) is
+  `manifest(vendor)`; one `sha256` per `evidence/` pin, document and candidates file) is
   written by `providers:generate`. Never edit it: `check:providers-generated`
   fails a hand edit, and evidence bytes that moved since the last run. Tools
   own the whole file's formatting (two-space JSON, `generated` after
@@ -137,8 +127,6 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   without `contract`: `providers:generate` accepts a row awaiting its digest,
   `providers:check --record --provider <name>` writes it, and the standard
   suite refuses a committed row without one.
-- `mcp-docs` checks compare documented names with
-  `generated.hosted`; `reviewedAccess` may name only those.
 - A record must also be one `providers:check` can read:
   `scripts/drift-validate.mjs` is the one offline validator, shared by
   `providers:check`, `providers:generate` and the standard suite, which
@@ -161,7 +149,7 @@ carries:
 - vendor semantics: units, time zones, consistency, what a status means;
 - required sequences;
 - disqualifiers: what the provider will not do;
-- for hosted tools, reduction advice and rendering rules (P7).
+- result reduction advice where the domain requires it.
 
 Keep these out of it:
 
@@ -178,7 +166,7 @@ Keep these out of it:
 Text that differs by implementation or option goes in unnested
 `<!-- when: <key> -->` … `<!-- end -->` blocks, each marker alone on its line.
 The definition declares the closed key set and a pure selector,
-`blocks: { keys, select(options) }` (`hosted` and `api` for a dual provider),
+`blocks: { keys, select(options) }`,
 and `usageGuide` renders the selected blocks; `defineProvider` and
 `providers:generate` refuse an undeclared key. Never interpolate values into
 guide text. The guide leads with the routing fact, keeps its summary within
@@ -188,9 +176,7 @@ guide text. The guide leads with the routing fact, keeps its summary within
 definition: results (`fields`, `truncated`) for an `api` surface, the
 withheld-value rule when the folder has `safety.ts`, paging from
 `kit.pageSize`, the hatch's tools, approval and refused operations from
-`kit.hatch`, the write-once rule for every kind, and the hosted catalog rules
-for `mcp`. A dual provider's API and hosted lines sit in its `api` and `hosted`
-blocks. The error and idempotency-key conventions arrive with the kit's
+`kit.hatch` and the write-once rule. The error and idempotency-key conventions arrive with the kit's
 `VendorErrors` and write declarations (B.4).
 
 ## The agent-facing surface (S)
@@ -339,10 +325,8 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 
 **Step 1: onto the kit and the standard folder.** Agent output does not move.
 
-1. Build `api.ts` and `tools.ts` on the kit (`api`, `dual`), or move the
-   `remoteMcp()` configuration and classification into `hosted.ts` (`mcp`,
-   `dual`). Replace `asProviderFactory` with `defineProvider`. GitHub's step 1
-   also replaces `composed` with `dual` and an `owners` map.
+1. Build `api.ts` and `tools.ts` on the kit. Replace `asProviderFactory`
+   with `defineProvider` (through `defineApiProvider` where appropriate).
 2. Move every file to its standard name (0011's table maps each existing
    file), convert evidence to its format, and rewrite `drift.json` as
    version 2 (`rationale` → `reason`, `reviewedAt` → `lastVerified`).
@@ -353,10 +337,7 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    code first: A.2 (#902) covers write 5xx, OAuth replay, redirects and privacy;
    regenerate goldens when it merges, then migrate. Only an impractical
    back-port permits an exception: individually list each case and why its
-   back-port is impractical, and obtain reviewer approval in this step-1 PR. For providers without goldens (the
-   `mcp` providers and the hosted half of `dual`), capture connector
-   metadata, the guide, served names and classifications, and `describe()`
-   before and after, and compare the serialized bytes for every mode.
+   back-port is impractical, and obtain reviewer approval in this step-1 PR.
    `SKILL.md` does not change.
 
 **Step 2: the standard surface and guide.** A separate PR.
@@ -390,9 +371,9 @@ This section applies only to providers in `PENDING`, and S.2 deletes it.
 - Legacy `drift.json` (version 1) keeps reviewed endpoint digests, revisions,
   product pins, inventories, and source URLs. A `manual` check declares its
   `source` and `rationale` and must not disappear from reporting.
-- A legacy dual REST provider declares options with
-  `variants(["auth", "type"], …)` and `create: byAuth({ … })`. OAuth uses
-  `hostedOAuth()` only. A key uses `restTools()` from
+- A legacy REST provider may dispatch API credential kinds with
+  `variants(["auth", "type"], …)` and `create: byAuth({ … })`. Rejected hosted
+  selectors are construction guards only. It uses `restTools()` from
   `src/providers/_shared/rest/` with an operator-managed credential and a
   `testCredential`. Supply vendor configuration only: transport, failure
   mapper, `scope`, `encode`, `page`, `refuse`, `redact` (secrets a successful
@@ -438,18 +419,13 @@ These hold on every path.
 
 - Declare the closed option shape with `optionsOf<Options>()`; there is no
   per-provider classification override option. Supply `name`, `title`,
-  `kind`, `skill`, `options`, `create` (or the kit's equivalents), and
+  `kind: "api"`, `skill`, `options`, `create` (or the kit's equivalents), and
   reviewed `bundle` facts (`baselineGzip`, optional `note`). The optional
   `readme` field is the display name in the README inventory and the
   provider's `documentation/providers.md` heading. Bundle baselines are
   review facts, reported and never capped, and stay out of `drift.json`.
 - Require a non-empty purpose. Refuse structural mistakes at construction
   (INV-11), naming the provider and connector id.
-- Hosted MCP uses `remoteMcp()` with `requireHttps`, explicit auth, and
-  reviewed classification. The registry applies `Connector.classification`;
-  the vendor owns names, descriptions, schemas, and results. A reviewed write
-  outranks a contradictory vendor read hint. Unknown tools fail closed unless
-  their annotations establish a read (INV-1).
 - API tools annotate reads and writes explicitly (on the kit, through the
   builders), declare output schemas, confine transport, and fail with
   `ConnectorCallError`. Do not infer safety from names or HTTP methods. Keep
@@ -483,27 +459,10 @@ coverage there when a provider exercises platform-specific behavior. Nightly
 Node checks add repeats and jitter with `CONNECTA_GOLDENS_DETERMINISM=1`.
 Cite applicable `INV-n` IDs in meaningful test titles.
 
-`pnpm run providers:check` reads public contracts only. Parser failures are
-provider-local findings; report them alongside other drift and manual review
-requirements. For a categorized documentation inventory,
-retain the current category/name capture in `inventory.categories`. Explicitly
-reviewed tools absent from the current reference may remain in the runtime
-classification and in `reviewed` (`generated.hosted` in version 2); name those
-absences in `inventory.acknowledgedRemoved`. Names deliberately left to live annotations
-belong in `inventory.acknowledgedUnclassified`, with the review rationale in
-the provider's evidence. Neither list accepts future names or partial
-captures; complete category counts remain mandatory.
-
-For documented tables with Access values, require `inventory.accessColumn`
-and record `reviewedAccess` (read/write) matching the runtime verdicts.
-Explicit access makes an `acknowledgedUnclassified` entry stale, even if
-another copy of the row is blank. Optional reviewed tools must declare
-`optional: true` with plan/feature/permission evidence; present tools keep
-their full classification and schema checks. New schema pins use
-`sha256-sets-v1:`; legacy `sha256:` pins keep their literal-array comparison
-until a reviewed migration. Never fetch credentials, call operational tools,
-file issues, or silently accept a new baseline. Recording endpoint evidence
-is an explicit action.
+`pnpm run providers:check` reads public API contracts only. Parser failures are
+provider-local findings; report them alongside API drift and standing manual
+reviews. Never fetch credentials, call operational tools, file issues, or
+silently accept a new baseline. Recording endpoint evidence is explicit.
 
 The Provider drift workflow runs weekly and on manual dispatch, scanning every
 public provider. It does not run on PRs. Its summary lists new or changed findings

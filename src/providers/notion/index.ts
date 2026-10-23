@@ -1,17 +1,13 @@
-import { skill } from "./skill.generated.js";
-import { apiConnector } from "../../connectors/api-connector.js";
-import { reviewedCatalog } from "../../catalog-drift.js";
-import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
-import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
+import { apiConnector } from "../../connectors/api-connector.js";
 import { tracksEveryRequest } from "../../provider-call.js";
+import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
+import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
+import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
+import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
+import { skill } from "./skill.generated.js";
 
 export { NOTION_API_BASE_URL, NOTION_API_VERSION } from "./rest.js";
-
-/** Notion's official hosted MCP endpoint. */
-export const NOTION_MCP_ENDPOINT = "https://mcp.notion.com/mcp";
 
 /** Lean by default: smaller than Notion's 100 so a first read stays cheap. */
 const DEFAULT_PAGE_SIZE = 25;
@@ -51,20 +47,6 @@ interface NotionCommonOptions {
 }
 
 /**
- * Notion's official hosted MCP server, acting as the OAuth-authorized user.
- * OAuth only: no integration token reaches the hosted endpoint.
- */
-export interface NotionOAuthOptions extends NotionCommonOptions {
-  auth: { type: "oauth" };
-  /** Optional per-runtime downstream call-admission policy. */
-  callAdmission?: ConnectorCallAdmissionPolicy;
-  /** Refused: the hosted server holds no operator credential. */
-  credentialLabel?: never;
-  /** Refused: hosted tools own their own paging. */
-  defaultPageSize?: never;
-}
-
-/**
  * Connecta's REST connector to `api.notion.com`, acting as one internal
  * integration with an operator-managed token pasted into the connection in
  * the operator UI.
@@ -88,7 +70,7 @@ export interface NotionTokenOptions extends NotionCommonOptions {
 }
 
 /** `auth` selects the implementation: hosted MCP over OAuth, or REST with a token. */
-export type NotionOptions = NotionOAuthOptions | NotionTokenOptions;
+export type NotionOptions = NotionTokenOptions;
 
 function instructionsSection(instructions: string | undefined): string {
   const text = instructions?.trim();
@@ -108,267 +90,12 @@ function tokenUsageGuide(purpose: string, instructions: string | undefined): str
 Workspace purpose: ${purpose}${key}${shared}${instructionsSection(instructions)}`;
 }
 
-function oauthUsageGuide(purpose: string, instructions: string | undefined): string {
-  const { oauth_head, oauth, shared } = skill.fragments;
-  return `${oauth_head}${purpose}${oauth}${shared}${instructionsSection(instructions)}`;
-}
-
-/**
- * Reviewed in #705's provider audit against https://developers.notion.com/guides/mcp/mcp-supported-tools.
- * Extended in #814 from the operator's 2026-10-15 hosted catalog capture,
- * recorded in mcp-catalog-2026-10-15.md. Includes names absent from the public
- * reference and retains reviewed names absent from this client's catalog.
- * Annotations were not visible; captured input summaries are not schema
- * documents, so no schema digests are asserted.
- */
-const NOTION_MCP_CLASSIFICATION: ToolClassification = {
-  tools: {
-    "notion-search": { "verdict": "read", "reason": "Retrieves Notion  information without changing vendor state." },
-    "notion-ai-search": {
-      "verdict": "read",
-      "reason": "Legacy AI search, still callable by name; retrieves matching content without changing vendor state.",
-    },
-    "notion-get-self": {
-      "verdict": "read",
-      "reason": "Returns the connected workspace and user without changing vendor state.",
-    },
-    "notion-get-tool-access": {
-      "verdict": "read",
-      "reason": "Reads which tools the workspace plan allows; it grants nothing and changes nothing.",
-    },
-    "notion-download-skill": {
-      "verdict": "read",
-      "reason": "Returns an existing Skill as a signed, expiring archive URL; it changes no workspace state.",
-    },
-    "notion-search-skills": {
-      "verdict": "read",
-      "reason": "Retrieves Notion skills information without changing vendor state.",
-    },
-    "notion-fetch": {
-      "verdict": "read",
-      "reason": "Retrieves Notion fetch information without changing vendor state.",
-    },
-    "notion-download-attachment": {
-      "verdict": "read",
-      "reason": "Reads attachment content; creating uploads and attachments uses separate writes.",
-    },
-    "notion-query-data-sources": {
-      "verdict": "read",
-      "reason": "Retrieves Notion query data sources information without changing vendor state.",
-    },
-    "notion-query-meeting-notes": {
-      "verdict": "read",
-      "reason": "Retrieves Notion query meeting notes information without changing vendor state.",
-    },
-    "notion-search-agents": {
-      "verdict": "read",
-      "reason": "Retrieves Notion agents information without changing vendor state.",
-    },
-    "notion-list-agents": {
-      "verdict": "read",
-      "reason": "Retrieves Notion agents information without changing vendor state.",
-    },
-    "notion-query-sessions": {
-      "verdict": "read",
-      "reason": "Retrieves Notion query sessions information without changing vendor state.",
-    },
-    "notion-search-sessions": {
-      "verdict": "read",
-      "reason": "Retrieves Notion sessions information without changing vendor state.",
-    },
-    "notion-get-session-status": {
-      "verdict": "read",
-      "reason": "Retrieves Notion session status information without changing vendor state.",
-    },
-    "notion-wait-session": {
-      "verdict": "read",
-      "reason": "Waits for existing session state; it does not start or message a session.",
-    },
-    "notion-list-session-events": {
-      "verdict": "read",
-      "reason": "Retrieves Notion session events information without changing vendor state.",
-    },
-    "notion-read-session-event": {
-      "verdict": "read",
-      "reason": "Retrieves Notion read session event information without changing vendor state.",
-    },
-    "notion-get-comments": {
-      "verdict": "read",
-      "reason": "Retrieves Notion comments information without changing vendor state.",
-    },
-    "notion-get-teams": {
-      "verdict": "read",
-      "reason": "Retrieves Notion teams information without changing vendor state.",
-    },
-    "notion-get-users": {
-      "verdict": "read",
-      "reason": "Retrieves Notion users information without changing vendor state.",
-    },
-    "notion-get-async-task": {
-      "verdict": "read",
-      "reason": "Retrieves Notion async task information without changing vendor state.",
-    },
-    "notion-create-file-upload": { "verdict": "write", "reason": "Allocates upload state for a workspace file." },
-    "notion-create-attachment": {
-      "verdict": "write",
-      "reason": "create attachment creates or appends Notion state; it has side effects.",
-    },
-    "notion-create-pages": {
-      "verdict": "write",
-      "reason": "create pages creates or appends Notion state; it has side effects.",
-    },
-    "notion-duplicate-page": {
-      "verdict": "write",
-      "reason": "duplicate page creates or appends Notion state; it has side effects.",
-    },
-    "notion-create-database": {
-      "verdict": "write",
-      "reason": "create database creates or appends Notion state; it has side effects.",
-    },
-    "notion-create-folder": {
-      "verdict": "write",
-      "reason": "create folder creates or appends Notion state; it has side effects.",
-    },
-    "notion-create-view": {
-      "verdict": "write",
-      "reason": "create view creates or appends Notion state; it has side effects.",
-    },
-    "notion-spawn-session": {
-      "verdict": "write",
-      "reason": "Starts asynchronous agent work and creates session state.",
-    },
-    "notion-send-message-to-session": {
-      "verdict": "write",
-      "reason": "Appends a message to a running session and may trigger further work.",
-    },
-    "notion-create-comment": {
-      "verdict": "write",
-      "reason": "create comment creates or appends Notion state; it has side effects.",
-    },
-    "notion-update-page": {
-      "verdict": "destructive",
-      "reason": "update page changes existing Notion state or removes it.",
-    },
-    "notion-convert-page-to-skill": {
-      "verdict": "destructive",
-      "reason": "Changes the role and content of an existing workspace page.",
-    },
-    "notion-move-pages": {
-      "verdict": "destructive",
-      "reason": "move pages changes existing Notion state or removes it.",
-    },
-    "notion-update-data-source": {
-      "verdict": "destructive",
-      "reason": "update data source changes existing Notion state or removes it.",
-    },
-    "notion-update-view": {
-      "verdict": "destructive",
-      "reason": "update view changes existing Notion state or removes it.",
-    },
-    "notion-stop-session": { "verdict": "destructive", "reason": "Stops an existing session and interrupts its work." },
-    "notion-check-mcp-next-steps": {
-      "verdict": "read",
-      "reason": "Returns an upsell or next-step card without changing workspace state or enabling access.",
-    },
-    "notion-show-advanced-analysis-next-steps": {
-      "verdict": "read",
-      "reason": "Returns a message and destination link without changing workspace state or enabling access.",
-    },
-    "notion-get-enabled-skills": {
-      "verdict": "read",
-      "reason": "Lists the current user's enabled skills; enabling or disabling them is a separate write.",
-    },
-    "notion-get-file-download-urls": {
-      "verdict": "read",
-      "reason":
-        "Returns signed, expiring download URLs for existing file references without changing workspace state; use only for downloads and do not expose the URLs.",
-    },
-    "notion-get-groups": {
-      "verdict": "read",
-      "reason": "Retrieves visible permission group IDs and names without changing membership or permissions.",
-    },
-    "notion-list-favorite-pages": {
-      "verdict": "read",
-      "reason": "Lists existing favorites in sidebar order without changing them.",
-    },
-    "notion-list-page-backlinks": {
-      "verdict": "read",
-      "reason": "Retrieves IDs, titles and URLs of existing page backlinks without changing links or pages.",
-    },
-    "notion-list-private-pages": {
-      "verdict": "read",
-      "reason": "Lists existing pages and databases in the user's Private sidebar without changing them.",
-    },
-    "notion-list-recent-pages": {
-      "verdict": "read",
-      "reason": "Lists the user's existing page-view history without changing pages or recording a new view.",
-    },
-    "notion-list-shared-pages": {
-      "verdict": "read",
-      "reason": "Lists existing pages and databases in the user's Shared sidebar without changing sharing.",
-    },
-    "notion-memory-search": {
-      "verdict": "read",
-      "reason": "Searches memories saved by connected agents in earlier sessions without saving or changing memories.",
-    },
-    "notion-query-multiple-data-sources": {
-      "verdict": "read",
-      "reason": "Runs read-only SQLite SQL across existing data sources without changing them.",
-    },
-    "notion-delete-comment": {
-      "verdict": "destructive",
-      "reason": "Deletes a comment and may remove its discussion when no comments remain.",
-    },
-    "notion-delete-databases": {
-      "verdict": "destructive",
-      "reason": "Moves existing databases to Trash; an optional confirmation flag does not make this tool read-only.",
-    },
-    "notion-delete-pages": {
-      "verdict": "destructive",
-      "reason": "Moves existing pages to Trash; an optional confirmation flag does not make this tool read-only.",
-    },
-    "notion-restore-pages": {
-      "verdict": "destructive",
-      "reason": "Restores pages or databases from Trash and changes their workspace state.",
-    },
-    "notion-set-comment-reaction": {
-      "verdict": "destructive",
-      "reason": "Adds or removes the user's emoji reaction on a comment; repeatability does not make it read-only.",
-    },
-    "notion-set-discussion-resolved": {
-      "verdict": "destructive",
-      "reason": "Resolves or reopens an existing comment discussion.",
-    },
-    "notion-update-comment": {
-      "verdict": "destructive",
-      "reason": "Replaces the text of an existing comment.",
-    },
-    "notion-update-enabled-skills": {
-      "verdict": "destructive",
-      "reason": "Changes the current user's skill enablement for external MCP clients, Notion AI, or both.",
-    },
-    "notion-update-folder": {
-      "verdict": "destructive",
-      "reason": "Changes an existing folder by adding or removing files or adding a subfolder.",
-    },
-    "notion-upload-skill": {
-      "verdict": "destructive",
-      "reason":
-        "Preparation returns a credential-bearing upload URL and headers; completion replaces the target page title, Description, body and Files. Both actions stay writes.",
-    },
-  },
-};
-
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options notion() accepts, selected by `auth.type`; see `assertKnownOptions`. */
 const NOTION_OPTIONS = variants(["auth", "type"], {
   // The never-typed keys stay out of the shape, so the walk refuses them by name.
-  oauth: optionsOf<Omit<NotionOAuthOptions, "credentialLabel" | "defaultPageSize">>()({
-    ...COMMON,
-    callAdmission: CALL_ADMISSION,
-    auth: optionsOf<NotionOAuthOptions["auth"]>()(keys("type")),
-  }).shape,
+  oauth: { ...COMMON, callAdmission: CALL_ADMISSION, auth: optionsOf<{ type: "oauth" }>()(keys("type")) },
   token: optionsOf<NotionTokenOptions>()({
     ...COMMON,
     callAdmission: CALL_ADMISSION,
@@ -376,19 +103,6 @@ const NOTION_OPTIONS = variants(["auth", "type"], {
     auth: optionsOf<NotionTokenOptions["auth"]>()(keys("type")),
   }).shape,
 });
-
-function notionOAuth(id: string, options: Readonly<NotionOAuthOptions>, provider: ProviderContext): Connector {
-  return hostedOAuth(id, provider, {
-    url: NOTION_MCP_ENDPOINT,
-    title: options.title ?? "Notion (MCP)",
-    description: `Notion's official hosted MCP interface: ${options.purpose}`,
-    usageGuide: {
-      content: oauthUsageGuide(options.purpose, options.instructions),
-      summary: "Official MCP as the OAuth user. Live Notion schemas, object discovery, sessions, agents, attachments.",
-      required: true,
-    },
-  });
-}
 
 function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider: ProviderContext): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
@@ -420,15 +134,11 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
   );
 }
 
-/**
- * A maintained Notion connection. `auth` selects the implementation: OAuth
- * reaches Notion's hosted MCP server as the authorizing user; an integration
- * token reaches Connecta's REST connector to `api.notion.com` as that bot.
- */
+/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
 export const notion = defineProvider<NotionOptions>({
   name: "notion",
   title: "Notion",
-  kind: "dual",
+  kind: "api",
   readme: "Notion",
   bundle: {
     "baselineGzip": 211946,
@@ -437,9 +147,5 @@ export const notion = defineProvider<NotionOptions>({
   },
   skill,
   options: NOTION_OPTIONS,
-  classify: NOTION_MCP_CLASSIFICATION,
-  create: byAuth<NotionOptions>({ oauth: notionOAuth, token: notionToken }),
+  create: byAuth<NotionOptions>({ oauth: removedHostedMcp, token: notionToken }),
 });
-
-/** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */
-export const NOTION_MCP_VETTED_CATALOG = reviewedCatalog(notion.definition.classify!, 'defineProvider("notion")');

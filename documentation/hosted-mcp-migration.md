@@ -3,8 +3,9 @@
 Basecamp, Intercom, Linear, RevenueCat, and Wispr Flow no longer have provider
 subpath exports. Replace their imports and factories with `remoteMcp` from
 `@zackbart/connecta`. The remote server supplies its catalog at runtime.
-This guide applies only to those five removed presets. Stripe, Vercel,
-Cloudflare, Notion, Mixpanel, and GitHub retain their current provider options.
+Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub also lose their hosted
+halves. Their vendored API connectors remain. The mappings below describe the
+former settings as of 2026-10-23, not a promise about current vendor availability.
 
 ## Replace a connection without expanding access
 
@@ -21,9 +22,9 @@ Cloudflare, Notion, Mixpanel, and GitHub retain their current provider options.
    changing it to shared would expose one person's grant to other callers.
    Keep the original pool `tools` entries and membership. An existing exact
    `crm.get_record` grant stays exact; do not replace it with `crm`.
-4. Preserve `requireHttps: true` on all five. Copy explicit `title`,
-   `maxResultBytes`, `readOnly`, and `callAdmission` unchanged. None of these
-   presets supplied default call admission. Their local `readOnly` default was
+4. Preserve `requireHttps: true` on every migrated connection. Copy explicit `title`,
+   `maxResultBytes`, `readOnly`, and `callAdmission` unchanged. The five removed presets supplied no default call admission; see Stripe below
+   for its former fixed hosted policy. Their local `readOnly` default was
    false, independent of a remote endpoint's read-only variant.
 5. Move `purpose` to `description`, and deployment-specific `instructions` to
    `usageGuide.content`. Generic entries do not accept `purpose` or
@@ -79,6 +80,226 @@ Intercom's non-loopback OAuth callbacks historically needed Customer Support
 to allowlist the deployment's redirect URI. Preserve that URI and approval.
 Fin Operator requires teammate OAuth, workspace availability, and permissions;
 a static token is not an equivalent grant.
+
+## Run a hosted connection beside its API connector
+
+Keep the existing API connector and its id. Add the generic hosted entry under a
+**distinct id**, then add only intended tool addresses to its pools. If replacing
+an old hosted entry, keep that hosted id and put the API connector under another
+id. A new id does not inherit stored credentials or grants: connect it through
+the operator UI as the intended owner. Do not copy tokens between ids or owners.
+All examples below are deployment fragments to place in the existing
+`connectors` array; preserve the surrounding deployment configuration.
+
+The old OAuth selections on Stripe, Vercel, Cloudflare, and Notion now throw at
+construction. Mixpanel also throws without `via: "api"`, including an omitted
+`via`. They never fall through to an API credential. `remoteMcp({ classify })`
+throws too; move checked deployment policy to `ConnectaConfig.classification`.
+Do not migrate schema pins, `optional`, or `unlisted: "hide"` as live reviews.
+
+### Stripe
+
+Former URL: `https://mcp.stripe.com/`. Auth was OAuth only, shared unless
+explicitly personal, with discovered scopes and no preset scope fallback or
+extra headers. Preserve an explicit OAuth client, scope, redirect policy and
+version negotiation. API-key `mode` and `connectedAccount` still belong only to
+the API connector; OAuth could reach both live and sandbox accounts.
+
+```ts
+import { stripe } from "@zackbart/connecta/providers/stripe";
+import { remoteMcp } from "@zackbart/connecta";
+
+const billingApi = stripe("billing_api", {
+  purpose: "Sandbox billing", auth: { type: "apiKey" }, mode: "sandbox",
+});
+const billingHosted = remoteMcp("billing_hosted", {
+  url: "https://mcp.stripe.com/", requireHttps: true,
+  description: "Billing across authorized Stripe accounts",
+  auth: { type: "oauth" }, authScope: "shared",
+  callAdmission: { rules: [{
+    maxConcurrency: 4, queueTimeoutMs: 5000, retryAfterMs: 1000,
+    budget: { kind: "rolling-window", maxCalls: 25, windowMs: 1000 },
+  }] },
+});
+```
+
+The explicit admission policy reproduces the former fixed hosted default:
+25 calls/second and four concurrent calls, even for a live account. Preserve
+it when migrating; generic connections supply no Stripe admission default.
+Discover account selectors and current classifications before account-scoped use.
+
+### Vercel
+
+Former URL: `https://mcp.vercel.com`. Auth was OAuth only, shared unless
+explicitly personal. Scopes were discovered; there was no preset fallback,
+extra header, or default call admission. Preserve explicit call admission.
+Vercel historically admitted only approved MCP clients; retain the registered
+client and callback approval. `teamId` and `baseUrl` remain API-only options;
+the hosted grant controls reachable teams.
+
+```ts
+import { vercel } from "@zackbart/connecta/providers/vercel";
+import { remoteMcp } from "@zackbart/connecta";
+
+const hostingApi = vercel("hosting_api", {
+  purpose: "Deployment operations", auth: { type: "token" },
+});
+const hostingHosted = remoteMcp("hosting_hosted", {
+  url: "https://mcp.vercel.com", requireHttps: true,
+  description: "Authorized hosting teams", authScope: "shared",
+  auth: { type: "oauth" },
+});
+```
+
+### Cloudflare
+
+Former URL: `https://mcp.cloudflare.com/mcp`. Auth was OAuth only, shared
+unless explicitly personal, with discovered scopes, no preset scope fallback,
+extra headers, or default hosted admission. Preserve explicit admission.
+API `accountId`, `zoneId`, `pin`, and Global API Key boundaries do not constrain
+the generic server; authorize the intended hosted account separately.
+
+```ts
+import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
+import { remoteMcp } from "@zackbart/connecta";
+
+const infrastructureApi = cloudflare("infrastructure_api", {
+  purpose: "Infrastructure operations", auth: { type: "apiToken" },
+});
+const infrastructureHosted = remoteMcp("infrastructure_hosted", {
+  url: "https://mcp.cloudflare.com/mcp", requireHttps: true,
+  description: "Authorized infrastructure accounts", authScope: "shared",
+  auth: { type: "oauth" },
+});
+```
+
+The former reviewed `execute` verdict is gone. Check the live annotations and
+set an explicit deployment `"write"` or `"hidden"` override when required.
+
+### Notion
+
+Former URL: `https://mcp.notion.com/mcp`. Auth was OAuth only, shared unless
+explicitly personal, acting as the authorized user. Scopes were discovered;
+there was no preset fallback, extra header, or default hosted admission.
+The API integration token and its page sharing remain separate from user OAuth.
+Preserve any explicit hosted call admission; the API's default does not apply.
+
+```ts
+import { notion } from "@zackbart/connecta/providers/notion";
+import { remoteMcp } from "@zackbart/connecta";
+
+const notesApi = notion("notes_api", {
+  purpose: "Integration-shared notes", auth: { type: "token" },
+});
+const notesHosted = remoteMcp("notes_hosted", {
+  url: "https://mcp.notion.com/mcp", requireHttps: true,
+  description: "User-authorized notes", authScope: "personal",
+  auth: { type: "oauth" },
+});
+```
+
+The example explicitly selects personal ownership; preserve the old setting
+when replacing an existing connection. Generic hosted results do not inherit
+the integration connector's URL redaction or file safety rules.
+
+### Mixpanel
+
+Former regional URLs:
+
+| Region         | Generic `url`                     |
+| -------------- | --------------------------------- |
+| `us` (default) | `https://mcp.mixpanel.com/mcp`    |
+| `eu`           | `https://mcp-eu.mixpanel.com/mcp` |
+| `in`           | `https://mcp-in.mixpanel.com/mcp` |
+
+Preserve the project's exact region. OAuth was the default, with discovered
+scopes and no preset fallback. Explicit credential, inline `headers`, and
+`request` auth were also accepted. Ownership defaulted shared for every mode;
+no extra headers or default hosted admission were supplied. Copy explicit
+headers/request callbacks with their existing secret sources and restrictions.
+
+```ts
+import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
+import { remoteMcp } from "@zackbart/connecta";
+
+const analyticsApi = mixpanel("analytics_api", {
+  purpose: "Product analytics", via: "api", auth: { type: "credential" }, region: "eu",
+});
+const analyticsHosted = remoteMcp("analytics_hosted", {
+  url: "https://mcp-eu.mixpanel.com/mcp", requireHttps: true,
+  description: "EU product analytics", authScope: "shared",
+  auth: { type: "oauth" },
+});
+```
+
+For a service account, replace the generic entry's `auth` with
+`{ type: "credential", header: "Authorization", scheme: "Bearer Basic",
+credential: { label: "Service account" } }`. Store the original `username:secret`
+pair in its vault slot. Generic `remoteMcp()` base64-encodes a credential whose
+scheme ends in `Basic`, producing `Authorization: Bearer Basic <base64(pair)>`.
+Ordinary `Basic` or `Bearer <pair>` is not equivalent. Preserve an explicit old
+header/scheme instead of overriding it with these historical defaults.
+The API connector still uses its own service-account HTTP framing and admission.
+
+### GitHub
+
+`github()` has no hosted selector. It keeps its connector id and these six REST
+tools: `list_scopes`, `search_scoped`, `create_release`, `update_release`,
+`delete_release`, and `merge_pull_request`. Its 26 hosted tools disappear. Update
+programs, instructions, and exact grants that name them after discovering the
+new generic catalog.
+
+Former URL: `https://api.githubcopilot.com/mcp/`, shared request auth with
+`Authorization: Bearer <installation token>`, `requireHttps: true`, and
+`redirects: "none"`. The old headers were
+`X-MCP-Toolsets: repos,git,issues,pull_requests,actions,labels` and `X-MCP-Tools`
+containing the 26 reviewed names. These become generic top-level `headers` when
+needed. They select vendor tools; they do not confer repository permissions.
+No OAuth scopes or consent applied to this App-token path; each call minted a
+token narrowed to repository IDs and reviewed permissions.
+
+```ts
+import { github } from "@zackbart/connecta/providers/github";
+import { remoteMcp, type ConnectorContext } from "@zackbart/connecta";
+
+// The deployment supplies the request-bound token minter and its restrictions.
+function sourceConnections(token: (ctx: ConnectorContext) => Promise<string>) {
+  return [
+    github("source_api", {
+      purpose: "Repository administration", app: { appId: "12345" },
+      scopes: [{ repo: "alice/notes", access: "read" }],
+    }),
+    remoteMcp("source_hosted", {
+      url: "https://api.githubcopilot.com/mcp/", requireHttps: true,
+      redirects: "none", description: "Authorized repository tools", authScope: "shared",
+      auth: { type: "request", token },
+      headers: { "X-MCP-Toolsets": "repos,git,issues,pull_requests,actions,labels",
+        "X-MCP-Tools": "get_file_contents,list_commits" },
+    }),
+  ];
+}
+```
+
+For reference, the former complete `X-MCP-Tools` value was:
+
+```text
+get_file_contents,get_commit,list_commits,list_branches,get_tag,list_tags,get_latest_release,get_release_by_tag,list_releases,list_issues,issue_read,get_label,list_pull_requests,pull_request_read,actions_list,actions_get,issue_write,add_issue_comment,create_pull_request,update_pull_request,pull_request_review_write,create_branch,create_or_update_file,delete_file,push_files,actions_run_trigger
+```
+
+The example deliberately selects two tools; set the exact intended vendor
+selection and pool grants after checking the live catalog. A separately scoped static token can instead use generic
+`auth: { type: "credential", header: "Authorization", scheme: "Bearer" }`
+in its own vault slot. OAuth is a separate generic option
+only when supported by the chosen server/client; preserve its own scopes and
+registration rather than reusing App credentials.
+
+**GitHub App hosted routing does not carry over.** The generic connection does
+not reuse the vendored App's private-key vault, mint or narrow installation
+tokens, resolve installation/repository identity, validate owner/repo arguments,
+or enforce its workflow-file and method guards. `github().scopes` constrain only
+the six REST tools. Only generic `auth: { type: "request", token: async (ctx) =>
+… }` can supply an operator-minted App token per request; the deployment must own
+its minting, renewal, confinement and subject isolation. A static token does not restore the removed per-call App identity or restrictions.
 
 ## Preserve credentials and registration
 
@@ -164,22 +385,19 @@ change; the override applies if that exact name returns. Never copy the retired
 preset's review into this map or promote tools merely to recover their old route.
 
 An override does not change replay safety. A call is write-like when either its
-effective class or its source class is write. The source class is a verified
-provider review where one remains during migration, otherwise the server's
-annotations; these five deleted presets no longer supply reviews. Write-like
+effective class or its source class is write. The source class uses only the server's annotations: missing hints or
+`destructiveHint: true` count as write even when deployment policy sets read. Write-like
 calls get one attempt across OAuth renewal, reconnect, authorization recovery
 and program re-runs. An ambiguous dispatched failure, including timeout or
 cancellation, reports an unknown outcome with no retry or wait advice. Approval,
 read-only gating and catalog presentation keep using the effective class. See
 [generic remote connections](./integrating.md#another-remote-mcp-server) for the configuration rules.
 
-Across the former hosted presets and the hosted halves scheduled for later
-migration, about 290 of roughly 350 reviewed reads lacked retained evidence of
+Across the former hosted presets and hosted halves, about 290 of roughly 350 reviewed reads lacked retained evidence of
 `readOnlyHint: true`. The estimate for these five is up to 105 Basecamp, 53
 RevenueCat, 16 Wispr Flow, 11 Intercom, and 2 Linear tools. These are historical
 evidence gaps, not counts of the current live catalog. Check the live hints
-before concluding a tool is still a read. Dual-provider behavior is unchanged
-by this five-preset removal.
+before concluding a tool is still a read. The six hosted halves now follow the same annotations-only rule.
 
 A formerly reviewed read can disappear from a read-only connector or endpoint.
 On a writable endpoint it can move from `call_tool` to

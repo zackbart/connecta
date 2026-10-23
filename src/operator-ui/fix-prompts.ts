@@ -13,12 +13,7 @@ import type { UiCredentialProblem, UiProblem } from "./model.js";
  * `refusedNotice` in view.ts); what remains are the page's own sentences and a
  * credential form's field checks.
  */
-export type FixPromptKind =
-  | UiProblem
-  | UiCredentialProblem
-  | "credential_test_failed"
-  | "oauth_action_failed"
-  | "catalog_drift";
+export type FixPromptKind = UiProblem | UiCredentialProblem | "credential_test_failed" | "oauth_action_failed";
 
 const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
   connector_unavailable: {
@@ -95,15 +90,6 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
       "Check that the downstream still serves a complete tools list; connecta refuses a partial catalog rather than serving part of it.",
       "Check for tools the connector cannot accept: invalid schemas, missing descriptions, or names that collide.",
       "Pin or upgrade the @zackbart/connecta version if a maintained provider's catalog changed shape underneath it.",
-    ],
-  },
-  catalog_drift: {
-    problem:
-      "A hosted provider's live catalog differs from the reviewed manifest shipped with connecta: new unclassified tools, unserved tools, annotation conflicts, or schema changes.",
-    steps: [
-      "Unclassified tools are withheld until a release classifies them. Check whether a newer @zackbart/connecta release has, and upgrade if so.",
-      "If a tool the deployment depends on is now unserved or changed shape, review callers of it before upgrading.",
-      "Report drift the release does not cover as an issue on the connecta repository, naming the provider and the kinds of drift but no tool data.",
     ],
   },
 };

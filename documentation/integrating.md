@@ -109,113 +109,11 @@ pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
-For minimal Stripe OAuth/API-key examples with and without connector `readOnly`, see [Stripe setup](./provider-auth-migration.md#stripe). With an API key, prefer a restricted `rk_` key with only read permissions for read-only access; Stripe enforces it too.
-
-Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
-server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector
-with an operator-managed key. Notion requires `auth` the same way:
-`{ type: "oauth" }` acts as the signed-in user over Notion's hosted MCP, and
-`{ type: "token" }` acts as an internal integration over Connecta's REST
-connector. Cloudflare requires `auth` too: `{ type: "oauth" }` reaches its
-hosted MCP server, and `{ type: "apiToken" }` or `{ type: "globalApiKey" }`
-reaches Connecta's REST connector, with an optional `pin` of accounts and zones
-(required for a Global API Key unless `unpinned: true`). Vercel requires `auth`
-as well: `{ type: "oauth" }` reaches Vercel's hosted MCP server, and
-`{ type: "token" }` with an optional `teamId` reaches Connecta's REST connector
-with an operator-managed access token. Vercel admits only reviewed and approved
-MCP clients to its hosted server, an operational gate outside Connecta. See the
-[provider auth migration](./provider-auth-migration.md).
-To use both implementations of one provider, configure two connector ids with
-independent credentials.
-
-Both Notion auth variants accept optional `callAdmission`. For a token
-connector it replaces the whole per-runtime default of 180 calls per minute
-and 3 concurrent. Notion's [request limits](https://developers.notion.com/reference/request-limits)
-allow 600 requests per minute per connection on Business and Enterprise and
-180 on other plans. A separate workspace-wide limit is shared by all
-connections. Size an override for other runtime traffic and tools that make
-multiple HTTP requests. Only an omitted or `undefined` policy selects the
-default; malformed policies, including `false`, `null`, `0`, and `""`, throw
-at construction on both auth variants.
-
-Planning Center's `excludeApps` removes whole products from a connection, for
-example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
-deployment that keeps agents away from donor and financial data. Excluded
-products lose their named tools, guide text, and version pins, and the
-`pco_api_get` and `pco_api_mutate` hatches refuse their paths before sending.
-The check reads the exact URL the transport would fetch, and while any product
-is excluded a hatch path must be literal: dot segments, empty segments,
-backslashes, whitespace, and percent-encoded `/`, `\`, `?`, `#`, or `%` are
-refused rather than normalized.
-
-Exclusion also closes the routes through which the excluded product's data is
-reachable through another product. While any product is excluded the connection removes
-`list_lists`, `list_list_people`, and `run_list` and refuses every People list,
-list result, rule, and condition, by path or `include`, because a list's
-conditions can draw on any product, such as a donor list built from Giving
-donations, and lists can depend on other lists. Planning Center publishes a
-list's conditions, but a reliable check would have to follow every nested list,
-so the connection does not attempt one. It refuses webhook event and delivery
-payloads, since a payload can carry any product's records, and every change to
-an existing webhook subscription by id, since the id does not name its product.
-A new subscription must name a reachable product's event. People cannot be
-excluded.
-
-What exclusion guarantees is that agents reach none of the excluded product's
-endpoints, no live cross-product query such as a People list, and no webhook
-payload or change to an existing subscription. It does not hide records that the church's own
-automations or staff have copied into a reachable product. A
-[Giving automation](https://help.planningcenter.com/en/144355-automations-in-giving.html)
-can add first-time donors to a People workflow, and those workflow cards stay
-readable, as do donor details recorded in notes, custom fields, or form
-answers. Those are People data once written, so the connection does not refuse
-them by guessing at their origin.
-
-For a hard boundary, give the connection a personal access token belonging to a
-Planning Center user with No Access in the excluded product. Planning Center
-sets permissions per product for each user, does not grant Giving to
-organization administrators automatically, and lets People workflows be shared
-per workflow; a token carries its user's permissions, so Planning Center itself
-refuses what that user cannot see. `excludeApps` is defense in depth on top of
-that boundary: it narrows what Connecta exposes, not what the token can do
-elsewhere.
-
-Church Community Builder and Tithe.ly drop sensitive fields from every
-result by default: for `ccb()`, allergies, giving numbers and dates, envelope
-ids, statement dates, attendance prayer requests and meeting notes, and form
-payment details (`CCB_SENSITIVE_FIELDS`); for `tithely()`, an organization's
-payout `bank` and `legal` contact (`TITHELY_SENSITIVE_FIELDS`). The drop goes
-by field name at any depth and covers the named tools, `raw: true`, the read
-hatches, CCB's advanced search, and write replies. No tool argument returns
-them. A deployment that needs them opts in with `sensitiveFields: "return"`,
-after which `raw: true` and the hatches return CCB's or Tithe.ly's rows
-without the drop:
-
-```ts
-import { ccb } from "@zackbart/connecta/providers/ccb";
-
-const church = ccb("church", {
-  purpose: "Pastoral care for the care team",
-  environment: "production",
-  mode: "identity",
-  clientId: env.CCB_CLIENT_ID,
-  clientSecret: env.CCB_CLIENT_SECRET,
-  sensitiveFields: "return",
-});
-```
-
-The option controls a projection, not credential redaction: either way,
-`api()` replaces every credential the connection sent with `[redacted]`
-wherever it appears in a result. The drop removes fields from results only.
-CCB's advanced search can still filter on them, so a value can be inferred
-from which rows match; where that matters, leave `read:advanced_searches` out
-of `scopes`.
-
-Planning Center withholds the credentials its bodies can carry, in every
-mode and on every path: a webhook subscription's signing secret
-(`authenticity_secret`, also in a create or `rotate_secret` reply) and an
-organization's `secret`. No tool argument or option returns them; an operator
-reads them in Planning Center.
+Stripe, Notion, Vercel, Cloudflare, and Mixpanel now vendor only their APIs.
+Keep their existing API auth choices; Mixpanel requires `via: "api"`.
+GitHub retains its six App-authenticated REST tools. For hosted OAuth, regional
+Mixpanel servers, or GitHub's hosted server, add a distinct `remoteMcp()` entry
+using the [hosted MCP migration guide](./hosted-mcp-migration.md).
 
 ## Another remote MCP server
 
@@ -273,30 +171,20 @@ applies if that exact name returns. Unknown static tool names fail construction.
 No argument can change these rules. A write-to-read override changes exposure
 and approval. Replay and failure decisions treat a call as a write when either its
 effective class or its source class is write. The source class is the verified
-provider review, where one exists during migration, otherwise the server annotations;
+server annotations;
 deployment overrides never change it. A write gets one wire attempt across
 OAuth renewal, reconnect, transport and authorization recovery, including program re-runs. After possible dispatch, its
 failure also reports an unknown outcome with no retry or wait advice; a proven
 unsent failure retains its own recovery advice. Connector `readOnly` remains
 optional and composes with endpoint policy.
 
-Remote catalogs evolve. Discovery, direct calls, and program calls all enforce
-classification against the current catalog. `classify` and existing provider
-reviews remain supported during migration; schema changes can invalidate a
-reviewed read. Exact deployment classification overrides take precedence. See
-[reviewed classification](./architecture.md#providers-and-reviewed-classification)
-for precedence, schema digests, and `unlisted: "hide"`. Review the behavior
-before declaring a read, and do not use classification to bypass provider target
-scopes or caller grants.
-
-A reviewed name is required by default for drift comparison. Mark a tool
-`optional: true` only when the downstream can omit it because of plan,
-feature, or permission gating. For example, a remote `crm` connector can use
-`classify: { tools: { list_accounts: "read", list_customers: { verdict: "read",
-optional: true } } }`. Absence of `list_customers` then adds no unserved count;
-when present, its verdict, annotations, and any pinned schema are still checked.
-A missing schema pin means that tool's schema has not been verified against a
-review. Zero schema changes alone does not establish a matching schema.
+Remote catalogs evolve. Discovery, direct calls, and programs enforce the
+current annotations and `ConnectaConfig.classification` overrides. A leftover
+`classify` option throws at construction and names that map. Provider reviews,
+schema pins, `optional`, and `unlisted: "hide"` are removed. Missing or
+contradictory hints make the source class write, even when an override makes
+the effective class read. Review behavior before setting a read override;
+classification does not replace downstream scopes or caller grants.
 
 ## A hand-written HTTP capability
 
@@ -384,5 +272,5 @@ and [provider construction](https://github.com/zackbart/connecta/blob/main/src/p
 [Remote tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp.test.ts),
 [API tests](https://github.com/zackbart/connecta/blob/main/test/api-connector.test.ts),
 [provider contracts](https://github.com/zackbart/connecta/blob/main/test/provider-contracts.test.ts),
-and [classification tests](https://github.com/zackbart/connecta/blob/main/test/classified-decorators.test.ts)
+and the [write-once tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp-write-once.test.ts)
 check shared behavior. Provider-specific tests remain beside each provider.

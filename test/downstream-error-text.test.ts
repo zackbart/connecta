@@ -366,14 +366,22 @@ describe("an OAuth flow on a live client", () => {
       allowAuthorization: true,
     });
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
-    const first = connector.callTool("read", {}, context).then(
-      () => null,
-      (err: unknown) => err,
-    );
-    const second = connector.callTool("read", {}, context).then(
-      () => null,
-      (err: unknown) => err,
-    );
+    const first = connector
+      .callTool("read", {}, context, {
+        definition: { name: "read", annotations: { readOnlyHint: true } },
+      })
+      .then(
+        () => null,
+        (err: unknown) => err,
+      );
+    const second = connector
+      .callTool("read", {}, context, {
+        definition: { name: "read", annotations: { readOnlyHint: true } },
+      })
+      .then(
+        () => null,
+        (err: unknown) => err,
+      );
     aFlowSettled = Promise.race([first, second]);
     const [firstError, secondError] = (await Promise.all([first, second])) as Error[];
     await connector.closeScope!(context);

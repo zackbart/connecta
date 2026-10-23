@@ -6,11 +6,9 @@ const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "vercel",
   options,
-  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"team","options":{"teamId":"team_fixture"}},{"label":"oauth","options":{"auth":{"type":"oauth"}}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"team","options":{"teamId":"team_fixture"}}],
   create(id = "fixture", overrides: Partial<Options> = {}) {
-    // OAuth takes no team or base URL, so its case starts from the common options alone.
-    const base: Partial<Options> = overrides.auth?.type === "oauth" ? { purpose: options.purpose } : options;
-    return vercel(id, { ...base, ...overrides } as Options);
+    return vercel(id, { ...options, ...overrides } as Options);
   },
   conventions: {"verbs":["list","get","upsert","update","delete","vercel"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };

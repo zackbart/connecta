@@ -10,9 +10,8 @@
 //   "version": 2,
 //   "provider": "<folder name>",
 //   "generated": {                      // providers:generate only
-//     "operations": ["GET /accounts"],  // api, dual: the kit's manifest(vendor), sorted
-//     "hosted": ["get_issue"],          // mcp, dual: the served hosted classification's names, sorted
-//     "evidence": { "catalog.json": "sha256:…" } // one digest per hashed evidence file
+//     "operations": ["GET /accounts"],  // the kit's manifest(vendor), sorted
+//     "evidence": { "openapi.json": "sha256:…" } // one digest per hashed evidence file
 //   },
 //   "checks": [ … ]                     // the check types drift-check.mjs knows
 // }
@@ -21,7 +20,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Evidence files whose bytes `generated.evidence` pins, sorted. */
-export const HASHED_EVIDENCE = ["catalog.json", "openapi.document.json", "openapi.json", "value-safety.json"];
+export const HASHED_EVIDENCE = ["openapi.document.json", "openapi.json", "value-safety.json"];
 /** `providers:check` reports a manual check verified longer ago than this; no test fails as the calendar moves. */
 export const STALE_AFTER_DAYS = 180;
 
@@ -30,11 +29,10 @@ function digest(bytes) {
 }
 
 /**
- * The `generated` block (D2): operations from the kit's facts, hosted names
- * from the same reviewed classification the connector serves, and one digest
+ * The `generated` block (D2): operations from the kit's facts and one digest
  * per hashed evidence file the folder holds.
  */
-export async function generatedBlock({ directory, kind, kit, classify }) {
+export async function generatedBlock({ directory, kit }) {
   const evidence = {};
   for (const name of HASHED_EVIDENCE) {
     try {
@@ -44,8 +42,7 @@ export async function generatedBlock({ directory, kind, kit, classify }) {
     }
   }
   return {
-    operations: kind === "mcp" ? [] : [...new Set(kit?.operations ?? [])].sort(),
-    hosted: kind === "api" ? [] : Object.keys(classify?.tools ?? {}).sort(),
+    operations: [...new Set(kit?.operations ?? [])].sort(),
     evidence,
   };
 }
