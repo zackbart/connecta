@@ -147,7 +147,7 @@ export function vendorIndex(
           ? 0
           : [contentType, node(record(media)["schema"], components), ...(requestBody["required"] === true ? [1] : [])];
       details.push(params.length === 0 && body === 0 ? 0 : [params, body]);
-      const success = Object.entries(record(operation["responses"])).find(([status]) => /^2/.test(status))?.[1];
+      const success = Object.entries(record(operation["responses"])).find(([status]) => status.startsWith("2"))?.[1];
       const paths = (where: OperationField["in"], schema: unknown) =>
         [...new Set(propertyPaths(schema, components))].map((path) => ({ in: where, path }));
       fields.set(ops.length - 1, [
