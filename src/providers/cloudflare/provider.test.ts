@@ -285,6 +285,10 @@ describe("cloudflare() over a key", () => {
 
   it("maps Cloudflare's own error codes and chains, not only the HTTP status", async () => {
     const connector = cloudflare("cf", TOKEN);
+    const deep = Array.from({ length: 20 }).reduce<Record<string, unknown>>(
+      (entry) => ({ code: 1004, message: "DNS Validation Error", error_chain: [entry] }),
+      { code: 9005, message: "Content bad" },
+    );
     const cases: Array<[number, unknown, Record<string, string>, string, string]> = [
       [
         400,
@@ -323,6 +327,23 @@ describe("cloudflare() over a key", () => {
         "invalid_args",
         "1000: Odd",
       ],
+      [400, { success: false, errors: [deep] }, {}, "invalid_args", "1004: DNS Validation Error"],
+      [
+        400,
+        {
+          success: false,
+          errors: [
+            {
+              code: 1004,
+              message: "DNS Validation Error",
+              error_chain: [null, 1, { code: 9005, message: "Content bad" }],
+            },
+          ],
+        },
+        {},
+        "invalid_args",
+        "9005: Content bad",
+      ],
     ];
     for (const [status, body, headers, code, message] of cases) {
       respond = () => Response.json(body, { status, headers });
@@ -330,6 +351,14 @@ describe("cloudflare() over a key", () => {
       expect(failure.code, `${status}`).toBe(code);
       expect(failure.message).toContain(message);
     }
+    respond = () =>
+      Response.json(
+        { success: false, errors: [{ code: 9106, message: "Invalid key", error_chain: [deep] }] },
+        { status: 400 },
+      );
+    await expect(
+      cloudflare("cf", GLOBAL).testCredentials!({ email: "ops@example.com", apiKey: "gk-1" }, globalKey()),
+    ).resolves.toMatchObject({ ok: false });
   });
 
   it("tests a user token, then an account token under its account", async () => {

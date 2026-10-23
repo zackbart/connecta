@@ -268,6 +268,10 @@ export function describeErrors(errors: EnvelopeError[]): string {
   const parts: string[] = [];
   const walk = (list: EnvelopeError[]): void => {
     for (const entry of list) {
+      if (typeof entry !== "object" || entry === null) {
+        parts.push("Unknown error");
+        continue;
+      }
       const code = typeof entry.code === "number" ? entry.code : undefined;
       const message = typeof entry.message === "string" ? entry.message.slice(0, 500) : "Unknown error";
       parts.push(code === undefined ? message : `${code}: ${message}`);
@@ -282,6 +286,7 @@ function errorCodes(errors: EnvelopeError[]): Set<number> {
   const codes = new Set<number>();
   const walk = (list: EnvelopeError[]): void => {
     for (const entry of list) {
+      if (typeof entry !== "object" || entry === null) continue;
       if (typeof entry.code === "number") codes.add(entry.code);
       if (Array.isArray(entry.error_chain)) walk(entry.error_chain);
     }
