@@ -1,7 +1,7 @@
 # Connecta principles
 
 The goals describe the direction. The invariants describe the contracts tests
-must defend. The [0.29 plan](https://github.com/zackbart/connecta/issues/703)
+must defend. The [#703 rework](https://github.com/zackbart/connecta/issues/703)
 records the work still needed; a goal is not a claim that it has shipped.
 
 ## Goals

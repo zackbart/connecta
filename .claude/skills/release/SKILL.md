@@ -1,11 +1,11 @@
 ---
 name: release
-description: Cut a connecta release - assemble .changes/ fragments into CHANGELOG.md, run release:check, tag, and publish a GitHub Release. Use when asked to release, bump the version, or assemble the changelog. Nothing publishes until 0.29.0 is complete.
+description: Cut a connecta release - assemble .changes/ fragments into CHANGELOG.md, run release:check, tag, and publish a GitHub Release. Use when asked to release, bump the version, or assemble the changelog. Nothing publishes until 0.35.0 is complete.
 ---
 
 # Release connecta
 
-**Stop first.** Under the [0.29 plan #703](https://github.com/zackbart/connecta/issues/703),
+**Stop first.** Under the [#703 rework](https://github.com/zackbart/connecta/issues/703),
 deployments, advisory publication, and npm publishing wait until Phase 5 ends.
 Publishing a GitHub Release runs [publish.yml](../../../.github/workflows/publish.yml),
 which publishes to npm. Do not tag or publish without the owner's explicit
@@ -17,8 +17,8 @@ go-ahead for this release.
   `type: added|changed|fixed|removed|security`, optional `breaking: true`.
   `pnpm run check:changes` validates them.
 - A hand-written narrative: paragraphs, no headings. Say what changes, what
-  breaks, and what deployments can ignore. The 0.29.0 draft is
-  [release-notes/0.29.0.md](../../../release-notes/0.29.0.md).
+  breaks, and what deployments can ignore. The 0.35.0 draft is
+  [release-notes/0.35.0.md](../../../release-notes/0.35.0.md).
 
 ## Steps
 
