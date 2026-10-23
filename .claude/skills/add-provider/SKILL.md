@@ -131,6 +131,12 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   `scripts/drift-validate.mjs` is the one offline validator, shared by
   `providers:check`, `providers:generate` and the standard suite, which
   report what it rejects as `D3: providers:check rejects …`.
+- Very large shared/recursive OpenAPI contracts may declare
+  `specification.contractAlgorithm: "ref-graph-v1"` before their initial endpoint
+  recording. It hashes the full canonical reference graph with strongly connected
+  cycles as units, rather than expanding it exponentially. Keep existing endpoint
+  digests on the default inline algorithm; switching an established baseline is
+  a separately reviewed evidence change.
 - `providers:check` reports each manual check last verified more than 180
   days ago as `manual-stale`. No test fails as the calendar moves.
 

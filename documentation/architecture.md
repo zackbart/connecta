@@ -1899,7 +1899,9 @@ for 401/403/404 precede the other defaults; 409 has no shared conflict default.
 A 421 is `unavailable` and retryable only when the transport's core
 positive-read classification proves that request a read, including its actual
 method and method-override headers. The agent chooses another call; the kit
-does not resend it. A physical write retains its existing failure mapping.
+does not resend it. This override preserves the vendor's wording and changes
+only the code and retryability. A physical write retains its existing failure
+mapping.
 
 The mapping records each request's own served provenance and raw 401 facts.
 `api()` and invocation retain the sole write-outcome decision in the core's
@@ -2007,6 +2009,29 @@ caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
 
+The REST bridge in `src/providers/_shared/rest/kit.ts` retains pinned index
+validation and legacy hatch schemas while the kit owns tool leases, fixed write
+capacity, transport, failures and result safety. It verifies schema equality
+before restoring legacy catalog key order. `indexedVendor` derives operation
+metadata from the index and builds the full manifest lazily; the typed client
+contains only named operations and probes. Manifest/index operation-set equality
+is checked independently of drift digests, which still use full vendor contracts.
+
+Reviewed response policies can select text using only the redacted, normalized
+Content-Type. A separate `binaryBodies` review opts into bounded byte reads.
+Only the connection sees those bytes: it calls `RequestSecrets.encode` before
+constructing the legacy `{ contentType, bytes, base64 }` value. Undeclared
+binary bodies retain the JSON-only failure. Fixed secondary origins use a
+separate kit Connection built during provider construction, with their own
+confinement and the same authentication and result safety.
+
+A definition may derive authentication and default admission from validated
+options. Probes may derive their request from those options and describe a mapped
+failure (for example, an accepted key lacking account-read permission). Public
+routing/version headers remain request or constant headers, never authentication
+secrets. An optional positive `timeoutMs` retains a vendor's request and body
+deadline. A path request opting into `emptyForm: true` retains an explicitly empty form on the wire; other empty form declarations keep their previous omission.
+
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
 `unsentAfterUnauthorized` diagnostic, preserving the grant's authorization
@@ -2068,10 +2093,11 @@ policy over legacy unindexed paths declares its own resolver. Sent-secret redact
 covers response headers before result hooks can extract fragments. Withheld
 hooks admit only operation-bound status failures or unreadable bodies; other
 failures become defects whose text the API boundary withholds. Hook defects
-are rewrapped once at the tool edge when text is withheld, including defects
-from reviewed redaction, vendor error mapping, and the provider program that
-carry a `ConnectorCallError`. A failing visibility hook also withholds the
-defect's text; non-withheld operations retain their original defects.
+are rewrapped once at the tool or credential-probe edge when text is withheld,
+including defects from reviewed redaction, vendor error mapping, and the
+provider program that carry a `ConnectorCallError`. A failing visibility hook
+also withholds the defect's text; non-withheld operations retain their original
+defects.
 
 ### Why not Schema or HttpApi for core routes
 
@@ -2286,7 +2312,7 @@ compiling and configuring the real thing.
   (`GuardedFetchOptions`: the vendor's cited guarantee and a narrow predicate
   over the raw status and headers and the request's method and path, checked
   at construction) and the predicate matched, which the ledger records on the
-  request. Only Stripe declares it (`src/providers/stripe/rest.ts`, reviewed
+  request. Only Stripe declares it (`src/providers/stripe/api.ts`, reviewed
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
   `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
   sources. Q8 is decided in one place, `settleWrite` in

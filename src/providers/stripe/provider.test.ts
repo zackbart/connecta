@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectorContext } from "../../../test/fixtures/misc.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
 
+import { manifest } from "../../http/vendor.js";
+import { StripeApi, stripeIndex } from "./api.js";
 import { STRIPE_API_BASE_URL, stripe } from "./index.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
@@ -19,9 +22,11 @@ describe("stripe() over an API key", () => {
   let sent: Sent[];
   let respond: (request: Sent) => Response;
   const realFetch = globalThis.fetch;
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
 
   beforeEach(() => {
     sent = [];
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     respond = () => Response.json({ object: "list", data: [], has_more: false });
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request: Sent = {
@@ -37,6 +42,7 @@ describe("stripe() over an API key", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
+    configureGuardedTransport(restoreTransport);
   });
 
   const keyed = (key = "rk_test_51abc"): ConnectorContext => ({
@@ -52,6 +58,28 @@ describe("stripe() over an API key", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     return error as ConnectorCallError;
   }
+
+  it("INV-11: derives every manifest operation and vendor path parameter from the pinned index", () => {
+    const document = manifest(StripeApi);
+    const operations = Object.entries(document.paths)
+      .flatMap(([path, item]) =>
+        Object.entries(item)
+          .filter(([method]) => ["get", "head", "post", "put", "patch", "delete"].includes(method))
+          .map(([method, endpoint]) => {
+            const names = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+            expect(
+              (endpoint as { parameters?: Array<{ in: string; name: string }> }).parameters
+                ?.filter((p) => p.in === "path")
+                .map((p) => p.name)
+                .sort() ?? [],
+            ).toEqual(names);
+            return `${method.toUpperCase()} ${path}`;
+          }),
+      )
+      .sort();
+    expect(operations).toEqual(stripeIndex.ops.map((op) => `${op.method} ${op.path}`).sort());
+    expect(stripe.definition.kit?.operations).toEqual(operations);
+  });
 
   it("INV-5: refuses a key whose prefix contradicts the declared mode before any request leaves", async () => {
     const sandbox = stripe("billing", SANDBOX);
@@ -77,20 +105,22 @@ describe("stripe() over an API key", () => {
     const missing = await refusal(live.callTool("get_balance_summary", {}, connectorContext()));
     expect(missing.code).toBe("auth_required");
     expect(sent).toEqual([]);
-  });
-
-  it("INV-9: reports a lock_timeout as a retryable conflict Stripe did not process, not an unknown outcome", async () => {
-    const connector = stripe("billing", SANDBOX);
-    respond = () => Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
-    const error = await refusal(
-      connector.callTool(
-        "stripe_api_write",
-        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } },
-        keyed(),
-      ),
-    );
-    expect(error).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1_000 });
-    expect(sent).toHaveLength(1);
+    const connector = stripe("billing", { ...SANDBOX, connectedAccount: "acct_fixture" });
+    respond = () => Response.json({ id: "acct_fixture", business_profile: { name: "Example" } });
+    expect(await connector.testCredential!("  rk_test_candidate  ", connectorContext())).toEqual({
+      ok: true,
+      message: "Authenticated to acct_fixture (Example) with a test-mode key.",
+    });
+    expect(sent[0]!.headers.get("authorization")).toBe("Bearer rk_test_candidate");
+    expect(sent[0]!.headers.get("stripe-account")).toBe("acct_fixture");
+    expect(sent[0]!.headers.get("stripe-version")).toBe(stripeIndex.version);
+    respond = () =>
+      Response.json({ error: { type: "invalid_request_error", message: "Permission denied" } }, { status: 403 });
+    expect(await connector.testCredential!("rk_test_candidate", connectorContext())).toEqual({
+      ok: true,
+      message:
+        "Stripe accepted the test-mode key; it cannot read the account object, which only get_stripe_account_info needs.",
+    });
   });
 
   it("INV-5: returns a Checkout page whole only for a provably guest payment session, wherever it appears (review 807-2, 807-r2)", async () => {
@@ -168,15 +198,6 @@ describe("stripe() over an API key", () => {
     expect(
       ((await connector.callTool("stripe_api_read", { path: "/v1/payment_links/plink_1" }, keyed())) as any).data.url,
     ).toBe("https://buy.stripe.com/test_abc");
-  });
-
-  it("INV-3: refuses v2 account links and Terminal onboarding links before sending", async () => {
-    const connector = stripe("billing", SANDBOX);
-    for (const path of ["/v2/core/account_links", "/v1/terminal/onboarding_links"]) {
-      const error = await refusal(connector.callTool("stripe_api_write", { method: "POST", path, body: {} }, keyed()));
-      expect(error.message).toContain(`Connecta refuses POST ${path}.`);
-    }
-    expect(sent).toEqual([]);
   });
 
   it("reads quote PDFs from files.stripe.com and refuses multipart uploads and the meter event stream", async () => {

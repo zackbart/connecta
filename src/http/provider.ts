@@ -41,11 +41,14 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;
   readonly maxResponseBytes: number;
+  readonly timeoutMs?: number;
   readonly headers?: GuardedOptions["headers"];
   readonly admit?: GuardedOptions["admit"];
   /** Connection-specific transport settings, built outside every caller context. */
   readonly transport?: (options: Readonly<O>) => Pick<GuardedOptions, "headers" | "admit">;
-  readonly defaultCallAdmission?: import("../types.js").ConnectorCallAdmissionPolicy;
+  readonly defaultCallAdmission?:
+    | import("../types.js").ConnectorCallAdmissionPolicy
+    | ((options: Readonly<O>) => import("../types.js").ConnectorCallAdmissionPolicy);
   readonly pageSize?: { readonly default: number; readonly max: number };
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
@@ -57,16 +60,19 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
   /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
   readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
-  readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
-  readonly errors: VendorErrors;
+  readonly authenticate:
+    | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
+    | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
+  readonly errors: VendorErrors<any>;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly probe: {
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
+    readonly failure?: (error: ConnectorCallError, options: Readonly<O>) => CredentialTestResult | undefined;
   } & (
-    | { readonly operation: ProbeOperation; readonly request: unknown }
+    | { readonly operation: ProbeOperation; readonly request: unknown | ((options: Readonly<O>) => unknown) }
     | { readonly run: (options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices> }
   );
   /** Complete guides preserve legacy fragments and option-dependent lines. */
@@ -102,6 +108,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     vendor,
     baseUrl,
     maxResponseBytes,
+    timeoutMs,
     headers,
     admit,
     transport,
@@ -172,10 +179,11 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         provider: errors.provider,
         baseUrl: baseUrl(options),
         maxResponseBytes,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(oauthWrite401 ? { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES } : {}),
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
-        authenticate,
+        authenticate: typeof authenticate === "function" ? authenticate(options) : authenticate,
         ...configured,
       });
       const connected = connect(
@@ -240,7 +248,12 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           ("run" in probe
             ? probe.run(options)
             : connection
-                .send(probe.operation, probe.request as Parameters<Connection["send"]>[1])
+                .send(
+                  probe.operation,
+                  (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
+                    Connection["send"]
+                  >[1],
+                )
                 .pipe(Effect.map(({ data }) => data))
           ).pipe(
             Effect.flatMap((data) =>
@@ -257,8 +270,20 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               ),
             ),
             Effect.catch((failure) =>
-              Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
+              Effect.sync(() => {
+                const error = toConnectorCallError(failure, errors, map);
+                return probe.failure?.(error, options) ?? { ok: false, message: error.message };
+              }),
             ),
+            Effect.catchDefect((defect) => {
+              try {
+                if (!map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
+                  return Effect.die(defect);
+              } catch {
+                // A broken visibility hook cannot authorize exposing a defect's text.
+              }
+              return Effect.die(new Error("A provider hook withholding vendor text failed."));
+            }),
             Effect.provideContext(lease.services),
             Effect.ensuring(Effect.sync(lease.close)),
           ),
@@ -276,7 +301,12 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const usageGuide = guide(options);
       return tracksEveryRequest(
         api(id, {
-          ...(defaultCallAdmission ? { callAdmission: defaultCallAdmission } : {}),
+          ...(defaultCallAdmission
+            ? {
+                callAdmission:
+                  typeof defaultCallAdmission === "function" ? defaultCallAdmission(options) : defaultCallAdmission,
+              }
+            : {}),
           ...provider.connectorOptions,
           ...(authScope ? { authScope: authScope(options) } : {}),
           title: options.title ?? displayTitle?.(options) ?? metadata.title,

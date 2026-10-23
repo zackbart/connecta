@@ -13,7 +13,6 @@
     "examples",
     "src/operator-ui/app",
     "src/providers/**/*.test.ts",
-    "src/providers/*/fixtures.ts",
-    "src/providers/*/kit-prototype.ts"
+    "src/providers/*/fixtures.ts"
   ]
 }

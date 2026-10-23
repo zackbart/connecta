@@ -32,7 +32,6 @@ export const PENDING = {
     "notion",
     "sheets",
     "slides",
-    "stripe",
     "vercel",
   ]),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */

@@ -97,6 +97,7 @@ import {
   type ProviderRequest,
 } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { errors as breezeErrors } from "../src/providers/breeze/api.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
@@ -977,132 +978,275 @@ describe("kit construction (decision 0010, B.4)", () => {
 const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
-it("INV-5 INV-6: reviewed text bodies keep bounded UTF-8, JSON contracts, and withheld errors", WORKERS, async () => {
-  for (const row of [
-    {
-      name: "text error",
-      status: 400,
-      format: "json-or-text",
-      text: "Rejected sk_test_0123456789",
-      message: "Rejected [redacted]",
-    },
-    { name: "legacy error", status: 400, text: "Rejected sk_test_0123456789", message: "No vendor text." },
-    { name: "JSON contract", status: 200, text: "{broken", tag: "UnreadableBody" },
-    {
-      name: "withheld text",
-      status: 400,
-      format: "text",
-      text: "stored secret not sent",
-      withheld: true,
-      message: "No vendor text.",
-    },
-    {
-      name: "hatch text",
-      status: 200,
-      format: "json-or-text",
-      text: "café sk_test_0123456789",
-      value: "café [redacted]",
-    },
-    { name: "JSON hatch", status: 200, format: "json-or-text", text: '{"ok":true}', value: { ok: true } },
-    { name: "whitespace text", status: 200, format: "json-or-text", text: " \n ", value: " \n " },
-    { name: "declared ceiling", status: 200, format: "text", text: "x", length: "65", tag: "ResponseTooLarge" },
-    {
-      name: "streamed UTF-8",
-      status: 200,
-      format: "text",
-      text: "café sk_test_0123456789",
-      streamed: true,
-      value: "café [redacted]",
-    },
-    {
-      name: "streamed ceiling",
-      status: 200,
-      format: "text",
-      text: "é".repeat(33),
-      streamed: true,
-      tag: "ResponseTooLarge",
-    },
-  ] as const) {
-    const test = row as {
-      name: string;
-      status: number;
-      format?: "text" | "json-or-text";
-      text: string;
-      message?: string;
-      value?: unknown;
-      tag?: string;
-      length?: string;
-      streamed?: boolean;
-      withheld?: boolean;
-    };
-    answers.push(() => {
-      const bytes = new TextEncoder().encode(test.text);
-      const response = new Response(
-        test.streamed
-          ? new ReadableStream({
-              start(controller) {
-                // Split the multi-byte é across chunks, as a native response may.
-                for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
-                controller.close();
-              },
-            })
-          : test.text,
-        { status: test.status, ...(test.length ? { headers: { "content-length": test.length } } : {}) },
-      );
-      response.text = () => {
-        throw new Error("Text contracts must decode bounded bytes, never response.text().");
+it(
+  "INV-5 INV-6: reviewed media bodies keep bounded text and bytes, sent-secret safety and withheld errors",
+  WORKERS,
+  async () => {
+    for (const row of [
+      {
+        name: "text error",
+        status: 400,
+        format: "json-or-text",
+        text: "Rejected sk_test_0123456789",
+        message: "Rejected [redacted]",
+      },
+      { name: "legacy error", status: 400, text: "Rejected sk_test_0123456789", message: "No vendor text." },
+      { name: "JSON contract", status: 200, text: "{broken", tag: "UnreadableBody" },
+      {
+        name: "withheld text",
+        status: 400,
+        format: "text",
+        text: "stored secret not sent",
+        withheld: true,
+        message: "No vendor text.",
+      },
+      {
+        name: "hatch text",
+        status: 200,
+        format: "json-or-text",
+        text: "café sk_test_0123456789",
+        value: "café [redacted]",
+      },
+      { name: "JSON hatch", status: 200, format: "json-or-text", text: '{"ok":true}', value: { ok: true } },
+      { name: "whitespace text", status: 200, format: "json-or-text", text: " \n ", value: " \n " },
+      { name: "declared ceiling", status: 200, format: "text", text: "x", length: "65", tag: "ResponseTooLarge" },
+      {
+        name: "streamed UTF-8",
+        status: 200,
+        format: "text",
+        text: "café sk_test_0123456789",
+        streamed: true,
+        value: "café [redacted]",
+      },
+      {
+        name: "streamed ceiling",
+        status: 200,
+        format: "text",
+        text: "é".repeat(33),
+        streamed: true,
+        tag: "ResponseTooLarge",
+      },
+    ] as const) {
+      const test = row as {
+        name: string;
+        status: number;
+        format?: "text" | "json-or-text";
+        text: string;
+        message?: string;
+        value?: unknown;
+        tag?: string;
+        length?: string;
+        streamed?: boolean;
+        withheld?: boolean;
       };
-      return response;
-    });
-    let hooks = 0;
-    const errors = {
-      ...VENDOR,
-      detail: ({ body }: { body?: unknown }) => (typeof body === "string" ? body : "No vendor text."),
-    };
-    const safety = resultSafety({
-      review: "Fixture text has no stored values.",
-      reviewed: { redact: (value) => value, withholdsErrors: () => test.withheld === true },
-      sensitiveFields: { names: [], choice: "drop" },
-    });
+      answers.push(() => {
+        const bytes = new TextEncoder().encode(test.text);
+        const response = new Response(
+          test.streamed
+            ? new ReadableStream({
+                start(controller) {
+                  // Split the multi-byte é across chunks, as a native response may.
+                  for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
+                  controller.close();
+                },
+              })
+            : test.text,
+          { status: test.status, ...(test.length ? { headers: { "content-length": test.length } } : {}) },
+        );
+        response.text = () => {
+          throw new Error("Text contracts must decode bounded bytes, never response.text().");
+        };
+        return response;
+      });
+      let hooks = 0;
+      const errors = {
+        ...VENDOR,
+        detail: ({ body }: { body?: unknown }) => (typeof body === "string" ? body : "No vendor text."),
+      };
+      const safety = resultSafety({
+        review: "Fixture text has no stored values.",
+        reviewed: { redact: (value) => value, withholdsErrors: () => test.withheld === true },
+        sensitiveFields: { names: [], choice: "drop" },
+      });
+      const connection = connect(
+        {
+          ...ACME_API,
+          ...(test.format
+            ? {
+                textBodies: { review: "Fixture response explicitly permits text.", forResponse: () => test.format },
+              }
+            : {}),
+        },
+        guardedClient(OPTIONS),
+        {
+          errors,
+          safety,
+          result: (body) => {
+            hooks++;
+            return Effect.succeed(body);
+          },
+        },
+      );
+      const result = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+      if (result._tag === "Failure") {
+        expect(result.failure._tag, test.name).toBe(test.tag ?? "StatusFailure");
+        if (test.message !== undefined)
+          expect(
+            toConnectorCallError(result.failure, errors, {
+              classification: "read",
+              dispatches: [],
+              withholds: safety.withholdsErrors,
+            }).message,
+            test.name,
+          ).toBe(test.message);
+        expect(hooks, test.name).toBe(0);
+      } else {
+        expect(test.tag, test.name).toBeUndefined();
+        expect(result.success.data, test.name).toEqual(test.value);
+        expect(hooks, test.name).toBe(1);
+      }
+    }
+    await binaryReplyEvidence();
+  },
+);
+
+async function binaryReplyEvidence() {
+  const safety = resultSafety({
+    review: "Fixture responses contain no stored credentials.",
+    sensitiveFields: { names: [], choice: "drop" },
+  });
+  for (const row of [
+    { declared: true, body: "%PDF", expected: "JVBERg==" },
+    { declared: true, body: "sk_test_0123456789", expected: btoa("[redacted]") },
+    { declared: true, body: "x", length: "65", tag: "ResponseTooLarge" },
+    { declared: true, body: "x".repeat(65), tag: "ResponseTooLarge" },
+    { declared: false, body: "%PDF", tag: "UnreadableBody" },
+  ]) {
+    answers.push(
+      () =>
+        new Response(new TextEncoder().encode(row.body), {
+          headers: { "Content-Type": "application/pdf", ...(row.length ? { "Content-Length": row.length } : {}) },
+        }),
+    );
     const connection = connect(
       {
         ...ACME_API,
-        ...(test.format
+        ...(row.declared
           ? {
-              textBodies: { review: "Fixture response explicitly permits text.", forResponse: () => test.format },
+              binaryBodies: {
+                review: "Reviewed fixture PDF response.",
+                forResponse: (_status: number, _operation: OperationRef, type: string) => type === "application/pdf",
+              },
             }
           : {}),
       },
       guardedClient(OPTIONS),
-      {
-        errors,
-        safety,
-        result: (body) => {
-          hooks++;
-          return Effect.succeed(body);
-        },
-      },
+      { errors: VENDOR, safety },
     );
-    const result = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
-    if (result._tag === "Failure") {
-      expect(result.failure._tag, test.name).toBe(test.tag ?? "StatusFailure");
-      if (test.message !== undefined)
-        expect(
-          toConnectorCallError(result.failure, errors, {
-            classification: "read",
-            dispatches: [],
-            withholds: safety.withholdsErrors,
-          }).message,
-          test.name,
-        ).toBe(test.message);
-      expect(hooks, test.name).toBe(0);
-    } else {
-      expect(test.tag, test.name).toBeUndefined();
-      expect(result.success.data, test.name).toEqual(test.value);
-      expect(hooks, test.name).toBe(1);
+    const outcome = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+    if (outcome._tag === "Failure") expect(outcome.failure._tag).toBe(row.tag);
+    else {
+      expect(row.tag).toBeUndefined();
+      expect(outcome.success.data).toEqual({
+        contentType: "application/pdf",
+        bytes: new TextEncoder().encode(row.body).length,
+        base64: row.expected,
+      });
     }
   }
-});
+}
+
+it(
+  "INV-9: explicit empty forms retain their content type and zero wire bytes without changing other encodings",
+  WORKERS,
+  async () => {
+    const safety = resultSafety({
+      review: "Fixture paths carry no stored values.",
+      sensitiveFields: { names: [], choice: "drop" },
+    });
+    const requests: Array<{ type: string | null; body: BodyInit | null | undefined; bytes: number[] }> = [];
+    globalThis.fetch = (async (_url, init) => {
+      requests.push({
+        type: new Headers(init?.headers).get("content-type"),
+        body: init?.body,
+        bytes: [...new TextEncoder().encode(typeof init?.body === "string" ? init.body : "")],
+      });
+      return Response.json({});
+    }) as typeof fetch;
+    const connection = connect(ACME_API, guardedClient(OPTIONS), { errors: VENDOR, safety });
+    for (const request of [
+      { ...POST_ITEMS, form: {}, emptyForm: true as const },
+      { ...POST_ITEMS, form: {} },
+      { ...POST_ITEMS, json: "{}" },
+      { ...POST_ITEMS, form: { name: "Café" } },
+    ])
+      await runEdge(connection.sendPath(request).pipe(Effect.provideContext(services("write"))));
+    expect(requests).toEqual([
+      { type: "application/x-www-form-urlencoded", body: "", bytes: [] },
+      { type: null, body: undefined, bytes: [] },
+      { type: "application/json", body: "{}", bytes: [123, 125] },
+      {
+        type: "application/x-www-form-urlencoded",
+        body: "name=Caf%C3%A9",
+        bytes: [110, 97, 109, 101, 61, 67, 97, 102, 37, 67, 51, 37, 65, 57],
+      },
+    ]);
+  },
+);
+
+it(
+  "INV-7 INV-9: a vendor stream deadline only tightens the caller's deadline and preserves request bytes",
+  WORKERS,
+  async () => {
+    for (const first of ["vendor", "caller"] as const) {
+      const caller = new AbortController();
+      const reason = new Error("invocation deadline");
+      const requests: Array<{ method: string | undefined; type: string | null; bytes: number[] }> = [];
+      let signal: AbortSignal | null | undefined;
+      globalThis.fetch = (async (_url, init) => {
+        signal = init?.signal;
+        requests.push({
+          method: init?.method,
+          type: new Headers(init?.headers).get("content-type"),
+          bytes: [...new TextEncoder().encode(String(init?.body))],
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([123]));
+              signal!.addEventListener("abort", () => controller.error(signal!.reason), { once: true });
+              if (first === "caller") queueMicrotask(() => caller.abort(reason));
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch;
+      const connection = connect(ACME_API, guardedClient({ ...OPTIONS, timeoutMs: first === "vendor" ? 50 : 60_000 }), {
+        errors: VENDOR,
+        safety: resultSafety({
+          review: "Fixture paths carry no stored values.",
+          sensitiveFields: { names: [], choice: "drop" },
+        }),
+      });
+      const outcome = await runEdge(
+        connection
+          .sendPath({ ...POST_ITEMS, json: '{"name":"Café"}' })
+          .pipe(Effect.result, Effect.provideContext(services("write").pipe(Context.add(Signal, caller.signal)))),
+      );
+      expect(outcome._tag).toBe("Failure");
+      expect(signal?.aborted).toBe(true);
+      expect(caller.signal.aborted).toBe(first === "caller");
+      if (first === "caller") expect(signal?.reason).toBe(reason);
+      expect(requests).toEqual([
+        {
+          method: "POST",
+          type: "application/json",
+          bytes: [123, 34, 110, 97, 109, 101, 34, 58, 34, 67, 97, 102, 195, 169, 34, 125],
+        },
+      ]);
+    }
+  },
+);
 
 function acme(
   options: {
@@ -1110,17 +1254,20 @@ function acme(
     sensitive?: "drop" | "return";
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
+    timeoutMs?: number;
     result?: Parameters<typeof connect>[2]["result"];
+    errors?: VendorErrors;
   } = {},
 ) {
   const guarded = guardedClient({
     ...OPTIONS,
     maxResponseBytes: 4096,
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.refresh ? { authenticate: bearer } : {}),
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
   });
   return connect(ACME_API, options.refresh ? refreshOnce(guarded as never) : guarded, {
-    errors: VENDOR,
+    errors: options.errors ?? VENDOR,
     safety: resultSafety({
       review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
       reviewed: {
@@ -1139,6 +1286,25 @@ function acme(
 }
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
+  it("INV-5: a result hook redacts split rich text through this call's request-secret service", async () => {
+    const secret = "split-credential-value";
+    const secrets = new SentSecrets();
+    secrets.add(secret);
+    const pieces = Array.from({ length: Math.ceil(secret.length / 4) }, (_, i) => secret.slice(i * 4, i * 4 + 4));
+    answers.push(() => Response.json(pieces.map((plain_text) => ({ plain_text, annotation: "unrelated annotation" }))));
+    const connection = acme({
+      result: (body) =>
+        RequestSecrets.use((secrets) =>
+          Effect.succeed({
+            parts: secrets.parts((body as { plain_text: string }[]).map((run) => run.plain_text)),
+          }),
+        ),
+    });
+    const reply = await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+    expect(JSON.stringify(reply.data)).not.toContain("credential");
+    expect(reply.data).not.toEqual({ parts: pieces });
+  });
+
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {
     const rows = [1, 2, 3].map((n) => ({ token: `sk_live_secret_${n}`, owner: { email: "alice@example.com" }, n }));
     answers.push(() => Response.json(rows));
@@ -1837,7 +2003,14 @@ async function through(tool: ApiTool, args: Record<string, unknown>): Promise<{ 
 
 it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch", WORKERS, async () => {
   for (const test of [
-    { name: "read", method: "GET", served: "read", override: false, code: "unavailable", retryable: true },
+    {
+      name: "Breeze read with empty body",
+      method: "GET",
+      served: "read",
+      override: false,
+      code: "unavailable",
+      retryable: true,
+    },
     {
       name: "write",
       method: "POST",
@@ -1864,8 +2037,9 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
     },
   ] as const) {
     sent = [];
-    answers = [() => Response.json({}, { status: 421 })];
-    const connection = acme();
+    answers = [() => new Response(null, { status: 421 })];
+    const breezeRead = test.name === "Breeze read with empty body";
+    const connection = acme({ errors: breezeRead ? breezeErrors : VENDOR });
     const tool = read(connection, {
       name: "misdirected",
       description: "A request answered 421.",
@@ -1890,7 +2064,7 @@ it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch
     expect(error, test.name).toMatchObject({
       code: test.code,
       retryable: test.retryable,
-      message: "Acme returned HTTP 421.",
+      message: breezeRead ? "Breeze request failed (HTTP 421)." : "Acme returned HTTP 421.",
     });
     expect(sent, test.name).toHaveLength(1);
     expect(sent[0]?.method, test.name).toBe(test.method);
@@ -2360,7 +2534,9 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     const scope = {};
     const request = openRequest(scope);
     callView(operationView({ ...context(), requestScope: scope }, undefined), call);
-    const pending = runEdge(acme().sendPath(POST_ITEMS).pipe(Effect.result, Effect.provideContext(call.services)));
+    const pending = runEdge(
+      acme({ timeoutMs: 60_000 }).sendPath(POST_ITEMS).pipe(Effect.result, Effect.provideContext(call.services)),
+    );
     await started;
     (boundary === "call" ? call : request).close();
     expect(transportSignal?.aborted).toBe(true);

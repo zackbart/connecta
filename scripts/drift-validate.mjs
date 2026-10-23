@@ -183,6 +183,8 @@ export function validateCheck(check, recording, version = 1) {
   }
   if (check.type === "endpoints") {
     require(nonempty(check.specification?.url), "endpoint check requires specification URL");
+    require(check.specification.contractAlgorithm === undefined ||
+      check.specification.contractAlgorithm === "ref-graph-v1", "unknown contract digest algorithm");
     require(check.specification.format === undefined ||
       ["openapi", "google-discovery", "readme-operation-pages"].includes(
         check.specification.format,

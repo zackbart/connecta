@@ -1,3 +1,4 @@
+import { contractDigest } from "./drift-contract.mjs";
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
 // Version 2 (decision 0011, D; scripts/drift-record.mjs) reads
@@ -8,7 +9,6 @@
 // Only --record with an explicit --provider selection updates endpoint digests,
 // revisions and latest-published evidence. It never changes pins, check config,
 // or runtime code.
-import { createHash } from "node:crypto";
 import { STALE_AFTER_DAYS, serializeDrift } from "./drift-record.mjs";
 import {
   DRIFT_VERSION,
@@ -53,7 +53,6 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * here too, but not ignored: it is recorded as its own field on the manifest
  * row so the check can report the transition rather than the state.
  */
-const PROSE_KEYS = new Set(["description", "summary", "example", "examples", "externalDocs", "title", "deprecated"]);
 
 function usage(message) {
   if (message) console.error(`drift:check: ${message}`);
@@ -423,94 +422,6 @@ function validateOpenApi(provider, document) {
   return document;
 }
 
-/** Follow a local JSON pointer; anything else stays a reference. */
-function pointer(document, ref) {
-  if (!ref.startsWith("#/")) return undefined;
-  let node = document;
-  for (const raw of ref.slice(2).split("/")) {
-    const key = decodeURIComponent(raw.replace(/~1/g, "/").replace(/~0/g, "~"));
-    if (node === null || typeof node !== "object") return undefined;
-    node = node[key];
-  }
-  return node;
-}
-
-/**
- * Inline the operation's local `$ref`s and drop prose.
- *
- * Both providers keep their real request and response shapes in shared
- * components, so an unresolved reference would make the digest blind to exactly
- * the changes it exists to catch. A reference already on the resolution stack —
- * a block that contains blocks, a schema that contains itself — is left as a
- * reference: that is a cycle, not a contract, and the alternative is a
- * traversal that never ends.
- */
-function inline(document, value, stack = []) {
-  if (Array.isArray(value)) {
-    return value.map((item) => inline(document, item, stack));
-  }
-  if (value === null || typeof value !== "object") return value;
-  const ref = value.$ref;
-  if (typeof ref === "string") {
-    if (stack.includes(ref)) return { $ref: ref };
-    const target = pointer(document, ref);
-    if (target === undefined) return { $ref: ref };
-    const rest = { ...value };
-    delete rest.$ref;
-    return {
-      ...inline(document, target, [...stack, ref]),
-      ...inline(document, rest, stack),
-    };
-  }
-  const out = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (PROSE_KEYS.has(key) || key.startsWith("x-")) continue;
-    if (item === undefined) continue;
-    out[key] = inline(document, item, stack);
-  }
-  return out;
-}
-
-/** Deterministic JSON: sorted keys, so key order is not a contract change. */
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([key, item]) => [key, canonicalize(item)]),
-  );
-}
-
-/**
- * Digest one operation's contract: what a caller may send, and what a
- * successful call returns. Failure responses are excluded — an error body is
- * H11's business, mapped from the status, not from a schema — and so is prose.
- *
- * Each response is inlined *before* its `content` is read. A whole response
- * object is frequently a reference — Cloudflare writes several of the ones
- * connecta touches as `{"$ref": "#/components/responses/…"}` — and a reference
- * has no `content` key of its own, so reading through it first would digest the
- * entire response contract as `null` and go blind to exactly what it watches.
- */
-function contractDigest(document, operation) {
-  const successes = Object.fromEntries(
-    Object.entries(operation.responses ?? {})
-      .filter(([status]) => status.startsWith("2"))
-      .map(([status, response]) => {
-        const resolved = inline(document, response ?? null);
-        return [status, resolved?.content ?? null];
-      }),
-  );
-  const contract = canonicalize({
-    parameters: inline(document, operation.parameters ?? null),
-    requestBody: inline(document, operation.requestBody ?? null),
-    responses: successes,
-  });
-  return `sha256:${createHash("sha256").update(JSON.stringify(contract)).digest("hex")}`;
-}
-
 function operationFor(document, endpoint) {
   const item = document.paths?.[endpoint.path];
   if (!item) return { missing: "path" };
@@ -572,6 +483,7 @@ function checkSpecProvider(provider, manifest, specification) {
   const { findings, recorded } = checkEndpoints(manifest.endpoints, () => ({
     document: specification.document,
     revision,
+    contractAlgorithm: manifest.specification?.contractAlgorithm,
   }));
   return {
     provider,
@@ -595,7 +507,7 @@ function checkEndpoints(endpoints, documentFor) {
       path: endpoint.path,
       specRevision: endpoint.specRevision,
     };
-    const { document, path = endpoint.path, revision } = documentFor(endpoint);
+    const { document, path = endpoint.path, revision, contractAlgorithm } = documentFor(endpoint);
     if (!document) {
       recorded.push(endpoint);
       continue;
@@ -616,7 +528,7 @@ function checkEndpoints(endpoints, documentFor) {
       recorded.push(endpoint);
       continue;
     }
-    const digest = contractDigest(document, operation);
+    const digest = contractDigest(document, operation, contractAlgorithm);
     // The finding is the *transition*, not the state. A deprecation a
     // maintainer has already read and recorded is not news on every subsequent
     // release, and a check that can never reach its own "no drift" state is a

@@ -27,9 +27,9 @@ const SENTENCE =
   "The write was sent before Tickets rejected its credential, so whether it took effect is unknown: check the target before repeating it.";
 const RECONCILE = "re-read the target of the write that failed to check whether it took effect before any fresh call";
 
-// Kit providers (Tithe.ly) send writes through the owned transport listen() installs on Node.
+// Kit providers send writes through the owned transport listen() installs on Node.
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
 });
 
 afterEach(() => {
@@ -702,7 +702,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
     expect(stalled.answered).toHaveBeenCalledTimes(1);
   });
 
-  it("INV-9: the reviewed exception stands at the deadline: a declared Stripe 401 stays the invocation's timeout", async () => {
+  it("INV-9: a declared Stripe 401 with a stalled body keeps its auth code and unknown outcome at the deadline", async () => {
     const stalled = stalledStripe({ "request-id": "req_1" });
     const meta = createMetaTools(await registryFor(billing(), { value: "sk_test_fixture" }), BASE);
     const result = await meta.callDestructiveTool({
@@ -711,10 +711,15 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
       timeoutMs: 100,
     });
     stalled.release();
+    // The kit retains the answered status when reading its error body is
+    // interrupted. The legacy path reported the invocation's timeout; both
+    // keep this write unknown, nonretryable, and sent once.
     expect((result.structuredContent as { error: CallErrorDetails }).error).toMatchObject({
-      code: "write_outcome_unknown",
+      code: "auth_required",
       retryable: false,
+      writeOutcome: "unknown",
     });
+    expect(stalled.answered).toHaveBeenCalledTimes(1);
   });
 
   it("INV-9: a served write its caller cancels after an undeclared 401 keeps Q8", async () => {
