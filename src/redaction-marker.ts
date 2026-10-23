@@ -15,10 +15,21 @@ export function redactionAltered(value: unknown): boolean {
   return typeof value === "string" && value.includes(REDACTED);
 }
 
-/** A letter, a digit or a `%` escape: what any credential's remainder holds. */
-function readableUnit(code: number): boolean {
+/**
+ * A credential's data: the base64 and base64url alphabets (letters, digits, `+`, `/`, `=`, `-`,
+ * `_`) and `%` escapes. A remainder of `+/` alone is still the end of a base64 value.
+ */
+function credentialUnit(code: number): boolean {
   return (
-    (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a) || code === 0x25
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code === 0x2b ||
+    code === 0x2f ||
+    code === 0x3d ||
+    code === 0x2d ||
+    code === 0x5f ||
+    code === 0x25
   );
 }
 
@@ -27,8 +38,9 @@ function readableUnit(code: number): boolean {
  * prefix redaction took (#703): up to the first unit `ends` accepts, reading later placeholders
  * whole so none is split. Redaction can take `sk_live_`, `whsec_`, `Bearer `, or a signing
  * parameter's name and `=`, leaving what follows; with that prefix known, any remainder rebuilds
- * the credential, however short or encoded, so `readable` holds whenever it carries a letter, a
- * digit or a `%` escape. Punctuation alone carries none. One forward pass over the run.
+ * the credential, however short or encoded, so `readable` holds whenever it carries any base64 or
+ * base64url character or a `%` escape. Other punctuation alone (`.`, `,`, `;`, `!`) is no
+ * credential's data. The run still ends where `ends` says a value does. One forward pass.
  */
 export function splitRemainder(
   text: string,
@@ -42,7 +54,7 @@ export function splitRemainder(
     if (text.startsWith(REDACTED, end)) end += REDACTED.length;
     else if (ends(text, end)) break;
     else {
-      readable ||= readableUnit(text.charCodeAt(end));
+      readable ||= credentialUnit(text.charCodeAt(end));
       end++;
     }
   }

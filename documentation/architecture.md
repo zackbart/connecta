@@ -1444,16 +1444,19 @@ every vendor ships one reviewed table through one mechanism
    parameter's name and `=`) and leave its remainder, which with the prefix
    known rebuilds the credential however short or encoded it is. Wherever
    signing parameters are scanned, a placeholder followed by any of a value's
-   letters, digits or `%` escapes is withheld with them through the end of the
-   value (`splitRemainder`), and a value's end never splits a placeholder. In
-   reviewed links, a query component that carries the placeholder and has no
-   readable name withholds the query. What stays visible cannot complete a
-   credential: punctuation alone after a placeholder, and text past a value's
-   end (whitespace, a quote, an angle bracket, `&`, `#`, `)`, `]`, a backtick
-   or a backslash), which belongs to another parameter decided by its own
-   name. A signing value written as numeric character references outside a
-   reviewed link is withheld by no rule, collision or not, since the signing
-   scan ends a value at `&`. Value safety's own
+   base64 or base64url characters (letters, digits, `+`, `/`, `=`, `-`, `_`)
+   or `%` escapes is withheld with them through the end of the value
+   (`splitRemainder`), so a tail of `+/` alone goes too, and a value's end
+   never splits a placeholder. In reviewed links, a query component that
+   carries the placeholder and has no readable name withholds the query. What
+   stays visible cannot complete a credential: other punctuation alone after a
+   placeholder (`.`, `,`, `;`, `!`), which no base64 value contains, and text
+   past a value's end (whitespace, a quote, an angle bracket, `&`, `#`, `)`,
+   `]`, a backtick or a backslash), which belongs to another parameter decided
+   by its own name. A signing value written as numeric character references
+   outside a reviewed link is withheld by no rule, collision or not, since the
+   signing scan ends a value at `&`; that is a separate gap in the signing
+   scan, unchanged here. Value safety's own
    placeholders are not alterations: `@keys` map keys, a withheld value right
    after `=`, and a withheld `#[redacted]` fragment. More is withheld only
    when a private value occurs in a decision input, and then deliberately:

@@ -591,6 +591,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         "c4e1a7d3f9b5208e6a1c7d3f9b5e2a8c4f0d6b2e8a4c1f7d3b9e5a2c8f4d0b6e",
       ];
       const token = "sk_live_A7vJp9nR-2tW6qK8c-M4zX1sF5-hL3dB0uY";
+      // Base64 values whose known prefix a private value takes, leaving only `+/` or `-_` data.
+      const [plus, url] = ["QUJD".repeat(20), "QkNE".repeat(20)];
       const encode = (text: string, form: (code: number) => string) => Array.from(text, (c) => form(c.charCodeAt(0))).join("");
       const altering = [
         "TOKE",
@@ -605,7 +607,14 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       ];
       const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok", "secret=whsec_"] : [];
       const signing = table.embeddedUrls
-        ? ["Signatur", "X-Goog-Credential=", "X-Amz-Security-Token=", `X-Goog-Signature=${tailHex.slice(0, -7)}`]
+        ? [
+            "Signatur",
+            "X-Goog-Credential=",
+            "X-Amz-Security-Token=",
+            `X-Goog-Signature=${tailHex.slice(0, -7)}`,
+            `X-Amz-Security-Token=${plus}`,
+            `X-Goog-Security-Token=${url}`,
+          ]
         : [];
       const all = [short, long, ...altering, ...resources, ...signing];
       const pins = {
@@ -660,6 +669,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
               split: "get http://bucket.storage.example/f?X-Goog-Credential=VENDOR_HELD_GOOG now",
               encoded: `get http://bucket.storage.example/f?X-Amz-Security-Token=${encode(hex, (code) => `%${code.toString(16)}`)} now`,
               tail: `get http://bucket.storage.example/f?X-Goog-Signature=${tailHex} now`,
+              symbols: `diagnostic X-Amz-Security-Token=${plus}+/+/+/+/ now`,
+              safe: `diagnostic X-Goog-Security-Token=${url}-_-_-_-_ now`,
             }
           : {}),
       };
@@ -682,7 +693,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           .replace(/%([0-9a-f]{2})/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
           .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
         expect(shown.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
-        for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7)]) expect(shown, text).not.toContain(held);
+        for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7), "+/+/+/+/", "-_-_-_-_"])
+          expect(shown, text).not.toContain(held);
         expect(text).not.toContain(long);
         expect(text).not.toMatch(/\\?"ecre\\?"/);
       };

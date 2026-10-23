@@ -823,7 +823,8 @@ function valueEnd(text: string, at: number): number {
  * Where the next placeholder that may hide a signing parameter starts, at or
  * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
  * `=`, and the start of its value, so a placeholder followed by any of a
- * value's letters, digits or `%` escapes goes with them, however short. One
+ * value's base64 or base64url characters (`+`, `/`, `=`, `-`, `_` included)
+ * or `%` escapes goes with them, however short. One
  * inside a name ending at an encoded `=` (`&#61;`, `\u003d`) gives that
  * value's start. A placeholder right after an `=` with nothing readable after
  * it is a withheld value. Each placeholder is read once, resuming after its run.
