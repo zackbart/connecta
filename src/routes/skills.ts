@@ -1,5 +1,5 @@
 import { ProtocolError, type McpServer } from "@modelcontextprotocol/server";
-import { z } from "zod";
+import * as z from "zod";
 import { ConnectorCallError } from "../errors.js";
 import { SkillsRegistry, type SkillsRegistryOptions } from "../skills.js";
 import type { RegistryView } from "../registry.js";
