@@ -31,15 +31,25 @@
 // Residual risk: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 //
+// Sent-secret redaction runs first, in the provider kit's parse pass, so a
+// rule that decides on a value can find the placeholder where the vendor
+// wrote what the rule matches. Every such decision input fails closed
+// (#703): an altered type discriminator applies every resource rule; an
+// altered label or type makes a secret record or a header rule; an altered
+// URL scheme or parameter name withholds the whole URL or its value; an
+// altered key withholds its value; a placeholder that may stand for a
+// credential's public prefix withholds the remainder after it.
+//
 // The key-name rules combine Cloudflare's and Vercel's former engines.
 // URL policy and exemptions are reviewed per vendor in its table (`keep`,
 // `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
 import { ConnectorCallError } from "../../../errors.js";
+import { REDACTED, redactionAltered, splitRemainder } from "../../../redaction-marker.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
-/** What a removed secret reads as. */
-export const REDACTED = "[redacted]";
+/** What a removed secret reads as: the placeholder sent-secret redaction writes too. */
+export { REDACTED };
 
 /** Credential vocabulary over normalized names, matched anywhere; mirrors `scripts/value-safety.mjs`. */
 export const CREDENTIAL_WORDS = [
@@ -137,6 +147,8 @@ const LABELLED_VALUE_FIELDS = [...ENV_VALUE_FIELDS, "args", "text"];
 const URL_PARAM_CONTAINS = /token|secret|password|passwd|signature|^sig$|key|auth|code|jwt|credential|bypass/i;
 const URL_PARAM_SUFFIX = /(token|secret|password|passphrase|key|signature|sig|credential|auth|authorization|jwt)$/;
 const URL_SHAPE = /^[a-z][a-z0-9+.-]*:\/\//i;
+/** What makes a string text rather than one whole URL: whitespace, quotes, escapes, entities, Markdown. */
+const TEXT = /[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i;
 /** The fields of a header, cookie, or query rule that hold the matched or set value. */
 const HEADER_RULE_VALUES = ["value", "values", "args"];
 /** Keys whose absolute URL is a route or redirect destination. */
@@ -349,6 +361,54 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** A rule's test over one decision input; an input redaction altered passes it (#703). */
+function decides(input: unknown, test: (input: string) => boolean): boolean {
+  return typeof input === "string" && (redactionAltered(input) || test(input));
+}
+
+/** Value safety's own `@keys` placeholders, which no redaction of a vendor's key wrote. */
+const PLACEHOLDER_KEYS = new WeakSet<object>();
+
+/**
+ * Whether redaction altered one of a record's keys, so no key-based decision
+ * about it can be read (#703). Parsed JSON keeps its keys; text the kit
+ * redacted whole and a result hook parsed after it (NDJSON, log streams) can
+ * carry the placeholder in one.
+ */
+function keysAltered(value: JsonRecord): boolean {
+  return !PLACEHOLDER_KEYS.has(value) && Object.keys(value).some(redactionAltered);
+}
+
+/** What may come before a URL's first placeholder when redaction took part of its scheme or authority. */
+const SCHEME_PREFIX = /^(?:[a-z][a-z0-9+.-]*(?::\/{0,2})?)?$/i;
+
+/**
+ * Whether redaction altered the scheme a whole-string URL decision reads
+ * (#703): the text is no longer URL-shaped, everything before its first
+ * placeholder could begin a URL, and more than placeholders follows it. A
+ * URL a vendor sends holds no whitespace.
+ */
+function alteredScheme(text: string): boolean {
+  if (!redactionAltered(text) || URL_SHAPE.test(text) || /\s/.test(text)) return false;
+  const at = text.indexOf(REDACTED);
+  return SCHEME_PREFIX.test(text.slice(0, at)) && text.slice(at).replaceAll(REDACTED, "") !== "";
+}
+
+/**
+ * Every place a parameter name can sit in a URL's path, query, or fragment:
+ * each run before an `=` since the last `/`, `?`, `&`, `#`, `;`, or `=`. A
+ * name redaction altered, or a separator it took, leaves the placeholder in
+ * one of them.
+ */
+function parameterNames(text: string): string[] {
+  return text.split(/[/?&#;]/).flatMap((part) => part.split("=").slice(0, -1));
+}
+
+/** Whether a fragment carries a placeholder other than the one value safety writes for a withheld fragment. */
+function alteredFragment(fragment: string): boolean {
+  return redactionAltered(fragment) && fragment !== REDACTED;
+}
+
 /** A URL without userinfo, credential query parameters, or a credential-looking fragment; anything unparseable is withheld. */
 function sanitizeUrl(value: string, credentials = true): string {
   let url: URL;
@@ -514,6 +574,22 @@ function endsValue(text: string, at: number): boolean {
   return code === 0x5c && text.charCodeAt(at + 1) !== 0x2f;
 }
 
+/**
+ * Where a word at `start` holds a placeholder in place of a link's scheme
+ * and host (`[redacted]/pkg?token=…`, `https:[redacted]…`), or `-1`:
+ * redaction took the authority that makes text a link (#703). A Markdown
+ * label (`[redacted](…)`) is not one; its destination is read as a link.
+ */
+function markerLed(text: string, start: number): number {
+  let at = start;
+  while (at < text.length && at - start <= MAX_SCHEME + 3 && /[a-z0-9+.:/-]/i.test(text[at]!)) at++;
+  return text.startsWith(REDACTED, at) &&
+    text[at + REDACTED.length] !== "(" &&
+    SCHEME_PREFIX.test(text.slice(start, at))
+    ? at
+    : -1;
+}
+
 /** The authority immediately after a destination's scheme and slashes, however escaped. */
 function destinationHost(text: string, start: number): number | undefined {
   // A scheme and three escaped characters (colon and slashes), each bounded
@@ -550,6 +626,13 @@ interface LinkSpan {
   end: number;
 }
 
+interface Link extends LinkSpan {
+  /** Where the link begins: its scheme, its `//`, or its Markdown destination. */
+  start: number;
+  /** Where its authority begins, or its destination when it has none. */
+  host: number;
+}
+
 /**
  * Read a destination once. Admission ends at its actual CommonMark close,
  * counting balanced and escaped parentheses, before inspecting its query.
@@ -584,10 +667,26 @@ function linkSpan(text: string, start: number, host: number, inline: boolean): L
   return { cut, open, end };
 }
 
-/** Visit each destination once, respecting its CommonMark close and encoded delimiters. */
-function* linkSpans(text: string): Generator<LinkSpan> {
+/**
+ * Visit each destination once, respecting its CommonMark close and encoded
+ * delimiters. Redaction (`failClosed`) also reads a link whose scheme and
+ * host redaction took (#703); admission never does.
+ */
+function* linkSpans(text: string, failClosed = false): Generator<Link> {
+  const markers = failClosed && redactionAltered(text);
   for (let at = 0; at < text.length; at++) {
     const char = text[at]!;
+    const marker = markers && (at === 0 || OPENS_LINK.test(text[at - 1]!)) ? markerLed(text, at) : -1;
+    if (marker >= 0) {
+      // A placeholder opening a word stands where a link's scheme and host may have been.
+      // Its run is read once, query or not, and the scan resumes after it.
+      const host = marker + REDACTED.length;
+      const span = linkSpan(text, host, host, false);
+      const start = at;
+      at = Math.max(at, span.end - 1);
+      yield { ...span, start, host };
+      continue;
+    }
     if (char === "]" && text[at + 1] === "(") {
       const destination = markdownStart(text, at + 2);
       if (destination !== undefined) {
@@ -596,7 +695,7 @@ function* linkSpans(text: string): Generator<LinkSpan> {
         const host = destinationHost(text, start) ?? start;
         const span = linkSpan(text, start, host, !angle);
         at = Math.max(destination, span.end) - 1;
-        yield span;
+        yield { ...span, start, host };
         continue;
       }
     }
@@ -607,9 +706,11 @@ function* linkSpans(text: string): Generator<LinkSpan> {
         SLASH.lastIndex = next;
         if (SLASH.test(text)) {
           const authority = SLASH.lastIndex;
+          const begin = authorityAt(text, authority);
           const span = linkSpan(text, authority, authority, false);
+          const start = begin >= 0 ? begin : at;
           at = span.end - 1;
-          yield span;
+          yield { ...span, start, host: authority };
         }
       }
     }
@@ -628,7 +729,11 @@ function credentialQuery(text: string): boolean {
     decoded = next;
   }
   const fragment = decoded.indexOf("#");
-  if (fragment >= 0 && /token|secret|key|code|auth/i.test(decodeLinkText(decoded.slice(fragment + 1)))) return true;
+  if (fragment >= 0) {
+    const words = decodeLinkText(decoded.slice(fragment + 1));
+    // A fragment redaction altered cannot be read (#703).
+    if (/token|secret|key|code|auth/i.test(words) || alteredFragment(words)) return true;
+  }
   const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
   for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
     const next = query.indexOf("&", at);
@@ -636,6 +741,9 @@ function credentialQuery(text: string): boolean {
     const pair = decodeLinkText(query.slice(at, end));
     const equals = pair.indexOf("=");
     at = end + 1;
+    // A component redaction altered with no readable name (its name, or its `=`, taken) may be a
+    // credential parameter's value, however encoded (#703).
+    if (pair !== REDACTED && redactionAltered(equals < 0 ? pair : pair.slice(0, equals))) return true;
     if (equals < 0) continue;
     const name = pair.slice(0, equals);
     if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
@@ -648,40 +756,99 @@ function credentialQuery(text: string): boolean {
 function withholdLinkQueries(text: string): string {
   let out = "";
   let copied = 0;
-  for (const { cut, open, end } of linkSpans(text)) {
-    if (cut < 0) continue;
-    if (!credentialQuery(text.slice(cut, end))) continue;
+  for (const { cut, open, end, start, host } of linkSpans(text, true)) {
+    // A parameter name redaction altered cannot be read, so the whole link goes (#703).
+    const whole = alteredLink(text.slice(host, end));
+    if (!whole && (cut < 0 || !credentialQuery(text.slice(cut, end)))) continue;
+    const from = Math.max(whole ? start : cut, copied);
     let keep = end;
-    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) {
+    while (keep > from + 1 && TRAILING.test(text[keep - 1]!)) {
       // A signing pass may already have replaced the final parameter. Its
       // closing bracket belongs to the value, not the surrounding Markdown.
       if (text.endsWith(REDACTED, keep)) break;
       keep--;
     }
     // A query with nothing in it.
-    if (keep <= cut + 1) continue;
-    out += `${text.slice(copied, cut)}${open}${REDACTED}`;
+    if (keep <= from + 1) continue;
+    out += `${text.slice(copied, from)}${whole ? "" : open}${REDACTED}`;
     copied = keep;
   }
   return copied === 0 ? text : out + text.slice(copied);
+}
+
+/** Whether redaction altered a parameter name in a link's own path, query, or fragment (#703). */
+function alteredLink(link: string): boolean {
+  return redactionAltered(link) && parameterNames(decodeLinkText(link)).some(redactionAltered);
 }
 
 function withholdSigningParams(anchored: string): string {
   let out = "";
   let copied = 0;
   SIGNING_PARAM.lastIndex = 0;
-  for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
-    const start = match.index + match[0].length;
+  let signing = SIGNING_PARAM.exec(anchored);
+  let altered = alteredParameter(anchored, 0);
+  while (signing || altered >= 0) {
+    const named = signing ? signing.index + signing[0].length : -1;
+    const start = altered >= 0 && (named < 0 || altered < named) ? altered : named;
     // Skip an existing complete placeholder, but still remove any suffix.
     const already = anchored.startsWith(REDACTED, start);
-    let end = already ? start + REDACTED.length : start;
-    while (end < anchored.length && !endsValue(anchored, end)) end++;
+    const end = valueEnd(anchored, already ? start + REDACTED.length : start);
+    // Resume both scans after this value, as one scan would.
     SIGNING_PARAM.lastIndex = end;
+    if (named >= 0 && named <= end) signing = SIGNING_PARAM.exec(anchored);
+    if (altered >= 0 && altered <= end) altered = alteredParameter(anchored, end);
     if (end === start || (already && end === start + REDACTED.length)) continue;
     out += `${anchored.slice(copied, start)}${REDACTED}`;
     copied = end;
   }
   return copied === 0 ? anchored : out + anchored.slice(copied);
+}
+
+/** An `=`, plain or encoded, as a signing parameter's name ends with one. */
+const EQUALS = /=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d/iy;
+const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)$/i;
+const NAME_CHAR = /[\w.~-]/;
+
+/** Where a parameter's value ends: at `endsValue`, reading every placeholder in it whole (#703). */
+function valueEnd(text: string, at: number): number {
+  while (at < text.length) {
+    if (text.startsWith(REDACTED, at)) at += REDACTED.length;
+    else if (endsValue(text, at)) break;
+    else at++;
+  }
+  return at;
+}
+
+/**
+ * Where the next placeholder that may hide a signing parameter starts, at or
+ * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
+ * `=`, and the start of its value, so a placeholder followed by any of a
+ * value's base64 or base64url characters (`+`, `/`, `=`, `-`, `_` included)
+ * or `%` escapes goes with them, however short. One
+ * inside a name ending at an encoded `=` (`&#61;`, `\u003d`) gives that
+ * value's start. A placeholder right after an `=` with nothing readable after
+ * it is a withheld value. Each placeholder is read once, resuming after its run.
+ */
+function alteredParameter(text: string, from: number): number {
+  for (let at = text.indexOf(REDACTED, from); at >= 0;) {
+    const tail = splitRemainder(text, at, endsValue);
+    if (tail.readable) return at;
+    let end = at;
+    while (end < tail.end) {
+      if (text.startsWith(REDACTED, end)) end += REDACTED.length;
+      else if (NAME_CHAR.test(text[end]!)) end++;
+      else break;
+    }
+    EQUALS.lastIndex = end;
+    if (
+      redactionAltered(text.slice(at, end)) &&
+      !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) &&
+      EQUALS.test(text)
+    )
+      return EQUALS.lastIndex;
+    at = text.indexOf(REDACTED, Math.max(tail.end, at + REDACTED.length));
+  }
+  return -1;
 }
 
 /**
@@ -868,26 +1035,60 @@ function labelsOf(value: JsonRecord): string[] {
   return labels;
 }
 
-/** Whether a record's label names a credential, so its value or args are one. */
+/**
+ * Whether a record's label names a credential, so its value or args are one.
+ * A label redaction altered, or keys that may hide one, does too (#703).
+ */
 function credentialLabelled(value: unknown): boolean {
-  return isRecord(value) && labelsOf(value).some(credentialName);
+  if (!isRecord(value)) return false;
+  const target = value["target"];
+  return (
+    keysAltered(value) ||
+    (isRecord(target) && keysAltered(target)) ||
+    labelsOf(value).some((label) => decides(label, credentialName))
+  );
 }
 
-/** A header, cookie, or query rule (`request.headers`, `header`, `cookie`, `query`, …). */
+/** A record typed as a secret (`secret_text`); a type redaction altered may have been one (#703). */
+function typedSecret(value: JsonRecord): boolean {
+  return keysAltered(value) || decides(value["type"], (type) => /secret/i.test(type));
+}
+
+/** A list item typed as an environment variable; a type redaction altered may have been one (#703). */
+function envTyped(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return keysAltered(value) || decides(String(value["type"]), (type) => /env/i.test(type));
+}
+
+/** A header, cookie, or query rule (`request.headers`, `header`, `cookie`, `query`, …); likewise (#703). */
 function headerLike(value: unknown): boolean {
-  return isRecord(value) && typeof value["type"] === "string" && /header|cookie|query/i.test(value["type"]);
+  return isRecord(value) && (keysAltered(value) || decides(value["type"], (type) => /header|cookie|query/i.test(type)));
 }
 
 /** A route-like object: its `headers` are set on requests or responses. */
 function routeLike(value: JsonRecord): boolean {
-  return ["src", "source", "dest", "destination"].some((key) => key in value);
+  return keysAltered(value) || ["src", "source", "dest", "destination"].some((key) => key in value);
 }
 
 /** Every value of a headers map, or of a list of `{ key, value }` header pairs, withheld. */
 function headerValues(value: unknown): unknown {
   if (isRecord(value)) return Object.fromEntries(Object.keys(value).map((name) => [name, REDACTED]));
   if (Array.isArray(value)) {
-    return value.map((item) => (isRecord(item) && "value" in item ? { ...item, value: REDACTED } : item));
+    // A pair whose keys redaction altered may hold its value under any of them (#703).
+    return value.map((item) =>
+      !isRecord(item)
+        ? item
+        : keysAltered(item)
+          ? Object.fromEntries(
+              Object.entries(item).map(([key, entry]) => [
+                key,
+                key === "value" || redactionAltered(key) ? withheld(entry) : entry,
+              ]),
+            )
+          : "value" in item
+            ? { ...item, value: REDACTED }
+            : item,
+    );
   }
   return value;
 }
@@ -955,7 +1156,7 @@ function applyPath(body: unknown, raw: string, transform?: (value: unknown) => u
     if (segment === "[]" || segment === "[?env]" || segment === "[?credential]" || segment === "[?header]") {
       if (!Array.isArray(current)) return current;
       return current.map((item) => {
-        if (segment === "[?env]" && !/env/i.test(String(isRecord(item) ? item["type"] : ""))) return item;
+        if (segment === "[?env]" && !envTyped(item)) return item;
         if (segment === "[?credential]" && !credentialLabelled(item)) return item;
         if (segment === "[?header]" && !headerLike(item)) return item;
         return step(item, index + 1);
@@ -969,7 +1170,11 @@ function applyPath(body: unknown, raw: string, transform?: (value: unknown) => u
     }
     if (segment === "@keys") {
       if (!isRecord(current)) return current;
-      return Object.fromEntries(Object.values(current).map((item, position) => [`${REDACTED} ${position + 1}`, item]));
+      const keyed = Object.fromEntries(
+        Object.values(current).map((item, position) => [`${REDACTED} ${position + 1}`, item]),
+      );
+      PLACEHOLDER_KEYS.add(keyed);
+      return keyed;
     }
     if (!isRecord(current) || !Object.hasOwn(current, segment)) return current;
     return { ...current, [segment]: step(current[segment], index + 1) };
@@ -996,7 +1201,10 @@ function matches(paths: readonly string[][], trail: readonly string[]): boolean 
 function scrubEnv(value: unknown, depth: number): unknown {
   if (depth > 32) return REDACTED;
   if (Array.isArray(value)) {
-    return value.map((item) => (typeof item === "string" && item.includes("=") ? REDACTED : scrubEnv(item, depth + 1)));
+    // A `NAME=value` string, or one whose name and `=` redaction may have taken (#703).
+    return value.map((item) =>
+      typeof item === "string" && (item.includes("=") || redactionAltered(item)) ? REDACTED : scrubEnv(item, depth + 1),
+    );
   }
   if (!isRecord(value)) return value;
   const entries = Object.entries(value);
@@ -1031,6 +1239,40 @@ function scrubValues(value: unknown, depth: number): unknown {
   return out;
 }
 
+/** Every rule's paths and withheld fields: the rule for an object whose type redaction altered (#703). */
+const ANY_RULE = new WeakMap<ResourceRules, ResourceRule>();
+function anyRule(resources: ResourceRules): ResourceRule {
+  let rule = ANY_RULE.get(resources);
+  if (!rule) {
+    const paths = Object.values(resources.rules).flatMap((each) => [...(each.paths ?? []), ...(each.withheld ?? [])]);
+    rule = { reason: "A type redaction altered may be any reviewed resource.", paths: [...new Set(paths)] };
+    ANY_RULE.set(resources, rule);
+  }
+  return rule;
+}
+
+/**
+ * What a record's type discriminator selects. A type redaction altered, or
+ * one an altered key may hide, selects every rule at once (#703).
+ */
+function typed<T>(record: JsonRecord, key: string, rules: Readonly<Record<string, T>>, any: () => T): T | undefined {
+  const type = record[key];
+  if (redactionAltered(type) || (type === undefined && keysAltered(record))) return any();
+  return typeof type === "string" && Object.hasOwn(rules, type) ? rules[type] : undefined;
+}
+
+/** What the discriminator of the object an event carries (`data.object`) selects, for its partial copies. */
+function typedInner<T>(
+  record: JsonRecord,
+  key: string,
+  rules: Readonly<Record<string, T>>,
+  any: () => T,
+): T | undefined {
+  const inner = record[key];
+  if (isRecord(inner)) return typed(inner, key, rules, any);
+  return inner === undefined && keysAltered(record) ? any() : undefined;
+}
+
 /**
  * Apply resource rules to every discriminated object in a body, innermost
  * first, and to the partial copies events carry beside one. Records the
@@ -1048,11 +1290,9 @@ function resourcePass(
   let out: JsonRecord = Object.fromEntries(
     Object.entries(value).map(([key, item]) => [key, resourcePass(item, resources, verbatim, depth + 1)]),
   );
-  const ruleFor = (type: unknown): ResourceRule | undefined =>
-    typeof type === "string" && Object.hasOwn(resources.rules, type) ? resources.rules[type] : undefined;
+  const any = () => anyRule(resources);
   // An event's `previous_attributes` is a partial copy of `data.object`: every reviewed path applies to it.
-  const inner = out[resources.key];
-  const innerRule = isRecord(inner) ? ruleFor(inner[resources.key]) : undefined;
+  const innerRule = typedInner(value, resources.key, resources.rules, any);
   if (innerRule) {
     for (const partial of resources.partials ?? []) {
       let copy = out[partial];
@@ -1061,7 +1301,7 @@ function resourcePass(
       out = { ...out, [partial]: copy };
     }
   }
-  const rule = ruleFor(out[resources.key]);
+  const rule = typed(value, resources.key, resources.rules, any);
   if (!rule) return out;
   for (const path of rule.paths ?? []) out = applyPath(out, path) as JsonRecord;
   if (rule.guest && !guestOnly(out, rule.guest)) {
@@ -1097,21 +1337,29 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
       // Reviewed vendors already scanned signing names and selected text;
       // generic names in customer data must retain their original bytes.
       if (!exempt.reviewedUrls) return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
-      const whole = URL_SHAPE.test(current) && !/[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i.test(current);
-      return whole ? sanitizeUrl(current, false) : current;
+      // A placeholder's own brackets are not Markdown; a URL whose scheme redaction
+      // altered may still carry userinfo, so it is withheld whole (#703).
+      const altered = redactionAltered(current);
+      if (TEXT.test(altered ? current.replaceAll(REDACTED, "") : current)) return current;
+      if (altered && alteredScheme(current)) return REDACTED;
+      return URL_SHAPE.test(current) ? sanitizeUrl(current, false) : current;
     }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));
     if (!isRecord(current)) return current;
-    const labelled =
-      credentialLabelled(current) || (typeof current["type"] === "string" && /secret/i.test(current["type"]));
-    const destination = parent === "delivery" || "endpoint" in current || "deliveryFormat" in current;
+    const labelled = credentialLabelled(current) || typedSecret(current);
+    const placeholders = PLACEHOLDER_KEYS.has(current);
+    const destination =
+      parent === "delivery" || "endpoint" in current || "deliveryFormat" in current || keysAltered(current);
     const out: JsonRecord = {};
     const verbatim = exempt.verbatim.get(current);
     for (const [key, item] of Object.entries(current)) {
       const path = [...trail, key];
       const normalized = normalizedName(key);
       const review = Object.hasOwn(exempt.fields, key) ? exempt.fields[key] : undefined;
-      if (review?.verdict === "redact") {
+      if (!placeholders && redactionAltered(key)) {
+        // A key redaction altered may have named a credential (#703).
+        out[key] = withheld(item);
+      } else if (review?.verdict === "redact") {
         out[key] = withheld(item);
       } else if (labelled && LABELLED_VALUE_FIELDS.includes(key)) {
         out[key] = withheld(item);
@@ -1140,8 +1388,13 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
         out[key] = withheld(item);
       } else if (key === "headers" && routeLike(current)) {
         out[key] = headerValues(item);
-      } else if (DESTINATION_KEYS.includes(key) && typeof item === "string" && URL_SHAPE.test(item)) {
+      } else if (
+        DESTINATION_KEYS.includes(key) &&
+        typeof item === "string" &&
+        (URL_SHAPE.test(item) || alteredScheme(item))
+      ) {
         // An external destination can carry its secret in the path; relative paths stay.
+        // One whose scheme redaction altered does not parse, so it is withheld (#703).
         out[key] = originOnly(item);
       } else if (typeof item === "string" && verbatim?.has(key)) {
         out[key] = item;
@@ -1217,26 +1470,24 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
         }
         const resources = table.embeddedUrls.resources;
         if (resources) {
+          // A type redaction altered takes every resource's reviewed text paths (#703).
+          const all = [...new Set(Object.values(resources.paths).flat())];
+          const any = () => all;
           const scan = (value: unknown, depth: number): unknown => {
             if (depth > MAX_DEPTH || value === null || typeof value !== "object") return value;
             if (Array.isArray(value)) return value.map((item) => scan(item, depth + 1));
             let clean: JsonRecord = Object.fromEntries(
               Object.entries(value).map(([key, item]) => [key, scan(item, depth + 1)]),
             );
-            const inner = clean[resources.key];
-            const innerType = isRecord(inner) ? inner[resources.key] : undefined;
-            if (typeof innerType === "string" && Object.hasOwn(resources.paths, innerType)) {
+            const innerPaths = typedInner(value as JsonRecord, resources.key, resources.paths, any);
+            if (innerPaths) {
               for (const partial of resources.partials ?? []) {
                 if (!Object.hasOwn(clean, partial)) continue;
-                for (const path of resources.paths[innerType]!)
-                  clean[partial] = applyPath(clean[partial], path, withholdEmbeddedUrlsIn);
+                for (const path of innerPaths) clean[partial] = applyPath(clean[partial], path, withholdEmbeddedUrlsIn);
               }
             }
-            const type = clean[resources.key];
-            if (typeof type === "string" && Object.hasOwn(resources.paths, type)) {
-              for (const path of resources.paths[type]!)
-                clean = applyPath(clean, path, withholdEmbeddedUrlsIn) as JsonRecord;
-            }
+            for (const path of typed(value as JsonRecord, resources.key, resources.paths, any) ?? [])
+              clean = applyPath(clean, path, withholdEmbeddedUrlsIn) as JsonRecord;
             return clean;
           };
           out = scan(out, 0);

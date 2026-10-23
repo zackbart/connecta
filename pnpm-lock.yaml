@@ -182,15 +182,15 @@ importers:
         specifier: 4.0.5
         version: 4.0.5
       zod:
-        specifier: ^4.4.3
-        version: 4.4.3
+        specifier: ^4.6.6
+        version: 4.6.6
     devDependencies:
       '@clerk/backend':
         specifier: 3.12.0
         version: 3.12.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@cloudflare/codemode':
         specifier: ^0.5.0
-        version: 0.5.1(zod@4.4.3)
+        version: 0.5.1(zod@4.6.6)
       '@cloudflare/vitest-pool-workers':
         specifier: ^0.18.8
         version: 0.18.8(@cloudflare/workers-types@5.20260722.1)(@vitest/runner@4.1.10)(@vitest/snapshot@4.1.10)(vitest@4.1.10(@types/node@22.20.1)(vite@8.1.5(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0)))
@@ -3476,8 +3476,8 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
 snapshots:
 
@@ -3553,12 +3553,12 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  '@cloudflare/codemode@0.5.1(zod@4.4.3)':
+  '@cloudflare/codemode@0.5.1(zod@4.6.6)':
     dependencies:
       '@types/json-schema': 7.0.15
       acorn: 8.19.0
     optionalDependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
@@ -4190,16 +4190,16 @@ snapshots:
       eventsource-parser: 3.1.0
       jose: 6.2.4
       pkce-challenge: 5.0.1
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@modelcontextprotocol/core@2.3.1':
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@modelcontextprotocol/server@2.3.1':
     dependencies:
       '@modelcontextprotocol/core': 2.3.1
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@mrleebo/prisma-ast@0.13.1':
     dependencies:
@@ -5364,7 +5364,7 @@ snapshots:
       tinyglobby: 0.2.17
       unbash: 4.0.4
       yaml: 2.9.0
-      zod: 4.4.3
+      zod: 4.6.6
 
   libsodium-wrappers@0.8.4:
     dependencies:
@@ -6073,4 +6073,4 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zod@4.4.3: {}
+  zod@4.6.6: {}

@@ -220,7 +220,7 @@
     "@modelcontextprotocol/server": "2.3.1",
     "acorn": "^8.19.0",
     "effect": "4.0.5",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "@clerk/backend": "^3.12.0",
