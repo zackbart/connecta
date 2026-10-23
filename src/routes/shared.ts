@@ -1,4 +1,5 @@
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
+import { isVercelAgentCredential } from "../auth/vercel-agent.js";
 import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
 import { htmlSecurityHeaders } from "../html-security.js";
@@ -234,13 +235,13 @@ export async function authorize(
   }
   request = authorizationRequest(request);
   if (explicit && runtimeContext) runtimeContext = { waitUntil: runtimeContext.waitUntil.bind(runtimeContext) };
-  const machineCredential = isMachineCredential(request);
+  const machineCredential = isMachineCredential(request) || isVercelAgentCredential(request);
   if (interactiveOnly && machineCredential) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
   // Every caller of this function is a human route. Agents reach pools only at
-  // `/agent/<pool>` (#837), so a `cta_` token refuses here without consulting
-  // token storage, and never falls back to a cookie, session, or Access context.
+  // `/agent/<pool>` (#837), so a workload or `cta_` credential refuses here
+  // without verification, and never falls back to a cookie, session or Access context.
   if (machineCredential) {
     return {
       ok: false,
@@ -294,7 +295,7 @@ export async function authorize(
     );
     if (!admission.admitted) return { ok: false, response: admission.response };
     const result = admission.result;
-    // Only the built-in access-token adapter asserts an agent, and it never
+    // Only built-in agent credential adapters assert an agent, and they never
     // answers here. Any `agent` claim refuses like an unknown token.
     const agent = result.ok ? result.agent : undefined;
     if (result.ok && agent !== undefined) {
@@ -377,7 +378,7 @@ function agentChallenge(): { ok: false; response: Response } {
 
 /**
  * Admission at an agent endpoint, `/agent/<pool>` (#837). Only the built-in
- * `cta_` adapter is consulted: Clerk and Access never run, cookies and Clerk
+ * agent credential adapters are consulted: Clerk and Access never run, cookies and Clerk
  * handshake parameters are stripped, and the runtime context, which carries
  * Access's `ctx.access` even on a bypassed path, is never passed. Anything but
  * an admitted declared agent gets the machine-only challenge.
@@ -389,8 +390,10 @@ export async function authorizeAgent(
   logger: Logger = console,
   settle?: (pending: Promise<unknown>) => void,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
-  const provider = auth.find(assertsAgents);
-  if (!provider || !isMachineCredential(request)) return agentChallenge();
+  const provider = auth.find(
+    (candidate) => assertsAgents(candidate) && candidate.recognizesCredential?.(request) === true,
+  );
+  if (!provider) return agentChallenge();
   let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
   try {
     const admission = await authenticate(provider, authorizationRequest(request), baseUrl, undefined, logger, settle);

@@ -28,7 +28,8 @@ import {
   type ConfigInput,
   type ConfigOutput,
 } from "./config-schema.js";
-import { assertAgentNames } from "./agent-identity.js";
+import { agentConfig } from "./agent-config.js";
+import { vercelAgentAuth } from "./auth/vercel-agent.js";
 import type { MemberRef } from "./membership.js";
 import { assertExecutor } from "./executor-contract.js";
 import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
@@ -393,16 +394,16 @@ const connectaConfig = {
   }),
   /**
    * Agents, declared by name: lowercase letters, digits, `_` and `-`, each
-   * unique. Each has one `cta_` token slot that operators issue, rotate, and
+   * unique. With `accessTokens`, each has one `cta_` slot operators issue, rotate, and
    * revoke; nothing outside code adds, renames, or rebinds an agent. Removing
-   * a name stops its token on the next request. Requires `accessTokens`.
+   * a name stops its credentials on the next request. A string name requires
+   * `accessTokens`; `{ name, vercel: { team, project, environments? } }` also
+   * accepts Vercel OIDC. Prefer immutable team_ and prj_ IDs. Environments
+   * default to production. Both credential types may coexist.
    * An admitted agent carries `identity.agent` and has no principal, so
    * personal connectors are absent for it. Defaults to none.
    */
-  agents: opaque<readonly string[], readonly string[]>({
-    check: (value, path) => assertAgentNames(value, path),
-    resolve: (value) => Object.freeze([...(value ?? [])]),
-  }),
+  agents: agentConfig,
   /**
    * The people who may use plain `/mcp`, which serves the whole catalog with
    * the deployment's `readOnly`, and who administer the deployment. Same
@@ -610,7 +611,8 @@ type Parsed = ConfigOutput<typeof connectaConfig>;
  * The configuration a Connecta runs with: validated, every default applied,
  * auth ordered, and `serverInfo` named and versioned. Built once by createConnecta; nothing downstream re-derives it.
  */
-export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
+export interface ResolvedConfig extends Omit<Parsed, "serverInfo" | "agents"> {
+  readonly agents: readonly string[];
   /** `serverInfo` with its name and version defaults applied. */
   readonly serverInfo: {
     readonly name: string;
@@ -714,7 +716,7 @@ function assertCoherent(config: Parsed): void {
   ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
-  if (config.agents.length > 0 && !config.accessTokens) {
+  if (config.agents.some((agent) => !agent.vercel) && !config.accessTokens) {
     throw new ConfigError(
       "ConnectaConfig.agents needs accessTokens: accessTokens(storage) from @zackbart/connecta/auth/access-tokens " +
         "holds each agent's token slot.",
@@ -750,12 +752,15 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
     version: parsed.serverInfo.version ?? CONNECTA_VERSION,
   } as ResolvedConfig["serverInfo"];
   // The token module admits exactly the agents this configuration declares.
-  const accessTokens = parsed.accessTokens?.forAgents(parsed.agents);
+  const agents = Object.freeze(parsed.agents.map((agent) => agent.name));
+  const accessTokens = parsed.accessTokens?.forAgents(agents);
+  const vercel = vercelAgentAuth(parsed.agents);
   const resolved: ResolvedConfig = Object.freeze({
     ...parsed,
+    agents,
     accessTokens,
     // A managed-token module contributes one more provider, ordered with the rest.
-    auth: accessTokens ? normalizeAuth([accessTokens.auth, ...parsed.auth]) : parsed.auth,
+    auth: normalizeAuth([...(accessTokens ? [accessTokens.auth] : []), ...(vercel ? [vercel] : []), ...parsed.auth]),
     serverInfo: Object.freeze(info),
   });
   return { input, resolved };

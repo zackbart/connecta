@@ -1,6 +1,6 @@
 // Code-declared agents (#837): the names deployment code lists in `agents`,
-// the identity an admitted agent carries, and the one provider trusted to
-// assert it. Pure, so core reads it without reaching the token module.
+// the identity an admitted agent carries, and the built-in providers trusted
+// to assert it. Pure, so core reads it without reaching credential modules.
 
 import { ConfigError } from "./config-schema.js";
 import type { InboundAuth } from "./types.js";
@@ -44,13 +44,13 @@ export function assertAgentNames(value: unknown, path: string): asserts value is
 
 const agentProviders = new WeakSet<InboundAuth>();
 
-/** Mark the built-in access-token adapter as the one provider whose `agent` is trusted. */
+/** Mark a built-in credential adapter as trusted to assert `agent`. */
 export function trustAgentProvider<T extends InboundAuth>(provider: T): T {
   agentProviders.add(provider);
   return provider;
 }
 
-/** Whether `provider` is the built-in access-token adapter. */
+/** Whether `provider` is a trusted built-in agent credential adapter. */
 export function assertsAgents(provider: InboundAuth): boolean {
   return agentProviders.has(provider);
 }
