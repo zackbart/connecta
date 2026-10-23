@@ -113,6 +113,7 @@ const cap = (text: string, chars: number) => (text.length > chars ? `${text.slic
 /** One piece of a contract that may travel alone: a parameter, a body property, the body, or a long label. */
 type Piece =
   | { readonly kind: "parameter"; readonly of: string; readonly value: OperationContract["parameters"][number] }
+  | { readonly kind: "frame"; readonly of: string; readonly value: Readonly<Record<string, unknown>> }
   | {
       readonly kind: "property";
       readonly of: string;
@@ -123,24 +124,38 @@ type Piece =
   | { readonly kind: "body"; readonly of: string; readonly value: unknown }
   | { readonly kind: "text"; readonly of: "operationId" | "summary"; readonly value: string };
 
-/** Every piece of a contract, in order: long labels, parameters, then body properties (or the whole body). */
+/**
+ * Every piece of a contract, in order: long labels, parameters, then the body.
+ * An object body travels as its frame (every keyword but `properties` and
+ * `required`: type, description, additionalProperties, …) and one piece per
+ * property, each carrying whether it is required, so pages and chunks
+ * together reconstruct the whole schema. Any other body travels whole.
+ */
 function piecesOf(contract: OperationContract, capped: { operationId: boolean; summary: boolean }): Piece[] {
-  const schema = contract.body?.schema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
-  const required = new Set(schema?.required ?? []);
+  const schema = contract.body?.schema as Record<string, unknown> | undefined;
+  const properties = schema?.["properties"];
+  const required = new Set(Array.isArray(schema?.["required"]) ? (schema["required"] as string[]) : []);
+  const object = properties !== null && typeof properties === "object" && !Array.isArray(properties);
+  const frame = object
+    ? Object.fromEntries(Object.entries(schema!).filter(([key]) => key !== "properties" && key !== "required"))
+    : undefined;
   return [
     ...(capped.operationId ? [{ kind: "text" as const, of: "operationId" as const, value: contract.operationId }] : []),
     ...(capped.summary ? [{ kind: "text" as const, of: "summary" as const, value: contract.summary }] : []),
     ...contract.parameters.map((value) => ({ kind: "parameter" as const, of: `parameters.${value.name}`, value })),
     ...(contract.body === undefined
       ? []
-      : schema?.properties
-        ? Object.entries(schema.properties).map(([name, value]) => ({
-            kind: "property" as const,
-            of: `body.schema.properties.${name}`,
-            name,
-            value,
-            required: required.has(name),
-          }))
+      : frame
+        ? [
+            { kind: "frame" as const, of: "body.schema", value: frame },
+            ...Object.entries(properties as Record<string, unknown>).map(([name, value]) => ({
+              kind: "property" as const,
+              of: `body.schema.properties.${name}`,
+              name,
+              value,
+              required: required.has(name),
+            })),
+          ]
         : [{ kind: "body" as const, of: "body.schema", value: contract.body.schema }]),
   ];
 }
@@ -414,7 +429,8 @@ export function hatch(
         parameters: Schema.Array(Schema.Unknown).annotate({ description: "Path and query parameters." }),
         body: Schema.optionalKey(
           ObjectValue.annotate({
-            description: "Body content type and schema; when paged, the properties and required names on this page.",
+            description:
+              "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them.",
           }),
         ),
         verdict: Schema.Literals(["read", "write", "destructive", "refuse"]),
@@ -488,8 +504,11 @@ export function hatch(
           const parameters: unknown[] = [];
           const properties: Record<string, unknown> = {};
           const required: string[] = [];
+          let frame: Readonly<Record<string, unknown>> | undefined;
           let body: unknown;
           let chunk: { of: string; text: string } | undefined;
+          // A paged object body carries the frame keywords on the page that delivers them,
+          // this page's properties, and the required names of the properties it delivers or chunks.
           const compose = (page: { readonly hasMore: boolean; readonly nextCursor?: string }) => ({
             ...base,
             parameters,
@@ -500,7 +519,7 @@ export function hatch(
                     contentType: contract.body.contentType,
                     ...(contract.body.required ? { required: true } : {}),
                     schema: body ?? {
-                      type: "object",
+                      ...frame,
                       properties,
                       ...(required.length ? { required } : {}),
                     },
@@ -527,6 +546,7 @@ export function hatch(
             if (o === 0 && piece.kind !== "text") {
               if (piece.kind === "parameter") parameters.push(piece.value);
               else if (piece.kind === "body") body = piece.value;
+              else if (piece.kind === "frame") frame = piece.value;
               else {
                 properties[piece.name] = piece.value;
                 if (piece.required) required.push(piece.name);
@@ -537,14 +557,22 @@ export function hatch(
               }
               if (piece.kind === "parameter") parameters.pop();
               else if (piece.kind === "body") body = undefined;
+              else if (piece.kind === "frame") frame = undefined;
               else {
                 delete properties[piece.name];
                 if (piece.required) required.pop();
               }
             }
-            // A piece that cannot share a page arrives alone, in as many chunks as it needs.
-            if (parameters.length === 0 && Object.keys(properties).length === 0 && body === undefined) {
+            // A piece that cannot share a page arrives alone, in as many chunks as it needs; a
+            // chunked required property keeps its name in this page's required list.
+            if (
+              parameters.length === 0 &&
+              Object.keys(properties).length === 0 &&
+              body === undefined &&
+              frame === undefined
+            ) {
               const json = JSON.stringify(piece.value);
+              if (piece.kind === "property" && piece.required) required.push(piece.name);
               chunk = { of: piece.of, text: "" };
               let low = o + 1;
               let high = json.length;
