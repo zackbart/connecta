@@ -359,6 +359,9 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
 
 it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed probes", NODE, async () => {
   let signal: AbortSignal | undefined;
+  let hookDefect = false;
+  let withheld = false;
+  const defect = new ConnectorCallError("invalid_args", "stored-secret-never-sent");
   const authenticate = definition.authenticate.pipe(
     Effect.tap(() =>
       Signal.use((value) =>
@@ -368,20 +371,36 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
       ),
     ),
   );
-  const connector = defineApiProvider({ ...definition, authenticate })("tickets", { purpose: "Support" });
-  for (const [status, detail] of [
-    [401, "Replace the candidate."],
-    [403, "Grant access."],
-    [200, "unreadable JSON"],
+  const connector = defineApiProvider({
+    ...definition,
+    authenticate,
+    safety: (options) => ({
+      ...safety(options),
+      reviewed: { redact: (data) => data, withholdsErrors: () => withheld },
+    }),
+    result: (data) => (hookDefect ? Effect.die(defect) : Effect.succeed(data)),
+  })("tickets", { purpose: "Support" });
+  for (const [status, detail, hook] of [
+    [401, "Replace the candidate.", undefined],
+    [403, "Grant access.", undefined],
+    [200, "unreadable JSON", undefined],
+    [200, "A provider hook withholding vendor text failed.", "withheld"],
+    [200, defect.message, "open"],
   ] as const) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(status === 200 ? "not JSON" : "{}", { status })),
-    );
-    expect(await connector.testCredential!("candidate", connectorContext())).toEqual({
-      ok: false,
-      message: expect.stringContaining(detail),
-    });
+    hookDefect = hook !== undefined;
+    withheld = hook === "withheld";
+    const fetch = vi.fn(async () => new Response(status === 200 && !hookDefect ? "not JSON" : "{}", { status }));
+    vi.stubGlobal("fetch", fetch);
+    const result = connector.testCredentials!({ value: "candidate" }, connectorContext());
+    if (hookDefect) {
+      if (withheld) {
+        await expect(result).rejects.toThrow(detail);
+        await expect(result).rejects.not.toBeInstanceOf(ConnectorCallError);
+      } else await expect(result).rejects.toBe(defect);
+    } else {
+      expect(await result).toEqual({ ok: false, message: expect.stringContaining(detail) });
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(signal?.aborted).toBe(true);
   }
 });
