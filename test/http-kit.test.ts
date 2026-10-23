@@ -433,19 +433,20 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       }
 
       // Presence is a closed structural declaration: neither callback sees the text it classifies.
-      for (const [value, present, nonBlank] of [
-        [undefined, false, false],
-        ["", false, false],
-        [" ", true, false],
-        ["private prose here", true, true],
-        [["", " ", "private prose"], true, true],
-        [[null, 1], false, false],
-        [{ value: "private prose" }, false, false],
+      for (const [field, content, value, present, nonBlank] of [
+        ["retry_guidance", "text", undefined, false, false],
+        ["retry_guidance", "text", "", false, false],
+        ["retry_guidance", "text", " ", true, false],
+        ["retry_guidance", "text", "private prose here", true, true],
+        ["retry_guidance", "text", ["", " ", "private prose"], true, true],
+        ["retry_guidance", "text", [null, 1], false, false],
+        ["retry_guidance", "text", { value: "private prose" }, false, false],
+        ["committed_resource_id", "string", "private non-token id", true, true],
       ] as const) {
         let seen: unknown;
         const shaped: VendorErrors = {
           ...VENDOR,
-          presence: { guidance: { path: ["additional_data", "retry_guidance"], content: "text" } },
+          presence: { reviewed: { path: ["additional_data", field], content } },
           classify: [
             (input) => {
               seen = input.presence;
@@ -457,12 +458,12 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
             return "Withheld.";
           },
         };
-        toConnectorCallError(status(503, {}, { additional_data: { retry_guidance: value } }), shaped, {
+        toConnectorCallError(status(503, {}, { additional_data: { [field]: value } }), shaped, {
           classification: "read",
           dispatches: [],
           withholds: () => true,
         });
-        expect(seen).toEqual({ guidance: { present, nonBlank } });
+        expect(seen).toEqual({ reviewed: { present, nonBlank } });
         expect(JSON.stringify(seen)).not.toContain("private");
       }
       expect(() => validateVendorErrors({ ...VENDOR, presence: { bad: { path: [], content: "text" } } })).toThrow(
