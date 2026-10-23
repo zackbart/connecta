@@ -9,6 +9,7 @@
 
 import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../../connectors/api-connector.js";
+import { callClassification } from "../../../call-classification.js";
 import { deriveContext } from "../../../derived-context.js";
 import { ConnectorCallError } from "../../../errors.js";
 import {
@@ -471,10 +472,14 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     binary = false,
   ) =>
     Effect.gen(function* () {
-      const classification = yield* Classification;
+      const active = yield* Effect.serviceOption(Operation);
       const dispatches = yield* Dispatches;
       const signal = yield* Signal;
-      const write = classification === "write";
+      // Match the legacy wording rule even for direct calls: their GET
+      // lookups have no served verdict. Physical write accounting stays the
+      // core's Classification; only these Google-specific words use this.
+      const served = Option.isSome(active) ? callClassification(active.value) : undefined;
+      const write = (served ?? (request.method === "GET" ? "read" : "write")) === "write";
       const operation = yield* connection.safety.resolve(request.method, request.path);
       return yield* connection
         .sendPath(
