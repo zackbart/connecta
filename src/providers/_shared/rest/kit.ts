@@ -51,7 +51,7 @@ export function checked<A>(run: () => A): Effect.Effect<A, Refusal> {
 }
 
 /** Only the JSON forms the pinned index and legacy hatch catalogs publish. No vendor encoders run here. */
-function schema(node: JsonSchema): Schema.Codec<unknown> {
+export function schema(node: JsonSchema): Schema.Codec<unknown> {
   const n = node as Json;
   let out: Schema.Codec<unknown>;
   const types = n["type"];
@@ -276,7 +276,7 @@ function closed(properties: Record<string, JsonSchema>, required: string[]): Jso
 }
 
 /** Restore declaration key order only after proving the kit generated the identical schema. */
-function catalogOrder(actual: unknown, legacy: unknown): unknown {
+export function catalogOrder(actual: unknown, legacy: unknown): unknown {
   if (Array.isArray(legacy)) {
     if (!Array.isArray(actual) || actual.length !== legacy.length)
       throw new Error("Kit catalog array differs from the legacy declaration.");
