@@ -238,6 +238,9 @@ describe("GitHub App provider", () => {
     expect(JSON.stringify(activity.events)).not.toContain(SENTINEL);
     expect(logger.warnings().join(" ")).not.toContain(SENTINEL);
     expect(activity.events[0]?.errorCode).toBe("auth_required");
+    expect(logger.warn.mock.calls.find(([message]) => String(message).includes("call failed"))?.[1]).toMatchObject({
+      httpStatus: 403,
+    });
     expect(fixture.requests.filter((request) => request.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
   });
 
