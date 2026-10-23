@@ -1,5 +1,5 @@
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
@@ -7,9 +7,11 @@ import { ConnectorCallError } from "../src/errors.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
-import { hatch } from "../src/http/hatch.js";
+import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
+import { Integer } from "../src/http/json-schema.js";
 import { restSafety, resultSafety } from "../src/http/safety.js";
-import { connect, get, vendor } from "../src/http/vendor.js";
+import { connect, form, get, post, Summary, vendor } from "../src/http/vendor.js";
+import { vendorIndex } from "../src/http/vendor-index.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
@@ -160,9 +162,24 @@ it(
       ["items_api_read", { readOnlyHint: true }],
       ["items_api_write", { readOnlyHint: false, destructiveHint: true }],
     ]);
-    const rows = (
-      (await call("search", { query: "item", limit: 50 })) as { operations: Array<Record<string, unknown>> }
-    ).operations;
+    // Compact pages of at most eight, continued by cursor until hasMore is false.
+    const rows: Array<Record<string, unknown>> = [];
+    let page: { hasMore: boolean; nextCursor?: string } = { hasMore: true };
+    while (page.hasMore) {
+      const reply = (await call("search", {
+        query: "item",
+        limit: 8,
+        ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
+      })) as { operations: Array<Record<string, unknown>>; page: typeof page };
+      expect(reply.operations.length).toBeLessThanOrEqual(8);
+      expect(Object.keys(reply.operations[0]!)).not.toContain("tag");
+      rows.push(...reply.operations);
+      page = reply.page;
+      expect("nextCursor" in page).toBe(page.hasMore);
+    }
+    expect(rows).toHaveLength(11);
+    await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
     for (const [method, path, verdict, tool] of [
       ["GET", "/items", "read", "items_api_read"],
       ["GET", "/touch", "write", "items_api_write"],
@@ -198,6 +215,85 @@ it(
         expect.arrayContaining(["raw"]),
       );
     }
+    // A kit vendor with no OpenAPI pin indexes its own declarations, and details stay in budget.
+    const optional = Object.fromEntries(
+      Array.from({ length: 300 }, (_, i) => [
+        `note_${i}`,
+        Schema.optionalKey(Schema.String.annotate({ description: "n".repeat(120) })),
+      ]),
+    );
+    const derived = vendorIndex(
+      vendor(
+        "forms",
+        post("createThing", "/things/:thing_id", {
+          params: { thing_id: Schema.String },
+          query: { account_id: Schema.String },
+          payload: form(
+            Schema.Struct({
+              name: Schema.String.annotate({ description: "Display name." }),
+              amount: Schema.optionalKey(Integer),
+              ...optional,
+            }),
+          ),
+          success: Schema.Unknown,
+        }).annotate(Summary, "Create a thing"),
+      ),
+      { prefix: "forms", title: "Forms", revision: "v1" },
+    );
+    const forms = tracksEveryRequest(
+      apiConnector("forms", {
+        tools: hatch({ name: "forms", index: derived, verdicts: { "POST /things/{thing_id}": "write" }, connection }),
+      }),
+    );
+    const formsCall = (kind: string, args: Record<string, unknown>) =>
+      forms.callTool(`forms_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>;
+    expect((await formsCall("search", { query: "thing" })).operations).toEqual([
+      {
+        method: "POST",
+        path: "/things/{thing_id}",
+        operationId: "createThing",
+        summary: "Create a thing",
+        tool: "forms_api_write",
+      },
+    ]);
+    const contract = await formsCall("details", { method: "POST", path: "/things/t1" });
+    expect(new TextEncoder().encode(JSON.stringify(contract)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+    expect(contract.parameters).toEqual([
+      { name: "thing_id", in: "path", required: true, schema: { type: "string" } },
+      { name: "account_id", in: "query", required: true, schema: { type: "string" } },
+    ]);
+    expect(contract.body).toMatchObject({
+      contentType: "application/x-www-form-urlencoded",
+      required: true,
+      schema: { required: ["name"], properties: { name: { type: "string", description: "Display name." } } },
+    });
+    expect(contract.truncated).toEqual(expect.arrayContaining(["body.schema.properties.note_299"]));
+    expect(contract.truncated).not.toContain("body.schema.properties.name");
+    expect((await formsCall("details", { method: "POST", path: "/things/{thing_id}", param: "amount" })).body).toEqual({
+      contentType: "application/x-www-form-urlencoded",
+      schema: { type: "object", properties: { amount: { type: "number" } } },
+    });
+    // Search trims whole entries to its byte budget and continues by cursor.
+    const long = new OperationIndex(
+      {
+        ...DATA,
+        ops: Array.from(
+          { length: 10 },
+          (_, i) => ["GET", `/${"x".repeat(2000)}${i}`, `Long${i}`, "Long path", 0] as const,
+        ),
+        details: JSON.stringify({ d: [], o: [] }),
+      },
+      { vendor: "long", title: "Long" },
+    );
+    const trimmed = (await tracksEveryRequest(
+      apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
+    ).callTool("long_api_search", { query: "xxx", limit: 8 }, connectorContext())) as {
+      operations: unknown[];
+      page: { hasMore: boolean };
+    };
+    expect(trimmed.operations.length).toBeLessThan(8);
+    expect(new TextEncoder().encode(JSON.stringify(trimmed)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes + 200);
+    expect(trimmed.page.hasMore).toBe(true);
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();
     expect(sent).toEqual([]);

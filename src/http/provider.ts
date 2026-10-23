@@ -25,7 +25,7 @@ import type {
 } from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
-import { hatch } from "./hatch.js";
+import { hatch, type HatchDeclaration } from "./hatch.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
@@ -88,7 +88,10 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   };
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
-  readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
+  /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
+  readonly hatch?: HatchDeclaration & {
+    readonly notes?: (options: Readonly<O>) => { readonly read?: string; readonly write?: string };
+  };
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
   /**
    * Record construction facts about the built connector, such as whose
@@ -96,6 +99,15 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
    * its return value is ignored, so it can neither replace nor wrap it.
    */
   readonly tagConnector?: (connector: Connector, options: Readonly<O>) => void;
+}
+
+/** A declared hatch for one connection: its notes resolved from that connection's options. */
+function hatchDeclaration<O>(
+  declared: HatchDeclaration & { readonly notes?: (options: Readonly<O>) => { read?: string; write?: string } },
+  options: Readonly<O>,
+): HatchDeclaration & { readonly notes?: { readonly read?: string; readonly write?: string } } {
+  const { notes, ...rest } = declared;
+  return notes ? { ...rest, notes: notes(options) } : rest;
 }
 
 /** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
@@ -169,7 +181,13 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   ) {
     throw new Error(`${metadata.title} pageSize needs positive whole default and max values, with default <= max.`);
   }
-  const hatchOptions = declaredHatch ? { ...declaredHatch, verdicts: { ...declaredHatch.verdicts } } : undefined;
+  const hatchOptions = declaredHatch
+    ? {
+        ...declaredHatch,
+        verdicts: { ...declaredHatch.verdicts },
+        ...(declaredHatch.named ? { named: { ...declaredHatch.named } } : {}),
+      }
+    : undefined;
 
   return defineProvider({
     ...metadata,
@@ -344,7 +362,10 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               }
             : {}),
           ...(oauth ? { oauth: oauth(options) } : {}),
-          tools: [...builtTools, ...(hatchOptions ? hatch({ ...hatchOptions, connection }) : [])],
+          tools: [
+            ...builtTools,
+            ...(hatchOptions ? hatch({ ...hatchDeclaration(hatchOptions, options), connection }) : []),
+          ],
         }),
       );
       tagConnector?.(connector, options);
