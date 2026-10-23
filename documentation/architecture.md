@@ -2130,6 +2130,9 @@ still pass sent-secret redaction, the result hook and value safety before any
 projection. The callback runs with an empty Effect context, receives a copy of
 the chunk, and cannot transform the answer. Its defects receive the same
 withheld-text rewrap as result hooks. Invocation cancellation remains authoritative.
+Reviewed binary prefixes retain bytes through the same sent-secret encoding
+as whole binary bodies, without a text decode. Only that binary path accepts
+a zero-byte prefix, which keeps empty bytes and the ordinary prefix facts.
 
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
