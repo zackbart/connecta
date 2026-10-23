@@ -27,7 +27,7 @@ import { write } from "../src/http/tools.js";
 import { connect, get, vendor } from "../src/http/vendor.js";
 import { InvocationService, type InvocationOutcome } from "../src/invocation.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
-import { stripeErrors } from "../src/providers/stripe/kit-prototype.js";
+import { stripeErrors } from "../src/providers/stripe/api.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { Registry } from "../src/registry.js";

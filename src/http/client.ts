@@ -58,6 +58,8 @@ export interface GuardedOptions<R = never> {
   readonly baseUrl: string;
   /** Ceiling on any response body, in bytes. Required: it is a fact about the API. */
   readonly maxResponseBytes: number;
+  /** Request and response-body deadline, as imposed by the vendor. */
+  readonly timeoutMs?: number;
   /** Optional lower ceiling for discarded OAuth 401 challenges. */
   readonly maxUnauthorizedResponseBytes?: number;
   /** Constant headers, such as `Accept`. */
@@ -80,6 +82,8 @@ interface Reply {
   readonly status: number;
   readonly headers: Headers;
   readonly text: string | undefined;
+  /** Present only for a reviewed binary read, still under the same byte ceiling. */
+  readonly bytes?: Uint8Array;
 }
 
 export interface GuardedClient<R = CallServices> {
@@ -90,6 +94,7 @@ export interface GuardedClient<R = CallServices> {
   readonly read: (
     response: HttpClientResponse.HttpClientResponse,
     maxBytes?: number,
+    format?: "bytes",
   ) => Effect.Effect<Reply, HttpFailure>;
 }
 
@@ -110,6 +115,8 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   if (unauthorizedLimit !== undefined && (!Number.isInteger(unauthorizedLimit) || unauthorizedLimit < 1))
     throw new Error("maxUnauthorizedResponseBytes must be a whole number of bytes >= 1.");
   const responseLimit = (status: number) => (status === 401 ? Math.min(limit, unauthorizedLimit ?? limit) : limit);
+  if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1))
+    throw new Error("timeoutMs must be a positive whole number.");
   const base = confinementBase(provider, options.baseUrl);
   const basePath = base.pathname.replace(/\/+$/, "");
   const constant = { ...options.headers };
@@ -312,7 +319,11 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
               ...body,
               // A redirect re-sends the credential wherever `Location` points.
               redirect: "manual",
-              signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
+              signal: AbortSignal.any([
+                interrupted,
+                ...(callSignal ? [callSignal] : []),
+                ...(options.timeoutMs === undefined ? [] : [AbortSignal.timeout(options.timeoutMs)]),
+              ]),
             });
           },
           catch: (failure): HttpFailure => {
@@ -357,10 +368,10 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
   return {
     provider,
     client: HttpClient.makeWith(postprocess, preprocess),
-    read: (response, maxBytes) => {
+    read: (response, maxBytes, format) => {
       if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1))
         throw new Error("A read ceiling must be a whole number of bytes >= 1.");
-      return readReply(provider, Math.min(responseLimit(response.status), maxBytes ?? limit), response);
+      return readReply(provider, Math.min(responseLimit(response.status), maxBytes ?? limit), response, format);
     },
   };
 }
@@ -420,20 +431,25 @@ function readReply(
   provider: string,
   limit: number,
   response: HttpClientResponse.HttpClientResponse,
+  format?: "bytes",
 ): Effect.Effect<Reply, ResponseTooLarge> {
-  const reply = (text: string | undefined): Reply => ({
+  const reply = (text: string | undefined, bytes?: Uint8Array): Reply => ({
     status: response.status,
     headers: new Headers(Object.entries(response.headers)),
     text,
+    ...(bytes === undefined ? {} : { bytes }),
   });
-  if (BODILESS_STATUSES.has(response.status) || response.request.method === "HEAD") return Effect.succeed(reply(""));
+  if (BODILESS_STATUSES.has(response.status) || response.request.method === "HEAD")
+    return Effect.succeed(format === "bytes" ? reply(undefined, new Uint8Array()) : reply(""));
   const buffered = response.arrayBuffer.pipe(
     Effect.matchEffect({
       onFailure: () => Effect.succeed(reply(undefined)),
       onSuccess: (buffer) =>
         buffer.byteLength > limit
           ? Effect.fail(tooLarge(provider, limit, `${buffer.byteLength} bytes`))
-          : Effect.succeed(reply(decoder.decode(buffer))),
+          : Effect.succeed(
+              format === "bytes" ? reply(undefined, new Uint8Array(buffer)) : reply(decoder.decode(buffer)),
+            ),
     }),
   );
   return response.stream.pipe(
@@ -453,7 +469,7 @@ function readReply(
         bytes.set(part, offset);
         offset += part.byteLength;
       }
-      return reply(decoder.decode(bytes));
+      return format === "bytes" ? reply(undefined, bytes) : reply(decoder.decode(bytes));
     }),
     Effect.catch((error: ResponseTooLarge | HttpClientError.HttpClientError) =>
       error._tag === "ResponseTooLarge"

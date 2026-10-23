@@ -1405,6 +1405,14 @@ response. Breeze selects text for
 error statuses and JSON-or-text for its legacy hatches only, so malformed
 JSON on named tools still fails as `UnreadableBody`.
 
+C.6 adds optional vendor `timeoutMs`: the earlier vendor or invocation deadline ends the request and response stream; caller cancellation and lease closure still win (INV-7).
+C.6 preserves explicit empty form bodies through `sendPath`'s `emptyForm: true`: `{}` sends form Content-Type and zero body bytes; JSON and existing omitted empty forms retain their framing.
+Its reviewed
+`binaryBodies` selector keeps bounded response bytes inside the connection and
+checks them with `RequestSecrets.encode` before base64. Text selection receives
+only redacted, normalized Content-Type; fixed secondary origins use separate
+connections constructed outside caller contexts.
+
 **The value-safety boundary (`src/http/safety.ts`).** Every answer, from a
 declared operation or a hatch's path, takes one route inside `connect`, and a
 provider cannot reach a body any earlier:
@@ -1662,6 +1670,10 @@ The success description receives the validated options. It copies no context.
 options; an explicit `options.title` takes precedence. A complete usage guide
 passes through unchanged so step-1 migrations preserve legacy fragments and
 option-dependent text without changing `SKILL.md`.
+
+- C.6 adds optional `probe.failure(error, options)` to describe a mapped probe failure as a reviewed credential result; `undefined` retains the failure.
+- C.6 allows `authenticate(options)` to build the authentication Effect from validated connection options outside caller contexts.
+- C.6 allows `defaultCallAdmission(options)` to derive connection defaults; explicit connector admission options take precedence.
 
 CCB's C.4 migration adds the optional `authScope(options)` selector. Its
 deployment mode fixes grant ownership: System Auth is shared and Identity
