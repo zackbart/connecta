@@ -5,7 +5,7 @@
 // write that carried a genuine idempotency key keep their advice. Round 14:
 // that advice is a segment of its own, so neither redaction nor a preflight
 // failure after an earlier dispatch can keep it on an unknown write.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authorizationHandoff, bindAuthorizationHandoffs } from "../src/authorization-handoff.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
@@ -15,6 +15,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { docs } from "../src/providers/docs/index.js";
 import { notion } from "../src/providers/notion/index.js";
@@ -28,7 +29,12 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
 
+beforeEach(() => {
+  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
