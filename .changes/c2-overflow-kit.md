@@ -2,4 +2,4 @@
 type: changed
 ---
 
-Move Overflow onto the shared HTTP provider kit while preserving its tools, guide, request bytes, and results.
+Move Overflow onto the shared HTTP provider kit while preserving its existing tool and guide contracts.

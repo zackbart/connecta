@@ -2155,7 +2155,10 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       const result = await through(tool, { value });
       expect(sent).toHaveLength(value === "one" ? 1 : 0);
       if (value === "changed") expect(result.error).toMatchObject({ code: "invalid_args" });
-      else expect(result).toHaveProperty("value");
+      else {
+        expect(result).toHaveProperty("value");
+        expect(sent[0]!.url).toBe("https://api.acme.example/v1/items/a");
+      }
     }
   });
 

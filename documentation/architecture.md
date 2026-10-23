@@ -2121,6 +2121,11 @@ describer becomes the ordinary failed credential-test result.
 an object with required properties; its decoder is unchanged. Closed empty
 input records render `properties: {}` and `required: []` explicitly.
 
+A vendor may set `manifestBase` to prefix its documented operation paths.
+Transport paths remain relative to the confined base URL. The catalog renderer
+collapses unions of bare object and array branches into a type array; branches
+with additional constraints retain `anyOf`.
+
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection
 before paging or provider projections can read it. Read methods beyond GET

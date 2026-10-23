@@ -207,14 +207,10 @@ export const getCampaignById = get("getCampaignById", "/campaigns/:campaignId", 
   params: { campaignId: Schema.String },
   success: Envelope,
 });
+// Lists and the credential probe historically put these keys in different orders.
+// A scalar query record preserves each caller's order without a second operation.
 export const getLocations = get("getLocations", "/locations", {
-  query: {
-    "includeArchived": Schema.optionalKey(Schema.Boolean),
-    "sortBy": Schema.optionalKey(Schema.String),
-    "sortDirection": Schema.optionalKey(Schema.String),
-    "page": Schema.optionalKey(Integer),
-    "limit": Schema.optionalKey(Integer),
-  },
+  query: Schema.Record(Schema.String, Schema.Union([Schema.String, Integer, Schema.Boolean])),
   success: Envelope,
 });
 export const getLocationById = get("getLocationById", "/locations/:locationId", {

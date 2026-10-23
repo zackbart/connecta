@@ -534,10 +534,12 @@ function rawQuery(value: unknown): Query {
   );
 }
 
-interface ListSpec<K extends string, Row> {
-  args: JsonRecord;
-  fetch: (query: Query) => Effect.Effect<{ readonly data: unknown }, HttpFailure, CallServices>;
-  query: Query;
+interface ListSpec<K extends string, Row, Filters extends Query> {
+  args: { page?: number; limit?: number; raw?: boolean };
+  fetch: (
+    query: Compact<Filters & { page: number; limit: number }>,
+  ) => Effect.Effect<{ readonly data: unknown }, HttpFailure, CallServices>;
+  query: Filters;
   key: K;
   project: (value: unknown) => Row;
 }
@@ -597,7 +599,7 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
             : Effect.succeed(data),
         ),
       );
-  const list = <K extends string, Row>(spec: ListSpec<K, Row>) =>
+  const list = <K extends string, Row, Filters extends Query>(spec: ListSpec<K, Row, Filters>) =>
     Effect.gen(function* () {
       const page = spec.args["page"] ?? 1;
       const limit = spec.args["limit"] ?? pageSize;
