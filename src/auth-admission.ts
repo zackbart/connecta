@@ -120,6 +120,18 @@ export function withAuthenticationDeadline<T>(
   );
 }
 
+/** Shared capacity refusal: one checked log and retryable HTTP contract. */
+export function authenticationBusyResponse(
+  logger: Logger,
+  reason: "authentication_busy" | "authentication_abandoned_saturated" = "authentication_busy",
+): Response {
+  logFailure(logger, "Authentication admission refused", failureRecord({ reason }));
+  return Response.json(
+    { error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true } },
+    { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
+  );
+}
+
 /** The sole route boundary for invoking an inbound adapter, including its SDK. */
 export async function authenticate(
   provider: InboundAuth,
@@ -142,13 +154,9 @@ export async function authenticate(
     // Callers see one retryable contract; the log and health tell an
     // operator whether stalled bindings, not load, are refusing.
     const reason = abandoned >= ABANDONED_ALLOWANCE ? "authentication_abandoned_saturated" : "authentication_busy";
-    logFailure(logger, "Authentication admission refused", failureRecord({ reason }));
     return {
       admitted: false,
-      response: Response.json(
-        { error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true } },
-        { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
-      ),
+      response: authenticationBusyResponse(logger, reason),
     };
   }
   active++;

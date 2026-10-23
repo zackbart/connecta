@@ -31,7 +31,7 @@ import {
   unauthorizedAnswer,
   type ProviderRequest,
 } from "./provider-call.js";
-import { carryFailureFacts, errorLabel } from "./operator-record.js";
+import { attachFailureFacts, carryFailureFacts, errorLabel } from "./operator-record.js";
 
 /** How a dispatched write ended, as far as anyone can know. */
 export type WriteState = "ok" | "failed" | "unknown";
@@ -364,7 +364,10 @@ function unauthorizedVerdict(answer: ProviderRequest, error: unknown): Connector
   const base = authorizationFailure(error)
     ? error
     : (unauthorizedAnswer(answer) ??
-      new ConnectorCallError("auth_required", `${answer.provider} answered this write with HTTP 401.`));
+      attachFailureFacts(
+        new ConnectorCallError("auth_required", `${answer.provider} answered this write with HTTP 401.`),
+        answer.status === undefined ? {} : { httpStatus: answer.status },
+      ));
   if (explainsUnauthorized(base)) return carryFailureFacts(error, withoutRetry(base));
   return explainedUnauthorizedVerdict(
     carryFailureFacts(

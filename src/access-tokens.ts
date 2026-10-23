@@ -1,19 +1,14 @@
 import { withAuthenticationDeadline } from "./auth-admission.js";
 import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
 import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
-import { assertKnownOptions, ConfigError, optionsOf } from "./config-schema.js";
+import { assertKnownOptions, ConfigError, optionsOf, readPlain } from "./config-schema.js";
 import { routeAccessTokens } from "./routes/access-tokens.js";
 import type { AccessTokensModule } from "./module-contracts.js";
 import { validIdentityReference } from "./identity.js";
 import { accessTokenKeys } from "./storage/keys.js";
-import {
-  AGENT_NAMESPACE,
-  agentSubjectId,
-  assertAgentNames,
-  isAgentName,
-  trustAgentProvider,
-} from "./agent-identity.js";
+import { AGENT_NAMESPACE, agentSubjectId, isAgentName, trustAgentProvider } from "./agent-identity.js";
 import { keepErrorName } from "./redaction-identity.js";
+import { agentConfig, type AgentConfig } from "./agent-config.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
@@ -364,7 +359,7 @@ export class AccessTokenManager {
 
   constructor(
     private readonly storage: KVStorage,
-    options: { agents?: readonly string[] } = {},
+    options: { agents?: readonly AgentConfig[] } = {},
   ) {
     // Issuance swaps slots by compare-and-set; refuse a store without it here,
     // not at the first rotation.
@@ -374,8 +369,9 @@ export class AccessTokenManager {
           "(d1Storage, sqliteStorage, or memoryStorage)",
       );
     }
-    const agents = options.agents ?? [];
-    assertAgentNames(agents, "agents");
+    const input = readPlain(options.agents ?? [], "agents", agentConfig);
+    if (input.unknown.length) throw new ConfigError("agents contains unknown declaration options.");
+    const agents = agentConfig.parse(input.value, "agents").map((agent) => agent.name);
     this.agentOrder = Object.freeze([...agents]);
     this.agents = new Set(agents);
     this.auth = trustAgentProvider({

@@ -24,7 +24,14 @@ import type {
   CredentialTestResult,
 } from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
-import { errorMeanings, Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
+import {
+  errorMeanings,
+  Refusal,
+  toConnectorCallError,
+  withheldDefect,
+  type HttpFailure,
+  type VendorErrors,
+} from "./errors.js";
 import { hatch, type HatchDeclaration } from "./hatch.js";
 import { takesIdempotencyKey } from "./tools.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
@@ -82,15 +89,26 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly probe: {
-    readonly operation: ProbeOperation;
-    readonly request: unknown | ((options: Readonly<O>) => unknown);
-    /** Auth-dependent read-only probe programs use the same candidate services and failure edge. */
-    readonly run?: (connection: Connection, options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices>;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
     readonly failure?: (error: ConnectorCallError, options: Readonly<O>) => CredentialTestResult | undefined;
-  };
+  } & (
+    | {
+        /** Auth-dependent read-only programs use the same candidate services and failure edge. */
+        readonly run: (
+          connection: Connection,
+          options: Readonly<O>,
+        ) => Effect.Effect<unknown, HttpFailure, CallServices>;
+        readonly operation?: never;
+        readonly request?: never;
+      }
+    | {
+        readonly run?: never;
+        readonly operation: ProbeOperation;
+        readonly request: unknown | ((options: Readonly<O>) => unknown);
+      }
+  );
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
@@ -323,16 +341,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                 return probe.failure?.(error, options) ?? { ok: false, message: error.message };
               }),
             ),
-            Effect.catchDefect((defect) => {
-              try {
-                // Custom probes may send outside this ledger, so always withhold their defects.
-                if (!probe.run && !map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
-                  return Effect.die(defect);
-              } catch {
-                // A broken visibility hook cannot authorize exposing a defect's text.
-              }
-              return Effect.die(new Error("A provider hook withholding vendor text failed."));
-            }),
+            Effect.catchDefect((defect) => Effect.die(withheldDefect(defect, map, !!probe.run))),
             Effect.provideContext(lease.services),
             Effect.ensuring(Effect.sync(lease.close)),
           ),

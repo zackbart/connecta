@@ -13,7 +13,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
-import { failureRecord } from "../src/operator-record.js";
+import { attachFailureFacts, failureRecord } from "../src/operator-record.js";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
@@ -290,6 +290,47 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       }
       for (const unknown of [null, {}, { _tag: "toString" }, new Error("defect")])
         expect(isHttpFailure(unknown)).toBe(false);
+
+      // Only this failure's recorded answer supplies an oversized verdict's
+      // operator status. Another request's answer is not its provenance.
+      const large = new ResponseTooLarge({ detail: "Acme exceeded its byte ceiling." });
+      const map = { classification: "read" as const, dispatches: [] as Dispatch[] };
+      const plain = toConnectorCallError(large, VENDOR, map);
+      for (const code of [200, 401, 424, 503, undefined, 99, 600, 200.5, NaN]) {
+        const own = answered(large, code === undefined ? {} : { status: code });
+        const mapped = toConnectorCallError(large, VENDOR, {
+          ...map,
+          dispatches: [answered(status(429)), own],
+        });
+        const expected = code !== undefined && Number.isInteger(code) && code >= 100 && code <= 599 ? code : undefined;
+        expect(failureRecord({}, mapped).httpStatus).toBe(expected);
+        expect(JSON.stringify(mapped)).toBe(JSON.stringify(plain));
+        const resend = toConnectorCallError(new ResendRefused({ first: own }), VENDOR, map);
+        expect(failureRecord({}, resend).httpStatus).toBe(expected);
+        expect(resend.message).toBe(
+          `${plain.message} A second attempt to send it was stopped before it left: connecta sends a write once.`,
+        );
+      }
+      expect(
+        failureRecord({}, toConnectorCallError(large, VENDOR, { ...map, dispatches: [answered(status(503))] }))
+          .httpStatus,
+      ).toBeUndefined();
+
+      // An unread body still has its ledger's 401. It wins over a later
+      // failure's status without growing the wire error.
+      for (const later of [undefined, attachFailureFacts(new Error("body unreadable"), { httpStatus: 503 })]) {
+        const mapped = settleWrite([request(401)], later, false) as ConnectorCallError;
+        expect(failureRecord({}, mapped).httpStatus).toBe(401);
+        expect(JSON.stringify(mapped)).toBe(
+          JSON.stringify(
+            new ConnectorCallError(
+              "auth_required",
+              "Acme answered this write with HTTP 401. The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
+              { retryable: false, writeOutcome: "unknown" },
+            ),
+          ),
+        );
+      }
     },
   ],
   [

@@ -37,11 +37,11 @@ own HTTP APIs.
 
 ## Who can use it
 
-|                   | People                                               | Agents                                   |
-| ----------------- | ---------------------------------------------------- | ---------------------------------------- |
-| What they are     | You and your team                                    | Bots, assistants, CI, scheduled jobs     |
-| How they prove it | Sign in: Clerk (Node) or Cloudflare Access (Workers) | One token Connecta issues to that agent  |
-| Their own logins  | Yes, on personal connections                         | No. An agent uses accounts you assign it |
+|                   | People                                               | Agents                                                    |
+| ----------------- | ---------------------------------------------------- | --------------------------------------------------------- |
+| What they are     | You and your team                                    | Bots, assistants, CI, scheduled jobs                      |
+| How they prove it | Sign in: Clerk (Node) or Cloudflare Access (Workers) | A Connecta token, or Vercel workload identity (prototype) |
+| Their own logins  | Yes, on personal connections                         | No. An agent uses accounts you assign it                  |
 
 **Maintainers** are the people who run the deployment: they reach every tool
 and manage credentials and agent tokens. Everyone else reaches only the pools
@@ -69,7 +69,7 @@ someone in two pools uses two addresses: pools never merge.
 
 ### One agent, many people
 
-An assistant that talks to several people keeps **one token and one
+An assistant that talks to several people keeps **one machine identity and one
 connection**. Its harness, not the model, picks the pool each turn: a chat
 gets the most capable tier that everyone in it is cleared for, and a
 one-on-one gets that person's own pool.

@@ -395,6 +395,22 @@ export interface MapOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
+/** Shed a defect's text and typed identity when any request withholds vendor text. */
+export function withheldDefect(
+  defect: unknown,
+  options: Pick<MapOptions, "dispatches"> & { readonly withholds: (operation: OperationRef) => boolean },
+  // Custom probe programs may send outside this ledger, so always withhold their defects.
+  always = false,
+): unknown {
+  try {
+    if (!always && !options.dispatches.some(({ operation }) => operation && options.withholds(operation)))
+      return defect;
+  } catch {
+    // A broken visibility hook cannot authorize exposing a defect's text.
+  }
+  return new Error("A provider hook withholding vendor text failed.");
+}
+
 /**
  * The single mapping from a kit failure to what an agent reads. It decides
  * no write: the core does, from its ledger (`providerCallFailure` at the
@@ -449,7 +465,7 @@ function resent(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
       { retryable: false },
     );
   }
-  const error = verdict(own, vendor, options);
+  const error = verdict(own, vendor, options, first);
   const marked = first.request ? vendorRefusal(error, first.request) : error;
   return providerFailureMessage(marked, `${marked.message} ${RESEND}`);
 }
@@ -505,6 +521,7 @@ function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
   options: Pick<MapOptions, "withholds" | "signal" | "dispatches">,
+  dispatch = options.dispatches.find((entry) => entry.failure === failure),
 ): ConnectorCallError {
   switch (failure._tag) {
     case "Refusal":
@@ -525,7 +542,10 @@ function verdict(
         { retryable: false },
       );
     case "ResponseTooLarge":
-      return new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false });
+      return attachFailureFacts(
+        new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }),
+        dispatch?.status === undefined ? {} : { httpStatus: dispatch.status },
+      );
     case "ResendRefused":
       return new ConnectorCallError(
         "connector_call_failed",

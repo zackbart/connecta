@@ -50,6 +50,7 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
+import { failureRecord } from "../src/operator-record.js";
 import { readRequest, isKnownProviderFailure } from "../src/provider-call.js";
 import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
@@ -2140,11 +2141,13 @@ describe("the shared client reads bytes and text for the products that need them
           "Google Drive accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.",
       });
       expect(outcomeOf(accepted)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(failureRecord({}, accepted).httpStatus).toBe(200);
 
       // The same for a write through bytes(), whose read is not JSON.
       const viaBytes = await failing(drive.bytes({ ...write, method: "PATCH" }, context()));
       expect(viaBytes).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(outcomeOf(viaBytes)).toMatchObject({ status: 200, phase: "reading-body" });
+      expect(failureRecord({}, viaBytes).httpStatus).toBe(200);
 
       // A read broken off the same way keeps its unreadable-body refusal.
       const reread = await failing(drive.bytes(read, context()));
@@ -2166,17 +2169,20 @@ describe("the shared client reads bytes and text for the products that need them
       expect(overflow).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(overflow.message).toContain("accepted the request but its reply could not be read");
       expect(outcomeOf(overflow)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(failureRecord({}, overflow).httpStatus).toBe(200);
 
       const redirected = await failing(drive.json({ ...write, method: "DELETE" }, context()));
       expect(redirected).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(redirected.message).toContain("whether the request was applied is unknown");
       expect(redirected.message).not.toContain("probably applied");
       expect(outcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "redirected" });
+      expect(failureRecord({}, redirected).httpStatus).toBe(303);
 
       // A read that overflows keeps its own, unchanged refusal.
       const big = await failing(drive.bytes(read, context()));
       expect(big.message).toContain("1024-byte");
       expect(outcomeOf(big)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      expect(failureRecord({}, big).httpStatus).toBe(200);
     });
 
     it("refused: an error status stays a refusal when its body is past the ceiling", NODE, async () => {
@@ -2186,6 +2192,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure.message).toContain("1024-byte response ceiling");
       expect(failure.message).not.toContain("probably applied");
       expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+      expect(failureRecord({}, failure).httpStatus).toBe(403);
     });
 
     it(
@@ -2243,6 +2250,7 @@ describe("the shared client reads bytes and text for the products that need them
         );
         expect(failure.message).toContain("Re-read its target before repeating it");
         expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
+        expect(failureRecord({}, failure).httpStatus).toBe(status);
       });
 
       /** A quota refusal, carried on whichever status. */
@@ -2272,6 +2280,7 @@ describe("the shared client reads bytes and text for the products that need them
           expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
           expect(failure.message).not.toContain("probably applied");
           expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+          expect(failureRecord({}, failure).httpStatus).toBe(status);
         },
       );
 
@@ -2300,6 +2309,7 @@ describe("the shared client reads bytes and text for the products that need them
           expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
           expect(failure.message).toContain("whether the request was applied is unknown");
           expect(outcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+          expect(failureRecord({}, failure).httpStatus).toBe(status);
         },
       );
 
@@ -2317,6 +2327,7 @@ describe("the shared client reads bytes and text for the products that need them
             phase: index === 0 ? "redirected" : "reading-body",
           });
           expect(failure.retryable).toBe(false);
+          expect(failureRecord({}, failure).httpStatus).toBe(300);
         }
       });
 
@@ -2354,6 +2365,7 @@ describe("the shared client reads bytes and text for the products that need them
         const failure = await failing(client(1024).json(write, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
         expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
+        expect(failureRecord({}, failure).httpStatus).toBe(502);
       });
     });
 
@@ -2366,6 +2378,7 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(failure.message).toContain("1024-byte response ceiling");
       expect(outcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+      expect(failureRecord({}, failure).httpStatus).toBe(401);
       expect(tokenCalls).toHaveLength(1);
       expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1"]);
     });

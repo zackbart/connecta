@@ -12,6 +12,8 @@ import {
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
 import { AppAuth } from "./lib/auth.js";
+import { githubConnection } from "./api.js";
+import { runEdge } from "../../runtime/run.js";
 import { appJwt, privateKeyDer } from "./lib/key.js";
 import { parseScopes, ScopePolicy } from "./lib/scope.js";
 
@@ -224,6 +226,24 @@ describe("GitHub App provider", () => {
   it("INV-6: REST malformed/sentinel error responses produce typed facts without body or content-type", async () => {
     installOwnedTransport();
     const fixture = apiFixture();
+    const resource = githubConnection();
+    for (const [method, path] of [
+      ["GET", "/app/installations"],
+      ["POST", "/app/installations/11/access_tokens"],
+    ] as const) {
+      await expect(runEdge(resource.safety.resolve(method, path))).rejects.toMatchObject({
+        error: { code: "invalid_args", message: "This GitHub operation is not exposed by the connection." },
+      });
+    }
+    expect(await runEdge(resource.safety.resolve("POST", "/repos/acme/one/releases"))).toEqual({
+      method: "POST",
+      template: "/repos/{owner}/{repo}/releases",
+    });
+    expect(await runEdge(resource.safety.resolve("GET", "/installation/repositories"))).toEqual({
+      method: "GET",
+      template: "/installation/repositories",
+    });
+    expect(fixture.requests).toHaveLength(0);
     const logger = spyLogger();
     fixture.respond((request) =>
       request.url.pathname === "/repos/acme/one/releases"

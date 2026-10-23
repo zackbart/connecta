@@ -52,6 +52,7 @@ const WORKERS_SUITES = [
   "test/write-provenance.test.ts",
   // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.
   "test/access-tokens.test.ts",
+  "test/vercel-agent.test.ts",
   "test/clerk.test.ts",
   "test/cloudflare-access-auth.test.ts",
   "test/credentials.test.ts",

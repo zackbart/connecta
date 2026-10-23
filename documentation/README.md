@@ -23,6 +23,9 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 For removed hosted presets and the hosted halves of Stripe, Vercel, Cloudflare,
 Notion, Mixpanel, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).
 
+For a Vercel-hosted agent without a provisioned Connecta token, use
+[Vercel workload credentials (prototype)](./auth.md#vercel-workload-credentials-prototype).
+
 ## Audience rule
 
 Shipped docs (`documentation/`, `templates/`, `examples/worker/`, and the root

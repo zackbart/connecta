@@ -1159,7 +1159,10 @@ operator page may show catalog metadata the operator loaded (descriptions,
 schemas), but withholds a tool name outside the grammar as it does in records.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
-the next one.
+the next one. Recorded HTTP status facts survive the bare write-401 fallback,
+Google's uncertain-write wording, and oversized-response mapping; see
+[Read failure records](./operating.md#read-failure-records) for their operator
+meaning. These facts do not change agent error fields or write outcomes.
 
 ## Configuration
 

@@ -52,7 +52,7 @@ export function authorizationRequest(request: Request): Request {
   return normalized;
 }
 
-/** Reserved machine syntax, even when the optional verifier is not installed. */
+/** Reserved token syntax, even when the optional verifier is not installed. */
 export function isMachineCredential(request: Request): boolean {
   const credential = authorizationCredential(request);
   return credential.kind === "bearer" && credential.token.startsWith("cta_");
