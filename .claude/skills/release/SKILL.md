@@ -23,7 +23,11 @@ go-ahead for this release.
 ## Steps
 
 1. Branch from current `origin/main`. Bump the version in `package.json` with
-   `pnpm version <version> --no-git-tag-version`.
+   `pnpm version <version> --no-git-tag-version`. Set the same version in
+   `packages/connecta-eve/package.json` with
+   `pnpm --filter @zackbart/connecta-eve version <version> --no-git-tag-version`.
+   The helper and core share every release tag and version; retain both lockfiles.
+   Use Node 24 for `release:check` and publishing.
 2. Commit `CHANGELOG.md` and everything under `.changes/` first. Assembly
    refuses untracked or modified inputs.
 3. `pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]`.
@@ -32,12 +36,18 @@ go-ahead for this release.
    sections stay untouched.
 4. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
 5. Review the assembled section, commit it with the deletions, then run
-   `pnpm run release:check` (full `check`, `check:security`, `check:package`).
+   `pnpm run release:check` (full `check`, browser/example/security checks,
+   core package smoke, and the Eve helper's typecheck/test/build and packed
+   consumer smoke with real Eve).
    Open the PR and merge it like any other.
 6. After merge, tag the merge commit `v<version>` (must equal `package.json`;
    publish.yml verifies) and publish a GitHub Release with the narrative.
    publish.yml reruns `release:check` once and runs `npm publish --ignore-scripts`
-   on that validated `dist/`.
+   with provenance for both validated `dist/` trees. Configure npm trusted
+   publishing for **both** `@zackbart/connecta` and `@zackbart/connecta-eve`
+   against this repository's `publish.yml` before the first joint release.
+   A rerun after a partial publish needs the already published version handled
+   explicitly; never bump one package independently.
 
 If a Chromium install fails in publish.yml, see the `triage-ci` skill; rerun
 the workflow with `workflow_dispatch` and the existing tag instead of retagging.

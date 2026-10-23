@@ -1,62 +1,70 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "src/index.ts",
-    "src/node.ts",
-    "src/worker.ts",
-    "src/json-schema.ts",
-    "src/executors/quickjs.ts",
-    "src/executors/quickjs-child.ts",
-    "src/auth/clerk.ts",
-    // A published subpath the Worker example now imports by name, which
-    // otherwise hides that it is an entry of its own.
-    "src/activity.ts",
-    // Published operator contract types are consumed by external UI clients.
-    "src/ui.ts",
-    "src/providers/breeze/index.ts",
-    "src/providers/ccb/index.ts",
-    "src/providers/cloudflare/index.ts",
-    "src/providers/docs/index.ts",
-    "src/providers/drive/index.ts",
-    "src/providers/forms/index.ts",
-    "src/providers/github/index.ts",
-    "src/providers/gmail/index.ts",
-    "src/providers/overflow/index.ts",
-    "src/providers/planning-center/index.ts",
-    "src/providers/sheets/index.ts",
-    "src/providers/slides/index.ts",
-    "src/providers/stripe/index.ts",
-    "src/providers/tithely/index.ts",
-    "src/providers/vercel/index.ts",
-    "src/operator-ui/app/main.tsx",
-    "src/operator-ui/browser.css",
-    "examples/*/src/index.ts",
-    "examples/*/alchemy.run.ts",
-    "scripts/*.mjs",
-    "test/**/*.test.ts",
-    // Golden specs load through import.meta.glob in test/goldens.test.ts.
-    "test/goldens/*/spec.ts",
-    // The eval harness: CLI entries, plus the Worker entries wrangler loads.
-    "eval/*.ts",
-    "eval/deploy/worker-*.ts"
-  ],
-  "project": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "src/**/*.css",
-    "examples/**/*.ts",
-    "scripts/**/*.mjs",
-    "test/**/*.ts",
-    "eval/**/*.ts",
-    "*.ts"
-  ],
-  "ignoreDependencies": [
-    // `tsx` needed an exemption until `drift:check` named it in a script: its
-    // other uses — the forked QuickJS child, the Node template's runner — are
-    // ones knip cannot see. Delete that script and it needs the exemption back.
-    // `wrangler` — the deployment CLI and the schema provider for
-    // examples/worker/wrangler.jsonc — is in the same position:
-    // test/d1-storage.node.test.ts imports it, and losing that import
-    // brings its exemption back.
-  ]
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/index.ts",
+        "src/node.ts",
+        "src/worker.ts",
+        "src/json-schema.ts",
+        "src/executors/quickjs.ts",
+        "src/executors/quickjs-child.ts",
+        "src/auth/clerk.ts",
+        // A published subpath the Worker example now imports by name, which
+        // otherwise hides that it is an entry of its own.
+        "src/activity.ts",
+        // Published operator contract types are consumed by external UI clients.
+        "src/ui.ts",
+        "src/providers/breeze/index.ts",
+        "src/providers/ccb/index.ts",
+        "src/providers/cloudflare/index.ts",
+        "src/providers/docs/index.ts",
+        "src/providers/drive/index.ts",
+        "src/providers/forms/index.ts",
+        "src/providers/github/index.ts",
+        "src/providers/gmail/index.ts",
+        "src/providers/overflow/index.ts",
+        "src/providers/planning-center/index.ts",
+        "src/providers/sheets/index.ts",
+        "src/providers/slides/index.ts",
+        "src/providers/stripe/index.ts",
+        "src/providers/tithely/index.ts",
+        "src/providers/vercel/index.ts",
+        "src/operator-ui/app/main.tsx",
+        "src/operator-ui/browser.css",
+        "examples/*/src/index.ts",
+        "examples/*/alchemy.run.ts",
+        "scripts/*.mjs",
+        "test/**/*.test.ts",
+        // Golden specs load through import.meta.glob in test/goldens.test.ts.
+        "test/goldens/*/spec.ts",
+        // The eval harness: CLI entries, plus the Worker entries wrangler loads.
+        "eval/*.ts",
+        "eval/deploy/worker-*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "src/**/*.css",
+        "examples/**/*.ts",
+        "scripts/**/*.mjs",
+        "test/**/*.ts",
+        "eval/**/*.ts",
+        "*.ts"
+      ],
+      "ignoreDependencies": [
+        // `tsx` needed an exemption until `drift:check` named it in a script: its
+        // other uses — the forked QuickJS child, the Node template's runner — are
+        // ones knip cannot see. Delete that script and it needs the exemption back.
+        // `wrangler` — the deployment CLI and the schema provider for
+        // examples/worker/wrangler.jsonc — is in the same position:
+        // test/d1-storage.node.test.ts imports it, and losing that import
+        // brings its exemption back.
+      ]
+    },
+    "packages/connecta-eve": {
+      "entry": ["src/index.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts", "*.ts"]
+    }
+  }
 }

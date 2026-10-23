@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every core check runs for every change. Share static/build setup; `check`
-# is the only required status. Applicable browser/audit failures also block it.
+# is the only required status. Applicable browser/audit/Eve failures also block it.
 jobs:
   static:
     runs-on: ubuntu-latest
@@ -26,11 +26,12 @@ jobs:
       changed-files: ${{ steps.changes.outcome }}
       browser: ${{ steps.changes.outputs.browser }}
       audit: ${{ steps.changes.outputs.audit }}
+      eve: ${{ steps.changes.outputs.eve }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - name: Select browser and audit checks
+      - name: Select browser, audit and Eve checks
         id: changes
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -40,8 +41,7 @@ jobs:
           base=${PR_BASE:-${PUSH_BASE:-HEAD^1}}
           echo "base=$base" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT" != pull_request ]]; then
-            echo 'browser=true' >> "$GITHUB_OUTPUT"
-            echo 'audit=true' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'browser=true' 'audit=true' 'eve=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           test -n "$PR_BASE"
@@ -61,6 +61,13 @@ jobs:
           else
             echo 'audit=false' >> "$GITHUB_OUTPUT"
           fi
+          # The helper's integration test imports the real agent server. Any
+          # core change can change that contract; keep its Node 24 check separate.
+          if grep -zEq '^(packages/connecta-eve/|src/|scripts/check-eve-package\.mjs$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|\.github/workflows/(ci|publish)\.yml$)' "$RUNNER_TEMP/changed-files"; then
+            echo 'eve=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'eve=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -73,7 +80,7 @@ jobs:
           test -n "$BASE"
           git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
           git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run check:static
       - run: pnpm run check:build
 
@@ -91,7 +98,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run test:node
 
   # workerd runs only the suites vitest.config.ts lists for it.
@@ -107,8 +114,27 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run test:workers
+
+  eve:
+    needs: static
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.eve == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            packages/connecta-eve/pnpm-lock.yaml
+      # The integration test runs the in-repo agent endpoint, so install core too.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta-eve run check
 
   browser:
     needs: static
@@ -122,7 +148,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - name: Install Chromium and system dependencies
         timeout-minutes: 16
         uses: ./.github/actions/install-chromium
@@ -155,9 +181,9 @@ jobs:
       - run: pnpm --config.verify-deps-before-run=false run check:security
 
   # Branch protection requires this name. Core jobs and classification must
-  # succeed; browser/audit may skip only when explicitly inapplicable.
+  # succeed; browser/audit/Eve may skip only when explicitly inapplicable.
   check:
-    needs: [static, node, workers, browser, audit]
+    needs: [static, node, workers, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -171,7 +197,7 @@ jobs:
             . as $jobs |
             all(["static", "node", "workers"][]; $jobs[.].result == "success") and
             .static.outputs["changed-files"] == "success" and
-            all(["browser", "audit"][];
+            all(["browser", "audit", "eve"][];
               . as $job | $jobs.static.outputs[$job] as $applies |
               ($applies == "true" and $jobs[$job].result == "success") or
               ($applies == "false" and $jobs[$job].result == "skipped"))

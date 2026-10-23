@@ -1,0 +1,46 @@
+{
+  "name": "@zackbart/connecta-eve",
+  "version": "0.34.1",
+  "type": "module",
+  "sideEffects": false,
+  "description": "Eve connection and instructions helpers for Connecta agent endpoints.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zackbart/connecta.git",
+    "directory": "packages/connecta-eve"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "eve": ">=0.83.0 <0.84.0"
+  },
+  "devDependencies": {
+    "eve": "0.83.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6",
+    "@types/node": "^24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepack": "pnpm run check"
+  }
+}

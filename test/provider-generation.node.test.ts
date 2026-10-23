@@ -151,6 +151,32 @@ afterEach(() => {
 });
 
 describe("provider folder generation", () => {
+  it("preserves workspace-specific Knip entries and provider indentation", () => {
+    const root = repository();
+    write(
+      root,
+      "knip.jsonc",
+      `{
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/index.ts",
+        "src/providers/retired.ts",
+        "src/worker.ts"
+      ]
+    },
+    "packages/connecta-eve": { "entry": ["src/index.ts"] }
+  }
+}\n`,
+    );
+    provider(root, "alpha");
+    const result = run(root);
+    expect(result.status, result.stderr).toBe(0);
+    expect(read(root, "knip.jsonc")).toContain('        "src/providers/alpha/index.ts",');
+    expect(json(root, "knip.jsonc").workspaces["packages/connecta-eve"]).toEqual({ entry: ["src/index.ts"] });
+    expect(run(root, true).status).toBe(0);
+  });
+
   it("adds a provider to every generated membership without central edits and excludes _shared", () => {
     const root = repository();
     provider(root, "alpha");

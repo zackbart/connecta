@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run check:examples
       # Pack the existing dist/ with --ignore-scripts, without another build.

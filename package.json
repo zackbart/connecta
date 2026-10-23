@@ -190,7 +190,7 @@
     "check:build": "pnpm run build && pnpm run check:declarations && pnpm run check:bundle",
     "check:fast": "pnpm run check:static && vitest run --config vitest.config.node.ts --changed origin/main --passWithNoTests",
     "check": "pnpm run check:static && pnpm run test && pnpm run check:build",
-    "release:check": "pnpm run check && pnpm run test:browser && pnpm run check:examples && pnpm run check:security && pnpm run check:package",
+    "release:check": "pnpm run check && pnpm run test:browser && pnpm run check:examples && pnpm run check:security && pnpm run check:package && pnpm --filter @zackbart/connecta-eve run check && pnpm run check:eve-package",
     "prepack": "pnpm run check",
     "check:changes": "node scripts/changelog.mjs --check && node --test scripts/changelog.test.mjs",
     "changelog:assemble": "node scripts/changelog.mjs",
@@ -207,7 +207,8 @@
     "eval:compare": "tsx eval/compare.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "providers:spec": "tsx scripts/generate-openapi.mjs"
+    "providers:spec": "tsx scripts/generate-openapi.mjs",
+    "check:eve-package": "node scripts/check-eve-package.mjs"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

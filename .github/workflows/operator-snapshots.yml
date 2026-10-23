@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - name: Install Chromium and system dependencies
         timeout-minutes: 16
         uses: ./.github/actions/install-chromium
