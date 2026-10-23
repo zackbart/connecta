@@ -61,6 +61,8 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
    * the two renderings must agree.
    */
   readonly input: I;
+  /** Preserve caller key order after decoding, for byte-sensitive legacy request framing. */
+  readonly inputOrder?: "original";
   /** What the program returns; its type is checked against the projection statically. */
   readonly output: O;
   /** Default: one implicit `write` step. Declare every step before serving, including reads served as writes. */
@@ -69,6 +71,40 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
 }
 
 const inputs = new WeakMap<ApiTool, Input>();
+
+/** Copy decoded values only; the input supplies key order, never values or admission. */
+function originalOrder<A>(decoded: A, original: unknown): A {
+  const copies = new WeakMap<object, unknown>();
+  const copy = (value: unknown, source: unknown): unknown => {
+    if (value === source || value === null || typeof value !== "object") return value;
+    if (copies.has(value)) return copies.get(value);
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      copies.set(value, out);
+      value.forEach((item, index) => out.push(copy(item, Array.isArray(source) ? source[index] : undefined)));
+      return out;
+    }
+    const values = value as Record<string, unknown>;
+    const keys = source !== null && typeof source === "object" && !Array.isArray(source) ? Object.keys(source) : [];
+    const present = keys.filter((key) => Object.hasOwn(values, key));
+    const ordered = new Set(present);
+    const out: Record<string, unknown> = {};
+    copies.set(value, out);
+    for (const key of [...present, ...Object.keys(values).filter((key) => !ordered.has(key))]) {
+      Object.defineProperty(out, key, {
+        value: copy(
+          values[key],
+          source !== null && typeof source === "object" ? (source as Record<string, unknown>)[key] : undefined,
+        ),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  };
+  return copy(decoded, original) as A;
+}
 
 /** The input Schema a kit tool decodes with, for the catalog/decoder agreement check. */
 export function kitInput(tool: ApiTool): Input | undefined {
@@ -244,6 +280,7 @@ function build<I extends Input, O extends Schema.Top>(
         decode(args).pipe(
           // Its message can quote the argument; as a defect, api() withholds it.
           Effect.orDie,
+          Effect.map((decoded) => (spec.inputOrder === "original" ? originalOrder(decoded, args) : decoded)),
           Effect.flatMap((decoded) =>
             Effect.gen(function* () {
               const key = idempotency?.key(decoded);

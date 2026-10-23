@@ -518,6 +518,8 @@ guide eval, because no hosted surface remains to standardize.
 
 **Step 2** contents:
 
+Tool shape follows [0014](./0014-api-tool-shape.md).
+
 - S1–S6, G1–G7, the generated Conventions, and the
   `documentation/providers.md` section.
 - Regenerated goldens, every change listed by category: names, schemas,
