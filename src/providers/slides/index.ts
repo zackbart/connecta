@@ -108,8 +108,8 @@ export const slides = defineApiProvider<SlidesOptions>({
   title: "Google Slides",
   readme: "Google Slides",
   bundle: {
-    baselineGzip: 341691,
-    note: "./providers/slides remeasures at 341,691 B gzip in C.7 (decision 0010), on a local Node 26 measure, from 35,074 B for the api() provider: it now runs on the Effect provider kit through the shared Google Workspace layer. A deployment pays the kit once. Reported against this baseline, not capped (#899).",
+    baselineGzip: 343647,
+    note: "./providers/slides remeasures at 343,647 B gzip in C.7 (decision 0010), on a local Node 26 measure, from 35,074 B for the api() provider: it now runs on the Effect provider kit through the shared Google Workspace layer. A deployment pays the kit once. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

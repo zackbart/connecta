@@ -28,8 +28,6 @@ const DEFAULT_LAYOUTS = 100;
 /** Text kept per slide (its elements together, and its notes apart). */
 const DEFAULT_SLIDE_CHARS = 4_000;
 const MAX_SLIDE_CHARS = 50_000;
-/** A whole presentation without styles; with raw: true, with them. */
-
 /** Requests per raw batch: connecta's bound; Slides publishes none. */
 const MAX_BATCH_REQUESTS = 100;
 const MAX_REPLACEMENTS = 50;
