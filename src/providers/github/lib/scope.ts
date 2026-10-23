@@ -1,4 +1,4 @@
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError } from "../../../errors.js";
 
 export type GitHubScope = ({ org: string; repo?: never } | { repo: string; org?: never }) & {
   access: "read" | "read-write";
