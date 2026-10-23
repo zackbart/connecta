@@ -716,11 +716,11 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
         sensitiveFields: { names: [], choice: "drop" },
       }),
     });
-    const bulk = Object.values(declared.indexed!.api().groups["operations"]!.endpoints).find(
-      (endpoint) => endpoint.identifier === "indexed0",
-    )!;
+    const bulk = (
+      Object.values(declared.indexed!.api().groups["operations"]!.endpoints) as Array<Parameters<Connection["send"]>[0]>
+    ).find((endpoint) => endpoint.identifier === "indexed0")!;
     expect(
-      await runEdge(connection.send(bulk, {}).pipe(Effect.result, Effect.provideContext(services()))),
+      await runEdge(connection.send(bulk, {} as never).pipe(Effect.result, Effect.provideContext(services()))),
     ).toMatchObject({ _tag: "Failure", failure: { _tag: "RequestRefused" } });
     expect(sent).toEqual([]);
     const steps: Record<string, "once"> = { lookup: "once", write: "once" };
@@ -743,10 +743,10 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     });
     delete steps["write"];
     steps["extra"] = "once";
-    const tool = tools.find((tool) => tool.name === "acme_api_write")!;
+    const connector = apiConnector("acme", { tools });
     for (mode of ["normal", "extra", "repeat"]) {
       sent = [];
-      const outcome = tool.handler({ method: "POST", path: "/items" }, context());
+      const outcome = connector.callTool("acme_api_write", { method: "POST", path: "/items" }, context());
       if (mode === "normal") await expect(outcome).resolves.toBeDefined();
       else await expect(outcome).rejects.toBeInstanceOf(ConnectorCallError);
       expect(sent.map((request) => request.method)).toEqual(mode === "extra" ? [] : ["GET", "POST"]);
