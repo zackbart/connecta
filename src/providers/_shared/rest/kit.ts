@@ -83,7 +83,9 @@ export function schema(node: JsonSchema): Schema.Codec<unknown> {
           ]);
   } else if (types === "array") {
     let array = Schema.Array(schema((n["items"] ?? {}) as JsonSchema));
+    if (typeof n["minItems"] === "number") array = array.check(Schema.isMinLength(n["minItems"]));
     if (typeof n["maxItems"] === "number") array = array.check(Schema.isMaxLength(n["maxItems"]));
+    if (n["uniqueItems"] === true) array = array.check(Schema.isUnique());
     out = array;
   } else if (types === "string") {
     let string = Schema.String;

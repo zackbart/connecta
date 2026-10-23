@@ -690,7 +690,32 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     const object = Schema.Record(Schema.String, Schema.Unknown);
     const array = Schema.Array(Schema.Unknown);
     expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });
-    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toHaveProperty("anyOf");
+    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toEqual({
+      type: ["object", "array"],
+      minItems: 1,
+    });
+    const constrained = Schema.Union([
+      Schema.String,
+      Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(2), Schema.isUnique()),
+    ]);
+    const rendered = catalogSchema(constrained, "input");
+    expect(rendered).toEqual({
+      type: ["string", "array"],
+      minItems: 1,
+      maxItems: 2,
+      uniqueItems: true,
+      items: { type: "string" },
+    });
+    for (const value of ["", "one", [], ["one"], ["one", "one"], ["one", "two"], ["one", "two", "three"], [1]]) {
+      const admitted = Schema.decodeUnknownSync(Schema.Unknown)(value);
+      expect(
+        validateToolInput(
+          catalogSchema(Schema.Struct({ value: constrained }), "input"),
+          { value: admitted },
+          { address: "acme.union", failClosed: true },
+        ) === null,
+      ).toBe(Schema.is(constrained)(value));
+    }
   });
 
   it("renders every bound the decoder enforces: Integer has none past finiteness, Schema.Int says its own", () => {
@@ -1104,6 +1129,81 @@ it(
         expect(result.success.data, test.name).toEqual(test.value);
         expect(hooks, test.name).toBe(1);
       }
+    }
+    for (const mode of ["bytes", "stop", "time", "failure", "defect", "abort"] as const) {
+      let cancelled = false;
+      let callbacks = 0;
+      const controller = new AbortController();
+      answers.push(
+        () =>
+          new Response(
+            new ReadableStream({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode("!!!"));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            {
+              status: mode === "failure" ? 400 : 200,
+              headers: { "content-length": "1000" },
+            },
+          ),
+      );
+      const connection = connect(
+        {
+          ...ACME_API,
+          textBodies: { review: "Bounded fixture text.", forResponse: () => "text" as const },
+        },
+        guardedClient(OPTIONS),
+        {
+          errors: VENDOR,
+          safety: resultSafety({
+            reviewed: {
+              resolve: (method, template) => ({ method, template }),
+              redact: (value) => value,
+              withholdsErrors: () => true,
+            },
+            sensitiveFields: { names: [], choice: "drop" },
+          }),
+        },
+      );
+      const prefix = {
+        maxBytes: mode === "bytes" ? 2 : 8,
+        timeoutMs: 5,
+        stop: (chunk: Uint8Array): boolean => {
+          callbacks++;
+          // A callback cannot mutate accepted answer bytes.
+          chunk.fill(120);
+          if (mode === "defect") throw new Error("stored-secret-fixture");
+          if (mode === "abort") controller.abort();
+          return mode === "stop";
+        },
+      };
+      const work = connection
+        .sendPath({ method: "GET", path: "/keys" }, { prefix })
+        .pipe(Effect.provideContext(Context.add(services(), Signal, controller.signal)));
+      if (mode === "defect" || mode === "abort") {
+        await expect(runEdge(work, { signal: controller.signal })).rejects.toThrow(
+          mode === "defect" ? "A prefix hook withholding vendor text failed." : undefined,
+        );
+      } else {
+        const result = await runEdge(Effect.result(work));
+        if (mode === "failure") {
+          expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "ResponseTooLarge" } });
+          expect(callbacks).toBe(0);
+        } else {
+          expect(result).toMatchObject({
+            _tag: "Success",
+            success: {
+              data: mode === "bytes" ? "!!" : "!!!",
+              prefix: { truncated: true, bytes: mode === "bytes" ? 2 : 3, stopped: mode },
+            },
+          });
+        }
+      }
+      expect(cancelled, mode).toBe(true);
     }
     await binaryReplyEvidence();
   },

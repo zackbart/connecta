@@ -26,7 +26,7 @@ import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
 import { parameterPairs } from "./write-request.js";
-import type { GuardedClient } from "./client.js";
+import type { GuardedClient, SuccessPrefix, PrefixResult } from "./client.js";
 import {
   validateVendorErrors,
   isHttpFailure,
@@ -125,9 +125,12 @@ interface Answer {
   readonly status: number;
   /** The JSON body after the vendor's `result` hook and the connection's ResultSafety; `undefined` when empty. */
   readonly data: unknown;
+  readonly prefix?: PrefixResult;
 }
 
 interface SendOptions {
+  /** Success-only bounded streaming, without exposing a response or bypassing safety. */
+  readonly prefix?: SuccessPrefix;
   /** Auxiliary ownership; replay and capacity still follow the core's physical-request classification. */
   readonly effect?: "read";
   /**
@@ -172,6 +175,7 @@ export interface ConnectOptions {
       readonly headers: Headers;
       readonly operation: OperationRef;
       readonly withheld: boolean;
+      readonly prefix?: PrefixResult;
     },
   ) => Effect.Effect<unknown, HttpFailure, RequestSecrets>;
 }
@@ -249,7 +253,17 @@ export function connect<R>(
             response.status >= 200 &&
             response.status <= 299 &&
             binaryBodies?.forResponse(response.status, operation, contentType) === true;
-          return guarded.read(response, undefined, binary ? "bytes" : undefined);
+          return guarded
+            .read(response, undefined, binary ? "bytes" : undefined, sendOptions?.prefix)
+            .pipe(
+              Effect.catchDefect((defect) =>
+                Effect.die(
+                  sendOptions?.prefix && options.safety.withholdsErrors(operation)
+                    ? new Error("A prefix hook withholding vendor text failed.")
+                    : defect,
+                ),
+              ),
+            );
         });
         // Header-derived format decisions see only redacted Content-Type.
         const headers = new Headers(secrets.redact([...reply.headers]));
@@ -269,7 +283,10 @@ export function connect<R>(
               }
             : parse(
                 reply.text,
-                (value) => secrets.redact(value),
+                (value) =>
+                  reply.prefix?.truncated && typeof value === "string"
+                    ? secrets.redactOpenTail(value)
+                    : secrets.redact(value),
                 textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
               );
 
@@ -294,6 +311,7 @@ export function connect<R>(
                 headers,
                 operation: { ...operation },
                 withheld,
+                ...(reply.prefix ? { prefix: reply.prefix } : {}),
               }),
             ).pipe(
               Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
@@ -305,7 +323,11 @@ export function connect<R>(
               }),
             )
           : parsed.value;
-        return { status: reply.status, data: options.safety.redact(kept, operation) };
+        return {
+          status: reply.status,
+          data: options.safety.redact(kept, operation),
+          ...(reply.prefix ? { prefix: reply.prefix } : {}),
+        };
       }).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
@@ -318,6 +340,7 @@ export function connect<R>(
           ...(sendOptions?.step === undefined ? {} : { step: sendOptions.step }),
           ...(sendOptions?.item === undefined ? {} : { item: sendOptions.item }),
           operation,
+          ...(sendOptions?.prefix ? { successPrefix: true as const } : {}),
           sent,
         }),
       );
