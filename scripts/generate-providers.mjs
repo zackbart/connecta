@@ -91,7 +91,8 @@ function knipEntries(source, providers) {
   const position = matches[0]?.index ?? entries[2].length;
   const before = entries[2].slice(0, position);
   const after = entries[2].slice(position).replace(membership, "");
-  const additions = providers.map(({ name }) => `    "src/providers/${name}/index.ts",\n`).join("");
+  const indent = /\n([ \t]*)\]/.exec(entries[3])?.[1] ?? "  ";
+  const additions = providers.map(({ name }) => `${indent}  "src/providers/${name}/index.ts",\n`).join("");
   return source.replace(
     entries[0],
     entries[1] + before + (before.endsWith("\n") ? "" : "\n") + additions + after + entries[3],
