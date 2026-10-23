@@ -121,6 +121,13 @@ export function schema(node: JsonSchema): Schema.Codec<unknown> {
 
 /** Declare each indexed operation once; request schema subtrees stay suspended until manifest/client use. */
 export function indexedVendor(name: string, index: OperationIndex, named: readonly KitOperation[] = []): Vendor {
+  for (const op of index.ops) {
+    if (
+      [...op.path.matchAll(/\{([^}]*)\}/g)].some((match) => !/^[A-Za-z0-9_-]+$/.test(match[1]!)) ||
+      /[{}]/.test(op.path.replace(/\{[^}]*\}/g, ""))
+    )
+      throw new Error(`Indexed operation ${op.method} ${op.path} has an unsupported path parameter name.`);
+  }
   const constructors = { GET: get, HEAD: head, POST: post, PUT: put, PATCH: patch, DELETE: del };
   const overrides = new Map(
     named.map((op) => {
@@ -147,7 +154,8 @@ export function indexedVendor(name: string, index: OperationIndex, named: readon
         overrides.get(`${op.method} ${op.path}`) ??
         (constructors[op.method] as typeof post)(
           "indexed" + op.row,
-          op.path.replace(/\{([^}]+)\}/g, ":$1") as `/${string}`,
+          // These declarations feed only the manifest. The live client uses `named` below.
+          op.path as `/${string}`,
           {
             // Parameter names come directly from the vendor template; hatch validation still uses index.check.
             params: Schema.Struct(

@@ -361,7 +361,12 @@ export function connect<R>(
       return settle(
         ref,
         client.pipe(
-          Effect.flatMap((methods) => methods[operation.identifier]!({ ...request, responseMode: "response-only" })),
+          Effect.flatMap((methods) => {
+            const method = methods[operation.identifier];
+            return method
+              ? method({ ...request, responseMode: "response-only" })
+              : Effect.fail(new RequestRefused({ message: "This operation is not a named vendor endpoint." }));
+          }),
           // The guarded client fails only with HttpFailure. Anything else is a
           // request the vendor's own Schemas could not encode: a provider bug.
           Effect.catch((error: unknown) => (isHttpFailure(error) ? Effect.fail(error) : Effect.die(error))),
