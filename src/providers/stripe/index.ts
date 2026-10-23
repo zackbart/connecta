@@ -104,9 +104,9 @@ export const stripe = defineApiProvider<StripeOptions>({
   title: "Stripe",
   readme: "Stripe",
   bundle: {
-    "baselineGzip": 232089,
+    "baselineGzip": 377374,
     "note":
-      "./providers/stripe was measured at 232,089 B gzip (#801), from 170,771 B on main: that historical entry carried the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Stripe operation index (638 operations; request details to depth 2, without descriptions or enums over 50 values; 37,918 B gzip as source). Details were shrunk before its former cap moved: the first full index measured 81 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899).",
+      "./providers/stripe remeasures at 377,374 B gzip in C.6 (decision 0010, #703, PR #951), Node 22 CI static at d39a49fa: its API tools now run on the Effect provider kit with the pinned compact operation index (638 operations), reviewed text and bounded binary bodies, and connected-account routing. This replaces the historical 232,089 B baseline that included the hosted MCP half removed by C.0c. Root and examples/worker remain unchanged at 398,591 B and 738,601 B in CI. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: STRIPE_OPTIONS,

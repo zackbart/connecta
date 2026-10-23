@@ -1671,6 +1671,10 @@ options; an explicit `options.title` takes precedence. A complete usage guide
 passes through unchanged so step-1 migrations preserve legacy fragments and
 option-dependent text without changing `SKILL.md`.
 
+- C.6 adds optional `probe.failure(error, options)` to describe a mapped probe failure as a reviewed credential result; `undefined` retains the failure.
+- C.6 allows `authenticate(options)` to build the authentication Effect from validated connection options outside caller contexts.
+- C.6 allows `defaultCallAdmission(options)` to derive connection defaults; explicit connector admission options take precedence.
+
 CCB's C.4 migration adds the optional `authScope(options)` selector. Its
 deployment mode fixes grant ownership: System Auth is shared and Identity
 Auth is personal. The selector runs at construction from validated deployment
