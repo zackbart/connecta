@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 
 import { notion } from "./index.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
@@ -34,6 +35,7 @@ function queue(...responses: StubResponse[]): void {
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
   calls.length = 0;
   queued = [];
   globalThis.fetch = vi.fn(async (input: any, init: any = {}) => {
@@ -52,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 
@@ -420,6 +423,7 @@ describe("notion() generic REST tools", () => {
       ["POST", "/v1/sessions/query"],
       ["POST", "/v1/sessions/s-1/events/query"],
     ]);
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     calls.length = 0;
     // A view query is stored until deleted, and a page create is a create:
     // neither may ride the read path.
@@ -724,7 +728,9 @@ describe("notion() error mapping", () => {
     expect(updated.message).not.toContain("FAKE_SIGNATURE");
   });
 
-  test.each(cases)("%s", async (_name, run) => run());
+  it("INV-5 INV-9: preserves structured retry, commitment and withheld-error diagnostics", async () => {
+    for (const [, run] of cases) await run();
+  });
 });
 
 describe("notion() authoring helpers", () => {
@@ -747,6 +753,7 @@ describe("notion() authoring helpers", () => {
     });
     expect(calls[1]?.body.children[0].to_do.rich_text).toHaveLength(3);
 
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     calls.length = 0;
     const tooLong = await refusal(
       call(build(), "integration_append_blocks", {

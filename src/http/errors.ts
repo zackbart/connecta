@@ -113,6 +113,11 @@ export function isHttpFailure(error: unknown): error is HttpFailure {
 /** One machine-readable value from an error body: a code, a reason, a type. */
 type Fact = string | number | boolean;
 type Facts = Readonly<Record<string, Fact | ReadonlyArray<Fact> | undefined>>;
+/** A reviewed response shape, without its text or any other downstream value. */
+type Presence = Readonly<Record<string, { readonly present: boolean; readonly nonBlank: boolean }>>;
+type PresenceReview = Readonly<
+  Record<string, { readonly path: readonly string[]; readonly content: "string" | "text" }>
+>;
 
 /**
  * Everything classification reads. There is no detail line and no body: a
@@ -122,6 +127,7 @@ export interface Classified<F extends Facts = Facts> {
   readonly status: number;
   /** The vendor's `facts`, over the whole error body: tokens, finite numbers, booleans, and complete lists of them. */
   readonly facts: F;
+  readonly presence: Presence;
   /** Only the vendor's reviewed `headers`, by lowercase name. */
   readonly headers: Readonly<Record<string, string>>;
   readonly retryAfterMs: number | undefined;
@@ -157,6 +163,7 @@ interface DetailInput<F extends Facts = Facts> {
   readonly status: number;
   /** The same facts, with each list cut to its first eight entries for display. */
   readonly facts: F;
+  readonly presence: Presence;
   readonly headers: Readonly<Record<string, string>>;
   readonly withheld: boolean;
   readonly body?: unknown;
@@ -187,6 +194,8 @@ export interface VendorErrors<F extends Facts = Facts> {
    * not there to read. Runs on every failure, withheld or not.
    */
   readonly facts: (tokens: unknown) => F;
+  /** Structural text facts only: never exposes the string, including on withheld operations. */
+  readonly presence?: PresenceReview;
   /** Response headers rules and wording may read, by lowercase name. Every other header is invisible. */
   readonly headers?: readonly string[];
   /** One detail line for the reader, built after classification. */
@@ -215,6 +224,18 @@ interface AuthBeforeExecution<F extends Facts> {
 
 /** Refuse empty evidence at connection construction (INV-11); prose is never proof by itself. */
 export function validateVendorErrors(vendor: VendorErrors<any>): void {
+  for (const [name, review] of Object.entries(vendor.presence ?? {})) {
+    if (
+      !TOKEN.test(name) ||
+      !Array.isArray(review.path) ||
+      review.path.length === 0 ||
+      review.path.length > MAX_DEPTH ||
+      review.path.some((part) => typeof part !== "string" || !part) ||
+      !["string", "text"].includes(review.content)
+    ) {
+      throw new Error("Error presence reviews need a name, a bounded property path and string or text content.");
+    }
+  }
   const proof = vendor.authBeforeExecution;
   if (proof && (typeof proof.evidence !== "string" || !proof.evidence.trim() || typeof proof.matches !== "function")) {
     throw new Error("An authBeforeExecution declaration requires nonempty evidence and a narrow raw-fact predicate.");
@@ -455,7 +476,7 @@ function verdict(
 
 function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
-  const { facts, headers } = input;
+  const { facts, headers, presence } = input;
   // Classification first, over facts and headers only.
   const { code, retryable, retryAfterMs: wait, current, words, advice } = classified(input, vendor);
   // Then the wording. The body reaches `detail` only when this operation's
@@ -463,6 +484,7 @@ function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withhe
   const detail = vendor.detail({
     status: failure.status,
     facts: displayed(facts),
+    presence,
     headers,
     withheld,
     ...(withheld ? {} : { body: failure.body }),
@@ -475,10 +497,36 @@ function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withhe
   return advice === undefined ? error : resendAdvice(error, advice);
 }
 
+/** Only membership and whitespace are examined; no text is copied into classification. */
+function structuralPresence(body: unknown, reviews: PresenceReview | undefined): Presence {
+  return Object.fromEntries(
+    Object.entries(reviews ?? {}).map(([name, review]) => {
+      let value = body;
+      for (const part of review.path) {
+        value =
+          value !== null && typeof value === "object" && Object.hasOwn(value, part)
+            ? (value as Record<string, unknown>)[part]
+            : undefined;
+      }
+      const strings =
+        typeof value === "string"
+          ? [value]
+          : review.content === "text" && Array.isArray(value)
+            ? value.filter((entry): entry is string => typeof entry === "string")
+            : [];
+      return [
+        name,
+        { present: strings.some((text) => text.length > 0), nonBlank: strings.some((text) => text.trim().length > 0) },
+      ];
+    }),
+  );
+}
+
 function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): Classified {
   return {
     status: failure.status,
     facts: bounded(vendor.facts(tokensOf(failure.body))),
+    presence: structuralPresence(failure.body, vendor.presence),
     headers: visibleHeaders(failure.headers, vendor.headers),
     retryAfterMs: retryAfterMs(failure.headers),
     operation: failure.operation,

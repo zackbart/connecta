@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "notion",
   "checks": [
     {
@@ -9,58 +9,50 @@
       },
       "endpoints": [
         {
-          "method": "GET",
-          "path": "/v1/blocks/{block_id}/children",
           "specRevision": "1.0.0",
-          "contract": "sha256:ce60a0e9160d4aa41fb35ca71e36a795ae46a16c719a9a1bc04165f4902dff2d"
+          "contract": "sha256:ce60a0e9160d4aa41fb35ca71e36a795ae46a16c719a9a1bc04165f4902dff2d",
+          "operation": "GET /v1/blocks/{block_id}/children"
         },
         {
-          "method": "PATCH",
-          "path": "/v1/blocks/{block_id}/children",
           "specRevision": "1.0.0",
-          "contract": "sha256:a4f9b1b0e53031aac2a7c8d5b7bb30efaf43d32561b2717f1ac441f7e754f96e"
+          "contract": "sha256:a4f9b1b0e53031aac2a7c8d5b7bb30efaf43d32561b2717f1ac441f7e754f96e",
+          "operation": "PATCH /v1/blocks/{block_id}/children"
         },
         {
-          "method": "GET",
-          "path": "/v1/data_sources/{data_source_id}",
           "specRevision": "1.0.0",
-          "contract": "sha256:459a51d46148e364d71cdb052f70ba5fce7d15c2b49b05def5190538d31d038e"
+          "contract": "sha256:459a51d46148e364d71cdb052f70ba5fce7d15c2b49b05def5190538d31d038e",
+          "operation": "GET /v1/data_sources/{data_source_id}"
         },
         {
-          "method": "POST",
-          "path": "/v1/data_sources/{data_source_id}/query",
           "specRevision": "1.0.0",
-          "contract": "sha256:d42e880d63caac2c9298b753894de722392db187eca146596455b94789aef6b5"
+          "contract": "sha256:d42e880d63caac2c9298b753894de722392db187eca146596455b94789aef6b5",
+          "operation": "POST /v1/data_sources/{data_source_id}/query"
         },
         {
-          "method": "POST",
-          "path": "/v1/pages",
           "specRevision": "1.0.0",
-          "contract": "sha256:414ebdef64f57007f24248bf05cabb3f8a1b8944adba9d4057d1c932c8fd5828"
+          "contract": "sha256:414ebdef64f57007f24248bf05cabb3f8a1b8944adba9d4057d1c932c8fd5828",
+          "operation": "POST /v1/pages"
         },
         {
-          "method": "GET",
-          "path": "/v1/pages/{page_id}",
           "specRevision": "1.0.0",
-          "contract": "sha256:62886b88f7123a1654b7a3e925b45e264fcf82d6f0fa4479b70b58f42be9d27e"
+          "contract": "sha256:62886b88f7123a1654b7a3e925b45e264fcf82d6f0fa4479b70b58f42be9d27e",
+          "operation": "GET /v1/pages/{page_id}"
         },
         {
-          "method": "POST",
-          "path": "/v1/search",
           "specRevision": "1.0.0",
-          "contract": "sha256:9672287768a78b4e45bdc692184988116ef8459c1edc45110334afe578114086"
+          "contract": "sha256:9672287768a78b4e45bdc692184988116ef8459c1edc45110334afe578114086",
+          "operation": "POST /v1/search"
         },
         {
-          "method": "GET",
-          "path": "/v1/users/me",
           "specRevision": "1.0.0",
-          "contract": "sha256:2c880fea11f3a5dc77387c618f5a6a8d59d11f9b7a6fa782fb22fc3b11e35ae0"
+          "contract": "sha256:2c880fea11f3a5dc77387c618f5a6a8d59d11f9b7a6fa782fb22fc3b11e35ae0",
+          "operation": "GET /v1/users/me"
         }
       ]
     },
     {
       "type": "openapi-index",
-      "source": "openapi.source.json"
+      "source": "evidence/openapi.json"
     }
   ]
 }

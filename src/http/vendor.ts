@@ -80,7 +80,11 @@ export interface Vendor {
   /** Reviewed text contracts, selected by status and canonical operation; absent means JSON only. */
   readonly textBodies?: {
     readonly review: string;
-    readonly forResponse: (status: number, operation: OperationRef) => "text" | "json-or-text" | undefined;
+    readonly forResponse: (
+      status: number,
+      operation: OperationRef,
+      contentType?: string,
+    ) => "text" | "json-or-text" | undefined;
   };
 }
 
@@ -157,7 +161,7 @@ export interface ConnectOptions {
       readonly operation: OperationRef;
       readonly withheld: boolean;
     },
-  ) => Effect.Effect<unknown, HttpFailure>;
+  ) => Effect.Effect<unknown, HttpFailure, RequestSecrets>;
 }
 
 /** A vendor bound to one connection: its transport, its failure table, and its value-safety boundary. */
@@ -226,13 +230,12 @@ export function connect<R>(
         const reply = yield* Effect.flatMap(response, guarded.read);
         // Whole, before a detail line trims it or a projection extracts from it.
         const secrets = yield* RequestSecrets;
+        const headers = new Headers(secrets.redact([...reply.headers]));
         const parsed = parse(
           reply.text,
           (value) => secrets.redact(value),
-          textBodies?.forResponse(reply.status, operation),
+          textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
         );
-        // Hooks can cut header values too; redact their whole values before exposing them.
-        const headers = new Headers(secrets.redact([...reply.headers]));
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
             new StatusFailure({

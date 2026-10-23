@@ -21,7 +21,7 @@ import {
 } from "../_shared/rest/tools.js";
 import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
-import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
+import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./safety.js";
 import { redactBeforeCut, requestSentSecrets } from "../../sent-secrets.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */

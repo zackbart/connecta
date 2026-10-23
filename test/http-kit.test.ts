@@ -398,6 +398,42 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(facts).toMatchObject({ list: ["token", 1, true] });
       expect(JSON.stringify(facts)).not.toMatch(/text with spaces|https|Infinity/);
       expect(body.prose).toBe("the token expired");
+      // Presence is a closed structural declaration: neither callback sees the text it classifies.
+      for (const [value, present, nonBlank] of [
+        [undefined, false, false],
+        ["", false, false],
+        [" ", true, false],
+        ["private prose here", true, true],
+        [["", " ", "private prose"], true, true],
+        [[null, 1], false, false],
+        [{ value: "private prose" }, false, false],
+      ] as const) {
+        let seen: unknown;
+        const shaped: VendorErrors = {
+          ...VENDOR,
+          presence: { guidance: { path: ["additional_data", "retry_guidance"], content: "text" } },
+          classify: [
+            (input) => {
+              seen = input.presence;
+              return undefined;
+            },
+          ],
+          detail: (input) => {
+            expect(input).not.toHaveProperty("body");
+            return "Withheld.";
+          },
+        };
+        toConnectorCallError(status(503, {}, { additional_data: { retry_guidance: value } }), shaped, {
+          classification: "read",
+          dispatches: [],
+          withholds: () => true,
+        });
+        expect(seen).toEqual({ guidance: { present, nonBlank } });
+        expect(JSON.stringify(seen)).not.toContain("private");
+      }
+      expect(() => validateVendorErrors({ ...VENDOR, presence: { bad: { path: [], content: "text" } } })).toThrow(
+        /presence/,
+      );
     },
   ],
   [
@@ -1139,6 +1175,19 @@ function acme(
 }
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
+  it("INV-5: a result hook redacts joined text through this call's request-secret service", async () => {
+    const secret = "split-credential-value";
+    const secrets = new SentSecrets();
+    secrets.add(secret);
+    answers.push(() => Response.json([secret.slice(0, 5), secret.slice(5)]));
+    const connection = acme({
+      result: (body) => RequestSecrets.use((secrets) => Effect.succeed({ parts: secrets.parts(body as string[]) })),
+    });
+    const reply = await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+    expect(JSON.stringify(reply.data)).not.toContain("credential");
+    expect(reply.data).not.toEqual([secret.slice(0, 5), secret.slice(5)]);
+  });
+
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {
     const rows = [1, 2, 3].map((n) => ({ token: `sk_live_secret_${n}`, owner: { email: "alice@example.com" }, n }));
     answers.push(() => Response.json(rows));
