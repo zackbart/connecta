@@ -11,8 +11,9 @@
 // `Answer`, never a response. HttpApiClient's own decoding would read the
 // whole body without a ceiling, quote the body in a SchemaError, and fail an
 // empty 200. Every answer, from a declared operation or a hatch's path, takes
-// one route: bounded read, JSON, the request's sent secrets redacted from the
-// whole body before anything can cut or extract from it (#911), status (with
+// one route: bounded read, JSON, the request's sent secrets redacted from
+// every value of the whole body before anything can cut or extract from it
+// (#911), its keys kept for value safety to match by name, status (with
 // its operation, so value safety decides what a failure may quote), the
 // vendor's `result` hook, then the connection's ResultSafety. A provider
 // cannot reach a body earlier.
@@ -80,8 +81,6 @@ export interface Vendor {
   readonly indexed?: { readonly operations: readonly string[]; readonly api: () => HttpApi.HttpApi<string, any> };
   /** Published specification path prefix; transport operations remain relative to the confined base. */
   readonly manifestBase?: string;
-  /** Exact public JSON wire keys the projection navigates, each with its review reason. Values stay private. */
-  readonly fixedKeys?: Readonly<Record<string, string>>;
   /** Reviewed JSON fields decoded by the projection; normalized before whole-answer redaction. */
   readonly encodedFields?: readonly {
     readonly path: string;
@@ -353,15 +352,6 @@ export function connect<R>(
   validateVendorErrors(options.errors);
   const textBodies = vendor.textBodies ? { ...vendor.textBodies } : undefined;
   const binaryBodies = vendor.binaryBodies ? { ...vendor.binaryBodies } : undefined;
-  const fixedKeys = vendor.fixedKeys ? Object.freeze({ ...vendor.fixedKeys }) : undefined;
-  if (
-    fixedKeys &&
-    Object.entries(fixedKeys).some(
-      ([key, reason]) => !key || typeof reason !== "string" || !reason.trim() || /[\r\n]/.test(reason),
-    )
-  )
-    throw new Error("Fixed JSON keys require exact nonempty names and a one-line review reason for each.");
-  const fixedKeyNames = fixedKeys ? new Set(Object.keys(fixedKeys)) : undefined;
   const encodedFields = encodedFieldsReview(vendor.encodedFields);
   if (binaryBodies && (!binaryBodies.review.trim() || typeof binaryBodies.forResponse !== "function"))
     throw new Error("Binary bodies require a nonempty vendor review and a response contract selector.");
@@ -422,9 +412,13 @@ export function connect<R>(
               ),
             );
         });
-        // Header-derived format decisions see only redacted Content-Type.
-        const headers = new Headers(secrets.redact([...reply.headers]));
-        // Whole, before a detail line trims it or a projection extracts from it.
+        // Header-derived format decisions see only redacted Content-Type. Names are protocol
+        // constants `Headers` must accept, so only the values are redacted, together (#703).
+        const entries = [...reply.headers];
+        const values = secrets.redact(entries.map(([, value]) => value));
+        const headers = new Headers(entries.map(([name], index) => [name, values[index]!]));
+        // Whole, before a detail line trims it or a projection extracts from it. Values only:
+        // result safety and projections match fields by their vendor names (#703).
         const parsed =
           reply.bytes !== undefined
             ? {
@@ -448,7 +442,7 @@ export function connect<R>(
                   const redacted =
                     reply.prefix?.truncated && typeof value === "string"
                       ? secrets.redactOpenTail(value)
-                      : secrets.redact(value, "payload", format === "json" ? fixedKeyNames : undefined);
+                      : secrets.redact(value, "values");
                   if (provenance?.size && redacted !== null && typeof redacted === "object")
                     encodedProvenance.set(redacted, provenance);
                   return redacted;

@@ -1390,66 +1390,82 @@ it(
         expect(hooks, test.name).toBe(1);
       }
     }
-    // Exact reviewed wire keys survive only in parsed JSON, while their values,
-    // partial key matches and JSON embedded in text keep the ordinary protection.
-    const fixedKeys: Record<string, string> = { paragraph: "Public paragraph member in this fixture's JSON schema." };
-    const fixedSafety = resultSafety({
-      review: "Fixture JSON has no stored values.",
-      sensitiveFields: { names: [], choice: "drop" },
-    });
-    const fixedConnection = connect({ ...ACME_API, fixedKeys }, guardedClient({ ...OPTIONS, maxResponseBytes: 1024 }), {
-      errors: VENDOR,
-      safety: fixedSafety,
-    });
-    fixedKeys.prefix_paragraph = "A mutation after construction cannot exempt another key.";
-    delete fixedKeys.paragraph;
+    // Parsed JSON keeps its keys for value safety and projections (#703), while
+    // every value and JSON embedded in text keep the ordinary protection.
+    const [plainSafety, dropSafety] = [[], ["paragraph"]].map((names) =>
+      resultSafety({ review: "Fixture JSON has no stored values.", sensitiveFields: { names, choice: "drop" } }),
+    );
     const privateSecrets = new SentSecrets();
     privateSecrets.arguments(
       { private: "paragraph" },
       { type: "object", properties: { private: { type: "string", writeOnly: true } } },
     );
-    answers.push(() =>
-      Response.json({
-        paragraph: "paragraph",
-        prefix_paragraph: "paragraph",
-        nested: { paragraph: "paragraph" },
-        embedded: JSON.stringify({ paragraph: "paragraph" }),
-      }),
-    );
-    const fixedReply = await runEdge(
-      fixedConnection.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))),
-    );
-    expect(fixedReply.data).toEqual({
-      paragraph: "[redacted]",
-      "prefix_[redacted]": "[redacted]",
-      nested: { paragraph: "[redacted]" },
-      embedded: JSON.stringify({ "[redacted]": "[redacted]" }),
-    });
     for (const format of [undefined, "text"] as const) {
       const connection = connect(
         {
           ...ACME_API,
-          ...(format
-            ? {
-                fixedKeys: { paragraph: "Public schema member; text is not JSON framing." },
-                textBodies: { review: "Fixture raw text.", forResponse: () => format },
-              }
-            : {}),
+          ...(format ? { textBodies: { review: "Fixture raw text.", forResponse: () => format } } : {}),
         },
-        guardedClient(OPTIONS),
-        { errors: VENDOR, safety: fixedSafety },
+        guardedClient({ ...OPTIONS, maxResponseBytes: 1024 }),
+        { errors: VENDOR, safety: plainSafety! },
       );
-      answers.push(() => Response.json({ paragraph: "paragraph" }));
+      answers.push(() =>
+        Response.json({
+          paragraph: "paragraph",
+          prefix_paragraph: "paragraph",
+          nested: { paragraph: "paragraph" },
+          embedded: JSON.stringify({ paragraph: "paragraph" }),
+        }),
+      );
       const reply = await runEdge(
         connection.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))),
       );
-      expect(format ? JSON.parse(reply.data as string) : reply.data).toEqual({ "[redacted]": "[redacted]" });
+      expect(format ? JSON.parse(reply.data as string) : reply.data).toEqual(
+        format
+          ? {
+              "[redacted]": "[redacted]",
+              "prefix_[redacted]": "[redacted]",
+              nested: { "[redacted]": "[redacted]" },
+              embedded: JSON.stringify({ "[redacted]": "[redacted]" }),
+            }
+          : {
+              paragraph: "[redacted]",
+              prefix_paragraph: "[redacted]",
+              nested: { paragraph: "[redacted]" },
+              embedded: JSON.stringify({ "[redacted]": "[redacted]" }),
+            },
+      );
     }
-    for (const fixedKeys of [{ paragraph: " " }, { paragraph: "two\nlines" }, { "": "Empty key" }]) {
-      expect(() =>
-        connect({ ...ACME_API, fixedKeys }, guardedClient(OPTIONS), { errors: VENDOR, safety: fixedSafety }),
-      ).toThrow(/one-line review/);
-    }
+    // Value safety drops a field by the name the vendor gave it.
+    answers.push(() => Response.json({ id: "a1", paragraph: "vendor-held", nested: { paragraph: "vendor-held" } }));
+    const dropped = connect(ACME_API, guardedClient({ ...OPTIONS, maxResponseBytes: 1024 }), {
+      errors: VENDOR,
+      safety: dropSafety!,
+    });
+    expect(
+      (await runEdge(dropped.send(keys, {}).pipe(Effect.provideContext(services("read", privateSecrets))))).data,
+    ).toEqual({ id: "a1", nested: {} });
+    // Header names are protocol constants `Headers` must accept: a private value inside one
+    // leaves the name, and only header values are redacted.
+    const typeSecrets = new SentSecrets();
+    typeSecrets.arguments(
+      { private: "type" },
+      { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+    );
+    answers.push(() => Response.json({ id: "a1" }, { headers: { "x-echo": "type" } }));
+    let seen: Headers | undefined;
+    const headed = connect(ACME_API, guardedClient(OPTIONS), {
+      errors: VENDOR,
+      safety: plainSafety!,
+      result: (body, answer) => {
+        seen = answer.headers;
+        return Effect.succeed(body);
+      },
+    });
+    expect(
+      (await runEdge(headed.send(keys, {}).pipe(Effect.provideContext(services("read", typeSecrets))))).data,
+    ).toEqual({ id: "a1" });
+    expect([seen?.get("content-type"), seen?.get("x-echo")]).toEqual(["application/json", "[redacted]"]);
     for (const mode of ["bytes", "stop", "time", "empty", "failure", "defect", "abort"] as const) {
       let cancelled = false;
       let callbacks = 0;
@@ -1899,9 +1915,11 @@ it(
         credentialKey: { path: [secret], content: "string" as const },
         headerOnly: { path: ["x-presence"], content: "string" as const },
       };
+      // Keys keep the vendor's names (#703), so a review finds one that echoes a credential; the
+      // credential the detail line then quotes is redacted before the message leaves.
       const expected = {
         guidance: { present: true, nonBlank: true },
-        credentialKey: { present: false, nonBlank: false },
+        credentialKey: { present: true, nonBlank: true },
         headerOnly: { present: false, nonBlank: false },
       };
       const connection = acme({
