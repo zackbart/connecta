@@ -1,6 +1,6 @@
 // Q8 needs positive request-level read evidence. HTTP methods cannot prove
 // that a GET is harmless (Breeze writes and method overrides use GET too).
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ApiHandlerContext } from "../src/connectors/api-connector.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
@@ -8,6 +8,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { logicalCallRequests, providerRequests, tracksEveryRequest } from "../src/provider-call.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -22,7 +23,13 @@ const CREATE = { name: "create", description: "Create", annotations: { readOnlyH
 const HOW = ["direct", "served", "program"] as const;
 type How = (typeof HOW)[number];
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+afterEach(() => {
+  configureGuardedTransport(undefined);
+  vi.unstubAllGlobals();
+});
 
 async function run(connector: Connector, how: How, registry = makeRegistry([connector])): Promise<Record<string, any>> {
   if (how === "direct")

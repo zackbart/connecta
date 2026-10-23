@@ -1387,6 +1387,17 @@ export function operations(vendor: Vendor): string[];          // manifest's ope
 - Each vendor declares its documented error envelope once, for the manifest.
   Status meaning stays in code (B.3).
 
+A vendor may opt into reviewed text bodies through `textBodies`: its
+nonempty review and status/operation selector choose `text` (preserve decoded
+UTF-8) or `json-or-text` (parse JSON, otherwise preserve text). Without an
+explicit selection, JSON remains required. The same bounded byte reader
+and whole sent-secret redaction run before text reaches error mapping or the
+result hook; withheld error text stays withheld. The hook's `bodyFormat`
+distinguishes JSON, decoded text (including whitespace), and an empty JSON
+response. Breeze selects text for
+error statuses and JSON-or-text for its legacy hatches only, so malformed
+JSON on named tools still fails as `UnreadableBody`.
+
 **The value-safety boundary (`src/http/safety.ts`).** Every answer, from a
 declared operation or a hatch's path, takes one route inside `connect`, and a
 provider cannot reach a body any earlier:

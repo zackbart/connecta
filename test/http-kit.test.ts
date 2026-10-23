@@ -958,6 +958,133 @@ describe("kit construction (decision 0010, B.4)", () => {
 const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
+it("INV-5 INV-6: reviewed text bodies keep bounded UTF-8, JSON contracts, and withheld errors", WORKERS, async () => {
+  for (const row of [
+    {
+      name: "text error",
+      status: 400,
+      format: "json-or-text",
+      text: "Rejected sk_test_0123456789",
+      message: "Rejected [redacted]",
+    },
+    { name: "legacy error", status: 400, text: "Rejected sk_test_0123456789", message: "No vendor text." },
+    { name: "JSON contract", status: 200, text: "{broken", tag: "UnreadableBody" },
+    {
+      name: "withheld text",
+      status: 400,
+      format: "text",
+      text: "stored secret not sent",
+      withheld: true,
+      message: "No vendor text.",
+    },
+    {
+      name: "hatch text",
+      status: 200,
+      format: "json-or-text",
+      text: "café sk_test_0123456789",
+      value: "café [redacted]",
+    },
+    { name: "JSON hatch", status: 200, format: "json-or-text", text: '{"ok":true}', value: { ok: true } },
+    { name: "whitespace text", status: 200, format: "json-or-text", text: " \n ", value: " \n " },
+    { name: "declared ceiling", status: 200, format: "text", text: "x", length: "65", tag: "ResponseTooLarge" },
+    {
+      name: "streamed UTF-8",
+      status: 200,
+      format: "text",
+      text: "café sk_test_0123456789",
+      streamed: true,
+      value: "café [redacted]",
+    },
+    {
+      name: "streamed ceiling",
+      status: 200,
+      format: "text",
+      text: "é".repeat(33),
+      streamed: true,
+      tag: "ResponseTooLarge",
+    },
+  ] as const) {
+    const test = row as {
+      name: string;
+      status: number;
+      format?: "text" | "json-or-text";
+      text: string;
+      message?: string;
+      value?: unknown;
+      tag?: string;
+      length?: string;
+      streamed?: boolean;
+      withheld?: boolean;
+    };
+    answers.push(() => {
+      const bytes = new TextEncoder().encode(test.text);
+      const response = new Response(
+        test.streamed
+          ? new ReadableStream({
+              start(controller) {
+                // Split the multi-byte é across chunks, as a native response may.
+                for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
+                controller.close();
+              },
+            })
+          : test.text,
+        { status: test.status, ...(test.length ? { headers: { "content-length": test.length } } : {}) },
+      );
+      response.text = () => {
+        throw new Error("Text contracts must decode bounded bytes, never response.text().");
+      };
+      return response;
+    });
+    let hooks = 0;
+    const errors = {
+      ...VENDOR,
+      detail: ({ body }: { body?: unknown }) => (typeof body === "string" ? body : "No vendor text."),
+    };
+    const safety = resultSafety({
+      review: "Fixture text has no stored values.",
+      reviewed: { redact: (value) => value, withholdsErrors: () => test.withheld === true },
+      sensitiveFields: { names: [], choice: "drop" },
+    });
+    const connection = connect(
+      {
+        ...ACME_API,
+        ...(test.format
+          ? {
+              textBodies: { review: "Fixture response explicitly permits text.", forResponse: () => test.format },
+            }
+          : {}),
+      },
+      guardedClient(OPTIONS),
+      {
+        errors,
+        safety,
+        result: (body) => {
+          hooks++;
+          return Effect.succeed(body);
+        },
+      },
+    );
+    const result = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+    if (result._tag === "Failure") {
+      expect(result.failure._tag, test.name).toBe(test.tag ?? "StatusFailure");
+      if (test.message !== undefined)
+        expect(
+          toConnectorCallError(result.failure, errors, {
+            classification: "read",
+            dispatches: [],
+            withholds: safety.withholdsErrors,
+          }).message,
+          test.name,
+        ).toBe(test.message);
+      expect(hooks, test.name).toBe(0);
+    } else {
+      expect(test.tag, test.name).toBeUndefined();
+      expect(result.success.data, test.name).toEqual(test.value);
+      expect(hooks, test.name).toBe(1);
+    }
+  }
+});
+
 function acme(
   options: {
     withholds?: boolean;

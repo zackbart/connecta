@@ -40,7 +40,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly headers?: GuardedOptions["headers"];
   readonly admit?: GuardedOptions["admit"];
   readonly pageSize?: { readonly default: number; readonly max: number };
-  readonly credential?: ConnectorCredentialConfig;
+  readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
@@ -51,7 +51,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     readonly request: unknown;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
-    readonly describe: (reply: unknown, options: Readonly<O>) => string;
+    readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
   };
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
@@ -127,6 +127,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       ...(hatchOptions ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts } } : {}),
     },
     create(id, options, provider) {
+      const connectionCredential = typeof credential === "function" ? credential(options) : credential;
       const override = "defaultPageSize" in options ? options.defaultPageSize : undefined;
       if (
         override !== undefined &&
@@ -141,7 +142,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       }
       const guarded = guardedClient({
-        provider: metadata.title,
+        provider: errors.provider,
         baseUrl: baseUrl(options),
         maxResponseBytes,
         ...(headers === undefined ? {} : { headers }),
@@ -178,7 +179,10 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         };
         return runEdge(
           connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
-            Effect.map(({ data }) => ({ ok: true, message: probe.describe(data, options) })),
+            Effect.map(({ data }) => {
+              const described = probe.describe(data, options);
+              return typeof described === "string" ? { ok: true, message: described } : described;
+            }),
             Effect.catch((failure) =>
               Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
             ),
@@ -203,9 +207,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
           usageGuide: "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide),
-          ...(credential
+          ...(connectionCredential
             ? {
-                credential,
+                credential: connectionCredential,
                 testCredential: (value, ctx) => test({ value }, ctx),
                 testCredentials: (values, ctx) => test(values, ctx),
               }
