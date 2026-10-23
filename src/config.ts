@@ -754,7 +754,7 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
   // The token module admits exactly the agents this configuration declares.
   const agents = Object.freeze(parsed.agents.map((agent) => agent.name));
   const accessTokens = parsed.accessTokens?.forAgents(agents);
-  const vercel = vercelAgentAuth(parsed.agents);
+  const vercel = vercelAgentAuth(parsed.agents, parsed.logger);
   const resolved: ResolvedConfig = Object.freeze({
     ...parsed,
     agents,

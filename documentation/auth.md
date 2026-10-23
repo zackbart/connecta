@@ -410,12 +410,15 @@ agent. Enabling `preview` lets code on any pushed preview branch act as the agen
 Treat the project's OIDC token as a bearer credential for all of this agent's
 pools. Its default audience, `https://vercel.com/<team-slug>`, is shared by every
 service accepting Vercel's default OIDC tokens; it is not specific to Connecta.
-Anything holding the project's token can act as the agent until it expires:
+Anything holding the project's token can act as the agent:
 project code, builds (including build steps and dependency install scripts with
 access to `VERCEL_OIDC_TOKEN`), and services the project sends the token to,
-including other agents and third-party APIs. Send it only to services trusted
-with the same agent access. Signature verification establishes the project
-identity; it does not isolate Connecta from these other token holders.
+including other agents and third-party APIs. A holder may be able to obtain
+fresh Vercel tokens through `@vercel/oidc`'s exchange, so access may outlast the
+original token's expiry. Binding a project means trusting everything that can
+obtain that project's tokens. Send them only to services trusted with the same
+agent access. Signature verification establishes the project identity; it does
+not isolate Connecta from these other token holders.
 
 Both team (`https://oidc.vercel.com/<team-slug>`) and global
 (`https://oidc.vercel.com`) issuer modes work. Connecta verifies RS256 signatures

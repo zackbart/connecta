@@ -1,9 +1,9 @@
 // Built-in workload credentials: Web APIs only; no SDK or platform import.
 import type { ResolvedAgent } from "../agent-config.js";
 import { AGENT_NAMESPACE, agentSubjectId, trustAgentProvider } from "../agent-identity.js";
-import { withAuthenticationDeadline } from "../auth-admission.js";
+import { authenticationBusyResponse, withAuthenticationDeadline } from "../auth-admission.js";
 import { authorizationCredential } from "../inbound-credential.js";
-import type { AuthResult, InboundAuth } from "../types.js";
+import type { AuthResult, InboundAuth, Logger } from "../types.js";
 
 const ISSUER = "https://oidc.vercel.com";
 const JWKS = `${ISSUER}/.well-known/jwks`;
@@ -125,7 +125,7 @@ async function readKeys(signal: AbortSignal): Promise<Map<string, JsonWebKey>> {
 }
 
 /** One bounded public-key cache per deployment; never retains request I/O or promises. */
-export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth | undefined {
+export function vercelAgentAuth(agents: readonly ResolvedAgent[], logger: Logger = console): InboundAuth | undefined {
   const bindings = agents.filter((agent) => agent.vercel);
   if (bindings.length === 0) return undefined;
   let cache: { expires: number; keys: Map<string, JsonWebKey> } | undefined;
@@ -237,13 +237,7 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth |
         if (error === KEY_FETCH_BUSY)
           return {
             ok: false,
-            response: Response.json(
-              { error: "authentication_busy" },
-              {
-                status: 503,
-                headers: { "Cache-Control": "no-store", "Retry-After": "1" },
-              },
-            ),
+            response: authenticationBusyResponse(logger),
           };
         return denied();
       }

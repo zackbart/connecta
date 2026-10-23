@@ -86,8 +86,8 @@ function mockKeys(keys = [{ ...publicFirst, kid: "first" }]) {
   });
 }
 
-function auth() {
-  return vercelAgentAuth([{ name: "assistant", vercel: { ...credential, environments: ["production"] } }])!;
+function auth(logger = silentLogger) {
+  return vercelAgentAuth([{ name: "assistant", vercel: { ...credential, environments: ["production"] } }], logger)!;
 }
 const request = (value: string, path = "/agent/assistant") =>
   new Request(`${BASE}${path}`, {
@@ -140,8 +140,13 @@ describe("Vercel workload verification", () => {
     { environment: "preview", sub: "owner:assistant:project:assistant:environment:preview" },
     { environment: "development", sub: "owner:assistant:project:assistant:environment:development" },
     { sub: "owner:assistant:project:other:environment:production" },
-    { owner: "other" },
-    { project: "other" },
+    {
+      owner: "assistant.example",
+      iss: "https://oidc.vercel.com/assistant.example",
+      aud: "https://vercel.com/assistant.example",
+      sub: "owner:assistant.example:project:assistant:environment:production",
+    },
+    { project: "assistant:other", sub: "owner:assistant:project:assistant:other:environment:production" },
     { external_sub: "user_alice" },
     { iat: undefined },
     { exp: undefined },
@@ -232,7 +237,11 @@ describe("Vercel workload verification", () => {
     const later = Date.now() + 300_001;
     vi.spyOn(Date, "now").mockReturnValue(later);
     fetcher.mockRejectedValue(new Error("private upstream error"));
-    for (let i = 0; i < 3; i++) expect((await provider.authorize(request(value), BASE)).ok).toBe(false);
+    for (let i = 0; i < 3; i++) {
+      const result = await authorizeAgent(request(value), BASE, [provider], silentLogger);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(401);
+    }
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
@@ -241,9 +250,11 @@ describe("Vercel workload verification", () => {
     const timestamp = Date.now();
     const clock = vi.spyOn(Date, "now");
     const fetcher = mockKeys();
+    const warn = vi.fn();
     for (const expired of [false, true]) {
+      warn.mockClear();
       clock.mockReturnValue(timestamp);
-      const provider = auth();
+      const provider = auth({ ...silentLogger, warn });
       if (expired) {
         expect((await provider.authorize(request(value), BASE)).ok).toBe(true);
         clock.mockReturnValue(timestamp + 300_001);
@@ -269,7 +280,16 @@ describe("Vercel workload verification", () => {
       const results = await Promise.all(pending);
       expect(results.map((result) => (result.ok ? 200 : result.response.status))).toEqual([200, 200, 503]);
       const overflow = results[2]!;
-      if (!overflow.ok) expect(overflow.response.headers.get("Retry-After")).toBe("1");
+      if (!overflow.ok) {
+        expect(overflow.response.headers.get("Retry-After")).toBe("1");
+        expect(overflow.response.headers.get("Cache-Control")).toBe("no-store");
+        expect(await overflow.response.json()).toEqual({
+          error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true },
+        });
+      }
+      expect(warn.mock.calls).toEqual([
+        ["[connecta] Authentication admission refused", { reason: "authentication_busy" }],
+      ]);
       expect(loads).toBe(2);
       fetcher.mockImplementation(async (url, init) => {
         new Request(url, init);
