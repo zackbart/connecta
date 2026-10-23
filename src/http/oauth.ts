@@ -91,7 +91,7 @@ export const bearer: Effect.Effect<Readonly<Record<string, string>>, HttpFailure
 );
 
 /** Renewal facts only: a mapper never receives either access token. */
-export type Write401Renewal =
+type Write401Renewal =
   | { readonly _tag: "Renewed" }
   | { readonly _tag: "Unchanged" }
   | { readonly _tag: "Failed"; readonly failure: unknown };

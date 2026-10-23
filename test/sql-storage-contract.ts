@@ -335,12 +335,12 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     await db.exec("CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms)");
     await db.exec(
       "INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, NULL)",
-      "conn:notion:oauth:tokens",
+      "conn:notes:oauth:tokens",
       "sealed",
     );
     const storage = db.storage();
-    expect(await storage.get("conn:notion:oauth:tokens")).toBe("sealed");
-    expect(await storage.compareAndSet("conn:notion:oauth:tokens", "sealed", "next")).toBe(true);
+    expect(await storage.get("conn:notes:oauth:tokens")).toBe("sealed");
+    expect(await storage.compareAndSet("conn:notes:oauth:tokens", "sealed", "next")).toBe(true);
   });
 
   it("pages activity newest first without repeating or skipping an event", async () => {

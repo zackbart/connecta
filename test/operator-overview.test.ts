@@ -10,15 +10,15 @@ describe("overview attention list", () => {
     const items = attentionItems(maintainer(), { tokensPage: true });
     expect(items).toEqual([
       {
-        key: "connector:notion",
+        key: "connector:notes",
         kind: "connector",
         tone: "warn",
-        subject: "Notion",
+        subject: "Notes",
         problem: "needs a credential",
         body: "Affects /mcp and /mcp/team",
-        action: { label: "Connect", href: "/connectors/notion#connection", ariaLabel: "Connect Notion" },
-        href: "/connectors/notion#connection",
-        fix: { kind: "credential_required", connectorId: "notion" },
+        action: { label: "Connect", href: "/connectors/notes#connection", ariaLabel: "Connect Notes" },
+        href: "/connectors/notes#connection",
+        fix: { kind: "credential_required", connectorId: "notes" },
       },
       {
         key: "agent:triage",

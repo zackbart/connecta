@@ -5,7 +5,7 @@ import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import { OPERATOR_V2_MEMBER } from "../fixtures/operator-contract-v2.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import { crowdedMaintainer, memberWithNotion, OPERATOR_V2_SLOTS } from "../fixtures/operator-console.js";
+import { crowdedMaintainer, memberWithNotes, OPERATOR_V2_SLOTS } from "../fixtures/operator-console.js";
 import {
   createOperatorVisualFixture,
   operatorVisualVariant,
@@ -180,11 +180,11 @@ test.describe("agent tokens", () => {
 });
 
 test("the member credential form submits named fields and masks its secret input", async ({ page }) => {
-  const sent = await install(page, memberWithNotion(["save"]), ({ method, path }) =>
-    method === "PUT" && path === "/ui/credentials/notion" ? { json: { ok: true } } : undefined,
+  const sent = await install(page, memberWithNotes(["save"]), ({ method, path }) =>
+    method === "PUT" && path === "/ui/credentials/notes" ? { json: { ok: true } } : undefined,
   );
   await page.goto(VISUAL_ORIGIN + "/");
-  await page.getByRole("button", { name: "Add credential Notion", exact: true }).click();
+  await page.getByRole("button", { name: "Add credential Notes", exact: true }).click();
   await page.getByLabel("Workspace", { exact: true }).fill("acme");
   const token = page.getByLabel("Token", { exact: true });
   await expect(token).toHaveAttribute("type", "password");
@@ -195,7 +195,7 @@ test("the member credential form submits named fields and masks its secret input
     .toEqual([
       {
         method: "PUT",
-        path: "/ui/credentials/notion",
+        path: "/ui/credentials/notes",
         body: { values: { workspace: "acme", token: "secret_ui834_member_value" } },
       },
     ]);

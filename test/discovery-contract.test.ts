@@ -49,7 +49,7 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
           ],
           "Linear Work",
         ),
-        service("mixpanel", [{ name: "get_report" }], "Mixpanel Production"),
+        service("posthog", [{ name: "get_report" }], "PostHog Production"),
       ]);
       const first = await searchBoth(registry, { limit: 1, includeSchemas });
       expect(first).toMatchObject({ catalogErrors: [], total: 2, offset: 0, limit: 1, hasMore: true, nextOffset: 1 });
@@ -60,7 +60,7 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
       });
       const last = await searchBoth(registry, { limit: 1, offset: required(first.nextOffset), includeSchemas });
       expect(last).toMatchObject({ total: 2, hasMore: false });
-      expect(last.tools[0]).toMatchObject({ address: "mixpanel.get_report" });
+      expect(last.tools[0]).toMatchObject({ address: "posthog.get_report" });
     },
   );
 
@@ -141,11 +141,11 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
   );
 
   it.each(["GitHub get issue", "github list repos", "GitHub pull request status"])(
-    "answers an absent service instead of Linear/Mixpanel/Supabase lookalikes for %s",
+    "answers an absent service instead of Linear/PostHog/Supabase lookalikes for %s",
     async (query) => {
       const registry = makeRegistry([
         service("linear", [{ name: "get_issue", description: "Get issue details" }]),
-        service("mixpanel", [{ name: "list_projects", description: "List projects and request status" }]),
+        service("posthog", [{ name: "list_projects", description: "List projects and request status" }]),
         service("supabase", [{ name: "list_repos", description: "Get project status" }]),
       ]);
       const page = await searchBoth(registry, { query, includeSchemas: "json" });
@@ -157,7 +157,7 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
         absence: {
           service: "GitHub",
           message: 'No connector for "GitHub" is configured for this endpoint.',
-          configuredConnectors: ["linear", "mixpanel", "supabase"],
+          configuredConnectors: ["linear", "posthog", "supabase"],
         },
       });
     },

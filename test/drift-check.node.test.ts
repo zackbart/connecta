@@ -168,7 +168,7 @@ afterEach(async () => {
 });
 
 describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
-  it.each(["infisical", "notion", "overflow", "tithely"])(
+  it.each(["breeze", "vercel", "overflow", "tithely"])(
     "reports %s changes only for touched endpoints",
     async (provider) => {
       const { directory, manifests, specifications } = await workspace([provider]);
@@ -350,9 +350,9 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   });
 
   it("sees through a response written as a $ref into shared components", async () => {
-    const { directory, manifests, specifications } = await workspace(["notion"]);
-    const specification = specifications["notion"]!;
-    const [alpha, beta] = manifests["notion"]!.endpoints as [Endpoint, Endpoint];
+    const { directory, manifests, specifications } = await workspace(["vercel"]);
+    const specification = specifications["vercel"]!;
+    const [alpha, beta] = manifests["vercel"]!.endpoints as [Endpoint, Endpoint];
 
     // Both providers' real documents write whole response objects as
     // references. A digest that reads `.content` off the reference itself sees
@@ -385,27 +385,27 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         responses: { "200": { $ref: `#/components/responses/${component}` } },
       };
     }
-    await writeFile(join(directory, "notion-spec.json"), JSON.stringify(specification));
-    expect(run(directory, ["notion"], ["--record"]).status).toBe(0);
+    await writeFile(join(directory, "vercel-spec.json"), JSON.stringify(specification));
+    expect(run(directory, ["vercel"], ["--record"]).status).toBe(0);
 
-    const recorded: Manifest = JSON.parse(await readManifestFile(join(directory, "notion", "drift.json")));
+    const recorded: Manifest = JSON.parse(await readManifestFile(join(directory, "vercel", "drift.json")));
     const digestFor = (endpoint: Endpoint) =>
       recorded.endpoints.find((row) => row.method === endpoint.method && row.path === endpoint.path)!.contract;
     expect(digestFor(alpha)).not.toBe(digestFor(beta));
 
     // A change inside the referenced schema is a change to the contract.
     specification["components"].schemas.alpha.properties.id = { type: "number" };
-    await writeFile(join(directory, "notion-spec.json"), JSON.stringify(specification));
-    const result = run(directory, ["notion"], ["--json"]);
+    await writeFile(join(directory, "vercel-spec.json"), JSON.stringify(specification));
+    const result = run(directory, ["vercel"], ["--json"]);
     expect(result.status).toBe(0);
-    expect(findings(result.output, "notion")).toEqual([
+    expect(findings(result.output, "vercel")).toEqual([
       expect.objectContaining({
         kind: "contract-changed",
         method: alpha.method,
         path: alpha.path,
       }),
     ]);
-    expect(run(directory, ["notion"]).output.match(/^\s+contract-changed\b/gm)).toHaveLength(1);
+    expect(run(directory, ["vercel"]).output.match(/^\s+contract-changed\b/gm)).toHaveLength(1);
   });
 
   it(

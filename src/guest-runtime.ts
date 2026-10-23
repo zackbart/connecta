@@ -236,7 +236,7 @@ export function programError(
   ) {
     hint = "Do not shadow connecta. Use the host-provided connecta global.";
   } else if (
-    /callTool|mixpanel|\bskills\b|connecta\.(?:guide|skills)/.test(message) ||
+    /callTool|\bskills\b|connecta\.(?:guide|skills)/.test(message) ||
     (["TypeError", "ReferenceError"].includes(name) && /connecta\.(?:guide|skills)\b/.test(code))
   ) {
     hint =

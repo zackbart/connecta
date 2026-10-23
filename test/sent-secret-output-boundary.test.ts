@@ -17,7 +17,6 @@ import {
 } from "../src/operator-record.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
-import { notion } from "../src/providers/notion/index.js";
 import { planningCenter } from "../src/providers/planning-center/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
@@ -320,77 +319,60 @@ describe("provider sites the boundary cannot cover", () => {
     expect(preview).not.toContain("alpha b");
   });
 
-  it("INV-5: Notion rich text split across runs below K leaves no piece in either copy, cut short or not", async () => {
+  it("INV-5: Docs rich text split across runs below K leaves no piece in raw or projected copies", async () => {
     const value = "Q8!wZ2?";
     const publicRun = {
-      type: "text",
-      plain_text: "Public linked heading. ",
-      text: { content: "Public linked heading. ", link: { url: "https://example.com/notes" } },
-      annotations: { bold: true },
+      textRun: { content: "Public linked heading. ", textStyle: { link: { url: "https://example.com/notes" } } },
     };
-    let truncated = false;
-    vi.stubGlobal("fetch", async () =>
-      Response.json({
-        object: "page",
-        id: "p1",
-        properties: {
-          Name: {
-            type: "title",
-            has_more: truncated,
-            title: [
-              publicRun,
-              ...Array.from(truncated ? value.slice(0, 1) : value, (unit) => ({
-                type: "text",
-                plain_text: unit,
-                text: { content: unit },
-              })),
-            ],
-          },
-          Notes: {
-            type: "rich_text",
-            rich_text: Array.from(value, (unit) => ({ type: "text", plain_text: unit, text: { content: unit } })),
-          },
-        },
-      }),
-    );
-    const connector = notion("notes", { purpose: "Notes", auth: { type: "token" } });
-    for (const cut of [false, true]) {
-      truncated = cut;
-      const result = (await connector.callTool(
-        "integration_get_page",
-        { page_id: "p1", raw: true },
-        { ...context(value), credential: keyed(TOKEN).credential! },
-      )) as { properties: Record<string, { title?: unknown[]; rich_text?: unknown[] }> };
-      const runs = result.properties["Name"]!.title as Array<{ plain_text: string; text: { content: string } }>;
-      expect(runs[0]).toEqual(publicRun);
-      expect(runs.slice(1).every((run) => run.plain_text === MARK && run.text.content === MARK)).toBe(true);
-      const notes = result.properties["Notes"]!.rich_text as Array<{ plain_text: string }>;
-      expect(notes.every((run) => run.plain_text === MARK)).toBe(true);
-    }
-    // The projection reads `rich_text` by the name Notion gave it, whatever private value it holds (#703).
-    const paragraph = "Public paragraph text";
-    vi.stubGlobal("fetch", async () =>
-      Response.json({
-        object: "list",
-        has_more: false,
-        next_cursor: null,
-        results: [
+    stubGoogle(() => ({
+      documentId: "d1",
+      title: "Public title",
+      body: {
+        content: [
           {
-            object: "block",
-            id: "b1",
-            type: "paragraph",
-            has_children: false,
-            paragraph: { rich_text: [{ type: "text", plain_text: paragraph, text: { content: paragraph } }] },
+            paragraph: {
+              elements: [publicRun, ...Array.from(value, (unit) => ({ textRun: { content: unit } }))],
+            },
           },
         ],
-      }),
-    );
-    const blocks = (await connector.callTool(
-      "integration_get_page_content",
-      { block_id: "p1" },
-      { ...context("ich_te"), credential: keyed(TOKEN).credential! },
-    )) as { results: Array<Record<string, unknown>> };
-    expect(blocks.results).toEqual([{ id: "b1", type: "paragraph", depth: 0, text: paragraph, has_children: false }]);
+      },
+    }));
+    const connector = docs("docs", await workspaceOptions());
+    for (const raw of [false, true]) {
+      const result = await connector.callTool("get_document", { documentId: "d1", raw }, context(value));
+      expect(shown(result)).not.toContain(value);
+      expect(shown(result)).toContain(MARK);
+      expect(shown(result)).toContain("Public linked heading.");
+      expect(shown(result)).toContain("https://example.com/notes");
+      if (raw) {
+        const runs = (result as any).raw.body.content[0].paragraph.elements;
+        expect(runs[0]).toEqual(publicRun);
+        expect(runs.slice(1).every((run: any) => run.textRun.content === MARK)).toBe(true);
+      }
+    }
+    // #966's key-collision row now exercises the remaining Docs projection.
+    // Private text naming part of `textRun` must not hide public paragraph text.
+    const paragraph = "Public paragraph text";
+    stubGoogle(() => ({
+      documentId: "d1",
+      title: "Public title",
+      body: {
+        content: [
+          {
+            paragraph: {
+              elements: [{ textRun: { content: paragraph } }],
+            },
+          },
+        ],
+      },
+    }));
+    const projected = (await connector.callTool(
+      "get_document",
+      { documentId: "d1", withIndexes: true },
+      context("extRu"),
+    )) as any;
+    expect(projected.tabs[0].text).toContain(paragraph);
+    expect(projected.tabs[0].elements[0].text).toBe(paragraph);
   });
 
   it("INV-5: Slides raw text runs split below K with style between them leave no piece", async () => {

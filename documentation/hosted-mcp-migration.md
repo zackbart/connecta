@@ -3,8 +3,9 @@
 Basecamp, Intercom, Linear, RevenueCat, and Wispr Flow no longer have provider
 subpath exports. Replace their imports and factories with `remoteMcp` from
 `@zackbart/connecta`. The remote server supplies its catalog at runtime.
-Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub also lose their hosted
-halves. Their vendored API connectors remain. The mappings below describe the
+Stripe, Vercel, Cloudflare, and GitHub also lose their hosted halves.
+The vendored Notion and Mixpanel API providers are removed in 0.35.0; connect
+their hosted servers through the generic entries below. The mappings below describe the
 former settings as of 2026-10-23, not a promise about current vendor availability.
 
 ## Replace a connection without expanding access
@@ -85,6 +86,9 @@ a static token is not an equivalent grant.
 
 ## Run a hosted connection beside its API connector
 
+The Notion and Mixpanel API providers are [removed in 0.35.0](./provider-migration-0.35.md#remove-infisical-notion-and-mixpanel);
+their generic hosted entries replace the removed connections.
+
 Keep the existing API connector and its id. Add the generic hosted entry under a
 **distinct id**, then add only intended tool addresses to its pools. If replacing
 an old hosted entry, keep that hosted id and put the API connector under another
@@ -93,9 +97,8 @@ the operator UI as the intended owner. Do not copy tokens between ids or owners.
 All examples below are deployment fragments to place in the existing
 `connectors` array; preserve the surrounding deployment configuration.
 
-The old OAuth selections on Stripe, Vercel, Cloudflare, and Notion now throw at
-construction. Mixpanel also throws without `via: "api"`, including an omitted
-`via`. They never fall through to an API credential. `remoteMcp({ classify })`
+The old OAuth selections on Stripe, Vercel, and Cloudflare throw at
+construction. They never fall through to an API credential. `remoteMcp({ classify })`
 throws too; move checked deployment policy to `ConnectaConfig.classification`.
 Do not migrate schema pins, `optional`, or `unlisted: "hide"` as live reviews.
 
@@ -203,16 +206,12 @@ set an explicit deployment `"write"` or `"hidden"` override when required.
 Former URL: `https://mcp.notion.com/mcp`. Auth was OAuth only, shared unless
 explicitly personal, acting as the authorized user. Scopes were discovered;
 there was no preset fallback, extra header, or default hosted admission.
-The API integration token and its page sharing remain separate from user OAuth.
-Preserve any explicit hosted call admission; the API's default does not apply.
+An API integration token does not replace user OAuth. Preserve any explicit
+hosted call admission; no provider preset supplies a default.
 
 ```ts
-import { notion } from "@zackbart/connecta/providers/notion";
 import { remoteMcp } from "@zackbart/connecta";
 
-const notesApi = notion("notes_api", {
-  purpose: "Integration-shared notes", auth: { type: "token" },
-});
 const notesHosted = remoteMcp("notes_hosted", {
   url: "https://mcp.notion.com/mcp", requireHttps: true,
   description: "User-authorized notes", authScope: "personal",
@@ -222,7 +221,7 @@ const notesHosted = remoteMcp("notes_hosted", {
 
 The example explicitly selects personal ownership; preserve the old setting
 when replacing an existing connection. Generic hosted results do not inherit
-the integration connector's URL redaction or file safety rules.
+the removed integration connector's URL redaction or file safety rules.
 Keep confirmation-flag destructive tools such as `notion-delete-databases`
 and `notion-delete-pages` non-read. An optional confirmation flag does not
 make the whole tool read-only. If live hints mark them read, set exact
@@ -245,12 +244,8 @@ no extra headers or default hosted admission were supplied. Copy explicit
 headers/request callbacks with their existing secret sources and restrictions.
 
 ```ts
-import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
 import { remoteMcp } from "@zackbart/connecta";
 
-const analyticsApi = mixpanel("analytics_api", {
-  purpose: "Product analytics", via: "api", auth: { type: "credential" }, region: "eu",
-});
 const analyticsHosted = remoteMcp("analytics_hosted", {
   url: "https://mcp-eu.mixpanel.com/mcp", requireHttps: true,
   description: "EU product analytics", authScope: "shared",
@@ -265,7 +260,6 @@ pair in its vault slot. Generic `remoteMcp()` base64-encodes a credential whose
 scheme ends in `Basic`, producing `Authorization: Bearer Basic <base64(pair)>`.
 Ordinary `Basic` or `Bearer <pair>` is not equivalent. Preserve an explicit old
 header/scheme instead of overriding it with these historical defaults.
-The API connector still uses its own service-account HTTP framing and admission.
 Keep `Get-Experiment` non-read: its optional compute flags can persist refreshed
 result caches and auto-conclude an experiment. If live hints mark it read, set
 an exact `"write"` or `"hidden"` deployment override.

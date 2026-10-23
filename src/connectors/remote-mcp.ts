@@ -175,7 +175,7 @@ interface RemoteMcpCredentialAuth {
    * an empty string) sends the stored value verbatim, for an endpoint that
    * reads a bare key. A scheme whose last token is `Basic` declares
    * HTTP Basic credentials: the stored `user:secret` is base64-encoded first,
-   * so `"Basic"` produces `Basic <base64>` and Mixpanel's documented
+   * so `"Basic"` produces `Basic <base64>` and a nested
    * `"Bearer Basic"` produces `Bearer Basic <base64>`.
    */
   scheme?: string | null;
@@ -1018,7 +1018,7 @@ async function digestOf(value: string): Promise<string> {
  *
  * A scheme ending in `Basic` names HTTP Basic credentials wherever a provider
  * nests it, so the `user:secret` it frames is base64-encoded — that is what
- * makes plain `Basic` and Mixpanel's `Bearer Basic` one rule instead of two.
+ * makes plain `Basic` and nested `Bearer Basic` one rule instead of two.
  */
 function credentialHeaderValue(scheme: string | null, value: string): string {
   if (scheme === null) return value;

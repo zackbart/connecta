@@ -57,7 +57,7 @@
 //       reading, a local `invalid_args` refusal for a call that can only fail,
 //       and never a classification invented from provider prose. `not_found`
 //       applies only where the provider distinguishes absence from a permission
-//       gap — Cloudflare does, so its 404 maps; Notion's `object_not_found`
+//       gap — Cloudflare does, so its 404 maps; a vendor's `object_not_found`
 //       does not, so the honest code stays `connector_call_failed` (or
 //       `auth_required` where a credential really is the fix). It never appears
 //       on the proxy path, because P1 forbids re-shaping downstream framing.
@@ -112,7 +112,7 @@
 //   P7  The guide carries the reduction advice no schema can, because a proxy
 //       cannot project: page with the cursor rather than raising page size,
 //       reduce inside `execute_code` before returning, and state any rendering
-//       rule that is the provider's rather than the schema's (Mixpanel renders
+//       rule that is the provider's rather than the schema's (a provider renders
 //       an absent boolean as `false` in a breakdown).
 //   P8  Identity resolution comes before action: where writes take ids, the
 //       guide names the read tools that produce them and says not to guess, and
@@ -294,9 +294,9 @@ describe("hand-written providers refuse schemas they cannot enforce (H5)", () =>
     // The closed schemas are the whole point of H5: a stray argument is caught
     // locally as `invalid_args` instead of becoming a round trip that fails
     // somewhere inside the provider.
-    const { connector } = providers.find((provider) => provider.name === "notion")!;
+    const { connector } = providers.find((provider) => provider.name === "stripe")!;
     await expect(
-      connector.callTool("integration_get_page", { page_id: "page-1", workspace: "nope" }, CONTEXT),
+      connector.callTool("stripe_api_read", { path: "/v1/account", workspace: "nope" }, CONTEXT),
     ).rejects.toMatchObject({
       code: "invalid_args",
     });
@@ -314,17 +314,17 @@ describe("Cloudflare states its two pagination conventions in the schema (H10)",
   });
 });
 
-describe("Notion splits its guarded raw access by safety class (H14)", () => {
+describe("Stripe splits its guarded raw access by safety class (H14)", () => {
   it("reads through GET and reviewed queries, and writes through one destructive tool", () => {
-    const { connector, tools } = providers.find((provider) => provider.name === "notion")!;
+    const { connector, tools } = providers.find((provider) => provider.name === "stripe")!;
     const hatch = Object.fromEntries(
-      tools.filter((tool) => tool.name.startsWith("notion_api_")).map((tool) => [tool.name, tool.annotations]),
+      tools.filter((tool) => tool.name.startsWith("stripe_api_")).map((tool) => [tool.name, tool.annotations]),
     );
     expect(hatch).toEqual({
-      notion_api_search: { readOnlyHint: true },
-      notion_api_details: { readOnlyHint: true },
-      notion_api_read: { readOnlyHint: true },
-      notion_api_write: { readOnlyHint: false, destructiveHint: true },
+      stripe_api_search: { readOnlyHint: true },
+      stripe_api_details: { readOnlyHint: true },
+      stripe_api_read: { readOnlyHint: true },
+      stripe_api_write: { readOnlyHint: false, destructiveHint: true },
     });
     const guide = connector.usageGuide;
     if (typeof guide !== "object" || guide === undefined) {

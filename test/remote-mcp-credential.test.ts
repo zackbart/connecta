@@ -142,7 +142,7 @@ describe("remoteMcp() credential auth — header framing", () => {
     expect(sessionOpenAuthorizations(captured)).toEqual([expected]);
   });
 
-  it("encodes a nested Basic framing, which is Mixpanel's documented form", async () => {
+  it("encodes a nested Basic framing, for a generic hosted server", async () => {
     const captured = serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,

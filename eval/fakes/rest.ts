@@ -2,28 +2,34 @@
 import { serveFetch, type Served } from "../support/serve.js";
 import type { CallRecord, Ledger } from "./service.js";
 import { randomUUID } from "node:crypto";
+import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 
-export type RestVendor = "stripe" | "notion" | "cloudflare" | "vercel";
+export type RestVendor = "stripe" | "cloudflare" | "vercel";
 export const ACCOUNT_A = "a".repeat(32);
 export const ACCOUNT_B = "b".repeat(32);
 export const ZONE = "1".repeat(32);
 const OTHER_ZONE = "2".repeat(32);
 export const SHOP_ZONE = "3".repeat(32);
 export const DNS_ID = "4".repeat(32);
-export const DATABASE = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
-export const CHECKLIST = ["Book venue", "Send invites", "Order catering"];
-export const BLOCKED_TITLES = Array.from({ length: 230 }, (_, i) => `Blocked task ${String(i + 1).padStart(3, "0")}`);
 export const OLD_ENV = "eval_old_production_value";
 export const PREVIEW_ENV = "eval_preview_value";
 const REST_EMAIL = "eval@example.com";
 const HOSTS: Record<RestVendor, string[]> = {
   stripe: ["api.stripe.com", "files.stripe.com", "meter-events.stripe.com"],
-  notion: ["api.notion.com"],
   cloudflare: ["api.cloudflare.com"],
   vercel: ["api.vercel.com"],
 };
 const routes = new Map<string, { url: string; hosts: string[] }>();
 let originalFetch: typeof fetch | undefined;
+let previousKitTransport: GuardedTransport | undefined;
+let kitInstalled = false;
+
+/** listen() installs Node's sender; evals route kit calls through the fake-credential guard too. */
+export function installRestKitTransport(): void {
+  const previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  if (!kitInstalled) previousKitTransport = previous;
+  kitInstalled = true;
+}
 
 /** Keep the providers' production host guards; route only fresh fake credentials. */
 function installTransport() {
@@ -54,24 +60,6 @@ const canonicalParams = (value: unknown): unknown =>
       : String(value);
 const sameTargets = (a: unknown, b: unknown) =>
   Array.isArray(a) && Array.isArray(b) && [...a].sort().join() === [...b].sort().join();
-const text = (value: string) => [{ type: "text", text: { content: value }, plain_text: value }];
-const page = (id: string, title: string, status?: string) => ({
-  object: "page",
-  id,
-  url: `https://www.notion.so/${id}`,
-  archived: false,
-  in_trash: false,
-  properties: {
-    Name: { id: "title", type: "title", title: text(title) },
-    ...(status ? { Status: { id: "status", type: "status", status: { name: status } } } : {}),
-  },
-});
-const list = (results: unknown[], next_cursor: string | null = null) => ({
-  object: "list",
-  results,
-  has_more: next_cursor !== null,
-  next_cursor,
-});
 const cf = (result: unknown) => ({
   success: true,
   errors: [],
@@ -85,7 +73,6 @@ export function restState() {
     refunds: [] as Row[],
     refundKeys: {} as Record<string, { params: string; status: number; value: unknown }>,
     refundFaulted: false,
-    blocks: { "page-q3": [] as Row[], "page-retro": [] as Row[] } as Record<string, Row[]>,
     dns: [
       {
         id: DNS_ID,
@@ -116,7 +103,6 @@ export function restState() {
       },
     ],
     purges: [] as string[],
-    createdPages: [] as Row[],
     envs: [
       { id: "env_prod", key: "STRIPE_KEY", type: "encrypted", target: ["production"], value: OLD_ENV },
       { id: "env_preview", key: "STRIPE_KEY", type: "encrypted", target: ["preview"], value: PREVIEW_ENV },
@@ -157,6 +143,9 @@ export class FakeRestService {
     if (!routes.size && originalFetch) {
       globalThis.fetch = originalFetch;
       originalFetch = undefined;
+      if (kitInstalled) configureGuardedTransport(previousKitTransport);
+      kitInstalled = false;
+      previousKitTransport = undefined;
     }
   }
   private async handle(request: Request): Promise<Response> {
@@ -170,7 +159,7 @@ export class FakeRestService {
         : Object.fromEntries(new URLSearchParams(raw))
       : {};
     const headers = Object.fromEntries(
-      ["idempotency-key", "stripe-account", "stripe-version", "notion-version"].flatMap((key) =>
+      ["idempotency-key", "stripe-account", "stripe-version"].flatMap((key) =>
         request.headers.has(key) ? [[key, request.headers.get(key)!]] : [],
       ),
     );
@@ -225,10 +214,7 @@ export class FakeRestService {
     const ok = (value: unknown) => ({ value });
     const missing = () => ({
       status: 404,
-      value:
-        this.vendor === "notion"
-          ? { object: "error", status: 404, code: "object_not_found", message: "Object not found" }
-          : { error: { code: "not_found", message: "Unknown fake route" } },
+      value: { error: { code: "not_found", message: "Unknown fake route" } },
     });
     if (this.vendor === "stripe") {
       const charge = {
@@ -321,92 +307,6 @@ export class FakeRestService {
       }
       if (method === "GET" && path === "/v1/refunds")
         return ok({ object: "list", data: this.state.refunds, has_more: false });
-    }
-    if (this.vendor === "notion") {
-      if (headers["notion-version"] !== "2026-03-11")
-        return { status: 400, value: { code: "missing_version", message: "Notion-Version required" } };
-      const schema = {
-        object: "data_source",
-        id: "ds-roadmap",
-        title: text("Roadmap"),
-        properties: {
-          Name: { id: "title", type: "title", title: {} },
-          Status: {
-            id: "status",
-            type: "status",
-            status: {
-              options: ["Todo", "In progress", "Blocked", "Done"].map((name) => ({ id: name, name, color: "default" })),
-            },
-          },
-        },
-      };
-      if (method === "POST" && path === "/v1/search")
-        return ok(
-          list(
-            /roadmap/i.test(body.query ?? "")
-              ? [schema]
-              : [page("page-q3", "Q3 Offsite Plan"), page("page-retro", "Q3 Offsite Retro (2025)")],
-          ),
-        );
-      if (method === "GET" && path.replaceAll("-", "") === `/v1/databases/${DATABASE}`)
-        return ok({
-          object: "database",
-          id: DATABASE,
-          title: text("Roadmap"),
-          data_sources: [{ id: "ds-roadmap", name: "Roadmap" }],
-        });
-      if (method === "GET" && path === "/v1/data_sources/ds-roadmap") return ok(schema);
-      if (method === "POST" && path === "/v1/data_sources/ds-roadmap/query") {
-        const filtered = body.filter?.property === "Status" && body.filter?.status?.equals === "Blocked";
-        const titles = filtered
-          ? BLOCKED_TITLES
-          : [...BLOCKED_TITLES, ...Array.from({ length: 170 }, (_, i) => `Todo task ${i + 1}`)];
-        const offset =
-          body.start_cursor === "c-2" ? 100 : body.start_cursor === "c-3" ? 200 : body.start_cursor === "c-4" ? 300 : 0;
-        if (body.start_cursor && !["c-2", "c-3", "c-4"].includes(body.start_cursor))
-          return { status: 400, value: { code: "validation_error" } };
-        return ok(
-          list(
-            titles
-              .slice(offset, offset + 100)
-              .map((title, i) =>
-                page(`row-${offset + i + 1}`, title, title.startsWith("Blocked") ? "Blocked" : "Todo"),
-              ),
-            offset + 100 < titles.length ? `c-${offset / 100 + 2}` : null,
-          ),
-        );
-      }
-      const block = /^\/v1\/blocks\/([^/]+)\/children$/.exec(path);
-      if (block && this.state.blocks[block[1]!]) {
-        if (method === "GET") return ok(list(this.state.blocks[block[1]!]!));
-        if (method === "PATCH") {
-          const children = (body.children ?? []).map((b: Row, i: number) => ({
-            ...b,
-            ...(b[b.type]?.rich_text
-              ? {
-                  [b.type]: {
-                    ...b[b.type],
-                    rich_text: b[b.type].rich_text.map((r: Row) => ({
-                      ...r,
-                      plain_text: r.text?.content ?? r.plain_text ?? "",
-                    })),
-                  },
-                }
-              : {}),
-            id: `block-${this.state.blocks[block[1]!]!.length + i + 1}`,
-            object: "block",
-            has_children: false,
-          }));
-          this.state.blocks[block[1]!]!.push(...children);
-          return ok(list(children));
-        }
-      }
-      if (method === "GET" && /\/v1\/pages\/page-(q3|retro)$/.test(path))
-        return ok(page(path.split("/").at(-1)!, path.endsWith("q3") ? "Q3 Offsite Plan" : "Q3 Offsite Retro (2025)"));
-      if (method === "POST" && path === "/v1/pages") {
-        this.state.createdPages.push(body);
-        return ok(page("page-created", "Duplicate"));
-      }
     }
     if (this.vendor === "cloudflare") {
       const zones = [

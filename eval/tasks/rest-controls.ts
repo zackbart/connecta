@@ -32,7 +32,7 @@ export async function restTransportControls() {
     for (const [token, host] of [
       [undefined, "api.stripe.com"],
       ["eval_unknown", "api.stripe.com"],
-      [services[0]!.token, "api.notion.com"],
+      [services[0]!.token, "api.vercel.com"],
     ] as const) {
       let refused = false;
       try {
@@ -135,7 +135,6 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
     [
       "801-stripe-failed-payment",
       "801-stripe-guessed-parameter-recovery",
-      "801-notion-rows-past-first-page",
       "801-cloudflare-read-only-analytics",
       "801-vercel-failed-build",
     ].includes(task.id)
@@ -254,79 +253,6 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
         s.world.calls.at(-1)!.deduplicated = false;
       },
       "idempotency",
-    );
-  }
-  if (task.id === "801-notion-append-checklist") {
-    mutate(
-      "duplicate checklist blocks fail",
-      (s) => {
-        s.world.rest!.blocks["page-q3"]!.push(...s.world.rest!.blocks["page-q3"]!);
-      },
-      "state",
-    );
-    mutate(
-      "the retro must stay untouched",
-      (s) => {
-        s.world.rest!.blocks["page-retro"]!.push(s.world.rest!.blocks["page-q3"]![0]!);
-      },
-      "state",
-    );
-    mutate(
-      "checked items fail",
-      (s) => {
-        s.world.rest!.blocks["page-q3"]![0]!.to_do.checked = true;
-      },
-      "state",
-    );
-    mutate(
-      "a prepended checklist fails",
-      (s) => {
-        (s.world.calls.find((c) => c.kind === "write")!.args.body as Record<string, unknown>).position = {
-          type: "start",
-        };
-      },
-      "correct-destination",
-    );
-  }
-  if (task.id === "801-notion-rows-past-first-page") {
-    mutate(
-      "two pages cannot establish the count",
-      (s) => {
-        s.world.calls = s.world.calls.filter((c) => (c.args.body as Record<string, unknown>)?.start_cursor !== "c-3");
-      },
-      "correct-destination",
-    );
-    mutate(
-      "a URL cursor cannot replace a body cursor",
-      (s) => {
-        const c = s.world.calls.find((c) => (c.args.body as Record<string, unknown>)?.start_cursor === "c-2")!;
-        (c.args.query as Record<string, unknown>).start_cursor = "c-2";
-      },
-      "cursor-placement",
-    );
-    mutate(
-      "reusing a cursor fails",
-      (s) => {
-        (s.world.calls.at(-1)!.args.body as Record<string, unknown>).start_cursor = "c-2";
-      },
-      "cursor-placement",
-    );
-    mutate(
-      "the count alone cannot replace the titles",
-      (s) => {
-        s.trace.finalAnswer = "Notion: 230 Blocked tasks";
-      },
-      "answer-evidence",
-    );
-    mutate(
-      "a later page with a different filter fails",
-      (s) => {
-        (s.world.calls.at(-1)!.args.body as Record<string, unknown>).filter = {
-          property: "Status",
-          status: { equals: "Done" },
-        };
-      },
-      "correct-destination",
     );
   }
   if (task.id === "801-cloudflare-dns-ttl") {
