@@ -371,7 +371,9 @@ Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
 
-## Vercel workload credentials (prototype)
+## Vercel workload credentials
+
+Available from 0.35.0; earlier releases do not support workload admission.
 
 An agent running on Vercel can present its project's signed OIDC token instead
 of provisioning a Connecta token. Declare the binding beside its name:
@@ -847,7 +849,7 @@ and reports.
 
 A pool is a named slice of the deployment served to its members: people at
 `/mcp/<pool>` and agents at `/agent/<pool>`. A support team sees two notes
-tools and Linear, a calendar bot sees one tool, both over the same credentials. Private remote catalog
+tools and tickets, a calendar bot sees one tool, both over the same credentials. Private remote catalog
 cache entries remain partitioned by the admitted pool.
 
 ```ts
@@ -860,12 +862,12 @@ createConnecta({
   agents: ["calendar-bot"],
   pools: {
     support: {
-      tools: ["linear", "notes.search_pages", "notes.fetch_page"],
+      tools: ["tickets", "notes.search_pages", "notes.fetch_page"],
       members: supportTeam,
-      description: "Support tools: Linear and two notes reads. Ask a maintainer for anything else.",
+      description: "Support tools: tickets and two notes reads. Ask a maintainer for anything else.",
     },
     calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
-    reporting: { tools: ["linear", "notes"], readOnly: true, members: analysts },
+    reporting: { tools: ["tickets", "notes"], readOnly: true, members: analysts },
   },
   connectors, executor,
 });
@@ -882,7 +884,7 @@ admitted.
 | Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                               |
 | Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                                    |
 | Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                |
-| Surface      | Optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                              |
+| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                 |
 | Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; plain `/mcp` and a pool without one serve the shared instructions unchanged. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                   |
 | Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
@@ -1235,7 +1237,7 @@ intake-redacted successes, keyed by connector configuration. Set
 `authScope: "personal"` when every human needs a separate downstream account:
 
 ```ts
-remoteMcp("linear", { url: "https://mcp.linear.app/mcp", authScope: "personal",
+remoteMcp("crm", { url: "https://crm.example.com/mcp", authScope: "personal",
   auth: { type: "oauth" } });
 ```
 
@@ -1923,8 +1925,8 @@ createConnecta({
   auth: cloudflareAccessAuth(),
   // Administers shared credentials, agent tokens, and activity.
   maintainers: ["owner-id"],
-  // Each member connects their own account on personal_linear.
-  pools: { team: { tools: ["shared_docs", "personal_linear", "notes.search_pages"], members: team } },
+  // Each member connects their own account on personal_crm.
+  pools: { team: { tools: ["shared_docs", "personal_crm", "notes.search_pages"], members: team } },
   connectors, executor,
   readOnly: false, // required: true refuses every write call
 });

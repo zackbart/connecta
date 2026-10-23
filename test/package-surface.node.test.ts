@@ -84,7 +84,7 @@ describe("public package boundary", () => {
     // node:sqlite, behind ./sqlite, is unflagged from Node 22.13.
     expect(packageJson.engines?.node).toBe(">=22.13.0");
     expect(packageJson.files).toEqual(
-      expect.arrayContaining(["bin", "dist", "documentation", "templates", "README.md", "LICENSE"]),
+      expect.arrayContaining(["bin", "dist", "documentation", "guides", "templates", "README.md", "LICENSE"]),
     );
     // No code export resolves outside dist/ — the manifest data export
     // (`./package.json`, #374) is the one exception, and it ships anyway — so

@@ -28,16 +28,20 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                      |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
+## Tool presentation
+
+The default surface is the six meta-tools below. From 0.35.0, pools can use
+[native tool presentation](#native-tool-surface) for clients with their own
+tool search. Both presentations use the same invocation enforcement; native
+pools keep code available by default.
+
 ## The six tools
 
-Every deployment requires an executor, so a meta endpoint's `tools/list` is
-exactly six. Meta is every endpoint's default; only a pool's
-`surface: "native"` replaces the six with the
-[native tool surface](#native-tool-surface). No other configuration
-adds a seventh or removes one, so a client's cached tool list never depends on
-the storage behind the deployment. There was an eighth,
-`resume_execution`, while programs paused at writes; it left with pausing
-([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
+Every deployment requires an executor. A meta endpoint's `tools/list` is
+exactly six. This is the default; a pool may instead use the
+[native tool surface](#native-tool-surface). No other configuration adds a
+seventh or removes one, so a client's cached meta-tool list never depends on
+the storage behind the deployment. `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
 Approval belongs to the client. A read-only endpoint keeps all six tools, omits
@@ -571,9 +575,9 @@ default to JSON schemas and schema-key metadata.
   "catalogErrors": [],
   "tools": [
     {
-      "name": "get_issue",
-      "address": "linear.get_issue",
-      "connectorTitle": "Linear Production",
+      "name": "get_ticket",
+      "address": "tickets.get_ticket",
+      "connectorTitle": "Tickets",
       "classification": "read",
       "schemaFormat": "json",
       "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
