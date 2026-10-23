@@ -132,10 +132,15 @@ describe("shared REST failure mappers", () => {
         Response.json({ error: { message: straddling(form, 1_000) } }, { status: 400 }),
       );
       const connector = vercel("hosting", { purpose: "Ops", auth: { type: "token" }, teamId: "team_default" });
-      const error = await refusal(
-        connector.callTool("vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }, keyed()),
-      );
-      expectNoFragment(error.message, form);
+      const previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      try {
+        const error = await refusal(
+          connector.callTool("vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "hello" }, keyed()),
+        );
+        expectNoFragment(error.message, form);
+      } finally {
+        configureGuardedTransport(previousTransport);
+      }
     },
   );
 
