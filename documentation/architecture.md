@@ -2057,6 +2057,13 @@ answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
 outcome.
 
+Google's request adapter also offers a reviewed binary send. It marks the
+operation `googleBytes` for the product's `binaryBodies` selector and forwards
+an optional `maxBytes` to the success-only prefix reader. It returns the
+connection's safe answer: bytes pass the existing sent-secret encoding before
+any result hook, then value safety before the product reads them. Products
+keep charset decoding and special error-status interpretation local.
+
 An optional `tagConnector(connector, options)` records construction facts
 about the built connector, once, before the registry can serve it. Its return
 value is ignored, so it cannot replace or wrap the connector. Google Workspace

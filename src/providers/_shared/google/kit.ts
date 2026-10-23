@@ -450,10 +450,26 @@ export interface GoogleClient {
     request: GoogleRequest,
     options?: GoogleRequestOptions,
   ) => Effect.Effect<unknown, HttpFailure, CallServices>;
+  /**
+   * A reviewed binary answer, after the connection's byte ceiling, sent-secret
+   * pass, result hook and value safety. `data` is the safe binary envelope
+   * (or the product result hook's projection), never the transport's raw bytes.
+   * A product selects `googleBytes` in its vendor's `binaryBodies` review.
+   */
+  readonly bytes: (
+    request: GoogleRequest,
+    accept?: string,
+    options?: GoogleRequestOptions & { readonly maxBytes?: number },
+  ) => ReturnType<Connection["sendPath"]>;
 }
 
 export function googleClient(connection: Connection, provider: string): GoogleClient {
-  const send = (request: GoogleRequest, accept: string, options: GoogleRequestOptions | undefined) =>
+  const send = (
+    request: GoogleRequest,
+    accept: string,
+    options: (GoogleRequestOptions & { readonly maxBytes?: number }) | undefined,
+    binary = false,
+  ) =>
     Effect.gen(function* () {
       const classification = yield* Classification;
       const dispatches = yield* Dispatches;
@@ -472,7 +488,15 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
             ...(request.rawBody !== undefined ? { rawBody: request.rawBody } : {}),
           },
           {
-            ...(options?.revisionGuarded ? { flags: { revisionGuarded: true } } : {}),
+            ...(options?.revisionGuarded || binary
+              ? {
+                  flags: {
+                    ...(options?.revisionGuarded ? { revisionGuarded: true as const } : {}),
+                    ...(binary ? { googleBytes: true as const } : {}),
+                  },
+                }
+              : {}),
+            ...(binary && options?.maxBytes !== undefined ? { prefix: { maxBytes: options.maxBytes } } : {}),
             ...(options?.effect ? { effect: options.effect } : {}),
             ...(options?.step ? { step: options.step } : {}),
           },
@@ -571,6 +595,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
 
   return {
     json: (request, options) => Effect.map(send(request, "application/json", options), (answer) => answer.data),
+    bytes: (request, accept = "*/*", options) => send(request, accept, options, true),
   };
 }
 
