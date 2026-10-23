@@ -5,6 +5,7 @@
 // test/google-workspace-delegation.test.ts; only the no-caller refusal is
 // repeated here, because it is this connector's own front door.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../../executors/quickjs-protocol.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 
@@ -246,6 +247,15 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
 });
 
 describe("the raw batchUpdate hatch", () => {
+  // Kit writes on Node use the owned transport that listen() installs.
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+
   const bytesOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const hundred = Array.from({ length: 100 }, (_, index) => ({
     duplicateSheet: { sourceSheetId: 0, newSheetName: `Copy ${index}` },
@@ -289,6 +299,15 @@ describe("the raw batchUpdate hatch", () => {
 });
 
 describe("errors (H11)", () => {
+  // Kit writes on Node use the owned transport that listen() installs.
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+
   /** A 200 whose JSON body breaks off mid-stream. */
 
   /** A request that went out and got no answer at all. */
