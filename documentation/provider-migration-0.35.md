@@ -48,6 +48,7 @@ programs that name an old tool or argument must be updated before upgrading.
 | `get_organization` `{ organizationId }`                                                | a `list_organizations` row, or `tithely_api_read` `{ path: "/organizations/<id>" }`                      |
 | `get_account` `{ accountId }`                                                          | a `list_accounts` row, or `tithely_api_read` `{ path: "/accounts/<id>" }` for phone and address          |
 | `raw: true` on every named read                                                        | removed; read Tithe.ly's record with `tithely_api_read`                                                  |
+| —                                                                                      | `list_organizations` rows include `widgetId`, the organization's giving widget id                        |
 | list keys `organizations`, `accounts`, `charges`, `recurringCharges`, `paymentMethods` | `items`                                                                                                  |
 | `page.nextCursor: null` on the last page                                               | `nextCursor` omitted when `page.hasMore` is false                                                        |
 | `list_payment_methods` returned every method                                           | pages with `limit` and `cursor` like the other lists                                                     |
