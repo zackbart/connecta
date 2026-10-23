@@ -3,11 +3,13 @@
 // secret the request sent is replaced before each cut. A cut through an echo
 // leaves a fragment that no registered form matches, which no later
 // redaction can find. SECRET is the delegated token each call sends.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
+import { requestSentSecrets } from "../src/sent-secrets.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
@@ -241,6 +243,14 @@ describe("Docs", () => {
 });
 
 describe("Sheets", () => {
+  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restoreTransport);
+  });
+
   const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
   it.each([["raw", SECRET]])(
@@ -255,6 +265,81 @@ describe("Sheets", () => {
         connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"], maxCellChars: 500 }, caller()),
       );
       expectNoFragment(result.valueRanges[0].values[0][0], form);
+      // A private argument submitted earlier in this request may equal a
+      // public Sheets wire key. Keep the rows for projection; their cell
+      // values stay redacted, and the final boundary still protects keys
+      // that match the private value, exactly as the legacy result did.
+      for (const privateValue of ["values", "range", "sheets", "properties"]) {
+        const ctx = caller();
+        requestSentSecrets(ctx).arguments(
+          { private: privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        stubGoogle(() => ({
+          spreadsheetId: ID,
+          properties: { title: "Budget" },
+          sheets: [{ properties: { sheetId: 2, title: "Summary" } }],
+          valueRanges: [{ range: "Sheet1!A1:A2", values: [["kept"], [privateValue]] }],
+        }));
+        const projected = await read(
+          connector.callTool(
+            privateValue === "values" || privateValue === "range" ? "get_values" : "get_spreadsheet",
+            privateValue === "values" || privateValue === "range"
+              ? { spreadsheetId: ID, ranges: ["Sheet1!A1:A2"] }
+              : { spreadsheetId: ID },
+            ctx,
+          ),
+        );
+        if (privateValue === "values" || privateValue === "range") {
+          expect(projected.valueRanges[0][privateValue === "values" ? "[redacted]" : "values"]).toEqual([
+            ["kept"],
+            ["[redacted]"],
+          ]);
+          expect(projected.cellCount).toBe(2);
+        } else {
+          expect(projected.title).toBe("Budget");
+          expect(projected[privateValue === "sheets" ? "[redacted]" : "sheets"][0]).toMatchObject({
+            sheetId: 2,
+            title: "Summary",
+          });
+        }
+      }
+      // Error-envelope keys feed classification before the final boundary.
+      // Private key collisions must keep rate-limit, precondition and scope advice.
+      for (const row of [
+        ...["reason", "errors", "error"].map((privateValue) => ({
+          privateValue,
+          error: { code: 403, message: "Quota exceeded", errors: [{ reason: "userRateLimitExceeded" }] },
+          expected: {
+            code: "rate_limited",
+            retryable: true,
+            message: expect.stringContaining("Google meters this API"),
+          },
+        })),
+        {
+          privateValue: "status",
+          error: { code: 400, message: "Precondition", status: "FAILED_PRECONDITION" },
+          expected: { code: "connector_call_failed", message: expect.stringContaining("precondition") },
+        },
+        {
+          privateValue: "reason",
+          error: { code: 403, message: "Scope refused", errors: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] },
+          expected: {
+            code: "provider_permission_denied",
+            message: expect.stringContaining("lacks a scope this call needs"),
+          },
+        },
+      ]) {
+        const ctx = caller();
+        requestSentSecrets(ctx).arguments(
+          { private: row.privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        stubGoogle(() => Response.json({ error: row.error }, { status: row.error.code }));
+        await expect(
+          connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"] }, ctx),
+        ).rejects.toMatchObject(row.expected);
+      }
     },
   );
 
