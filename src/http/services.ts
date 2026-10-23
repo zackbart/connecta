@@ -109,6 +109,8 @@ export const RequestFacts = Context.Reference<{
   readonly step?: string;
   readonly item?: string;
   readonly operation?: OperationRef;
+  /** A bounded success read may deliberately stop before a declared body length. */
+  readonly successPrefix?: true;
   readonly sent?: { reservation?: Dispatch; dispatch?: Dispatch };
 }>("connecta/http/RequestFacts", { defaultValue: () => ({ effect: "call" }) });
 

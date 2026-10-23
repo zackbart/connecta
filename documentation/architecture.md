@@ -2026,6 +2026,15 @@ routing/version headers remain request or constant headers, never authentication
 secrets. An optional positive `timeoutMs` retains a vendor's request and body
 deadline. A path request opting into `emptyForm: true` retains an explicitly empty form on the wire; other empty form declarations keep their previous omission.
 
+A send may opt into a success-only `prefix` read with a byte ceiling, an optional
+tighter time limit and a boolean chunk-stop callback. Failure responses retain
+the ordinary bounded status and withheld-error path. Early success cancels the
+unread stream and reports `prefix: { truncated, bytes, stopped }`; accepted bytes
+still pass sent-secret redaction, the result hook and value safety before any
+projection. The callback runs with an empty Effect context, receives a copy of
+the chunk, and cannot transform the answer. Its defects receive the same
+withheld-text rewrap as result hooks. Invocation cancellation remains authoritative.
+
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
 `unsentAfterUnauthorized` diagnostic, preserving the grant's authorization
