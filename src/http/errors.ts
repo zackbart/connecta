@@ -621,6 +621,39 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
   };
 }
 
+/**
+ * What a vendor's status table says about absence and conflict, for the
+ * generated Conventions (decision 0011). It asks the table about 404 and 409
+ * with no body facts; fact rules that may yield `conflict` on other statuses
+ * are reported as such, never guessed from prose.
+ */
+export function errorConventions(vendor: VendorErrors<any>): {
+  readonly notFound: boolean;
+  readonly conflict: "status" | "rules" | "none";
+} {
+  const code = (status: number) => {
+    const rule = vendor.statuses[status] ?? DEFAULTS[status] ?? vendor.statuses.otherwise ?? otherwiseDefault;
+    try {
+      return rule({
+        status,
+        facts: bounded(vendor.facts({})),
+        presence: {},
+        numbers: {},
+        headers: {},
+        retryAfterMs: undefined,
+        operation: { method: "GET", template: "/" },
+        withheld: true,
+      }).code;
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    notFound: code(404) === "not_found",
+    conflict: code(409) === "conflict" ? "status" : vendor.classify?.length ? "rules" : "none",
+  };
+}
+
 function classified(input: Classified, vendor: VendorErrors<any>): Verdict {
   for (const rule of vendor.classify ?? []) {
     const decided = rule(input);

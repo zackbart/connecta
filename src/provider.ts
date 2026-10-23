@@ -151,6 +151,10 @@ export interface ProviderKitFacts {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
   };
+  /** What the vendor's status table makes of absence (404) and conflict, for the Errors convention. */
+  readonly errors?: { readonly notFound: boolean; readonly conflict: "status" | "rules" | "none" };
+  /** Whether a write takes an idempotency key the vendor honors, for the Writes convention. */
+  readonly idempotencyKey?: boolean;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -275,6 +279,8 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
     ...(kit.hatch
       ? { hatch: Object.freeze({ name: kit.hatch.name, verdicts: Object.freeze({ ...kit.hatch.verdicts }) }) }
       : {}),
+    ...(kit.errors ? { errors: Object.freeze({ ...kit.errors }) } : {}),
+    ...(kit.idempotencyKey !== undefined ? { idempotencyKey: kit.idempotencyKey } : {}),
   });
 }
 

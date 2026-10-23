@@ -201,6 +201,8 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     operations: ["GET /tickets/{id}", "GET /who"],
     pageSize: { default: 10, max: 50 },
     hatch: { name: "tickets", verdicts: { "GET /who": "read" } },
+    errors: { notFound: true, conflict: "none" },
+    idempotencyKey: false,
   });
   expect(Object.isFrozen(factory.definition.kit?.hatch?.verdicts)).toBe(true);
   expect(first.describe?.().source.provider).toBe("tickets");

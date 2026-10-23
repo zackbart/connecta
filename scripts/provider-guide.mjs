@@ -75,6 +75,25 @@ function hatchLine(name, hatch) {
   );
 }
 
+/** What the vendor's status table makes of absence and conflict (`kit.errors`). */
+function errorsLine(name, errors) {
+  if (errors === undefined) return [];
+  if (typeof errors.notFound !== "boolean" || !["status", "rules", "none"].includes(errors.conflict)) {
+    fail(name, 'kit.errors needs a boolean notFound and a conflict of "status", "rules" or "none"');
+  }
+  const absence = errors.notFound
+    ? "`not_found` means the record does not exist; this API tells absence from a permission gap."
+    : "This API does not tell a missing record from one these credentials cannot reach, so an unknown id fails as `connector_call_failed`, never `not_found`.";
+  const conflict = {
+    status: "`conflict` means it answered 409: read the target again before deciding.",
+    rules: "`conflict` appears only where its own error facts report one.",
+    none: "It documents no conflict.",
+  }[errors.conflict];
+  return [
+    `- **Errors:** codes come from the vendor's statuses and error facts, never its prose. ${absence} ${conflict}`,
+  ];
+}
+
 /**
  * The generated `## Conventions` (decision 0011): what the provider's
  * declarations mean for an agent. `kit` is the definition's `ProviderKitFacts`
@@ -94,7 +113,8 @@ export function renderConventions({ name, kind, kit, withheld }) {
       if (pageSize.max < pageSize.default) fail(name, "kit.pageSize default exceeds its maximum");
       api.push(
         `- **Paging:** a paged \`list_*\` or \`search_*\` read takes \`limit\` (default ${pageSize.default}, at most ` +
-          `${pageSize.max}) and \`cursor\`. While \`page.hasMore\` is true, pass \`page.nextCursor\` back unchanged as \`cursor\`.`,
+          `${pageSize.max}) and \`cursor\`. While \`page.hasMore\` is true, pass \`page.nextCursor\` back unchanged as \`cursor\`; ` +
+          "the last page has no `nextCursor`.",
       );
     }
     api.push(
@@ -109,7 +129,10 @@ export function renderConventions({ name, kind, kit, withheld }) {
     }
   }
   const writes =
-    "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it.";
-  const lines = [...api, writes, ...tail];
+    "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it." +
+    (kit?.idempotencyKey === true
+      ? " A write that takes `idempotencyKey` may be repeated with the same key and arguments while the vendor retains it."
+      : " Writes take no idempotency key.");
+  const lines = [...api, writes, ...errorsLine(name, kit?.errors), ...tail];
   return `## Conventions\n\n${lines.join("\n")}`;
 }

@@ -24,7 +24,7 @@ import type {
   CredentialTestResult,
 } from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
-import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
+import { errorConventions, Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch, type HatchDeclaration } from "./hatch.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
@@ -58,6 +58,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     | import("../types.js").ConnectorCallAdmissionPolicy
     | ((options: Readonly<O>) => import("../types.js").ConnectorCallAdmissionPolicy);
   readonly pageSize?: { readonly default: number; readonly max: number };
+  /** A write takes an idempotency key the vendor honors; the generated Writes convention says so. */
+  readonly idempotencyKey?: boolean;
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
@@ -143,6 +145,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     transport,
     defaultCallAdmission,
     pageSize: declaredPageSize,
+    idempotencyKey,
     credential,
     oauth,
     oauthWrite401,
@@ -196,6 +199,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       operations: operations(vendor),
       ...(pageSize ? { pageSize } : {}),
       ...(hatchOptions ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts } } : {}),
+      errors: errorConventions(errors),
+      idempotencyKey: idempotencyKey === true,
     },
     create(id, options, provider) {
       const connectionCredential = typeof credential === "function" ? credential(options) : credential;
