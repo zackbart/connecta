@@ -2011,6 +2011,14 @@ metadata from the index and builds the full manifest lazily; the typed client
 contains only named operations and probes. Manifest/index operation-set equality
 is checked independently of drift digests, which still use full vendor contracts.
 
+Reviewed response policies can select text using only the redacted, normalized
+Content-Type. A separate `binaryBodies` review opts into bounded byte reads.
+Only the connection sees those bytes: it calls `RequestSecrets.encode` before
+constructing the legacy `{ contentType, bytes, base64 }` value. Undeclared
+binary bodies retain the JSON-only failure. Fixed secondary origins use a
+separate kit Connection built during provider construction, with their own
+confinement and the same authentication and result safety.
+
 A definition may derive authentication and default admission from validated
 options. Probes may derive their request from those options and describe a mapped
 failure (for example, an accepted key lacking account-read permission). Public

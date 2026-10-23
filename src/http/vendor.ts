@@ -79,10 +79,19 @@ export interface Vendor {
   readonly indexed?: { readonly operations: readonly string[]; readonly api: () => HttpApi.HttpApi<string, any> };
   /** Published specification path prefix; transport operations remain relative to the confined base. */
   readonly manifestBase?: string;
+  /** Explicit response-byte review; the kit checks bytes before any base64 representation. */
+  readonly binaryBodies?: {
+    readonly review: string;
+    readonly forResponse: (status: number, operation: OperationRef, contentType: string) => boolean;
+  };
   /** Reviewed text contracts, selected by status and canonical operation; absent means JSON only. */
   readonly textBodies?: {
     readonly review: string;
-    readonly forResponse: (status: number, operation: OperationRef) => "text" | "json-or-text" | undefined;
+    readonly forResponse: (
+      status: number,
+      operation: OperationRef,
+      contentType?: string,
+    ) => "text" | "json-or-text" | undefined;
   };
 }
 
@@ -187,6 +196,9 @@ export function connect<R>(
 ): Connection<R | CallServices> {
   validateVendorErrors(options.errors);
   const textBodies = vendor.textBodies ? { ...vendor.textBodies } : undefined;
+  const binaryBodies = vendor.binaryBodies ? { ...vendor.binaryBodies } : undefined;
+  if (binaryBodies && (!binaryBodies.review.trim() || typeof binaryBodies.forResponse !== "function"))
+    throw new Error("Binary bodies require a nonempty vendor review and a response contract selector.");
   if (textBodies && (!textBodies.review.trim() || typeof textBodies.forResponse !== "function"))
     throw new Error("Text bodies require a nonempty vendor review and a response contract selector.");
   let built: Record<string, Method<R>> | undefined;
@@ -225,16 +237,37 @@ export function connect<R>(
           if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
           sent.reservation = slot;
         }
-        const reply = yield* Effect.flatMap(response, guarded.read);
-        // Whole, before a detail line trims it or a projection extracts from it.
         const secrets = yield* RequestSecrets;
-        const parsed = parse(
-          reply.text,
-          (value) => secrets.redact(value),
-          textBodies?.forResponse(reply.status, operation),
-        );
-        // Hooks can cut header values too; redact their whole values before exposing them.
+        const reply = yield* Effect.flatMap(response, (response) => {
+          const contentType = secrets.redact(String(response.headers["content-type"] ?? "")).toLowerCase();
+          const binary =
+            response.status >= 200 &&
+            response.status <= 299 &&
+            binaryBodies?.forResponse(response.status, operation, contentType) === true;
+          return guarded.read(response, undefined, binary ? "bytes" : undefined);
+        });
+        // Header-derived format decisions see only redacted Content-Type.
         const headers = new Headers(secrets.redact([...reply.headers]));
+        // Whole, before a detail line trims it or a projection extracts from it.
+        const parsed =
+          reply.bytes !== undefined
+            ? {
+                value:
+                  reply.bytes.length === 0
+                    ? null
+                    : {
+                        contentType: secrets.redact(reply.headers.get("content-type") ?? "").toLowerCase(),
+                        bytes: reply.bytes.length,
+                        base64: secrets.encode(reply.bytes),
+                      },
+                format: "json" as const,
+              }
+            : parse(
+                reply.text,
+                (value) => secrets.redact(value),
+                textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
+              );
+
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
             new StatusFailure({

@@ -1405,6 +1405,13 @@ response. Breeze selects text for
 error statuses and JSON-or-text for its legacy hatches only, so malformed
 JSON on named tools still fails as `UnreadableBody`.
 
+C.6 adds opt-in vendor deadlines (`timeoutMs`), which cannot extend a caller's
+signal, and preserves explicitly empty form bodies in `sendPath`. Its reviewed
+`binaryBodies` selector keeps bounded response bytes inside the connection and
+checks them with `RequestSecrets.encode` before base64. Text selection receives
+only redacted, normalized Content-Type; fixed secondary origins use separate
+connections constructed outside caller contexts.
+
 **The value-safety boundary (`src/http/safety.ts`).** Every answer, from a
 declared operation or a hatch's path, takes one route inside `connect`, and a
 provider cannot reach a body any earlier:
