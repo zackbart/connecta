@@ -148,10 +148,15 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
         (c) => success(c) && (query(c).organization_id === GRACE || query(c).account_id !== undefined),
       ) && calls(world, "GET", "/charges-list").some((c) => success(c)),
     );
-    const named = (d: Args) => answer.toLowerCase().includes(`${d.first_name} ${d.last_name}`.toLowerCase());
+    const text = answer.toLowerCase();
+    const name = (d: Args) => `${d.first_name} ${d.last_name}`.toLowerCase();
+    // Explaining who was left out is fine; listing them, or giving their emails, is not.
+    const listed = text.split(/\r?\n/).filter((line) => /^\s*(?:[-*•]|\d+[.)]|\|)/.test(line));
     evidence(
-      lapsed.matching.every((d) => named(d) && answer.toLowerCase().includes(String(d.email).toLowerCase())) &&
-        !lapsed.other.some(named),
+      lapsed.matching.every((d) => text.includes(name(d)) && text.includes(String(d.email).toLowerCase())) &&
+        !lapsed.other.some(
+          (d) => text.includes(String(d.email).toLowerCase()) || listed.some((line) => line.includes(name(d))),
+        ),
     );
     outcome("reads-only", "no write was attempted", readsOnly(world, trace));
   } else if (id === "tithely-account-paging") {
