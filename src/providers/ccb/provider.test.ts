@@ -200,6 +200,8 @@ describe("ccb() construction", () => {
       ["no environment", { environment: undefined }, /requires environment/],
       ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
       ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
+      ["an empty title", { title: "" }, /title.*non-empty string/],
+      ["a blank title", { title: " " }, /title.*non-empty string/],
     ] as const) {
       expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
     }
