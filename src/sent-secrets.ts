@@ -5,9 +5,9 @@ import { credentialUrlViews } from "./credential-url.js";
 import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
+import { REDACTED } from "./redaction-marker.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
-const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
 const requests = new WeakMap<object, SentSecrets>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
