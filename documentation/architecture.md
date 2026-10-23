@@ -1982,9 +1982,7 @@ cached value would otherwise keep its first caller's request alive (INV-7).
 The optional `grant(options)` factory supplies a renewable machine-login
 `Grant`, exclusive with static OAuth. It is built outside caller contexts;
 each send binds the active call to its token, refresh and rejected effects.
-An optional `writeUnauthorized`
-mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
-the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
+`settleWrite` decides the outcome and handoff.
 Reads replay once after renewal; writes are never resent.
 
 A machine grant may also declare `grantRenewal` modes, with an optional

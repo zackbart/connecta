@@ -54,10 +54,6 @@ export function machineLogin(id: string) {
       }),
       rejected: Effect.fail(new Refusal({ error: new ConnectorCallError("auth_required", "Machine rejected the token.") })),
     }; }),
-    writeUnauthorized: (renewal) => new ConnectorCallError(
-      renewal._tag === "Renewed" ? "connector_call_failed" : "auth_required",
-      "The write was sent before Machine rejected its credential, so whether it took effect is unknown.",
-    ),
     authenticate: bearer,
     errors: {
       provider: "Machine", facts: () => ({}), detail: ({ status }) => `Machine returned HTTP ${status}.`,

@@ -26,7 +26,7 @@ import type {
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
-import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal, type Write401Renewal } from "./oauth.js";
+import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
   Classification,
@@ -66,8 +66,6 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly grant?: (
     options: Readonly<O>,
   ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
-  /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
-  readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
   /** Opt-in machine-grant renewal modes (see GrantRenewal); defaults renew as B.2 describes. */
   readonly grantRenewal?: GrantRenewal;
   readonly authenticate:
@@ -135,7 +133,6 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     oauth,
     oauthWrite401,
     grant,
-    writeUnauthorized,
     grantRenewal,
     authenticate,
     errors,
@@ -153,7 +150,6 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   }
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
   if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
-  if (writeUnauthorized && !grant) throw new Error("writeUnauthorized requires a machine grant declaration.");
   if (grantRenewal && !grant) throw new Error("grantRenewal requires a machine grant declaration.");
   const renewalModes = grantRenewal ? { ...grantRenewal } : undefined;
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
@@ -229,9 +225,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                         "downstream_oauth_required",
                       ),
                   }
-                : writeUnauthorized || renewalModes
-                  ? { ...renewalModes, ...(writeUnauthorized ? { writeUnauthorized } : {}) }
-                  : undefined,
+                : renewalModes,
             )
           : guarded,
         {
