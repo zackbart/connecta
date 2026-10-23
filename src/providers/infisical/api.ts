@@ -20,7 +20,7 @@ import type { ConnectorContext, ConnectorCredentialValues } from "../../types.js
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import type { InfisicalOptions } from "./index.js";
-export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
+import { INFISICAL_API_BASE_URL } from "./lib/constants.js";
 export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const RESPONSE_CEILING_MESSAGE =
   "Infisical's response exceeded 8 MiB. Narrow secretPath, drop recursive, or omit includeValues.";

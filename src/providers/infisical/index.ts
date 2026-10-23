@@ -6,7 +6,7 @@ import { bearer } from "../../http/oauth.js";
 import { skill } from "./skill.generated.js";
 import * as api from "./api.js";
 import { infisicalTools } from "./tools.js";
-export { INFISICAL_API_BASE_URL } from "./api.js";
+export { INFISICAL_API_BASE_URL } from "./lib/constants.js";
 export interface InfisicalOptions extends ProviderOptions {
   /** API base including /api; US cloud by default, EU cloud or self-hosted HTTPS allowed. */
   baseUrl?: string;
