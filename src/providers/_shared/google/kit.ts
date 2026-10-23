@@ -443,9 +443,10 @@ function queryPairs(query: GoogleRequest["query"]): Array<[string, string]> {
  */
 function unknownWrite(message: string, status: number | undefined): Refusal {
   return new Refusal({
-    error: attachFailureFacts(new ConnectorCallError("connector_call_failed", message, { retryable: false }), {
-      httpStatus: status,
-    }),
+    error: attachFailureFacts(
+      new ConnectorCallError("connector_call_failed", message, { retryable: false }),
+      status === undefined ? {} : { httpStatus: status },
+    ),
   });
 }
 

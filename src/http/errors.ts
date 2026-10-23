@@ -542,9 +542,10 @@ function verdict(
         { retryable: false },
       );
     case "ResponseTooLarge":
-      return attachFailureFacts(new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }), {
-        httpStatus: dispatch?.status,
-      });
+      return attachFailureFacts(
+        new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }),
+        dispatch?.status === undefined ? {} : { httpStatus: dispatch.status },
+      );
     case "ResendRefused":
       return new ConnectorCallError(
         "connector_call_failed",

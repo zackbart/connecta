@@ -129,12 +129,12 @@ ask for the missing decision, before any fresh call. [Retry semantics](./code-mo
 ## Read failure records
 
 Failure logs and connector status report checked facts without downstream
-error text. When a response status was recorded, `httpStatus` is an integer
-from 100 through 599; status messages can include `with HTTP <status>`.
-It remains available for a write's bare 401 fallback, Google write failures
-whose outcome is unknown, and responses that exceed the connector's byte
-ceiling. If no answer was recorded, the field is absent. The status alone
-does not prove whether a write took effect or permit replaying it.
+error text. A failure record can include `httpStatus`, an integer from 100
+through 599; status messages can include `with HTTP <status>`. Recorded status
+is retained when a write's 401 body was not read, when a Google write reports
+an unknown outcome, and when a response exceeds the connector's byte ceiling.
+If no answer was recorded, the field is absent. The status alone does not
+prove whether a write took effect or permit replaying it.
 
 For example, a `crm` write answered HTTP 503 can log `httpStatus: 503` while
 its outcome stays unknown. Inspect the target before repeating the call.

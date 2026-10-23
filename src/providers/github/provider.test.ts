@@ -230,7 +230,6 @@ describe("GitHub App provider", () => {
     for (const [method, path] of [
       ["GET", "/app/installations"],
       ["POST", "/app/installations/11/access_tokens"],
-      ["GET", "/installation/repositories"],
     ] as const) {
       await expect(runEdge(resource.safety.resolve(method, path))).rejects.toMatchObject({
         error: { code: "invalid_args", message: "This GitHub operation is not exposed by the connection." },
@@ -239,6 +238,10 @@ describe("GitHub App provider", () => {
     expect(await runEdge(resource.safety.resolve("POST", "/repos/acme/one/releases"))).toEqual({
       method: "POST",
       template: "/repos/{owner}/{repo}/releases",
+    });
+    expect(await runEdge(resource.safety.resolve("GET", "/installation/repositories"))).toEqual({
+      method: "GET",
+      template: "/installation/repositories",
     });
     expect(fixture.requests).toHaveLength(0);
     const logger = spyLogger();

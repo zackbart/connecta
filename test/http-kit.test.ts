@@ -297,7 +297,7 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       const map = { classification: "read" as const, dispatches: [] as Dispatch[] };
       const plain = toConnectorCallError(large, VENDOR, map);
       for (const code of [200, 401, 424, 503, undefined, 99, 600, 200.5, NaN]) {
-        const own = answered(large, { status: code });
+        const own = answered(large, code === undefined ? {} : { status: code });
         const mapped = toConnectorCallError(large, VENDOR, {
           ...map,
           dispatches: [answered(status(429)), own],

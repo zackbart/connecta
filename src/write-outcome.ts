@@ -366,7 +366,7 @@ function unauthorizedVerdict(answer: ProviderRequest, error: unknown): Connector
     : (unauthorizedAnswer(answer) ??
       attachFailureFacts(
         new ConnectorCallError("auth_required", `${answer.provider} answered this write with HTTP 401.`),
-        { httpStatus: answer.status },
+        answer.status === undefined ? {} : { httpStatus: answer.status },
       ));
   if (explainsUnauthorized(base)) return carryFailureFacts(error, withoutRetry(base));
   return explainedUnauthorizedVerdict(
