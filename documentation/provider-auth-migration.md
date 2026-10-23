@@ -291,4 +291,4 @@ one; read or rotate withheld secrets in the vendor's dashboard.
 [Decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)
 explains why auth selects the implementation. Maintained provider source
 skills and review tables live under `src/providers/` in the repository;
-`src/providers/vercel/value-safety.ts` owns Vercel's reviewed table.
+`src/providers/vercel/safety.ts` owns Vercel's reviewed table.
