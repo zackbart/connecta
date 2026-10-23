@@ -275,24 +275,81 @@ it(
     expect((await formsCall("search", { query: "widget" })).operations).toEqual([
       expect.objectContaining({ path: "/things/{thing_id}", matched: "response field object.widget_id" }),
     ]);
-    const contract = await formsCall("details", { method: "POST", path: "/things/t1" });
-    expect(new TextEncoder().encode(JSON.stringify(contract)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+    // Every details answer stays within 32 KiB: a large contract pages whole pieces, and a piece
+    // too large for one answer arrives as chunks of its JSON. Required names are never dropped.
+    const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    const walk = async (call: typeof formsCall, args: Record<string, unknown>) => {
+      const pages: Array<Record<string, any>> = [];
+      let cursor: string | undefined;
+      do {
+        const page = await call("details", { ...args, ...(cursor ? { cursor } : {}) });
+        expect(size(page)).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);
+        pages.push(page);
+        cursor = page["page"]?.hasMore ? page["page"].nextCursor : undefined;
+      } while (cursor);
+      const chunks = (of: string) =>
+        JSON.parse(
+          pages
+            .filter((page) => page["chunk"]?.of === of)
+            .map((page) => page["chunk"].text)
+            .join(""),
+        );
+      return {
+        pages,
+        chunks,
+        parameters: pages.flatMap((page) => page["parameters"]),
+        properties: Object.assign({}, ...pages.map((page) => page["body"]?.schema?.properties ?? {})),
+        required: pages.flatMap((page) => page["body"]?.schema?.required ?? []),
+      };
+    };
+    const contract = await walk(formsCall, { method: "POST", path: "/things/t1" });
+    expect(contract.pages.length).toBeGreaterThan(1);
     expect(contract.parameters).toEqual([
       { name: "thing_id", in: "path", required: true, schema: { type: "string" } },
       { name: "account_id", in: "query", required: true, schema: { type: "string" } },
     ]);
-    expect(contract.body).toMatchObject({
+    expect(Object.keys(contract.properties)).toHaveLength(302);
+    expect(contract.properties["name"]).toEqual({ type: "string", description: "Display name." });
+    expect(contract.required).toEqual(["name"]);
+    expect(contract.pages[0]!["body"]).toMatchObject({
       contentType: "application/x-www-form-urlencoded",
       required: true,
-      schema: { required: ["name"], properties: { name: { type: "string", description: "Display name." } } },
     });
-    expect(contract.truncated).toEqual(expect.arrayContaining(["body.schema.properties.note_299"]));
-    expect(contract.truncated).not.toContain("body.schema.properties.name");
     expect((await formsCall("details", { method: "POST", path: "/things/{thing_id}", param: "amount" })).body).toEqual({
       contentType: "application/x-www-form-urlencoded",
       schema: { type: "object", properties: { amount: { type: "number" } } },
     });
-    // Search trims whole entries to its byte budget and continues by cursor.
+    const heavy = (fields: Record<string, Schema.Top>, verdict = "write") => {
+      const index = vendorIndex(
+        vendor("heavy", post("heavy", "/heavy", { payload: form(Schema.Struct(fields)), success: Schema.Unknown })),
+        { prefix: "heavy", title: "Heavy", revision: "v1" },
+      );
+      const connector = apiConnector("heavy", {
+        tools: hatch({ name: "heavy", index, verdicts: { "POST /heavy": verdict as "write" }, connection }),
+      });
+      return (kind: string, args: Record<string, unknown>) =>
+        connector.callTool(`heavy_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>;
+    };
+    // An irreducibly large required contract pages every required property.
+    const many = await walk(
+      heavy(
+        Object.fromEntries(
+          Array.from({ length: 240 }, (_, i) => [
+            `required_${i}`,
+            Schema.String.annotate({ description: "r".repeat(180) }),
+          ]),
+        ),
+      ),
+      { method: "POST", path: "/heavy" },
+    );
+    expect(many.required).toHaveLength(240);
+    expect(Object.keys(many.properties)).toHaveLength(240);
+    // One parameter larger than an answer arrives as chunks, through param too.
+    const note = Schema.optionalKey(Schema.String.annotate({ description: "x".repeat(40000) }));
+    const big = await walk(heavy({ note }), { method: "POST", path: "/heavy", param: "note" });
+    expect(big.pages.length).toBeGreaterThan(1);
+    expect(big.chunks("body.schema.properties.note")).toEqual({ type: "string", description: "x".repeat(40000) });
+    // Search trims whole entries to its exact byte budget, page and cursor included, and continues by cursor.
     const long = new OperationIndex(
       {
         ...DATA,
@@ -301,18 +358,43 @@ it(
           (_, i) => ["GET", `/${"x".repeat(2000)}${i}`, `Long${i}`, "Long path", 0] as const,
         ),
         details: JSON.stringify({ d: [], o: [] }),
+        fields: [],
       },
       { vendor: "long", title: "Long" },
     );
-    const trimmed = (await tracksEveryRequest(
-      apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
-    ).callTool("long_api_search", { query: "xxx", limit: 8 }, connectorContext())) as {
-      operations: unknown[];
-      page: { hasMore: boolean };
-    };
-    expect(trimmed.operations.length).toBeLessThan(8);
-    expect(new TextEncoder().encode(JSON.stringify(trimmed)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes + 200);
-    expect(trimmed.page.hasMore).toBe(true);
+    const searchLong = (args: Record<string, unknown>) =>
+      tracksEveryRequest(
+        apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
+      ).callTool("long_api_search", args, connectorContext()) as Promise<Record<string, any>>;
+    const trimmed = await searchLong({ query: "xxx", limit: 8 });
+    expect(trimmed["operations"].length).toBeLessThan(8);
+    expect(size(trimmed)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
+    expect(trimmed["page"].hasMore).toBe(true);
+    expect(size(await searchLong({ query: "xxx", limit: 8, cursor: trimmed["page"].nextCursor }))).toBeLessThanOrEqual(
+      SEARCH_BUDGET.bytes,
+    );
+    // A sole entry with an oversized label is cut, marked, and served whole by details.
+    const label = new OperationIndex(
+      {
+        ...DATA,
+        ops: [["GET", "/things", "x".repeat(40000), "Things", 0]],
+        details: JSON.stringify({ d: [], o: [] }),
+      },
+      { vendor: "label", title: "Label" },
+    );
+    const labelled = apiConnector("label", { tools: hatch({ name: "label", index: label, verdicts: {}, connection }) });
+    const found = (await labelled.callTool("label_api_search", { query: "things" }, connectorContext())) as Record<
+      string,
+      any
+    >;
+    expect(size(found)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
+    expect(found["truncated"]).toEqual(["operations[0].operationId"]);
+    const labels = await walk(
+      (kind, args) => labelled.callTool(`label_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>,
+      { method: "GET", path: "/things" },
+    );
+    expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
+    expect(labels.chunks("operationId")).toBe("x".repeat(40000));
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();
     expect(sent).toEqual([]);

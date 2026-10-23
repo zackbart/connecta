@@ -103,35 +103,41 @@ function parameters(values: Readonly<Record<string, unknown>>): Parameters {
   });
 }
 
-/**
- * Fit a contract inside the details budget by cutting optional parts only:
- * first optional body property schemas, then optional parameter schemas.
- * Names stay, so `param` fetches any one in full.
- */
-function withinBudget<T extends { parameters: OperationContract["parameters"]; body?: OperationContract["body"] }>(
-  contract: T,
-): T & { truncated?: string[] } {
-  // Leave room for the verdict, routing and revision the tool adds.
-  const budget = DETAILS_BUDGET_BYTES - 512;
-  if (bytes(contract) <= budget) return contract;
-  const truncated: string[] = [];
-  const out = structuredClone(contract) as T & { truncated?: string[] };
-  const fits = () => bytes({ ...out, truncated }) <= budget;
-  const schema = out.body?.schema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
+const cap = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text);
+
+/** One piece of a contract that may travel alone: a parameter, a body property, the body, or a long label. */
+type Piece =
+  | { readonly kind: "parameter"; readonly of: string; readonly value: OperationContract["parameters"][number] }
+  | {
+      readonly kind: "property";
+      readonly of: string;
+      readonly name: string;
+      readonly value: unknown;
+      readonly required: boolean;
+    }
+  | { readonly kind: "body"; readonly of: string; readonly value: unknown }
+  | { readonly kind: "text"; readonly of: "operationId" | "summary"; readonly value: string };
+
+/** Every piece of a contract, in order: long labels, parameters, then body properties (or the whole body). */
+function piecesOf(contract: OperationContract, capped: { operationId: boolean; summary: boolean }): Piece[] {
+  const schema = contract.body?.schema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
   const required = new Set(schema?.required ?? []);
-  for (const name of Object.keys(schema?.properties ?? {}).reverse()) {
-    if (fits()) break;
-    if (required.has(name)) continue;
-    schema!.properties![name] = {};
-    truncated.push(`body.schema.properties.${name}`);
-  }
-  if (!fits() && out.parameters.some((parameter) => !parameter.required)) {
-    out.parameters = out.parameters.map((parameter) =>
-      parameter.required ? parameter : ({ name: parameter.name, in: parameter.in, required: false } as never),
-    );
-    truncated.push("parameters[].schema", "parameters[].description");
-  }
-  return { ...out, truncated };
+  return [
+    ...(capped.operationId ? [{ kind: "text" as const, of: "operationId" as const, value: contract.operationId }] : []),
+    ...(capped.summary ? [{ kind: "text" as const, of: "summary" as const, value: contract.summary }] : []),
+    ...contract.parameters.map((value) => ({ kind: "parameter" as const, of: `parameters.${value.name}`, value })),
+    ...(contract.body === undefined
+      ? []
+      : schema?.properties
+        ? Object.entries(schema.properties).map(([name, value]) => ({
+            kind: "property" as const,
+            of: `body.schema.properties.${name}`,
+            name,
+            value,
+            required: required.has(name),
+          }))
+        : [{ kind: "body" as const, of: "body.schema", value: contract.body.schema }]),
+  ];
 }
 
 /** The standard hatch over an operation index; a missing verdict refuses every method. */
@@ -275,6 +281,7 @@ export function hatch(
     }),
   );
   const searchTool = tool("search");
+  const detailsTool = tool("details");
   const tools = [
     read(connection, {
       name: searchTool,
@@ -304,6 +311,11 @@ export function hatch(
           }),
         ),
         revision: Schema.String.annotate({ description: "Operation index revision." }),
+        truncated: Schema.optionalKey(
+          Schema.Array(Schema.String).annotate({
+            description: `Entry labels cut for size; ${detailsTool} on that method and path returns them whole.`,
+          }),
+        ),
         page: StandardPage,
       }),
       run: (args) =>
@@ -326,42 +338,68 @@ export function hatch(
             ...primary.map((op) => ({ op })),
             ...byField(args.query, args.method, new Set(primary)),
           ];
-          const operations = ranked.slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits)).map(({ op, field }) => {
-            const { named: authored, ...routed } = route(op);
+          // Search entries are compact: long labels are cut (details serves them whole), and a
+          // path the read and write tools cannot take (over 2,048 characters) is never routed.
+          const truncated: string[] = [];
+          const operations = ranked
+            .filter(({ op }) => [...op.path].length <= 2048)
+            .slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits))
+            .map(({ op, field }, position) => {
+              const { named: authored, ...routed } = route(op);
+              const label = (key: string, text: string) => {
+                if (text.length > SEARCH_BUDGET.summaryChars) truncated.push(`operations[${position}].${key}`);
+                return cap(text, SEARCH_BUDGET.summaryChars);
+              };
+              return {
+                method: op.method,
+                path: op.path,
+                operationId: label("operationId", op.operationId),
+                summary: label("summary", op.summary),
+                ...routed,
+                // A named tool's projection may omit the matched field, so a field match points at the hatch only.
+                ...(field
+                  ? { matched: label("matched", `${field.in} field ${field.path}`) }
+                  : authored
+                    ? { named: authored }
+                    : {}),
+              };
+            });
+          const reachable = ranked.filter(({ op }) => [...op.path].length <= 2048).length;
+          // The budget holds for the whole answer, page and cursor included, before it leaves the tool;
+          // what it cuts stays reachable by cursor.
+          const answer = function* () {
+            const next = offset + operations.length;
+            const shown = truncated.filter((path) => Number(/\[(\d+)\]/.exec(path)![1]) < operations.length);
             return {
-              method: op.method,
-              path: op.path,
-              operationId: op.operationId,
-              summary:
-                op.summary.length > SEARCH_BUDGET.summaryChars
-                  ? `${op.summary.slice(0, SEARCH_BUDGET.summaryChars - 1)}…`
-                  : op.summary,
-              ...routed,
-              // A named tool's projection may omit the matched field, so a field match points at the hatch only.
-              ...(field ? { matched: `${field.in} field ${field.path}` } : authored ? { named: authored } : {}),
+              operations,
+              revision: index.revision,
+              ...(shown.length ? { truncated: shown } : {}),
+              page:
+                next < reachable
+                  ? { hasMore: true, nextCursor: yield* boundCursor.encode(searchTool, scope, String(next)) }
+                  : { hasMore: false },
             };
-          });
-          // The budget holds before the result leaves the tool; what it cuts stays reachable by cursor.
-          while (operations.length > 1 && bytes({ operations, revision: index.revision }) > SEARCH_BUDGET.bytes)
-            operations.pop();
-          const next = offset + operations.length;
-          return {
-            operations,
-            revision: index.revision,
-            page:
-              next < ranked.length
-                ? { hasMore: true, nextCursor: yield* boundCursor.encode(searchTool, scope, String(next)) }
-                : { hasMore: false },
           };
+          let result = yield* answer();
+          while (operations.length > 1 && bytes(result) > SEARCH_BUDGET.bytes) {
+            operations.pop();
+            result = yield* answer();
+          }
+          return result;
         }),
     }),
     read(connection, {
-      name: tool("details"),
+      name: detailsTool,
       description: `Read one ${title} API operation's request contract: path, query and body parameters with types and required names. Reads no account data.`,
       input: Schema.Struct({
         method: Method.annotate({ description: "The operation's HTTP method." }),
         path: Path.annotate({ description: "The path template from search, or a concrete path." }),
         param: Schema.optionalKey(text(1, 200).annotate({ description: "Return only this parameter, in full." })),
+        cursor: Schema.optionalKey(
+          text(1, 1024).annotate({
+            description: "page.nextCursor from the previous details call with the same method, path and param.",
+          }),
+        ),
       }),
       output: Schema.Struct({
         method: Method,
@@ -371,27 +409,166 @@ export function hatch(
         server: Schema.optionalKey(Schema.String),
         parameters: Schema.Array(Schema.Unknown).annotate({ description: "Path and query parameters." }),
         body: Schema.optionalKey(
-          ObjectValue.annotate({ description: "Body content type and schema; required names are always complete." }),
+          ObjectValue.annotate({
+            description: "Body content type and schema; when paged, the properties and required names on this page.",
+          }),
         ),
         verdict: Schema.Literals(["read", "write", "destructive", "refuse"]),
         ...Routing,
         revision: Schema.String,
+        chunk: Schema.optionalKey(
+          Schema.Struct({
+            of: Schema.String.annotate({ description: "The piece this text belongs to, such as parameters.limit." }),
+            text: Schema.String.annotate({
+              description: "Part of that piece's JSON; join the parts in page order, then parse them.",
+            }),
+          }),
+        ),
         truncated: Schema.optionalKey(
           Schema.Array(Schema.String).annotate({
-            description: "Optional parts cut for size; read one in full with param.",
+            description: "Labels cut for size; their full text arrives as chunks.",
+          }),
+        ),
+        page: Schema.optionalKey(
+          StandardPage.annotate({
+            description: "Present when the contract exceeds one answer: pass nextCursor back for the next pieces.",
           }),
         ),
       }),
       run: (args) =>
-        checked(() => {
-          const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
-          const contract = index.contract(op, args.param);
-          return {
-            ...(args.param === undefined ? withinBudget(contract) : contract),
-            verdict: verdictOf(op),
-            ...route(op),
-            revision: index.revision,
+        Effect.gen(function* () {
+          const { op, contract } = yield* checked(() => {
+            const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
+            return { op, contract: index.contract(op, args.param) };
+          });
+          const tail = { verdict: verdictOf(op), ...route(op), revision: index.revision };
+          const whole = { ...contract, ...tail };
+          if (args.cursor === undefined && bytes(whole) <= DETAILS_BUDGET_BYTES) return whole;
+          // Bounded pages: every parameter and body property arrives whole on some page, and a
+          // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
+          const scope = { method: args.method, path: args.path, ...(args.param ? { param: args.param } : {}) };
+          let at = { i: 0, o: 0 };
+          if (args.cursor !== undefined) {
+            const decoded = yield* boundCursor.decode(detailsTool, scope, args.cursor);
+            const parsed = yield* Effect.try({
+              try: () => JSON.parse(decoded) as unknown,
+              catch: () => undefined,
+            }).pipe(Effect.orElseSucceed(() => undefined));
+            at = parsed as typeof at;
+          }
+          const capped = {
+            operationId: contract.operationId.length > SEARCH_BUDGET.summaryChars,
+            summary: contract.summary.length > SEARCH_BUDGET.summaryChars,
           };
+          const pieces = piecesOf(contract, capped);
+          if (
+            !Number.isSafeInteger(at?.i) ||
+            !Number.isSafeInteger(at?.o) ||
+            at.i < 0 ||
+            at.o < 0 ||
+            at.i >= pieces.length
+          )
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError("invalid_args", "This details cursor is not one details returned."),
+              }),
+            );
+          const base = {
+            method: contract.method,
+            path: contract.path,
+            operationId: cap(contract.operationId, SEARCH_BUDGET.summaryChars),
+            summary: cap(contract.summary, SEARCH_BUDGET.summaryChars),
+            ...(contract.server ? { server: contract.server } : {}),
+          };
+          const truncated = (["operationId", "summary"] as const).filter((key) => capped[key]);
+          const parameters: unknown[] = [];
+          const properties: Record<string, unknown> = {};
+          const required: string[] = [];
+          let body: unknown;
+          let chunk: { of: string; text: string } | undefined;
+          const compose = (page: { readonly hasMore: boolean; readonly nextCursor?: string }) => ({
+            ...base,
+            parameters,
+            ...(contract.body === undefined
+              ? {}
+              : {
+                  body: {
+                    contentType: contract.body.contentType,
+                    ...(contract.body.required ? { required: true } : {}),
+                    schema: body ?? {
+                      type: "object",
+                      properties,
+                      ...(required.length ? { required } : {}),
+                    },
+                  },
+                }),
+            ...tail,
+            ...(chunk ? { chunk } : {}),
+            ...(truncated.length ? { truncated } : {}),
+            page,
+          });
+          // Room for the largest cursor this contract can need.
+          const reserve = {
+            hasMore: true,
+            nextCursor: yield* boundCursor.encode(
+              detailsTool,
+              scope,
+              `{"i":${pieces.length},"o":${Number.MAX_SAFE_INTEGER}}`,
+            ),
+          };
+          const fits = () => bytes(compose(reserve)) <= DETAILS_BUDGET_BYTES;
+          let { i, o } = at;
+          while (i < pieces.length) {
+            const piece = pieces[i]!;
+            if (o === 0 && piece.kind !== "text") {
+              if (piece.kind === "parameter") parameters.push(piece.value);
+              else if (piece.kind === "body") body = piece.value;
+              else {
+                properties[piece.name] = piece.value;
+                if (piece.required) required.push(piece.name);
+              }
+              if (fits()) {
+                i += 1;
+                continue;
+              }
+              if (piece.kind === "parameter") parameters.pop();
+              else if (piece.kind === "body") body = undefined;
+              else {
+                delete properties[piece.name];
+                if (piece.required) required.pop();
+              }
+            }
+            // A piece that cannot share a page arrives alone, in as many chunks as it needs.
+            if (parameters.length === 0 && Object.keys(properties).length === 0 && body === undefined) {
+              const json = JSON.stringify(piece.value);
+              chunk = { of: piece.of, text: "" };
+              let low = o + 1;
+              let high = json.length;
+              let end = Math.min(o + 1, json.length);
+              while (low <= high) {
+                const middle = Math.floor((low + high) / 2);
+                chunk.text = json.slice(o, middle);
+                if (fits()) {
+                  end = middle;
+                  low = middle + 1;
+                } else high = middle - 1;
+              }
+              // Never split a surrogate pair across chunks.
+              if (end < json.length && end > o + 1 && /[\uD800-\uDBFF]/.test(json[end - 1]!)) end -= 1;
+              chunk.text = json.slice(o, end);
+              o = end;
+              if (o >= json.length) {
+                i += 1;
+                o = 0;
+              }
+            }
+            break;
+          }
+          return compose(
+            i < pieces.length
+              ? { hasMore: true, nextCursor: yield* boundCursor.encode(detailsTool, scope, JSON.stringify({ i, o })) }
+              : { hasMore: false },
+          );
         }),
     }),
   ];
