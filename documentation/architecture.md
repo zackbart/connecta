@@ -1400,30 +1400,18 @@ every vendor ships one reviewed table through one mechanism
    Withheld values must not be written back; obtain the original
    link or omit the field. A placeholder outside a destination is ordinary
    text.
-   Vendors whose responses embed the file links they mint can
-   use `withholdSignedLinks(text, hosts)` with a reviewed `FileHosts` policy
-   (`domains` and S3 `buckets`). The linear scan
-   matches only the current URL/destination's actual authority: a reviewed
-   domain or subdomain, or a reviewed S3 bucket, virtual-hosted or exactly
-   the first path segment on an S3 endpoint. A secondary scheme or `//` in
-   another URL's path or query cannot re-anchor it; those proxy links keep
-   their bytes. Schemes and slashes may be escaped. File links lose their
-   whole query and fragment from a literal, percent-, entity-, or
-   `\u`-encoded opener through the next whitespace, quote, or angle bracket;
-   trailing closing punctuation comes back. AWS SigV4 and Google V4
-   `Signature`, `Credential`, and `Security-Token` parameter values are
-   withheld wherever their literal signing names occur, at any host, with
-   plain or encoded equals signs. `carriesWithheldLink(value, hosts)` is
+   Reviewed text paths withhold credential-bearing URL queries and fragments.
+   AWS and Google signing parameter values are withheld at every host.
+   `carriesWithheldLink(value)` is
    a shared write-admission helper that refuses a write before dispatch
-   when a file link's own query/fragment carries the exact `[redacted]`
+   when a link's own query/fragment carries the exact `[redacted]`
    placeholder, plain or up to four layers encoded. Admission resumes at
    each actual Markdown destination's close, including adjacent links and
    images and balanced/escaped parentheses; leading spaces, tabs, and one
    line ending before the destination are recognized. A marker after the close is
    ordinary text. This boundary is independent of redaction's fail-closed
-   span. Each string is scanned alone; split rich-text runs, encoded hosts
-   or signing names, bare hosts without `//`, and userinfo before a reviewed
-   host are outside this scan's threat model.
+   span. Each string is scanned alone; split rich-text runs and encoded
+   signing parameter names are outside this scan's threat model.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in

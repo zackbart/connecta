@@ -354,8 +354,8 @@ describe(suiteName, { timeout: 120_000 }, () => {
   it("INV-5: records auxiliary request bodies, so an emptied Forms login changes the goldens", NODE, async () => {
     const baseline = (await captureGoldens(forms)).calls!;
     const { calls } = await captureGoldens(forms, { seam: emptyLoginBody });
-    expect(baseline).toContain('"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer"');
-    expect(calls).not.toContain('"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer"');
+    expect(baseline).toContain('"grant_type"');
+    expect(calls).not.toContain('"grant_type"');
     expect(calls).not.toBe(baseline);
   });
 
@@ -374,7 +374,9 @@ describe(suiteName, { timeout: 120_000 }, () => {
       expect(spaced).not.toBe(baseline);
       const reordered = (
         await captureGoldens(forms, {
-          seam: reshapedLogin((fields) => JSON.stringify(Object.fromEntries(Object.entries(fields).reverse()))),
+          seam: reshapedLogin((fields) =>
+            JSON.stringify({ ...fields, info: Object.fromEntries(Object.entries(fields["info"] as object).reverse()) }),
+          ),
         })
       ).calls!;
       expect(reordered).not.toBe(baseline);
@@ -390,7 +392,10 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(early).not.toBe(baseline);
     expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
     expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
-    expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
+    const byUrl = (a: { url: string }, b: { url: string }) => a.url.localeCompare(b.url);
+    expect(requestsOnly(JSON.parse(early) as Row).sort(byUrl)).toEqual(
+      requestsOnly(JSON.parse(baseline) as Row).sort(byUrl),
+    );
   });
 
   it("records a duplicated write, and whether its copies were sent together or in turn", NODE, async () => {

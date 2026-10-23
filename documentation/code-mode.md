@@ -619,7 +619,7 @@ when empty. An empty string reports `program_error` with
 program-authored throw is `program_error`. `details.name` is a bounded engine
 error name; `details.line` is the source line when the runtime supplies one,
 otherwise null. Fixed hints repair imports/require/filesystem access, shadowed
-`connecta`, and invented globals such as `callTool` and `posthog`.
+`connecta`, and invented globals such as `callTool`.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
