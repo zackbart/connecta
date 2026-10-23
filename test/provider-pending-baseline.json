@@ -1,5 +1,5 @@
 {
-  "step1": ["docs", "gmail", "mixpanel", "sheets", "slides"],
+  "step1": ["docs", "gmail", "sheets", "slides"],
   "step2": [
     "breeze",
     "ccb",

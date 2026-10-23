@@ -792,9 +792,8 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
         ["GET", "/items/{item-id}", "item", "Read item", 0],
         ["GET", "/items", "list", "List items", 0],
         ["POST", "/items", "create", "Create item", 0],
-        ["PUT", "/items", "replace", "Replace item", 0],
       ],
-      details: '{"d":[],"o":[0,0,0,0]}',
+      details: '{"d":[],"o":[0,0,0]}',
     } as const;
     const index = new OperationIndex(source, { vendor: "acme", title: "Acme" });
     const named = get("list", "/items", { success: Schema.Unknown });
@@ -839,6 +838,71 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
           return answer;
         }),
     });
+    expect(tools.find((tool) => tool.name === "acme_api_write")?.inputSchema?.properties).toHaveProperty("method", {
+      type: "string",
+      enum: ["POST"],
+      description: "The operation's HTTP method.",
+    });
+    const orderedInput = Schema.Struct({
+      first: Schema.String,
+      second: Schema.String,
+      rows: Schema.Array(Schema.Struct({ a: Schema.String, b: Schema.String })),
+    });
+    const capacityArgs: string[] = [];
+    const preserve = write(connection, {
+      name: "ordered",
+      description: "Preserve decoded argument order.",
+      input: orderedInput,
+      inputOrder: "original",
+      output: Schema.Unknown,
+      destructive: false,
+      writeSteps: {
+        write: {
+          maxItems: 1,
+          items: (args) => {
+            capacityArgs.push(JSON.stringify(args));
+            return ["one"];
+          },
+          request: () => POST_ITEMS,
+        },
+      },
+      run: (args) => Effect.succeed(args),
+    });
+    const unchanged = read(connection, {
+      name: "decoded_order",
+      description: "Keep default decoder ordering.",
+      input: orderedInput,
+      output: Schema.Unknown,
+      run: (args) => Effect.succeed(args),
+    });
+    let deep: unknown = "leaf";
+    for (let depth = 0; depth < 12_000; depth++) deep = { nested: [deep] };
+    const passthrough = read(connection, {
+      name: "passthrough_order",
+      description: "Preserve decoded pass-through subtrees without traversing them.",
+      input: Schema.Struct({ value: Schema.Unknown }),
+      inputOrder: "original",
+      output: Schema.Boolean,
+      run: (args) => Effect.succeed(args.value === deep),
+    });
+    const orderedConnector = apiConnector("ordered", { tools: [preserve, unchanged, passthrough] });
+    for (const args of [
+      { second: "two", rows: [{ b: "bee", a: "aye" }], first: "one" },
+      { rows: [{ a: "aye", b: "bee" }], first: "one", second: "two" },
+    ]) {
+      const result = await orderedConnector.callTool("ordered", args, context());
+      expect(JSON.stringify(result)).toBe(JSON.stringify(args));
+      expect(capacityArgs.at(-1)).toBe(JSON.stringify(args));
+      expect(result).not.toBe(args);
+      expect((result as typeof args).rows[0]).not.toBe(args.rows[0]);
+      expect(JSON.stringify(await orderedConnector.callTool("decoded_order", args, context()))).toBe(
+        '{"first":"one","second":"two","rows":[{"a":"aye","b":"bee"}]}',
+      );
+    }
+    await expect(
+      orderedConnector.callTool("ordered", { first: "one", second: 2, rows: [] }, context()),
+    ).rejects.toBeDefined();
+    await expect(orderedConnector.callTool("passthrough_order", { value: deep }, context())).resolves.toBe(true);
     delete steps["write"];
     steps["extra"] = "once";
     const connector = apiConnector("acme", { tools });
