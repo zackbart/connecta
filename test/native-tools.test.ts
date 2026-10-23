@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
 import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
 import type { JsonSchema } from "../src/types.js";
@@ -370,7 +371,7 @@ describe("native tool surface", () => {
     expect(listed.error.message).toContain("over the 1000-tool native listing cap");
   });
 
-  it("INV-2: resolves truncated connector prefixes and refuses every colliding read or write claimant", async () => {
+  it("INV-2: resolves truncated connector prefixes, refuses collisions, and ignores unrelated failing siblings", async () => {
     const longId = `a__${"b".repeat(50)}`;
     const name = await nativeToolName(longId, "get");
     for (const write of [false, true]) {
@@ -418,6 +419,50 @@ describe("native tool surface", () => {
         } finally {
           await app.close();
         }
+      }
+    }
+    for (const failure of [new Error("down"), new ConnectorCallError("auth_required", "needs auth")]) {
+      const storage = memoryStorage();
+      let siblingLoads = 0;
+      const sent: string[] = [];
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: "x",
+            listTools: async () => {
+              siblingLoads++;
+              throw failure;
+            },
+            callTool: async () => ({}),
+          },
+          {
+            id: "x_y",
+            listTools: async () => [{ name: "get", annotations: { readOnlyHint: true } }],
+            callTool: async () => {
+              sent.push("x_y");
+              return {};
+            },
+          },
+        ],
+        agents: ["assistant"],
+        pools: { native: { tools: ["x", "x_y"], members: ["agent:assistant"], surface: "native" } },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listing = await rpc(app, token, "native", "tools/list", {});
+        expect(listing.result.tools.map((tool: { name: string }) => tool.name)).toContain("x_y__get");
+        const before = siblingLoads;
+        for (const modern of [true, false]) {
+          const called = await rpc(app, token, "native", "tools/call", { name: "x_y__get", arguments: {} }, modern);
+          expect(called.result.isError).toBeUndefined();
+        }
+        expect(sent).toEqual(["x_y", "x_y"]);
+        expect(siblingLoads).toBe(before);
+      } finally {
+        await app.close();
       }
     }
   });

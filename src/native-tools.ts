@@ -256,7 +256,13 @@ export class NativeSurface {
       // A hashed name can truncate even the connector prefix, and strips
       // trailing underscores from its head. Include every possible claimant.
       const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-      return name.startsWith(prefix) || name.startsWith(`${head}_`);
+      // A hashed name carries a stripped head only as exactly `${head}_` + six hex digits.
+      return (
+        name.startsWith(prefix) ||
+        (name.length === head.length + 1 + HASH_CHARS &&
+          name.startsWith(`${head}_`) &&
+          /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
+      );
     });
     const { loaded, byName } = await this.claims(prefixed);
     const found = byName.get(name);
