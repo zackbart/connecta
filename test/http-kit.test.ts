@@ -1546,6 +1546,10 @@ async function binaryReplyEvidence() {
     { declared: true, body: "x", length: "65", tag: "ResponseTooLarge" },
     { declared: true, body: "x".repeat(65), tag: "ResponseTooLarge" },
     { declared: false, body: "%PDF", tag: "UnreadableBody" },
+    { declared: true, body: "😀", prefix: 2, expected: "8J8=" },
+    { declared: true, body: "sk_test_0123456789", prefix: 20, expected: btoa("[redacted]") },
+    { declared: true, body: "%PDF", prefix: 0, expected: null },
+    { declared: true, body: "", prefix: 0, expected: null },
   ]) {
     answers.push(
       () =>
@@ -1568,15 +1572,30 @@ async function binaryReplyEvidence() {
       guardedClient(OPTIONS),
       { errors: VENDOR, safety },
     );
-    const outcome = await runEdge(Effect.result(connection.send(keys, {})).pipe(Effect.provideContext(services())));
+    const prefix = "prefix" in row ? row.prefix : undefined;
+    const outcome = await runEdge(
+      Effect.result(
+        connection.send(keys, {}, prefix === undefined ? undefined : { prefix: { maxBytes: prefix } }),
+      ).pipe(Effect.provideContext(services())),
+    );
     if (outcome._tag === "Failure") expect(outcome.failure._tag).toBe(row.tag);
     else {
       expect(row.tag).toBeUndefined();
-      expect(outcome.success.data).toEqual({
-        contentType: "application/pdf",
-        bytes: new TextEncoder().encode(row.body).length,
-        base64: row.expected,
-      });
+      expect(outcome.success.data).toEqual(
+        row.expected === null
+          ? null
+          : {
+              contentType: "application/pdf",
+              bytes: Math.min(new TextEncoder().encode(row.body).length, prefix ?? Infinity),
+              base64: row.expected,
+            },
+      );
+      if (prefix !== undefined)
+        expect(outcome.success.prefix).toEqual({
+          bytes: Math.min(new TextEncoder().encode(row.body).length, prefix),
+          truncated: new TextEncoder().encode(row.body).length > prefix,
+          stopped: new TextEncoder().encode(row.body).length > prefix ? "bytes" : "end",
+        });
     }
   }
 }
