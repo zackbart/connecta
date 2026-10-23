@@ -1301,10 +1301,11 @@ export class SentSecrets {
    * copy. The original object is never returned, so nothing read later can differ from what was
    * checked. Payload rules apply where downstream or guest data enters; the envelope pass at the
    * agent boundary repeats every check except short private values, which would rewrite
-   * Connecta's own identifiers, counts and addresses. */
-  redact<T>(value: T, mode: "payload" | "envelope" = "payload"): T {
+   * Connecta's own identifiers, counts and addresses. Internal parsed-JSON callers may
+   * preserve exact reviewed schema keys; values and JSON embedded in text are still checked. */
+  redact<T>(value: T, mode: "payload" | "envelope" = "payload", fixedKeys?: ReadonlySet<string>): T {
     if (this.idle()) return value;
-    return this.project(value, this.scan(mode === "payload")).value as T;
+    return this.project(value, this.scan(mode === "payload"), fixedKeys).value as T;
   }
 
   /** Whether payload redaction would change anything in `value`, for fields that must be
@@ -1843,7 +1844,7 @@ export class SentSecrets {
    * write, so no caller's value is ever mutated, and a container past the node budget is
    * withheld whole. Copies hold writable, configurable data properties and keep the identity
    * facts registered in redaction-identity. */
-  private project(value: unknown, scan: Scan): { value: unknown; changed: boolean } {
+  private project(value: unknown, scan: Scan, fixedKeys?: ReadonlySet<string>): { value: unknown; changed: boolean } {
     type Holder = Record<PropertyKey, unknown>;
     /** Where values are written: `target` itself when this walk made it, or for a caller's
      * container (`shared`) a copy made on its first write and put in place of it in `parent`.
@@ -2173,7 +2174,9 @@ export class SentSecrets {
       }
       // A key is checked like any text; an error's toJSON shadow keeps its name, so it shadows.
       const rename = (key: string) =>
-        FRAMING_KEYS.has(key) || (error && key === "toJSON") ? key : check(seen.keys, key, TEXT);
+        FRAMING_KEYS.has(key) || (!error && level === 0 && fixedKeys?.has(key)) || (error && key === "toJSON")
+          ? key
+          : check(seen.keys, key, TEXT);
       const renamed = keys.map(rename);
       if (renamed.some((name, index) => name !== keys[index])) plain = false;
       // An error's copy is of its class. Every accessor its chain defines, such as DOMException's
