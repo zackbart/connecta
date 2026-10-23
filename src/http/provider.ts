@@ -1,6 +1,7 @@
 // Internal provider kit (decision 0010, B.4). Unreachable from src/index.ts.
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
+import { OAUTH_CHALLENGE_MAX_BYTES } from "../auth/renewable-grant.js";
 import type { ApiHandlerContext, ApiOAuthConfig, ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import {
@@ -159,6 +160,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         provider: errors.provider,
         baseUrl: baseUrl(options),
         maxResponseBytes,
+        ...(oauthWrite401 ? { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES } : {}),
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
         authenticate,
@@ -171,6 +173,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               guarded,
               oauthWrite401
                 ? {
+                    challengeMaxBytes: OAUTH_CHALLENGE_MAX_BYTES,
                     writeUnauthorized: (renewal) =>
                       unsentAfterUnauthorized(
                         `Connector "${id}"'s API`,

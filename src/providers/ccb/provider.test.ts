@@ -1,4 +1,4 @@
-// The CCB (Pushpay ChMS) connection is hand-written fetch over `api()`'s
+// The CCB (Pushpay ChMS) connection runs on the provider kit over `api()`'s
 // downstream OAuth grant. A fake CCB stands in for both the token endpoint and
 // the API. Request shapes, projections, and status mapping live in the
 // characterization goldens; these tests pin the consent URL, the code exchange
@@ -305,6 +305,7 @@ describe("ccb() reads", () => {
       last_giving_date: "2026-09-01",
       date_anyone_run_giving_statement: "2026-01-02",
       family: { members: [{ id: 43, allergies: "shellfish" }] },
+      custom_fields: [{ id: 1, value: { notes: "private nested value" } }],
     };
     const attendance = { event_id: 12, occurrence: "20260927", prayer_requests: "private", notes: "leader notes" };
     const response = { id: 5, form_id: 2, payment: { method: "CREDIT_CARD", total: 2500 }, payment_status: "PAID" };
@@ -314,8 +315,15 @@ describe("ccb() reads", () => {
       on("GET", "/forms/2/responses", () => json([response], { "x-next-page": "" })),
       on("POST", "/search/individuals/results", () => json([individual], { "x-next-page": "" })),
       on("PUT", "/individuals/42", () => json(individual)),
+      on("GET", "/events/12", () => json({ id: 12, guest_counts: { notes: "private nested value", children: 3 } })),
+      on("GET", "/scheduling/categories/2/schedules", () =>
+        json([{ id: 1, metrics: { notes: "private nested value", needed: 2 } }], { "x-next-page": "" }),
+      ),
     ];
     const reads: Array<[string, Record<string, unknown>]> = [
+      ["get_individual", { individualId: 42 }],
+      ["get_event", { eventId: 12 }],
+      ["list_schedules", { categoryId: 2 }],
       ["get_individual", { individualId: 42, raw: true }],
       ["get_event_attendance", { eventId: 12, occurrence: "2026-09-27", raw: true }],
       ["list_form_responses", { formId: 2, raw: true }],
@@ -342,6 +350,15 @@ describe("ccb() reads", () => {
     expect(await returned.call("get_individual", { individualId: 42, raw: true })).toMatchObject({
       allergies: "peanuts",
       giving_number: "G-17",
+    });
+    expect(await returned.call("get_individual", { individualId: 42 })).toMatchObject({
+      customFields: { "1": { notes: "private nested value" } },
+    });
+    expect(await returned.call("get_event", { eventId: 12 })).toMatchObject({
+      guestCounts: { notes: "private nested value" },
+    });
+    expect(await returned.call("list_schedules", { categoryId: 2 })).toMatchObject({
+      schedules: [{ metrics: { notes: "private nested value" } }],
     });
     expect(JSON.stringify(await returned.call("ccb_api_get", { path: "/events/12/attendance/20260927" }))).toContain(
       "leader notes",
@@ -433,6 +450,37 @@ describe("ccb() escape hatches (H14)", () => {
       expect((await call(tool, args)).result).toEqual(result);
       expect(fake.requests.filter((request) => request.url.pathname === path)).toHaveLength(2);
     }
+    // The static grant discards at most 1 MiB of a 401 challenge, independently
+    // of CCB's 8 MiB resource ceiling. No oversized challenge starts renewal.
+    for (const [tool, args, method, path, code] of [
+      ["get_group", { groupId: 5 }, "GET", "/groups/5", "connector_call_failed"],
+      [
+        "ccb_api_search",
+        { domain: "individuals", body: {} },
+        "POST",
+        "/search/individuals/results",
+        "downstream_oauth_required",
+      ],
+      [
+        "ccb_api_mutate",
+        { method: "POST", path: "/individuals/42/notes", body: {} },
+        "POST",
+        "/individuals/42/notes",
+        "downstream_oauth_required",
+      ],
+    ] as const)
+      for (const declared of [true, false]) {
+        fake.route(
+          on(method, path, () =>
+            declared
+              ? new Response(null, { status: 401, headers: { "content-length": String(9 * 1024 * 1024) } })
+              : new Response(new Uint8Array(1024 * 1024 + 1), { status: 401 }),
+          ),
+        );
+        const before = fake.tokenRequests.length;
+        expect(await failure(call(tool, args))).toMatchObject({ code, retryable: false });
+        expect(fake.tokenRequests).toHaveLength(before);
+      }
   });
 });
 

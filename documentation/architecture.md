@@ -2011,6 +2011,14 @@ The error retains the resource dispatch's provenance; `settleWrite` decides
 the final outcome. The default middleware behavior and renewal ownership stay
 unchanged.
 
+The static compatibility option caps discarded 401 challenges with the shared
+OAuth challenge limit before renewal. A guarded client's optional
+`maxUnauthorizedResponseBytes` applies to declared and streamed bodies;
+`read(response, maxBytes)` can narrow a read's ceiling further. The middleware
+maps an oversized challenge using its own recorded dispatch, including a
+declared-size refusal before the response wrapper exists. It never renews
+after that refusal.
+
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
 Transport diagnostics use the vendor error label rather than the provider

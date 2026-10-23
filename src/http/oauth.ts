@@ -28,13 +28,13 @@ import { Cause, Context, Effect, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { readRequest, renewedAfterUnauthorized } from "../provider-call.js";
+import { readRequest, renewedAfterUnauthorized, type ProviderRequest } from "../provider-call.js";
 import { renewableGrantFor } from "../auth/renewable-grant.js";
 import type { ApiOAuthAccess } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { responseRequest, type GuardedClient } from "./client.js";
 import { Refusal, RequestRefused, type HttpFailure } from "./errors.js";
-import { Signal, duringCall, type CallServices } from "./services.js";
+import { Dispatches, Signal, duringCall, type CallServices } from "./services.js";
 
 /** The calling owner's renewable token, as the operations a transport needs from it. */
 export class Grant extends Context.Service<
@@ -93,15 +93,50 @@ type Write401Renewal =
 /** Wrap a guarded client whose `authenticate` is {@link bearer}. */
 export function refreshOnce(
   guarded: GuardedClient<CallServices | Grant>,
-  options?: { readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError },
+  options?: {
+    readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
+    readonly challengeMaxBytes?: number;
+  },
 ): GuardedClient<CallServices | Grant> {
   const inner = guarded.client;
+  const challengeFailure = (entry: ProviderRequest | undefined) =>
+    Effect.gen(function* () {
+      const error = new ConnectorCallError(
+        "connector_call_failed",
+        "The OAuth challenge exceeded its response ceiling.",
+        { retryable: false },
+      );
+      const refusal = new Refusal({
+        error:
+          !readRequest(entry ?? {}) && options?.writeUnauthorized
+            ? options.writeUnauthorized({ _tag: "Failed", failure: error })
+            : error,
+      });
+      const dispatch = entry ? (yield* Dispatches).find((item) => item.request === entry) : undefined;
+      if (dispatch) dispatch.failure = refusal;
+      return yield* Effect.fail(refusal);
+    });
   const execute = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
-      const response = yield* inner.execute(request);
+      const response = yield* inner.execute(request).pipe(
+        Effect.catchTag("ResponseTooLarge", (failure) => {
+          const entry = responseRequest(failure);
+          return options?.challengeMaxBytes !== undefined && entry?.status === 401
+            ? challengeFailure(entry)
+            : Effect.fail(failure);
+        }),
+      );
       if (response.status !== 401) return response;
       // Read under the ceiling now, so nothing is left open while renewing.
-      const reply = yield* guarded.read(response);
+      const reply = yield* guarded
+        .read(response, options?.challengeMaxBytes)
+        .pipe(
+          Effect.catchTag("ResponseTooLarge", (failure) =>
+            options?.challengeMaxBytes !== undefined
+              ? challengeFailure(responseRequest(response))
+              : Effect.fail(failure),
+          ),
+        );
       const grant = yield* Grant;
       const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
       const entry = responseRequest(response);
@@ -143,7 +178,15 @@ export function refreshOnce(
         );
       renewedAfterUnauthorized(entry, stale, fresh);
       // `authenticate` runs again on the replay and reads the renewed token.
-      const replay = yield* inner.execute(request);
+      const replay = yield* inner
+        .execute(request)
+        .pipe(
+          Effect.catchTag("ResponseTooLarge", (failure) =>
+            options?.challengeMaxBytes !== undefined && responseRequest(failure)?.status === 401
+              ? grant.rejected
+              : Effect.fail(failure),
+          ),
+        );
       if (replay.status !== 401) return replay;
       yield* Effect.ignore(guarded.read(replay));
       return yield* grant.rejected;

@@ -1673,6 +1673,17 @@ replayed. The failure belongs to the same resource dispatch; `settleWrite`
 still decides the final outcome. Without the opt-in the B.2 behavior is
 unchanged, and a failed renewal never makes the resource write retryable.
 
+The static opt-in also uses the shared `OAUTH_CHALLENGE_MAX_BYTES` limit for
+discarded 401 challenges, before renewal. `GuardedClient.read(response,
+maxBytes?)` can only narrow its configured ceiling; the optional
+`maxUnauthorizedResponseBytes` declaration applies that lower ceiling to
+declared and streamed 401 bodies. A refusal before a response is wrapped
+retains its own request through `responseRequest(failure)`, so the middleware
+can map that challenge failure without guessing which dispatch failed. A
+write's challenge refusal uses the same `writeUnauthorized` mapper; reads
+retain the static grant's ceiling diagnostic. No renewal begins after an
+oversized challenge, and default guarded clients are unchanged.
+
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write
 never left (provenance (a)). It also sets the definition's `kit`, decision
