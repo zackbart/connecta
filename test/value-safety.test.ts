@@ -398,7 +398,12 @@ describe("reviewed text policy and global admission (#846)", () => {
   });
 
   it("INV-5: removes a private suffix after an existing signing placeholder", () => {
-    expect(withholdEmbeddedUrls("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE")).not.toContain("PRIVATE");
+    for (const text of [
+      "X-Amz-Signature=[redacted]PRIVATE",
+      "/a?X-Amz-Signature=[redacted]PRIVATE",
+      "https://files.example/a?X-Amz-Signature=[redacted]PRIVATE",
+    ])
+      expect(withholdEmbeddedUrls(text)).not.toContain("PRIVATE");
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
