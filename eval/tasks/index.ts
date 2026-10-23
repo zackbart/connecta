@@ -6,7 +6,7 @@ import { REST_TASKS } from "./rest.js";
 import { P5_TASKS } from "./p5.js";
 import { TITHELY_TASKS } from "./tithely.js";
 
-/** The 19-task scope registered for the #765 paired experiment stays fixed. */
+/** Retained tasks from the historical 19-task #765 paired experiment. */
 export const COMPARISON_TASKS: ActiveTask[] = [
   ...BASELINE_TASKS.map((task) => withCorrectness(task, EXISTING_CORRECTNESS[task.id]!)),
   ...P5_TASKS,

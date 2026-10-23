@@ -10,9 +10,9 @@ const EVENT: ToolCallActivityEvent = {
   occurredAt: "2026-07-23T12:00:00.000Z",
   requestId: "22222222-2222-4222-8222-222222222222",
   actor: { kind: "clerk", id: "user_123" },
-  connectorId: "notion",
+  connectorId: "notes",
   toolName: "search",
-  address: "notion.search",
+  address: "notes.search",
   source: "call_tool",
   outcome: "success",
   durationMs: 42,
@@ -47,9 +47,9 @@ describe("activity delivery", () => {
 
     expect(() =>
       recordToolActivity(context, {
-        connectorId: "notion",
+        connectorId: "notes",
         toolName: "search",
-        address: "notion.search",
+        address: "notes.search",
         source: "call_tool",
         outcome: "success",
         durationMs: 12,

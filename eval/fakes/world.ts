@@ -6,7 +6,7 @@ import { FakeRestService, restState, type RestVendor } from "./rest.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
-import { assetTools, mixpanelTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
+import { assetTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
 import {
   analyticsTools,
@@ -28,7 +28,6 @@ export type ServiceId =
   | "billing"
   | "ci"
   | "audit"
-  | "mixpanel"
   | "revenuecat"
   | "supabase"
   | "assets";
@@ -64,7 +63,6 @@ export interface WorldOptions {
 const BILLING_TOKEN = "sk_eval_billing_7f3a91";
 
 const META: Record<ServiceId, { title: string; description: string }> = {
-  mixpanel: { title: "Mixpanel", description: "Production event analytics" },
   revenuecat: { title: "RevenueCat", description: "Production subscription access" },
   supabase: { title: "Supabase", description: "Production database orders" },
   assets: { title: "Brand assets", description: "Launch badges and images" },
@@ -98,7 +96,7 @@ export class World {
       const ids =
         vendor === "cloudflare"
           ? ["cloudflare_prod", "cloudflare_legacy"]
-          : [vendor === "stripe" ? "stripe_sandbox" : vendor === "notion" ? "notion_bot" : "vercel_rest"];
+          : [vendor === "stripe" ? "stripe_sandbox" : "vercel_rest"];
       this.restServices = ids.map((id) => new FakeRestService(id, vendor, this.ledger, this.rest, options.refundFault));
     }
     if (options.tithely)
@@ -117,7 +115,6 @@ export class World {
       ["audit", make("audit", auditTools(this.audit, clock))],
       ...(options.prerequisites
         ? ([
-            ["mixpanel", make("mixpanel", mixpanelTools())],
             ["revenuecat", make("revenuecat", revenuecatTools())],
             ["supabase", make("supabase", supabaseTools())],
           ] as [ServiceId, FakeService][])

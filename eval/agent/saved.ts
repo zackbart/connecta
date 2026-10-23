@@ -109,7 +109,7 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       `ci.${run.runId}`,
     );
   if (state.rest) {
-    for (const key of ["refunds", "dns", "purges", "createdPages", "envs"] as const)
+    for (const key of ["refunds", "dns", "purges", "envs"] as const)
       requireEvidence(Array.isArray(state.rest[key]), `rest.${key}`);
     for (const [family, seeded] of [
       ["dns", world.rest.dns],
@@ -120,16 +120,10 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
           state.rest[family].filter((r) => r.id === record.id).length === 1,
           `rest.${family}.${record.id}`,
         );
-    requireEvidence(
-      state.rest.blocks && ["page-q3", "page-retro"].every((id) => Array.isArray(state.rest!.blocks[id])),
-      "rest.blocks",
-    );
     requireEvidence(state.rest.refundKeys && typeof state.rest.refundFaulted === "boolean", "rest.refund-recovery");
     Object.assign(world.rest, structuredClone(state.rest));
   } else if (
-    state.calls.some((c) =>
-      /^(stripe_sandbox|notion_bot|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service),
-    )
+    state.calls.some((c) => /^(stripe_sandbox|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service))
   )
     throw new Error("Incomplete saved grading evidence: rest");
   if (state.tithely) {

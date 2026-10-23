@@ -13,7 +13,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
-import { infisical } from "../src/providers/infisical/index.js";
+import { machineLogin } from "./fixtures/machine-login.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -743,7 +743,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
     expect(error.retry).not.toContain("idempotencyKey");
   });
 
-  it("INV-9: Infisical marks a write renewed only when a fresh login replaced the token it sent", async () => {
+  it("INV-9: Machine marks a write renewed only when a fresh login replaced the token it sent", async () => {
     let logins = 0;
     const sent: (string | null)[] = [];
     vi.stubGlobal(
@@ -755,7 +755,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
         return Response.json({ message: "rejected" }, { status: 401 });
       }),
     );
-    const secrets = infisical("secrets", { purpose: "Review" });
+    const secrets = machineLogin("secrets");
     const values = { clientId: "id", clientSecret: "secret" };
     const ctx = {
       storage: memoryStorage(),
@@ -767,21 +767,16 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
         getAll: async () => values,
       },
     };
-    const args = {
-      projectId: "11111111-1111-4111-8111-111111111111",
-      environment: "dev",
-      secretName: "X",
-      secretValue: "value",
-    };
+    const args = {};
     const write = async () =>
-      classifyCallError(await secrets.callTool("create_secret", args, ctx).catch((e: unknown) => e));
+      classifyCallError(await secrets.callTool("create_item", args, ctx).catch((e: unknown) => e));
     // The first write's 401 earned a fresh login: renewed, so no handoff.
     expect(await write()).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     // The second sent that fresh token, and recovery handed it back: nothing renewed.
     const second = await write();
     expect(second).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect(second.message).toContain(
-      "The write was sent before Infisical rejected its credential, so whether it took effect is unknown",
+      "The write was sent before Machine rejected its credential, so whether it took effect is unknown",
     );
     expect(sent).toEqual(["Bearer token-1", "Bearer token-2"]);
     expect(logins).toBe(2);

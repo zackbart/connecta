@@ -140,7 +140,7 @@ export default defineConfig((env: Env) => {
           // with a static key: the operator manages it inside its connection
           // in the operator UI, so no Worker secret holds it.
           //   type: "credential",
-          //   credential: { label: "Notion internal integration token" },
+          //   credential: { label: "Downstream token accepted by the hosted server" },
         },
         // Use `authScope: "personal"` with OAuth or credential auth when each
         // Access user connects their own downstream account. Literal headers

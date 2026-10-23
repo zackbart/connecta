@@ -106,18 +106,6 @@
       "types": "./dist/providers/gmail/index.d.ts",
       "import": "./dist/providers/gmail/index.js"
     },
-    "./providers/infisical": {
-      "types": "./dist/providers/infisical/index.d.ts",
-      "import": "./dist/providers/infisical/index.js"
-    },
-    "./providers/mixpanel": {
-      "types": "./dist/providers/mixpanel/index.d.ts",
-      "import": "./dist/providers/mixpanel/index.js"
-    },
-    "./providers/notion": {
-      "types": "./dist/providers/notion/index.d.ts",
-      "import": "./dist/providers/notion/index.js"
-    },
     "./providers/overflow": {
       "types": "./dist/providers/overflow/index.d.ts",
       "import": "./dist/providers/overflow/index.js"

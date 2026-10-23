@@ -613,7 +613,7 @@ terms that never occur in its tools need not be repeated in every tool descripti
 An explicit unknown `connector` scope returns no tools and an `absence` record:
 `{ service, message, configuredConnectors }`. The message says
 `No connector for "X" is configured for this endpoint.` Unscoped queries naming
-recognized services such as GitHub, Linear, Mixpanel, Supabase, or PostHog do the
+recognized services such as GitHub, Linear, Supabase, or PostHog do the
 same when no visible connector ID or title names that service. This service-name
 vocabulary is query interpretation, not an inventory of configured providers.
 For other service names, use the explicit `connector` scope. An unavailable
@@ -624,7 +624,7 @@ is indistinguishable from an unconfigured one.
 If no tool covers every search term, wider any-term fallback remains available
 for ordinary action/object searches and the page carries `matchMode: "partial"`.
 A service absence suppresses that fallback, so `GitHub get issue` cannot return
-Linear issues or Mixpanel/Supabase projects. Tool rows expose no scores or
+Linear issues or Supabase projects. Tool rows expose no scores or
 per-result query coverage. `queryAnalysis` partitions at most eight terms of at
 most 64 characters into `representedTerms`, `otherResultTerms`, and
 `unmatchedTerms`, marking longer input `truncated`. Its guidance distinguishes
@@ -1078,7 +1078,7 @@ operation or tool classification and a recorded GET or HEAD; the method
 alone is insufficient. Breeze GET writes and requests carrying
 `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` remain writes,
 even when a handler catches their 401 and returns.
-Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
+Once renewal succeeds (an OAuth refresh), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after
 the target is reconciled. Renewal succeeds only when it yields a different

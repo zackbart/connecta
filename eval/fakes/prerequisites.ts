@@ -10,100 +10,11 @@ export const BADGE_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGNQKXChKWIYtWDUglELRi0YtWDUglELRi0YtWDUglELhooFAL8KYC6q5AcJAAAAAElFTkSuQmCC";
 
 export const PREREQUISITE_GUIDES = {
-  mixpanel:
-    "Start with List-Organizations, then Get-Projects with its organization_id. Resolve the project and workspace, read Get-Business-Context, and Get-Query-Schema before Run-Query. Never guess ids.",
   revenuecat:
     "Call list-projects first. list-subscriptions returns plain text, not JSON. Report gives_access rather than inferring access from status or expires_date.",
   supabase:
     "Call list_projects to resolve the exact project. execute_sql requires project_ref, not project_id. Never query a different project's database.",
 } as const;
-
-export function mixpanelTools(): FakeTool[] {
-  let organizations = false,
-    projects = false,
-    context = false,
-    schema = false;
-  return [
-    {
-      name: "List-Organizations",
-      description: "List organizations",
-      input: z.object({}),
-      annotations: read,
-      run: () => {
-        organizations = true;
-        return { json: { organizations: [{ id: "org_eval", name: "Acme" }] } };
-      },
-    },
-    {
-      name: "Get-Projects",
-      description: "List an organization's projects and workspaces",
-      input: z.object({ organization_id: z.string() }),
-      annotations: read,
-      run: (args) => {
-        if (!organizations || args.organization_id !== "org_eval") return { error: "Resolve the organization first" };
-        projects = true;
-        return {
-          json: {
-            projects: [
-              { id: "mp_prod", name: "Production", workspace_id: "ws_prod" },
-              { id: "mp_test", name: "Sandbox", workspace_id: "ws_test" },
-            ],
-          },
-        };
-      },
-    },
-    {
-      name: "Get-Business-Context",
-      description: "Read the project's metric definitions",
-      input: z.object({ project_id: z.string() }),
-      annotations: read,
-      run: (args) => {
-        if (!projects || args.project_id !== "mp_prod") return { error: "Resolve the Production project first" };
-        context = true;
-        return {
-          json: {
-            project_id: "mp_prod",
-            metric: "activation",
-            event: "Activation Completed",
-            excludes: "internal accounts",
-          },
-        };
-      },
-    },
-    {
-      name: "Get-Query-Schema",
-      description: "Get query requirements",
-      input: z.object({ project_id: z.string() }),
-      annotations: read,
-      run: (args) => {
-        schema = args.project_id === "mp_prod" && context;
-        return schema
-          ? { json: { event: "Activation Completed", workspace_id: "ws_prod" } }
-          : { error: "Read business context first" };
-      },
-    },
-    {
-      name: "Run-Query",
-      description: "Read activation count for a resolved project and workspace",
-      input: z.object({ project_id: z.string(), workspace_id: z.string(), event: z.string() }),
-      annotations: read,
-      run: (args) =>
-        schema &&
-        args.project_id === "mp_prod" &&
-        args.workspace_id === "ws_prod" &&
-        args.event === "Activation Completed"
-          ? {
-              json: {
-                project_id: "mp_prod",
-                activations: 137,
-                window: "2026-10-01/2026-10-07",
-                excludes: "internal accounts",
-              },
-            }
-          : { error: "Bootstrap organization, project, context and query schema first" },
-    },
-  ];
-}
 
 export function revenuecatTools(): FakeTool[] {
   let resolved = false;

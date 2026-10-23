@@ -18,7 +18,6 @@ import { InvocationService } from "../src/invocation.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { docs } from "../src/providers/docs/index.js";
-import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor } from "../src/types.js";
@@ -238,32 +237,32 @@ describe("authorization and credential handoffs after a write are outcome-aware"
   });
 });
 
-describe("Notion's 529 overload advice", () => {
+describe("Stripe's 503 overload advice", () => {
   async function overloaded() {
     const sent: string[] = [];
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init?.method ?? "GET");
       return Response.json(
-        { object: "error", status: 529, code: "service_unavailable", message: "Overloaded" },
-        { status: 529 },
+        { object: "error", status: 503, code: "service_unavailable", message: "Overloaded" },
+        { status: 503 },
       );
     });
-    const connector = notion("notes", { purpose: "Review", auth: { type: "token" } });
+    const connector = stripe("notes", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
     return { sent, connector, registry: await vaulted([connector], "notes") };
   }
-  const write = { method: "POST", path: "/v1/pages", body: { parent: { page_id: "page-1" }, properties: {} } };
+  const write = { method: "DELETE", path: "/v1/customers/cus_1" };
 
-  it("INV-9: a keyless write answered 529 is unknown without retry wording, direct, served and in a program", async () => {
+  it("INV-9: a keyless write answered 503 is unknown without retry wording, direct, served and in a program", async () => {
     const { sent, connector, registry } = await overloaded();
     const direct = classifyCallError(
-      await failure(connector.callTool("notion_api_write", write, registry.contextFor("notes", BASE))),
+      await failure(connector.callTool("stripe_api_write", write, registry.contextFor("notes", BASE))),
     );
     expect(direct).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect(direct.message).toContain("Notion is overloaded. Whether the write took effect at Notion is unknown");
+    expect(direct.message).toContain("Stripe");
     expect(resendWording(direct)).toEqual([]);
 
     const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "notes.notion_api_write",
+      "notes.stripe_api_write",
       write,
       { source: "call_destructive_tool" },
     );
@@ -271,10 +270,10 @@ describe("Notion's 529 overload advice", () => {
     expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(resendWording(served.error)).toEqual([]);
 
-    const program = await catchingProgram(registry, "notes.notion_api_write", write);
+    const program = await catchingProgram(registry, "notes.stripe_api_write", write);
     expect(program.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
     expect(resendWording(program.structuredContent)).toEqual([]);
-    expect(sent).toEqual(["POST", "POST", "POST"]);
+    expect(sent).toEqual(["DELETE", "DELETE", "DELETE"]);
   });
 });
 

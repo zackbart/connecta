@@ -981,8 +981,7 @@ whole field value (a leaf, key, number, boolean or decoded view equal to one of
 its forms); one of four to seven units also as a substring of payload text,
 numbers, keys and decoded views; one of K or more also by every K-unit run.
 Pieces shorter than K are found only where they are adjacent: in the joined
-projection or one provider lane (one Slides shape's text runs, one Notion
-rich-text array, one Docs document). Non-adjacent pieces shorter than K, such as
+projection or one provider lane (one Slides shape's text runs, one Docs document). Non-adjacent pieces shorter than K, such as
 two seven-unit halves of a value in two Slides shapes, survive: they are
 indistinguishable from ordinary text without redacting ordinary words. Runs of
 K-1 units survive away from a cut. Values derived by an unregistered encoding
@@ -1081,8 +1080,7 @@ remnant shorter than K that no later pass can see, and a normalized number may
 no longer hold the form at all (Drive size strings, Breeze amounts and dates).
 Provider text lanes that the projection does not see as adjacent are matched
 joined (`SentSecrets.parts`): Docs text runs across links and paragraphs, with
-index previews checked again after whitespace collapses; Notion rich text
-wherever it appears, in both `plain_text` and `text.content`; and Slides raw
+index previews checked again after whitespace collapses; and Slides raw
 text runs, which carry style between them. Text read only up to a bound, or that
 a vendor stopped listing, also loses any suffix that begins a registered form
 (`redactBoundedRead`). Complete forms and open-tail prefixes are matched against
@@ -1222,27 +1220,6 @@ switched by the environment, and keep their entries under 30 lines.
 
 ### Providers and reviewed classification
 
-Infisical separates explicit value reads from identifier results. `get_secret`
-and `list_secrets` with `includeValues: true` return secret values and comments.
-All other results, including imported secrets and pending approvals, allow only
-checked IDs, keys, environment and tag slugs, paths, timestamps, positive versions
-and enum fields. They omit project slugs derived from free-text names, comments,
-descriptions, free-form names, reminder notes and arbitrary nested objects.
-`metadataOmitted: true` reports withheld or unavailable metadata.
-This assumes an honest server and protects against careless human entry in free
-text. A malicious server encoding values into valid identifiers is out of scope.
-Known, accepted residual risk: environment slugs are returned as required
-routing identifiers. Infisical's UI derives them from environment names by
-default, so secrets entered in those names can appear in returned slugs.
-Operators must not put secrets in environment names or slugs. Secrets placed in
-identifiers or key names are out of scope.
-Write input schemas mark secret values, secret comments and folder descriptions
-as `writeOnly`, so recovery argument echoes omit them without changing dispatch.
-Submitted values never join the request's sent-credential set, preserving later
-program arguments. Client credentials and tokens still join that set on every
-call. The [provider guide](https://github.com/zackbart/connecta/blob/main/src/providers/infisical/SKILL.md) owns routing and
-value-read conventions.
-
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
 name, title, `kind: "api"`, maintained skill, closed `options` shape and a
 synchronous `create`. Common values are checked before construction and the
@@ -1310,18 +1287,15 @@ and plain path parameters and cap one operation's details (`opBudget`).
 offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
 the
-[provider auth migration](./provider-auth-migration.md). Notion's token
-connector keeps its `integration_*` projections and authoring helpers beside
-the generic REST tools.
+[provider auth migration](./provider-auth-migration.md).
 
 #### Value safety for REST vendors
 
 The bar ([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):
 no REST tool response, success or error, returns a credential that grants
 access to the vendor or a third party, or a stored secret value, unless a
-reviewed named tool exists to return it. The threat model is Infisical's
-above: an honest server, with secrets people type into free text out of
-scope. Field-by-field redaction over a whole vendor API does not converge, so
+reviewed named tool exists to return it. The threat model assumes an honest server; secrets people type into free
+text are out of scope. Field-by-field redaction over a whole vendor API does not converge, so
 every vendor ships one reviewed table through one mechanism
 (`src/providers/_shared/rest/value-safety.ts`):
 
@@ -1425,34 +1399,19 @@ every vendor ships one reviewed table through one mechanism
    are inspected. The scans remain linear in the supplied and decoded bytes.
    Withheld values must not be written back; obtain the original
    link or omit the field. A placeholder outside a destination is ordinary
-   text. Notion keeps its stricter reviewed-host admission and proxy policy.
-   Vendors whose responses embed the file links they mint can
-   use `withholdSignedLinks(text, hosts)` or
-   `withholdSignedLinksIn(value, hosts)` with a reviewed `FileHosts` policy
-   (`domains` and S3 `buckets`). Notion applies the latter in its `result`
-   hook and before mapping errors, so Markdown, async task results, paging,
-   named-tool results, and `select` all pass through it. The linear scan
-   matches only the current URL/destination's actual authority: a reviewed
-   domain or subdomain, or a reviewed S3 bucket, virtual-hosted or exactly
-   the first path segment on an S3 endpoint. A secondary scheme or `//` in
-   another URL's path or query cannot re-anchor it; those proxy links keep
-   their bytes. Schemes and slashes may be escaped. File links lose their
-   whole query and fragment from a literal, percent-, entity-, or
-   `\u`-encoded opener through the next whitespace, quote, or angle bracket;
-   trailing closing punctuation comes back. AWS SigV4 and Google V4
-   `Signature`, `Credential`, and `Security-Token` parameter values are
-   withheld wherever their literal signing names occur, at any host, with
-   plain or encoded equals signs. `carriesWithheldLink(value, hosts)` is
-   the shared write-admission helper: Notion refuses a write before dispatch
-   when a file link's own query/fragment carries the exact `[redacted]`
+   text.
+   Reviewed text paths withhold credential-bearing URL queries and fragments.
+   AWS and Google signing parameter values are withheld at every host.
+   `carriesWithheldLink(value)` is
+   a shared write-admission helper that refuses a write before dispatch
+   when a link's own query/fragment carries the exact `[redacted]`
    placeholder, plain or up to four layers encoded. Admission resumes at
    each actual Markdown destination's close, including adjacent links and
    images and balanced/escaped parentheses; leading spaces, tabs, and one
    line ending before the destination are recognized. A marker after the close is
    ordinary text. This boundary is independent of redaction's fail-closed
-   span. Each string is scanned alone; split rich-text runs, encoded hosts
-   or signing names, bare hosts without `//`, and userinfo before a reviewed
-   host are outside this scan's threat model.
+   span. Each string is scanned alone; split rich-text runs and encoded
+   signing parameter names are outside this scan's threat model.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in
@@ -2043,10 +2002,7 @@ cached value would otherwise keep its first caller's request alive (INV-7).
 The optional `grant(options)` factory supplies a renewable machine-login
 `Grant`, exclusive with static OAuth. It is built outside caller contexts;
 each send binds the active call to its token, refresh and rejected effects.
-Infisical uses credential-bound login flights shared within one request, while
-only token strings and expiry cross requests. An optional `writeUnauthorized`
-mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
-the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
+`settleWrite` decides the outcome and handoff.
 Reads replay once after renewal; writes are never resent.
 
 A machine grant may also declare `grantRenewal` modes, with an optional
@@ -2486,7 +2442,7 @@ compiling and configuring the real thing.
   loss gives a non-retryable unknown outcome, never a fresh write attempt. A write
   always gives the SDK a tool definition, so `callTool` never relists and
   resends it after a `HeaderMismatch` answer. `api()` OAuth
-  (`src/auth/static-oauth.ts`), the Google Workspace client, and Infisical
+  (`src/auth/static-oauth.ts`), the Google Workspace client
   apply the same one-send rule to credential recovery. All maintained API
   provider failure mappers run inside `guardedFetch`. Each `api()` entry owns
   a fresh request ledger (`src/provider-call.ts`) on its derived handler context;
@@ -2508,8 +2464,7 @@ compiling and configuring the real thing.
   observed, never inferred from an error code: (a) the ledger proves it never
   left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
   (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
-  provider's existing served classification (Notion's write 409 is a
-  `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
+  provider's existing served classification (a write's HTTP 409 is a `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
   only a genuine idempotency key keeps such a direct write's retry. Nor is a
@@ -2555,7 +2510,7 @@ compiling and configuring the real thing.
   match, mapped verdict), `ctx.fetch` (dispatch, status), static OAuth
   (status, verdict, renewal), Google (per-attempt entry, renewal of a read's
   replay), the kit (core ledger entry, status, `recordUnauthorized`,
-  refresh-once renewal, including Infisical's machine-login `Grant`),
+  refresh-once renewal),
   `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
   logical call, status, the verdict, and renewal by comparing the
   `Authorization` of the resend the SDK attempts), and `api()` itself (one

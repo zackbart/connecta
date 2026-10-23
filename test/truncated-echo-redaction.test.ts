@@ -12,7 +12,8 @@ import { SentSecrets } from "../src/sent-secrets.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
-import { notion } from "../src/providers/notion/index.js";
+import { api } from "../src/connectors/api.js";
+import { redactBoundedRead } from "../src/sent-secrets.js";
 import { overflow } from "../src/providers/overflow/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -373,24 +374,31 @@ describe("open tails of bounded reads", () => {
   });
 });
 
-describe("Notion properties cut short by Notion", () => {
+describe("vendor-bounded text", () => {
   it.each(PROVIDER_ECHO_FORMS)(
-    "INV-5: a title Notion stopped listing inside the sent token %s shows no fragment of it",
+    "INV-5: a title the vendor stopped listing inside the sent token %s shows no fragment of it",
     async (_name, form) => {
-      vi.stubGlobal("fetch", async () =>
-        Response.json({
-          object: "page",
-          id: "p1",
-          properties: {
-            Name: { id: "title", type: "title", title: [{ plain_text: `intro ${head(form)}` }], has_more: true },
+      vi.stubGlobal("fetch", async () => Response.json({ title: `intro ${head(form)}` }));
+      const connector = api("notes", {
+        credential: { label: "API token" },
+        tools: [
+          {
+            name: "get_title",
+            description: "Read a vendor-bounded title",
+            inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
+            handler: async (_args, ctx) => {
+              const token = await ctx.credential!.get();
+              const body = (await (
+                await ctx.fetch("https://notes.example/title", { headers: { Authorization: `Bearer ${token}` } })
+              ).json()) as { title: string };
+              return { title: redactBoundedRead(ctx, body.title) };
+            },
           },
-        }),
-      );
-      const connector = notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" });
-      const result = (await connector.callTool("integration_get_page", { page_id: "p1" }, keyed())) as {
-        properties: { Name: string };
-      };
-      expect(result.properties.Name).toBe("intro [redacted]");
+        ],
+      });
+      const result = (await connector.callTool("get_title", {}, keyed())) as { title: string };
+      expect(result.title).toBe("intro [redacted]");
     },
   );
 });

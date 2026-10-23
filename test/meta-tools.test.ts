@@ -16,9 +16,9 @@ import { activitySink, authConnector, calcConnector, makeRegistry, required } fr
 const CREDENTIAL_KEY = Buffer.alloc(32, 11).toString("base64");
 
 describe("skills", () => {
-  const NOTION_GUIDE = `# Notion usage
+  const NOTES_GUIDE = `# Notes usage
 
-Prefer \`notion.search\` over listing databases.
+Prefer \`notes.search\` over listing databases.
 
 - Page results with \`start_cursor\`; never fetch more than 100 at a time.
 `;
@@ -72,18 +72,18 @@ Prefer \`notion.search\` over listing databases.
   }
 
   it("lists the built-in usage guide plus one entry per guided connector", async () => {
-    const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]), BASE);
+    const mt = createMetaTools(makeRegistry([guided("notes", NOTES_GUIDE), guided("plain")]), BASE);
     const listed = textFrom(await mt.skills({}));
     expect(listed).toContain("`usage` — How to route work between one execute_code program");
-    expect(listed).toContain("`connector:notion` — Prefer `notion.search` over listing databases.");
+    expect(listed).toContain("`connector:notes` — Prefer `notes.search` over listing databases.");
     expect(listed).not.toContain("connector:plain");
   });
 
   it("preserves a connector guide body behind skill frontmatter", async () => {
-    const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE)]), BASE);
-    const fetched = await mt.skills({ name: "connector:notion" });
+    const mt = createMetaTools(makeRegistry([guided("notes", NOTES_GUIDE)]), BASE);
+    const fetched = await mt.skills({ name: "connector:notes" });
     expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toContain(NOTION_GUIDE);
+    expect(textFrom(fetched)).toContain(NOTES_GUIDE);
   });
 
   it("rejects an explicit summary over budget at registry construction", () => {

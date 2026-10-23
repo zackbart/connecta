@@ -16,11 +16,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripe } from "@zackbart/connecta/providers/stripe";
-import { notion } from "@zackbart/connecta/providers/notion";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
 import { tithely } from "@zackbart/connecta/providers/tithely";
-import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
+import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -91,8 +90,6 @@ export async function startNodeDeployment(
       ...connectors.map((spec) => {
         const options = { purpose: spec.description };
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
-        if (spec.rest === "notion")
-          return notion(spec.id, { ...options, auth: { type: "token" }, defaultPageSize: 100 });
         if (spec.rest === "tithely")
           return tithely(spec.id, { ...options, environment: "live", baseUrl: `${spec.url}/api/v1` });
         if (spec.rest === "vercel")
@@ -135,6 +132,7 @@ export async function startNodeDeployment(
     gracefulShutdown: false,
   });
   await once(server, "listening");
+  if (connectors.some((spec) => spec.rest)) installRestKitTransport();
   return {
     kind: "node-template-shape",
     programs: observed.programs,

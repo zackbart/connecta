@@ -1,12 +1,11 @@
 // Security-review regressions for original-span matching, all derived copies,
 // normalization/extraction, tiny tails, and cross-request paging stability.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
-import { notion } from "../src/providers/notion/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { redactBoundedRead, requestSentSecrets, SentSecrets } from "../src/sent-secrets.js";
 import type { ConnectorContext } from "../src/types.js";
@@ -153,67 +152,35 @@ describe("bounded reads match original spans", () => {
   );
 });
 
-describe("every Notion representation", () => {
-  beforeEach(() => {
-    configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(undefined);
-  });
-
+describe("every Docs representation", () => {
   it.each(echoForms(SECRET))(
-    "INV-5: truncated %s text is safe in titles, selected properties, search, query, and raw branches",
+    "INV-5: truncated %s text is safe in titles, selected text, indexed previews, and raw branches",
     async (_name, form) => {
       const prefix = form.slice(0, Math.ceil(form.length / 2));
-      const text = `intro ${prefix}`;
-      const page = {
-        object: "page",
-        id: "p1",
-        properties: {
-          Name: {
-            id: "title",
-            type: "title",
-            has_more: true,
-            title: [
-              { type: "text", plain_text: text.slice(0, 8), text: { content: text.slice(0, 8) } },
-              { type: "text", plain_text: text.slice(8), text: { content: text.slice(8) } },
-            ],
-          },
-          Notes: {
-            id: "notes",
-            type: "rich_text",
-            has_more: true,
-            rich_text: [{ type: "text", plain_text: text, text: { content: text } }],
-          },
+      const text = `intro ${form} public tail`;
+      stubGoogle(() => ({
+        documentId: "d1",
+        title: text,
+        body: {
+          content: [
+            {
+              paragraph: {
+                elements: [{ textRun: { content: text.slice(0, 8) } }, { textRun: { content: text.slice(8) } }],
+              },
+            },
+          ],
         },
-      };
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-        const path = new URL(String(input)).pathname;
-        return Response.json(
-          path.endsWith("/search") || path.endsWith("/query")
-            ? { object: "list", results: [page], has_more: false, next_cursor: null }
-            : page,
-        );
-      });
-      const connector = notion("notes", { auth: { type: "token" }, purpose: "Team notes" });
-      for (const raw of [false, true]) {
-        for (const [tool, args] of [
-          ["integration_get_page", { page_id: "p1" }],
-          ["integration_get_page", { page_id: "p1", properties: ["Notes"] }],
-          ["integration_search", {}],
-          ["integration_query_data_source", { data_source_id: "ds1" }],
-          ["notion_api_read", { path: "/v1/pages/p1" }],
-        ] as const) {
-          const result: any = await connector.callTool(
-            tool,
-            { ...args, ...(tool === "notion_api_read" ? {} : { raw }) },
-            keyed(),
-          );
-          const shown = JSON.stringify(result);
-          expect(shown).not.toContain(prefix);
-          expect(leaks(shown)).toBe(false);
-          expect(shown).toContain(MARKER);
-        }
+      }));
+      const connector = docs("docs", await workspaceOptions());
+      for (const args of [{}, { withIndexes: true }, { maxChars: 12 }, { raw: true }]) {
+        const ctx = privateContext(SECRET);
+        const result = await connector.callTool("get_document", { documentId: "d1", ...args }, ctx);
+        const shown = JSON.stringify(result);
+        expect(shown).not.toContain(prefix);
+        expect(leaks(shown)).toBe(false);
+        expect(shown).toContain(MARKER);
+        // A vendor-bounded source loses its unfinished tail before projection too.
+        expect(redactBoundedRead(ctx, `intro ${prefix}`)).toBe(`intro ${MARKER}`);
       }
     },
   );

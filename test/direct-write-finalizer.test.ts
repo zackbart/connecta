@@ -20,7 +20,6 @@ import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
-import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
@@ -179,18 +178,18 @@ const SURFACES: Surface[] = [
     },
   },
   {
-    name: "the shared REST layer (Notion, no idempotency key)",
+    name: "the shared REST layer (Stripe, no idempotency key)",
     timeout: "caller signal",
     async start(kind, options) {
       const server = held();
       const real = globalThis.fetch;
       vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
-        String(input).startsWith("https://api.notion.com/") ? real(`${server.origin}/hold`, init) : real(input, init),
+        String(input).startsWith("https://api.stripe.com/") ? real(`${server.origin}/hold`, init) : real(input, init),
       );
-      const connector = notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" });
+      const connector = stripe("workspace", { auth: { type: "apiKey" }, mode: "sandbox", purpose: "Billing" });
       const storage = memoryStorage();
       const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-      await vault.set("workspace", "secret_token", "fixture");
+      await vault.set("workspace", "sk_test_fixture", "fixture");
       const ctx = makeRegistry([connector], { storage, credentialVault: vault }).contextFor(
         "workspace",
         BASE,
@@ -200,15 +199,14 @@ const SURFACES: Surface[] = [
       const pending =
         kind === "write"
           ? connector.callTool(
-              "notion_api_write",
+              "stripe_api_write",
               {
-                method: "PATCH",
-                path: "/v1/pages/page-1",
-                body: { cover: { type: "external", external: { url: "https://example.com/cover.png" } } },
+                method: "DELETE",
+                path: "/v1/customers/cus_1",
               },
               ctx,
             )
-          : connector.callTool("notion_api_read", { path: "/v1/users/me" }, ctx);
+          : connector.callTool("stripe_api_read", { path: "/v1/account" }, ctx);
       return { pending: failure(pending), ctx, received: server.received };
     },
   },

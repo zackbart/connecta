@@ -8,18 +8,15 @@ import { fixture as fixture4, createAuthored as authored4 } from "../src/provide
 import { fixture as fixture5, createAuthored as authored5 } from "../src/providers/forms/fixtures.js";
 import { fixture as fixture6, createAuthored as authored6 } from "../src/providers/github/fixtures.js";
 import { fixture as fixture7, createAuthored as authored7 } from "../src/providers/gmail/fixtures.js";
-import { fixture as fixture8, createAuthored as authored8 } from "../src/providers/infisical/fixtures.js";
-import { fixture as fixture9, createAuthored as authored9 } from "../src/providers/mixpanel/fixtures.js";
-import { fixture as fixture10, createAuthored as authored10 } from "../src/providers/notion/fixtures.js";
-import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/overflow/fixtures.js";
-import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/planning-center/fixtures.js";
-import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/sheets/fixtures.js";
-import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/slides/fixtures.js";
-import { fixture as fixture15, createAuthored as authored15 } from "../src/providers/stripe/fixtures.js";
-import { fixture as fixture16, createAuthored as authored16 } from "../src/providers/tithely/fixtures.js";
-import { fixture as fixture17, createAuthored as authored17 } from "../src/providers/vercel/fixtures.js";
+import { fixture as fixture8, createAuthored as authored8 } from "../src/providers/overflow/fixtures.js";
+import { fixture as fixture9, createAuthored as authored9 } from "../src/providers/planning-center/fixtures.js";
+import { fixture as fixture10, createAuthored as authored10 } from "../src/providers/sheets/fixtures.js";
+import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/slides/fixtures.js";
+import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/stripe/fixtures.js";
+import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/tithely/fixtures.js";
+import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/vercel/fixtures.js";
 
-export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17];
+export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14];
 
 export const providerKinds: Readonly<Record<string, string>> = {
   "breeze": "api",
@@ -30,9 +27,6 @@ export const providerKinds: Readonly<Record<string, string>> = {
   "forms": "api",
   "github": "api",
   "gmail": "api",
-  "infisical": "api",
-  "mixpanel": "api",
-  "notion": "api",
   "overflow": "api",
   "planning-center": "api",
   "sheets": "api",
@@ -51,14 +45,11 @@ export const authoredFixtures: Readonly<Record<string, (() => Pick<Connector, "l
   "forms": authored5,
   "github": authored6,
   "gmail": authored7,
-  "infisical": authored8,
-  "mixpanel": authored9,
-  "notion": authored10,
-  "overflow": authored11,
-  "planning-center": authored12,
-  "sheets": authored13,
-  "slides": authored14,
-  "stripe": authored15,
-  "tithely": authored16,
-  "vercel": authored17,
+  "overflow": authored8,
+  "planning-center": authored9,
+  "sheets": authored10,
+  "slides": authored11,
+  "stripe": authored12,
+  "tithely": authored13,
+  "vercel": authored14,
 };

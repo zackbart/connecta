@@ -1,6 +1,5 @@
 /** Classify attempts from the published providers' complete static REST catalogs. */
 import { stripe } from "@zackbart/connecta/providers/stripe";
-import { notion } from "@zackbart/connecta/providers/notion";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
 import { tithely } from "@zackbart/connecta/providers/tithely";
@@ -11,11 +10,6 @@ const connectors = [
     purpose: "Deterministic REST acceptance grading",
     auth: { type: "apiKey" },
     mode: "sandbox",
-  }),
-  notion("notion_bot", {
-    purpose: "Deterministic REST acceptance grading",
-    auth: { type: "token" },
-    defaultPageSize: 100,
   }),
   cloudflare("cloudflare_prod", {
     purpose: "Deterministic REST acceptance grading",

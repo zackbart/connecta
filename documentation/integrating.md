@@ -109,25 +109,15 @@ pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
-Stripe, Notion, Vercel, Cloudflare, and Mixpanel now vendor only their APIs.
-Keep their existing API auth choices; Mixpanel requires `via: "api"`.
-GitHub retains its six App-authenticated REST tools. For hosted OAuth, regional
-Mixpanel servers, or GitHub's hosted server, add a distinct `remoteMcp()` entry
+Stripe, Vercel, and Cloudflare vendor only their APIs.
+Keep their existing API auth choices.
+GitHub retains its six App-authenticated REST tools. For hosted servers, including
+Notion, Mixpanel, or GitHub, add a distinct `remoteMcp()` entry
 using the [hosted MCP migration guide](./hosted-mcp-migration.md).
 
 For Stripe API-key setup, see [Stripe setup](./provider-auth-migration.md).
 Prefer a restricted `rk_` key with only read permissions for read-only access;
 Stripe enforces it too.
-
-Notion's API token connector accepts optional `callAdmission`. It replaces the
-whole per-runtime default of 180 calls per minute
-and 3 concurrent. Notion's [request limits](https://developers.notion.com/reference/request-limits)
-allow 600 requests per minute per connection on Business and Enterprise and
-180 on other plans. A separate workspace-wide limit is shared by all
-connections. Size an override for other runtime traffic and tools that make
-multiple HTTP requests. Only an omitted or `undefined` policy selects the
-default; malformed policies, including `false`, `null`, `0`, and `""`, throw
-at construction.
 
 Planning Center's `excludeApps` removes whole products from a connection, for
 example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
