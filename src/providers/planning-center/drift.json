@@ -61,7 +61,6 @@
       "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/items",
       "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members"
     ],
-    "hosted": [],
     "evidence": {}
   },
   "checks": [
