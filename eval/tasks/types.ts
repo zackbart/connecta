@@ -73,7 +73,7 @@ export interface ActiveTask {
   status: "active";
   id: string;
   title: string;
-  introducedIn: "baseline" | "P2" | "P3" | "P5" | "#801";
+  introducedIn: "baseline" | "P2" | "P3" | "P5" | "#801" | "#703";
   /** Omitted tasks stay visible in reports. Explicit opt-in is needed to run them. */
   skip?: { flag: string; reason: string };
   runnerSkips?: Partial<Record<"claude" | "codex", { code: "runner-limitation"; reason: string }>>;

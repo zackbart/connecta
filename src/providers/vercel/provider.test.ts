@@ -1,4 +1,4 @@
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
@@ -23,7 +23,7 @@ describe("vercel() over an access token", () => {
   const realFetch = globalThis.fetch;
 
   beforeEach(() => {
-    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    installOwnedTransport();
     sent = [];
     respond = () => Response.json({});
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -48,7 +48,6 @@ describe("vercel() over an access token", () => {
   });
 
   afterEach(() => {
-    configureGuardedTransport(undefined);
     globalThis.fetch = realFetch;
   });
 

@@ -11,7 +11,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
 import { machineLogin } from "./fixtures/machine-login.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -29,11 +29,10 @@ const RECONCILE = "re-read the target of the write that failed to check whether 
 
 // Kit providers send writes through the owned transport listen() installs on Node.
 beforeEach(() => {
-  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -407,9 +406,9 @@ describe("a write answered 401 is decided before every other exception", () => {
     const connector = tithely("giving", { purpose: "Review", environment: "test" });
     const error = await call(
       connector,
-      "tithely_api_mutate",
+      "tithely_api_write",
       true,
-      { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] },
+      { method: "POST", path: "/refunds/ch_1" },
       { publicKey: "pub_abc123", privateKey: "pri_def456" },
     );
     expect(error).toMatchObject({

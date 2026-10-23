@@ -1,5 +1,5 @@
 import { NODE } from "./fixtures/runtime-tags.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // Decision 0010's shared case table: the provider kit and today's api() core
 // run the same cases, served by the invocation and called directly, and must
 // reach the same verdict on every row: the write's outcome
@@ -40,11 +40,10 @@ const BASE = "https://connecta.example";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -354,7 +353,7 @@ async function served(row: Row, connector: Connector, advice: string | undefined
 
 // --- The table -------------------------------------------------------------------
 
-const MUTATE = { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] };
+const REFUND = { method: "POST", path: "/refunds/ch_1" };
 const fail = (status: number, extra: Record<string, unknown> = {}): Reply => ({
   status,
   body: { status: "fail", reason: `Case ${status} failure` },
@@ -365,8 +364,8 @@ const unknown = (code: string) => ({ outcome: "unknown", code, retryable: false,
 const tithelyWrite = (name: string, replies: Reply[], verdict: Row["served"], extra: Partial<Row> = {}): Row => ({
   name: `Tithe.ly write: ${name}`,
   family: "tithely",
-  tool: "tithely_api_mutate",
-  args: MUTATE,
+  tool: "tithely_api_write",
+  args: REFUND,
   write: true,
   replies,
   served: verdict,
@@ -403,7 +402,7 @@ const ROWS: readonly Row[] = [
   tithelyWrite("408", [fail(408)], unknown("connector_call_failed")),
   tithelyWrite("409", [fail(409)], known("connector_call_failed", false)),
   tithelyWrite("422", [fail(422)], known("invalid_args", false)),
-  tithelyWrite("429", [fail(429, { headers: { "Retry-After": "2" } })], known("rate_limited", true, true)),
+  tithelyWrite("429", [fail(429, { headers: { "Retry-After": "2" } })], known("rate_limited", true)),
   // A 5xx never proves a write unapplied.
   tithelyWrite("500", [fail(500)], unknown("connector_call_failed")),
   tithelyWrite("503", [fail(503)], unknown("connector_call_failed")),
@@ -431,7 +430,7 @@ const ROWS: readonly Row[] = [
   tithelyRead("404", [fail(404)], read("connector_call_failed", false)),
   tithelyRead("408", [fail(408)], read("connector_call_failed", false)),
   tithelyRead("409", [fail(409)], read("connector_call_failed", false)),
-  tithelyRead("429", [fail(429, { headers: { "Retry-After": "2" } })], read("rate_limited", true, true)),
+  tithelyRead("429", [fail(429, { headers: { "Retry-After": "2" } })], read("rate_limited", true)),
   tithelyRead("500", [fail(500)], read("unavailable", true)),
   tithelyRead("network error", ["network"], read("unavailable", true)),
   tithelyRead("timeout", ["timeout"], read("unavailable", true)),
@@ -530,6 +529,7 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
           sent: call.sent,
         };
       }
+      if (row.replies.length) expect(seen.kit.sent, "requests").not.toEqual([]);
       // The same requests leave on both sides.
       if (seen.core) {
         expect(seen.kit.sent, "requests").toEqual(seen.core.sent);

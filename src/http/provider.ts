@@ -24,8 +24,9 @@ import type {
   CredentialTestResult,
 } from "../types.js";
 import { guardedClient, type GuardedOptions } from "./client.js";
-import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
-import { hatch } from "./hatch.js";
+import { errorMeanings, Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
+import { hatch, type HatchDeclaration } from "./hatch.js";
+import { takesIdempotencyKey } from "./tools.js";
 import { Grant, grantFromOAuth, refreshOnce, type GrantRenewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import {
@@ -58,6 +59,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     | import("../types.js").ConnectorCallAdmissionPolicy
     | ((options: Readonly<O>) => import("../types.js").ConnectorCallAdmissionPolicy);
   readonly pageSize?: { readonly default: number; readonly max: number };
+  /**
+   * Whether a write takes an idempotency key the vendor honors. When declared,
+   * construction checks it against the kit write builders' `idempotency`
+   * declarations, and the generated Writes convention states it.
+   */
+  readonly idempotencyKey?: boolean;
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
@@ -86,7 +93,10 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   };
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
-  readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;
+  /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
+  readonly hatch?: HatchDeclaration & {
+    readonly notes?: (options: Readonly<O>) => { readonly read?: string; readonly write?: string };
+  };
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
   /**
    * Record construction facts about the built connector, such as whose
@@ -94,6 +104,15 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
    * its return value is ignored, so it can neither replace nor wrap it.
    */
   readonly tagConnector?: (connector: Connector, options: Readonly<O>) => void;
+}
+
+/** A declared hatch for one connection: its notes resolved from that connection's options. */
+function hatchDeclaration<O>(
+  declared: HatchDeclaration & { readonly notes?: (options: Readonly<O>) => { read?: string; write?: string } },
+  options: Readonly<O>,
+): HatchDeclaration & { readonly notes?: { readonly read?: string; readonly write?: string } } {
+  const { notes, ...rest } = declared;
+  return notes ? { ...rest, notes: notes(options) } : rest;
 }
 
 /** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
@@ -129,6 +148,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     transport,
     defaultCallAdmission,
     pageSize: declaredPageSize,
+    idempotencyKey,
     credential,
     oauth,
     oauthWrite401,
@@ -165,7 +185,16 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   ) {
     throw new Error(`${metadata.title} pageSize needs positive whole default and max values, with default <= max.`);
   }
-  const hatchOptions = declaredHatch ? { ...declaredHatch, verdicts: { ...declaredHatch.verdicts } } : undefined;
+  const meanings = errorMeanings(errors);
+  if (idempotencyKey !== undefined && typeof idempotencyKey !== "boolean")
+    throw new Error(`${metadata.title} idempotencyKey must be true or false when declared.`);
+  const hatchOptions = declaredHatch
+    ? {
+        ...declaredHatch,
+        verdicts: { ...declaredHatch.verdicts },
+        ...(declaredHatch.named ? { named: { ...declaredHatch.named } } : {}),
+      }
+    : undefined;
 
   return defineProvider({
     ...metadata,
@@ -174,6 +203,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       operations: operations(vendor),
       ...(pageSize ? { pageSize } : {}),
       ...(hatchOptions ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts } } : {}),
+      ...(meanings ? { errors: meanings } : {}),
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     },
     create(id, options, provider) {
       const connectionCredential = typeof credential === "function" ? credential(options) : credential;
@@ -316,6 +347,12 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           return typeof override === "number" ? override : pageSize.default;
         },
       });
+      const hatchTools = hatchOptions ? hatch({ ...hatchDeclaration(hatchOptions, options), connection }) : [];
+      // The declared fact the Writes convention states must match what the write builders send.
+      if (idempotencyKey !== undefined && [...builtTools, ...hatchTools].some(takesIdempotencyKey) !== idempotencyKey)
+        throw new Error(
+          `${metadata.title} declares idempotencyKey: ${idempotencyKey}, but its write tools ${idempotencyKey ? "send no" : "send an"} idempotency key.`,
+        );
       const usageGuide = guide(options);
       const connector = tracksEveryRequest(
         api(id, {
@@ -338,7 +375,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               }
             : {}),
           ...(oauth ? { oauth: oauth(options) } : {}),
-          tools: [...builtTools, ...(hatchOptions ? hatch({ ...hatchOptions, connection }) : [])],
+          tools: [...builtTools, ...hatchTools],
         }),
       );
       tagConnector?.(connector, options);

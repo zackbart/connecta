@@ -8,7 +8,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { logicalCallRequests, providerRequests, tracksEveryRequest } from "../src/provider-call.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -24,10 +24,9 @@ const HOW = ["direct", "served", "program"] as const;
 type How = (typeof HOW)[number];
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 

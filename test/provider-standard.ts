@@ -42,7 +42,6 @@ export const PENDING = {
     "sheets",
     "slides",
     "stripe",
-    "tithely",
     "vercel",
   ]),
 } as const;

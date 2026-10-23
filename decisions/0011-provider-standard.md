@@ -501,11 +501,11 @@ provider's step 2.
 
 ### Two steps, and what conformant means
 
-| Level    | Means                                                                               | Enforced by                                                          |
-| -------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| pending  | in `PENDING.step1`: today's shape; existing H conventions only                      | the ratchet: must still fail L, E or D                               |
-| step 1   | on the kit; L, E, D; agent output unchanged                                         | `provider-standard.node.test.ts`; goldens                            |
-| standard | step 1 plus G and S, its `documentation/providers.md` section, and reviewed goldens | the same suite; S on both runtimes in `provider-conventions.test.ts` |
+| Level    | Means                                                                               | Enforced by                                                                                                    |
+| -------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| pending  | in `PENDING.step1`: today's shape; existing H conventions only                      | the ratchet: must still fail L, E or D                                                                         |
+| step 1   | on the kit; L, E, D; agent output unchanged                                         | `provider-standard.node.test.ts`; goldens                                                                      |
+| standard | step 1 plus G and S, its `documentation/providers.md` section, and reviewed goldens | the same suite; S structurally on Node in `provider-conventions.test.ts`, native evidence from workerd goldens |
 
 **Step 1** contents:
 
@@ -576,12 +576,17 @@ Tool shape follows [0014](./0014-api-tool-shape.md).
   digest authenticates the 23-name lists. CI supplies `CONNECTA_STANDARD_BASE`
   and fetches only the needed comparison history (AGENTS.md Verification).
   Unlike a count alone, the name comparison also catches replacements.
-- **The surface on both runtimes.** `provider-conventions.test.ts` applies S1–S6
-  to every standard `api()` surface on Node and workerd. Every provider,
-  pending ones included, must
-  supply a nonempty offline `createAuthored()` fixture; omission fails,
-  independently of whether H-convention metadata exists. It also proves on
-  today's Tithe.ly catalog that the rules catch real legacy shapes.
+- **The surface, structurally on Node and natively on workerd.**
+  `provider-conventions.test.ts` applies S1–S6 to every standard `api()`
+  surface on Node: the rules read catalog structure, which does not differ by
+  runtime, so the suite runs once, as the repository runs pure logic.
+  Workerd supplies the native evidence: every provider's goldens (catalog,
+  calls and failures) and the focused kit and hatch cases tagged for it. Every
+  provider, pending ones included, must supply a nonempty offline
+  `createAuthored()` fixture; omission fails, independently of whether
+  H-convention metadata exists. _Amended in Tithe.ly's step 2 (#703); the
+  draft said the suite ran on both runtimes, which the repository's workerd
+  selection never did._
 - **Generation.** From S.1 on, `providers:generate` refuses a G or D violation
   in a provider that is not pending. `check:providers-generated` refuses a
   stale `generated` block, Conventions section or `skill.generated.ts`.

@@ -15,7 +15,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { docs } from "../src/providers/docs/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -29,11 +29,10 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 const BASE = "https://connecta.example";
 
 beforeEach(() => {
-  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -460,7 +459,7 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           },
         };
         const registry = await vaulted([wrapper], "billing");
-        return [
+        const observed = [
           await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
             "billing.delete_pair",
             {},
@@ -468,13 +467,15 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           ),
           await catchingProgram(registry, "billing.delete_pair"),
         ];
+        expect(sent).toBe(4);
+        return observed;
       },
     ],
     [
       "a Stripe composite whose redacted private argument matches its advice",
       async () => {
-        const { registry, args } = await privateComposite();
-        return [
+        const { registry, args, state } = await privateComposite();
+        const observed = [
           await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
             "billing.delete_pair",
             args,
@@ -482,6 +483,8 @@ describe("no unknown write's agent-visible text says to retry or resend it", () 
           ),
           await catchingProgram(registry, "billing.delete_pair", args),
         ];
+        expect(state.sent).toBe(4);
+        return observed;
       },
     ],
     [
