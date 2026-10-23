@@ -4,6 +4,7 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureGuardedTransport } from "../../guarded-transport.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
@@ -295,6 +296,36 @@ describe("writing drafts", () => {
     expect(failure).toMatchObject({ code: "invalid_args" });
     expect(failure.message).toContain("nested more than 20 levels");
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+
+    // Redaction must not hide an unnamed text attachment and allow its deletion.
+    for (const privateValue of ["attachment", "attach", "tachm", "ment"]) {
+      calls.length = 0;
+      route = () => ({
+        body: existingDraft(
+          [],
+          [
+            { mimeType: "text/plain", body: { data: b64url("Body") } },
+            {
+              mimeType: "text/plain",
+              headers: [{ name: "Content-Disposition", value: "attachment" }],
+              body: { data: b64url("Attached notes") },
+            },
+          ],
+        ),
+      });
+      const ctx = context();
+      requestSentSecrets(ctx).arguments(
+        { private: privateValue },
+        { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+      );
+      await expect(
+        connection().callTool("update_draft", { draftId: "d1", body: "Revised." }, ctx),
+      ).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("Nothing was changed"),
+      });
+      expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+    }
   });
 
   it("splits address lists as RFC 5322 does: quoted commas, comments, and groups", async () => {
@@ -488,6 +519,17 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(failure).toMatchObject({ code: "invalid_args", message: expect.stringContaining("Read it without raw") });
     route = () => ({ body: MESSAGE });
     await expect(call(connection(), "get_message", { messageId: "m2", raw: true })).resolves.toEqual(MESSAGE);
+
+    // A valid inline body may be much larger than its projected result. The
+    // encoded-field validator must stay linear instead of exhausting V8's stack.
+    const bytes = 4 * 1024 * 1024;
+    route = () => ({
+      body: { id: "m4", payload: { mimeType: "text/plain", body: { size: bytes, data: b64url("x".repeat(bytes)) } } },
+    });
+    const projected = await call(connection(), "get_message", { messageId: "m4", maxBodyChars: 100 });
+    expect(projected.body).toContain("x".repeat(100));
+    expect(projected.bodyTruncated).toBe(true);
+    expect(size(projected)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 });
 

@@ -225,6 +225,7 @@ function readBody(
   messageId: string | undefined,
   payload: JsonRecord,
   max: number,
+  step: string,
 ): Effect.Effect<
   | MessageBody
   | {
@@ -256,10 +257,13 @@ function readBody(
         };
       }
       const fetched = asRecord(
-        yield* client.json({
-          method: "GET",
-          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
-        }),
+        yield* client.json(
+          {
+            method: "GET",
+            path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+          },
+          { step },
+        ),
       );
       data = text(fetched["data"]);
     }
@@ -377,10 +381,13 @@ function attachmentBytes(
     const freshId = text(stored["attachmentId"]);
     if (freshId) {
       source = asRecord(
-        yield* client.json({
-          method: "GET",
-          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
-        }),
+        yield* client.json(
+          {
+            method: "GET",
+            path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
+          },
+          { step: "attachment" },
+        ),
       );
     }
     const data = source["data"];
@@ -426,11 +433,14 @@ function readAttachment(
       throw new ConnectorCallError("invalid_args", "Supply partId from the attachment listing, or attachmentId.");
     }
     const message = asRecord(
-      yield* client.json({
-        method: "GET",
-        path: `/messages/${encodeURIComponent(messageId)}`,
-        query: { format: "full" },
-      }),
+      yield* client.json(
+        {
+          method: "GET",
+          path: `/messages/${encodeURIComponent(messageId)}`,
+          query: { format: "full" },
+        },
+        { step: "message" },
+      ),
     );
     const attachments = walk(asRecord(message["payload"])).attachments;
     // partId is immutable and authoritative when supplied. An attachmentId
@@ -587,11 +597,12 @@ function projectMessage(
   maxBodyChars: number,
   budget: number = RESULT_BUDGET_BYTES,
   finish: (message: JsonRecord) => JsonRecord = (message) => message,
+  bodyStep = "body",
 ): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
   return Effect.gen(function* () {
     const message = asRecord(value);
     const payload = asRecord(message["payload"]);
-    const read = yield* readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars);
+    const read = yield* readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars, bodyStep);
     const attachments = attachmentsOf(ctx, payload);
     const headerOf = (name: string) => clipped(ctx, header(payload, name), HEADER_BYTES);
     const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
@@ -1115,7 +1126,14 @@ function unrebuildable(payload: JsonRecord): string[] {
   const found: string[] = [];
   const visit = (part: JsonRecord, depth: number) => {
     const mime = mimeOf(part);
-    if (isAttachment(part) || header(part, "Content-ID") || (mime && !REBUILDABLE.has(mime))) {
+    // A disposition the request's redaction rewrote can no longer prove the part is not carried.
+    const disposition = header(part, "Content-Disposition");
+    if (
+      isAttachment(part) ||
+      header(part, "Content-ID") ||
+      (mime && !REBUILDABLE.has(mime)) ||
+      disposition?.includes("[redacted]")
+    ) {
       found.push(text(part["filename"]) ?? (mime || "an unnamed part"));
       return;
     }
@@ -1260,6 +1278,11 @@ const SAVED_DRAFT_SCHEMA: JsonSchema = {
   required: ["saved", "sent"],
 };
 // --- Tools ------------------------------------------------------------------------
+/** Each request a read sends names a step, so a deployment serving it as a write sends each once. */
+const indexedSteps = (prefix: string, count: number) =>
+  Object.fromEntries(Array.from({ length: count }, (_, index) => [`${prefix}${index}`, "once" as const]));
+/** Gmail splits a conversation into a new thread past 100 messages. */
+const MAX_THREAD_MESSAGES = 100;
 function declarations(client: GoogleClient): GoogleToolDeclaration[] {
   const readOnly = { readOnlyHint: true } as const;
   const bodyChars = (args: JsonRecord, fallback: number): number =>
@@ -1301,6 +1324,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
   return [
     {
       name: "search_threads",
+      writeSteps: { list: "once", ...indexedSteps("row", MAX_PAGE_SIZE) },
       description:
         "Search the user's Gmail threads with Gmail query syntax, newest first, returning subject, senders, date, and snippet per thread. Bodies need get_thread.",
       annotations: readOnly,
@@ -1355,32 +1379,41 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           );
           const claims = openCursor(args["cursor"], "search_threads", call);
           const listing = asRecord(
-            yield* client.json({
-              method: "GET",
-              path: "/threads",
-              query: {
-                q: args["query"],
-                includeSpamTrash: args["includeSpamTrash"],
-                maxResults: limit,
-                pageToken: claims?.p,
+            yield* client.json(
+              {
+                method: "GET",
+                path: "/threads",
+                query: {
+                  q: args["query"],
+                  includeSpamTrash: args["includeSpamTrash"],
+                  maxResults: limit,
+                  pageToken: claims?.p,
+                },
               },
-            }),
+              { step: "list" },
+            ),
           );
           const rows = asArray(listing["threads"]).map(asRecord);
-          const threads = yield* mapLimited(rows, SUMMARY_CONCURRENCY, (row) =>
-            unlessGone(() =>
-              Effect.gen(function* () {
-                return projectThreadSummary(
-                  ctx,
-                  yield* client.json({
-                    method: "GET",
-                    path: `/threads/${encodeURIComponent(String(row["id"]))}`,
-                    query: { format: "metadata", metadataHeaders: ["Subject", "From", "Date"] },
-                  }),
-                  row["snippet"],
-                );
-              }),
-            ),
+          const threads = yield* mapLimited(
+            rows.map((row, index) => ({ row, index })),
+            SUMMARY_CONCURRENCY,
+            ({ row, index }) =>
+              unlessGone(() =>
+                Effect.gen(function* () {
+                  return projectThreadSummary(
+                    ctx,
+                    yield* client.json(
+                      {
+                        method: "GET",
+                        path: `/threads/${encodeURIComponent(String(row["id"]))}`,
+                        query: { format: "metadata", metadataHeaders: ["Subject", "From", "Date"] },
+                      },
+                      { step: `row${index}` },
+                    ),
+                    row["snippet"],
+                  );
+                }),
+              ),
           );
           return compact({
             threads: threads.filter((thread) => thread !== undefined),
@@ -1392,6 +1425,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
     },
     {
       name: "get_thread",
+      writeSteps: { thread: "once", ...indexedSteps("body", MAX_THREAD_MESSAGES) },
       description:
         "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment metadata. Read attachments with get_attachment using partId. A long thread pages by cursor.",
       annotations: readOnly,
@@ -1419,11 +1453,14 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       run: (args, ctx) =>
         Effect.gen(function* () {
           const thread = asRecord(
-            yield* client.json({
-              method: "GET",
-              path: `/threads/${encodeURIComponent(args["threadId"])}`,
-              query: { format: "full" },
-            }),
+            yield* client.json(
+              {
+                method: "GET",
+                path: `/threads/${encodeURIComponent(args["threadId"])}`,
+                query: { format: "full" },
+              },
+              { step: "thread" },
+            ),
           );
           const max = bodyChars(args, DEFAULT_THREAD_BODY_CHARS);
           const call = yield* Effect.promise(() =>
@@ -1443,7 +1480,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           const messages: JsonRecord[] = [];
           let next = start;
           while (next < all.length) {
-            const projected = yield* projectMessage(client, ctx, all[next], max, room);
+            const projected = yield* projectMessage(client, ctx, all[next], max, room, undefined, `body${next}`);
             const size = jsonBytes(projected) + (messages.length > 0 ? 1 : 0);
             if (messages.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
             messages.push(projected);
@@ -1464,6 +1501,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
     },
     {
       name: "get_message",
+      writeSteps: { message: "once", body: "once" },
       description:
         "Get one Gmail message with headers, its plain-text body (HTML converted only when no text part exists), and attachment metadata. Read attachments with get_attachment using partId.",
       annotations: readOnly,
@@ -1482,11 +1520,14 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       outputSchema: MESSAGE_SCHEMA,
       run: (args, ctx) =>
         Effect.gen(function* () {
-          const message = yield* client.json({
-            method: "GET",
-            path: `/messages/${encodeURIComponent(args["messageId"])}`,
-            query: { format: "full" },
-          });
+          const message = yield* client.json(
+            {
+              method: "GET",
+              path: `/messages/${encodeURIComponent(args["messageId"])}`,
+              query: { format: "full" },
+            },
+            { step: "message" },
+          );
           if (args["raw"] !== true) {
             return yield* projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
           }
@@ -1504,6 +1545,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
     },
     {
       name: "get_attachment",
+      writeSteps: { message: "once", attachment: "once" },
       description:
         "Read a Gmail attachment by immutable partId: text with its charset, or small binaries as standard base64 for Drive create_file. Refuses oversized downloads; text is capped by maxChars and the whole result by maxBytes.",
       annotations: readOnly,
@@ -1648,6 +1690,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
     },
     {
       name: "list_drafts",
+      writeSteps: { list: "once", ...indexedSteps("row", MAX_PAGE_SIZE) },
       description:
         "List the user's Gmail drafts, newest first, with subject, recipients, and snippet. Use get_draft for a body.",
       annotations: readOnly,
@@ -1681,26 +1724,33 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
           const call = yield* Effect.promise(() => callKey("list_drafts", { query: args["query"] ?? null, limit }));
           const claims = openCursor(args["cursor"], "list_drafts", call);
           const listing = asRecord(
-            yield* client.json({
-              method: "GET",
-              path: "/drafts",
-              query: {
-                q: args["query"],
-                maxResults: limit,
-                pageToken: claims?.p,
+            yield* client.json(
+              {
+                method: "GET",
+                path: "/drafts",
+                query: {
+                  q: args["query"],
+                  maxResults: limit,
+                  pageToken: claims?.p,
+                },
               },
-            }),
+              { step: "list" },
+            ),
           );
-          const drafts = yield* mapLimited(asArray(listing["drafts"]).map(asRecord), SUMMARY_CONCURRENCY, (row) =>
+          const rows = asArray(listing["drafts"]).map((row, index) => ({ row: asRecord(row), index }));
+          const drafts = yield* mapLimited(rows, SUMMARY_CONCURRENCY, ({ row, index }) =>
             unlessGone(() =>
               Effect.gen(function* () {
                 return projectDraftSummary(
                   ctx,
-                  yield* client.json({
-                    method: "GET",
-                    path: `/drafts/${encodeURIComponent(String(row["id"]))}`,
-                    query: { format: "metadata" },
-                  }),
+                  yield* client.json(
+                    {
+                      method: "GET",
+                      path: `/drafts/${encodeURIComponent(String(row["id"]))}`,
+                      query: { format: "metadata" },
+                    },
+                    { step: `row${index}` },
+                  ),
                 );
               }),
             ),
@@ -1713,6 +1763,7 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
     },
     {
       name: "get_draft",
+      writeSteps: { draft: "once", body: "once" },
       description: "Get one Gmail draft's headers and plain-text body by draft id. Reading it never sends it.",
       annotations: readOnly,
       inputSchema: input(
@@ -1730,11 +1781,14 @@ function declarations(client: GoogleClient): GoogleToolDeclaration[] {
       run: (args, ctx) =>
         Effect.gen(function* () {
           const draft = asRecord(
-            yield* client.json({
-              method: "GET",
-              path: `/drafts/${encodeURIComponent(args["draftId"])}`,
-              query: { format: "full" },
-            }),
+            yield* client.json(
+              {
+                method: "GET",
+                path: `/drafts/${encodeURIComponent(args["draftId"])}`,
+                query: { format: "full" },
+              },
+              { step: "draft" },
+            ),
           );
           // The draft was read by the id the caller passed, so that is its id
           // whatever Gmail echoed back.

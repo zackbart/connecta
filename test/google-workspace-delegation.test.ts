@@ -1350,6 +1350,54 @@ describe("Workspace served classification on unauthorized requests", () => {
     // A deliberate repeat is a new call and uses a fresh token.
     expect((await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} })).isError).toBeFalsy();
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+
+    // Every multi-request mail read also completes when served as a write.
+    // Distinct body and row steps must survive more than one summary or body.
+    const stored = (id: string) => ({
+      id,
+      threadId: "t1",
+      payload: { mimeType: "text/plain", body: { attachmentId: "body", size: 3 } },
+    });
+    const body = { data: "YWJj", size: 3 };
+    const messages = [stored("m1"), stored("m2"), stored("m3")];
+    const thread = { id: "t1", messages };
+    const draft = { id: "d1", message: stored("m1") };
+    for (const [tool, args, replies] of [
+      ["get_message", { messageId: "m1" }, [stored("m1"), body]],
+      ["get_draft", { draftId: "d1" }, [draft, body]],
+      [
+        "get_attachment",
+        { messageId: "m1", partId: "1" },
+        [
+          {
+            id: "m1",
+            payload: { partId: "1", mimeType: "text/plain", filename: "a.txt", body: { attachmentId: "a1", size: 3 } },
+          },
+          body,
+        ],
+      ],
+      ["get_thread", { threadId: "t1" }, [thread, body, body, body]],
+      ["search_threads", { limit: 2 }, [{ threads: [{ id: "t1" }, { id: "t2" }] }, thread, { ...thread, id: "t2" }]],
+      ["list_drafts", { limit: 2 }, [{ drafts: [{ id: "d1" }, { id: "d2" }] }, draft, { ...draft, id: "d2" }]],
+    ] as const) {
+      let expected;
+      for (const served of ["read", "write"] as const) {
+        apiReplies.push(...replies.map((reply) => () => Response.json(reply)));
+        const meta = createMetaTools(
+          makeRegistry([connector], { classification: { gmail: { [tool]: served } } }),
+          "https://connecta.example",
+        );
+        const sent = apiCalls.length;
+        const answer = await (served === "write" ? meta.callDestructiveTool : meta.callTool)({
+          address: `gmail.${tool}`,
+          args,
+        });
+        expect(answer.isError, `${tool}: ${JSON.stringify(answer.structuredContent)}`).toBeFalsy();
+        expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(replies.map(() => "GET"));
+        if (served === "read") expected = answer.content;
+        else expect(answer.content, tool).toEqual(expected);
+      }
+    }
   });
 
   it("INV-9: a served read-classified POST is never replayed after 401", NODE, async () => {

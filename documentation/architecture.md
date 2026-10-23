@@ -2059,6 +2059,11 @@ Drive's two-request reads also declare fixed steps: `get_file_content` uses
 `metadata` and `content`, and non-root `list_folder_items` uses `folder` and
 `files`. These reads still send both GETs when deployment classification
 serves them as writes; each step can leave only once.
+Gmail declares separate initial and body-download steps for `get_message`,
+`get_draft`, and `get_attachment`; `search_threads` and `list_drafts` name
+each of up to 25 summary reads, and `get_thread` names each stored body in
+Gmail's 100-message conversation limit. Serving these reads as writes keeps
+every request available once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
@@ -2213,6 +2218,8 @@ or logs. Gmail copies this metadata privately for its decoded body containers:
 text renders after redaction and before cuts, while changed binary content is
 withheld in full. Its original byte counts still govern attachment validation.
 Vendors without this declaration retain the existing parsing path.
+Gmail refuses to update a draft whose Content-Disposition was redacted,
+because it cannot prove that rebuilding the message would retain its attachments.
 
 Drive declares the exact v3 keys its projections and cursor codec navigate,
 plus Google's error-envelope keys, so matching private values cannot erase a
