@@ -30,10 +30,11 @@ import { defineApiProvider } from "../../http/provider.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
-import { errors, FORMS, FORMS_API_BASE_URL, FORMS_MAX_RESPONSE_BYTES, FormsApi, probe, safety } from "./api.js";
+import { errors, FORMS, FormsApi, probe, safety } from "./api.js";
+import { FORMS_API_BASE_URL, FORMS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
 import { formsTools, LIST_ANSWER_CHARS } from "./tools.js";
 
-export { FORMS_API_BASE_URL, FORMS_SCOPES } from "./api.js";
+export { FORMS_API_BASE_URL, FORMS_SCOPES } from "./lib/constants.js";
 export type {
   GoogleServiceAccount,
   GoogleSubjectContext,
@@ -95,8 +96,8 @@ export const forms = defineApiProvider<FormsOptions>({
   title: "Google Forms",
   readme: "Google Forms",
   bundle: {
-    baselineGzip: 26161,
-    note: "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
+    baselineGzip: 332452,
+    note: "./providers/forms remeasures at 332,452 B gzip in C.7 (decision 0010), on a local Node 26 measure: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http) through the shared Google Workspace layer, from 26,161 B for the api() provider. A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

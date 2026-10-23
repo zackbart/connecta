@@ -57,7 +57,7 @@ export interface GoogleProduct {
 }
 
 /** Google's machine-readable reasons: `errors[].reason`, `details[].reason`, then `status`. */
-interface GoogleFacts extends Record<string, readonly string[]> {
+export interface GoogleFacts extends Record<string, readonly string[]> {
   readonly reasons: readonly string[];
 }
 
