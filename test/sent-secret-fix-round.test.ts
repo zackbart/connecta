@@ -203,7 +203,8 @@ describe("redact before normalization or extraction", () => {
       { presentationId: "deck1", pageObjectId: "s1" },
       privateContext(value),
     );
-    expect(result.elements.map((element: any) => element.text)).toEqual([MARKER, MARKER]);
+    // The kit redacts each source leaf before joining the two runs.
+    expect(result.elements.map((element: any) => element.text)).toEqual([`${MARKER}${MARKER}`, `${MARKER}${MARKER}`]);
     expect(leaks(JSON.stringify(result), value)).toBe(false);
   });
 
