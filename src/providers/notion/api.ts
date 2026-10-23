@@ -317,7 +317,10 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
             return { line };
           }
         });
-    return sanitizeLinks((yield* RequestSecrets).redact(protectRichText(yield* RequestSecrets, body ?? null)));
+    // Values only: value safety and the projections read Notion's field names (#703).
+    return sanitizeLinks(
+      (yield* RequestSecrets).redact(protectRichText(yield* RequestSecrets, body ?? null), "values"),
+    );
   });
 export const probe = {
   operation: getMe,
