@@ -859,11 +859,6 @@ export function withholdEmbeddedUrls(text: string): string {
   return withholdSigningParams(withholdLinkQueries(text));
 }
 
-/** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
-export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 0): unknown {
-  return mapStrings(value, (text) => withholdSignedLinks(text, hosts), depth);
-}
-
 /** Apply the reviewed text policy to a selected value or vendor error body. */
 export function withholdEmbeddedUrlsIn(value: unknown): unknown {
   return mapStrings(value, withholdEmbeddedUrls, 0);
