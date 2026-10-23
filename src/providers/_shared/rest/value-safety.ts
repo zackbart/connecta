@@ -803,7 +803,7 @@ function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean,
   // The first URL delimiter in the current text run also protects relative
   // paths/queries such as /proxy/https://… and image?url=//… .
   let firstReference = -1;
-  const markers = failClosed && !matcher && text.includes(REDACTED);
+  const markers = failClosed && !matcher && redactionAltered(text);
   for (let at = 0; at < text.length; at++) {
     const char = text[at]!;
     if (endsLink(text.charCodeAt(at), char)) {
@@ -988,7 +988,9 @@ function alteredParameter(text: string, from: number): number {
       else break;
     }
     EQUALS.lastIndex = end;
-    if (!EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) && EQUALS.test(text)) return EQUALS.lastIndex;
+    const name = text.slice(at, end);
+    if (redactionAltered(name) && !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) && EQUALS.test(text))
+      return EQUALS.lastIndex;
     at = text.indexOf(REDACTED, end);
   }
   return -1;
