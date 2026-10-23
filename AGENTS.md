@@ -71,17 +71,29 @@ suites), and `check:build` (build, declarations, bundle cap).
 audit, and published-package/generated-deployment/Docker smoke. Use it for
 packaging, dependencies, exports and releases. Run
 `pnpm run test:browser:install` once per machine. Package smoke reuses the
-built `dist/` and packs with `--ignore-scripts`.
+built `dist/` and packs with `--ignore-scripts`. The Eve helper's check and
+packed-consumer smoke also run in `release:check`, which requires Node 24.
+To match release CI, run `release:check:core` on Node 22 and `release:check:eve`
+on Node 24. The latter also audits the helper's full dependency graph.
+
+`packages/connecta-eve/` is validated separately from root tests. When changing
+that package or the agent-endpoint contract (any `src/` change selects its CI
+job), run `pnpm --filter @zackbart/connecta-eve run check` and
+`pnpm run check:eve-package` on Node 24.
 
 CI runs `static`, `node`, and `workers` in parallel on every PR, main push,
 and nightly. `static` runs `check:static` and `check:build` with one install;
 `node` runs `test:node`; `workers` runs `test:workers`. Runtime jobs use four
 Vitest workers on the four-core runner. Installs use the frozen lockfile and
-shared pnpm store cache. A single inline changed-files step in `static` selects
-PR browser/audit jobs with `git diff --name-only -z` against the PR base. Their
+shared pnpm store cache. Core jobs install only `@zackbart/connecta`; the
+conditional `eve` job installs both workspaces and runs the helper's typecheck,
+tests, build and packed-consumer runtime/type smoke on Node 24. Workspace packages use separate lockfiles so Eve's
+framework and peers do not enter the root importer or core CI install.
+A single inline changed-files step in `static` selects
+PR browser/audit/Eve jobs with `git diff --name-only -z` against the PR base. Their
 canonical path expressions and the browser import rationale live only in
 [ci.yml](.github/workflows/ci.yml). Main, nightly and manual runs always select
-both. There are no planning exceptions, goldens tiers or classifier scripts.
+all three. There are no planning exceptions, goldens tiers or classifier scripts.
 
 Node compares each golden's forward and reverse observations byte for byte;
 workerd compares its canonical observation. Each order starts a fresh module
@@ -95,8 +107,8 @@ use Vitest tags: `workers` marks native cases, while the Workers project skips
 files; portable filenames alone do not enroll a new suite in workerd.
 
 `check` is the single required status, with `needs: [static, node, workers,
-browser, audit]` and `if: always()`. Core jobs and the changed-files step must
-succeed. Browser/audit must succeed when selected, and must be skipped when
+browser, audit, eve]` and `if: always()`. Core jobs and the changed-files step must
+succeed. Browser/audit/Eve must succeed when selected, and must be skipped when
 explicitly unselected. Missing or invalid outputs, failures, cancellations,
 and unexpected skips fail the gate. Build failures fail `static` and hence
 `check`. Superseded PR runs are cancelled; each main push retains a full run.
@@ -117,10 +129,12 @@ only shrink. Missing history or an unreadable baseline fails the job. No
 `CONNECTA_STANDARD_BASE` setting or local history fallback is needed; the
 small guard's test runs in `check:static`.
 
-Browser and audit participate in `check` when selected. Browser visual
+Browser, audit and Eve participate in `check` when selected. Browser visual
 comparisons never retry; behavior tests keep two CI retries. Any failed
 attempt uploads the HTML report, diffs and traces as `playwright-report`.
-Audit runs `check:security` without installing dependencies.
+Audit runs `check:security` for core's production graph and
+`check:security:eve` for the helper's own full lockfile graph, without installing
+dependencies.
 
 Two independent workflows report their own status outside `check`; failures
 on main remain visible in Actions:
@@ -137,6 +151,8 @@ release/tag driven and runs `release:check` before publishing.
 
 ## Source map
 
+- `packages/connecta-eve/` owns the separate Node 24 Eve helper, its README,
+  real-Eve tests, build/typecheck configuration and isolated lockfile.
 - `src/index.ts` constructs the Promise API; `src/server.ts` composes routes.
 - `src/routes/` owns HTTP and upward MCP; `src/meta-tools.ts` and `src/execute.ts` own direct calls and programs.
 - `src/registry.ts`, `src/catalog-service.ts`, and `src/invocation.ts` own
@@ -177,8 +193,13 @@ checks health, executor, and the current meta-tool set.
 
 ## Tests
 
-Suites live in `test/` and `src/providers/<name>/`. Node runs every `*.test.ts`.
-workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
+Core suites live in `test/` and `src/providers/<name>/`; root Node runs every
+`*.test.ts` in those locations. The separate `packages/connecta-eve/test/` suites
+run against real Eve on Node 24 through
+`pnpm --filter @zackbart/connecta-eve run check`. Run that check and
+`pnpm run check:eve-package` on Node 24 when changing the helper or the
+agent-endpoint contract. The helper's suites are outside the root INV/spec
+coverage reporter. workerd runs only the suites listed in `WORKERS_SUITES` in `vitest.config.ts`:
 those that need Workers bindings or the Worker executor, or exercise behaviour
 that can differ under workerd (fetch, streams, unhandled rejections, Web
 Crypto, provider request bytes). List a new suite there only for such

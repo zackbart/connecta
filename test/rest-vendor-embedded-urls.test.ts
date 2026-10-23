@@ -1,6 +1,6 @@
 // Portable security/data-integrity regressions for #812 and PR #846 review rounds.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
@@ -78,9 +78,8 @@ const PLACEHOLDER = [PLACEHOLDERS[2]!];
 let sent: Array<{ body: BodyInit | null | undefined; url: string }>;
 let respond: () => Response;
 const realFetch = globalThis.fetch;
-let previousTransport: ReturnType<typeof configureGuardedTransport>;
 beforeEach(() => {
-  previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
   sent = [];
   respond = () => Response.json({});
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -90,7 +89,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
-  configureGuardedTransport(previousTransport);
 });
 const call = (connector: Connector, tool: string, args: Record<string, unknown>) =>
   connector.callTool(tool, args, ctx) as Promise<any>;
@@ -283,10 +281,7 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
   );
 
   it("INV-5: admits a base64 JSON field above 8 MiB and inspects a withheld destination at its end", async () => {
-    const previousTransport =
-      vendor.name === "vercel"
-        ? configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) })
-        : undefined;
+    const previousTransport = vendor.name === "vercel" ? installOwnedTransport() : undefined;
     try {
       const safe = "a".repeat(8 * 1024 * 1024 + 1);
       const connector = vendor.create();
@@ -301,7 +296,7 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
       ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
       expect(sent).toHaveLength(0);
     } finally {
-      if (vendor.name === "vercel") configureGuardedTransport(previousTransport);
+      previousTransport?.restore();
     }
   }, 20_000);
 });

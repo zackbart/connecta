@@ -151,6 +151,25 @@ export interface ProviderKitFacts {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
   };
+  /**
+   * The vendor's declared error meanings, for the Errors convention: the code
+   * an unknown id fails with, whether it proves absence, and each documented
+   * conflict source.
+   */
+  readonly errors?: {
+    readonly unknownId: string;
+    readonly provesAbsence: boolean;
+    readonly conflicts: readonly string[];
+  };
+  /** Whether a write takes an idempotency key the vendor honors, checked against the built tools. */
+  readonly idempotencyKey?: boolean;
+  /**
+   * Set only when the hatch refuses a write carrying a withheld placeholder
+   * value; the Withheld values convention promises exactly that. Unset until
+   * placeholder refusal for withheld scalar values exists, which a provider
+   * with a value-safety table needs before its step 2.
+   */
+  readonly refusesWithheld?: true;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -275,6 +294,11 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
     ...(kit.hatch
       ? { hatch: Object.freeze({ name: kit.hatch.name, verdicts: Object.freeze({ ...kit.hatch.verdicts }) }) }
       : {}),
+    ...(kit.errors
+      ? { errors: Object.freeze({ ...kit.errors, conflicts: Object.freeze([...kit.errors.conflicts]) }) }
+      : {}),
+    ...(kit.idempotencyKey !== undefined ? { idempotencyKey: kit.idempotencyKey } : {}),
+    ...(kit.refusesWithheld ? { refusesWithheld: true as const } : {}),
   });
 }
 

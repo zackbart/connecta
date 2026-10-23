@@ -3,7 +3,7 @@
 // encoding and refusals, body selection, charsets, attachments, and bounds.
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
 import { attachmentFixtures } from "./fixtures.js";
@@ -192,18 +192,10 @@ describe("reading mail (H9, H10)", () => {
   });
 });
 
-function useOwnedTransport() {
-  let restoreTransport: ReturnType<typeof configureGuardedTransport>;
-  beforeEach(() => {
-    restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(restoreTransport);
-  });
-}
-
 describe("writing drafts", () => {
-  useOwnedTransport();
+  beforeEach(() => {
+    installOwnedTransport();
+  });
   it("refuses header injection and malformed addresses before anything is sent", async () => {
     await expect(
       call(connection(), "create_draft", { subject: "Hi\r\nBcc: spy@evil.example", body: "x" }),
@@ -621,7 +613,7 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
 
 describe("round-6: measured budgets, said omissions, declared keys", () => {
   it("reports a saved draft as saved even when Gmail's id cannot be returned", async () => {
-    const restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    const restoreTransport = installOwnedTransport();
     try {
       route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
       const tooLong = await call(connection(), "create_draft", { body: "x" });
@@ -635,8 +627,10 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
       expect(missing).toMatchObject({ saved: true, sent: false, messageId: "m2" });
       expect(missing.omittedIds).toBeUndefined();
       expect(missing.note).toContain("list_drafts");
+      expect(restoreTransport.send).toHaveBeenCalledTimes(2);
+      expect(calls.map(({ method }) => method)).toEqual(["POST", "POST"]);
     } finally {
-      configureGuardedTransport(restoreTransport);
+      restoreTransport.restore();
     }
   });
 });

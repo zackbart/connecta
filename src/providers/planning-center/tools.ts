@@ -81,10 +81,11 @@ const input = (
         toJsonSchema: () => ({ type: "object", properties: {}, required: [], additionalProperties: false }),
       });
 // Preserve the explicit legacy additive annotation while the kit owns the verdict.
-const additive: typeof write = (connection, spec) => ({
-  ...write(connection, spec),
-  annotations: { readOnlyHint: false, destructiveHint: false },
-});
+const additive: typeof write = (connection, spec) => {
+  const tool = write(connection, spec);
+  tool.annotations = { readOnlyHint: false, destructiveHint: false };
+  return tool;
+};
 
 function idProperty(description: string): Schema.Codec<any> {
   return Schema.String.check(pattern("^[0-9]+$")).annotate({ description });

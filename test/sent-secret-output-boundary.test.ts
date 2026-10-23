@@ -429,8 +429,8 @@ describe("provider sites the boundary cannot cover", () => {
       };
       const error = (await connector
         .callTool(
-          name === "planning-center" ? "pco_api_get" : "tithely_api_get",
-          name === "planning-center" ? { path: "/people/v2/people" } : { path: "/organization" },
+          name === "planning-center" ? "pco_api_get" : "tithely_api_read",
+          name === "planning-center" ? { path: "/people/v2/people" } : { path: "/organizations-list" },
           ctx,
         )
         .catch((caught: unknown) => caught)) as Error;
@@ -468,8 +468,8 @@ describe("provider sites the boundary cannot cover", () => {
       requestSentSecrets(held).arguments({ value: "Authorization: Bearer sk_live_" }, schema);
       const out = shown(
         await connector.callTool(
-          pco ? "pco_api_get" : "tithely_api_get",
-          { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organization" },
+          pco ? "pco_api_get" : "tithely_api_read",
+          { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organizations/org_1" },
           held,
         ),
       );
@@ -493,9 +493,9 @@ describe("provider sites the boundary cannot cover", () => {
           getAll: async () => ({ publicKey: "pub_public", privateKey: `pri_${TOKEN}` }),
         },
       },
-    )) as { charges: Array<{ amountCents?: number; netAmountCents?: number }> };
-    expect(result.charges[0]!.amountCents).toBeUndefined();
-    expect(result.charges[0]!.netAmountCents).toBe(4100);
+    )) as { items: Array<{ amountCents?: number; netAmountCents?: number }> };
+    expect(result.items[0]!.amountCents).toBeUndefined();
+    expect(result.items[0]!.netAmountCents).toBe(4100);
   });
 
   it("INV-5: Drive checks downloaded bytes at any alignment and size strings before normalizing them", async () => {

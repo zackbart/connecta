@@ -248,7 +248,9 @@ function scanActivity(
           const row =
             event.kind !== "catalog_drift" && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
           const agent =
-            event.actor.kind === "access_token" && event.actor.namespace === AGENT_NAMESPACE && event.actor.id
+            (event.actor.kind === "access_token" || event.actor.kind === "vercel_oidc") &&
+            event.actor.namespace === AGENT_NAMESPACE &&
+            event.actor.id
               ? byAgent.get(event.actor.id)
               : undefined;
           if ((!row && !agent) || !activityEventVisible(context, authz, registry, event)) continue;

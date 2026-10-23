@@ -1,3 +1,10 @@
+import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import goldenSpec from "../../../test/goldens/overflow/spec.js";
+import { resultSafety } from "../../http/safety.js";
+import type { Connection } from "../../http/vendor.js";
+import { validateToolInput } from "../../validate.js";
+import { errors, safety } from "./api.js";
+import { overflowTools } from "./tools.js";
 // The goldens cover tools, projections and errors. Keep only Overflow's
 // reset-header fallback and candidate credential probe beyond that evidence.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -94,7 +101,16 @@ async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
 }
 
 describe("overflow() rate limits", () => {
-  it("waits out a 429 for Overflow's reported window remainder, or the whole window without one", async () => {
+  it("INV-11: aligns catalog decoding and waits out the reported 429 window or the whole window without one", async () => {
+    const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
+    for (const tool of overflowTools({ connection: kitConnection, pageSize: 25 })) {
+      const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
+      expect(
+        validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }),
+        tool.name,
+      ).toBeNull();
+      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
+    }
     queue(
       {
         status: 429,

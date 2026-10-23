@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { request as httpRequest } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Connecta } from "../src/index.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { listen } from "../src/node.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -39,7 +39,7 @@ it("INV-5: admits KV base64 values through a raised host body cap up to 25 MiB a
     maxBodyBytes: 40 * 1024 * 1024,
     gracefulShutdown: false,
   });
-  const previousTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  const previousTransport = installOwnedTransport();
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected a TCP address.");
@@ -92,7 +92,7 @@ it("INV-5: admits KV base64 values through a raised host body cap up to 25 MiB a
     });
     expect(dispatch).not.toHaveBeenCalled();
   } finally {
-    configureGuardedTransport(previousTransport);
+    previousTransport.restore();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }

@@ -161,16 +161,15 @@ refuses what that user cannot see. `excludeApps` is defense in depth on top of
 that boundary: it narrows what Connecta exposes, not what the token can do
 elsewhere.
 
-Church Community Builder and Tithe.ly drop sensitive fields from every
-result by default: for `ccb()`, allergies, giving numbers and dates, envelope
-ids, statement dates, attendance prayer requests and meeting notes, and form
-payment details (`CCB_SENSITIVE_FIELDS`); for `tithely()`, an organization's
-payout `bank` and `legal` contact (`TITHELY_SENSITIVE_FIELDS`). The drop goes
-by field name at any depth and covers the named tools, `raw: true`, the read
-hatches, CCB's advanced search, and write replies. No tool argument returns
-them. A deployment that needs them opts in with `sensitiveFields: "return"`,
-after which `raw: true` and the hatches return CCB's or Tithe.ly's rows
-without the drop:
+Church Community Builder drops sensitive fields from every result by
+default: allergies, giving numbers and dates, envelope ids, statement dates,
+attendance prayer requests and meeting notes, and form payment details
+(`CCB_SENSITIVE_FIELDS`). The drop goes by field name at any depth and covers
+the named tools, `raw: true`, the read hatches, CCB's advanced search, and
+write replies. No tool argument returns them. A deployment that needs them
+opts in with `sensitiveFields: "return"`, after which `raw: true` and the
+hatches return CCB's rows without the drop. Tithe.ly's option works the same
+way; see [Tithe.ly](./providers.md#tithely).
 
 ```ts
 import { ccb } from "@zackbart/connecta/providers/ccb";
@@ -357,3 +356,13 @@ and [provider construction](https://github.com/zackbart/connecta/blob/main/src/p
 [provider contracts](https://github.com/zackbart/connecta/blob/main/test/provider-contracts.test.ts),
 and the [write-once tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp-write-once.test.ts)
 check shared behavior. Provider-specific tests remain beside each provider.
+
+## Connect an Eve agent
+
+Use [`@zackbart/connecta-eve`](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
+in the Eve app for an app-owned connection and endpoint instructions refreshed
+at turn start. It requires Node 24 and Eve 0.83.x, and installs separately from
+Connecta. Follow its README for the two agent files, token environment variables,
+optional write approval and Vercel OIDC token source. Configure the server's
+[agent and pool membership](./auth.md#issue-rotate-or-revoke-an-agent-token)
+before connecting.

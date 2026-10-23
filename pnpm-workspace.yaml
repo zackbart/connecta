@@ -1,3 +1,12 @@
+packages:
+  - packages/*
+
+# Isolate Eve's Node 24 framework and peers from core's Node 22 install.
+sharedWorkspaceLockfile: false
+
 allowBuilds:
   esbuild: true
   workerd: true
+
+minimumReleaseAgeExclude:
+  - eve@0.83.0

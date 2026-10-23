@@ -1,0 +1,3057 @@
+{
+ "kind": "tithely-step2-eval-summary",
+ "note": "Per-trial summaries; full result files (about 9 MB each) are not committed.",
+ "runs": [
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "ac0d66ef986e",
+   "branch": "t3/tithely-step2-before-eval",
+   "srcTree": "3c955fa49675",
+   "createdAt": "2026-10-23T15:25:48.976Z",
+   "cli": "codex-cli 0.163.0",
+   "taskDefinitionsHash": "e2eb2a758ebaa9b2a05498a7e6a78ee11fad720b08fe8ecec5d086a9290f31e2",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2",
+   "regradedWith": "524acbec join-grader fix"
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "ac0d66ef986e",
+   "branch": "t3/tithely-step2-before-eval",
+   "srcTree": "3c955fa49675",
+   "createdAt": "2026-10-23T15:25:50.377Z",
+   "cli": "2.1.309 (Claude Code)",
+   "taskDefinitionsHash": "e2eb2a758ebaa9b2a05498a7e6a78ee11fad720b08fe8ecec5d086a9290f31e2",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2",
+   "regradedWith": "524acbec join-grader fix"
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "1b24bf289c24",
+   "branch": "t3/tithely-step2",
+   "srcTree": "b3436f4c9098",
+   "createdAt": "2026-10-23T16:18:45.351Z",
+   "cli": "codex-cli 0.163.0",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "1b24bf289c24",
+   "branch": "t3/tithely-step2",
+   "srcTree": "b3436f4c9098",
+   "createdAt": "2026-10-23T16:18:48.976Z",
+   "cli": "2.1.309 (Claude Code)",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "57879bf21391",
+   "branch": "t3/tithely-step2",
+   "srcTree": "e57669e6e265",
+   "createdAt": "2026-10-23T16:30:23.781Z",
+   "cli": "codex-cli 0.163.0",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "57879bf21391",
+   "branch": "t3/tithely-step2",
+   "srcTree": "e57669e6e265",
+   "createdAt": "2026-10-23T16:30:25.805Z",
+   "cli": "2.1.309 (Claude Code)",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "8776b91a0667",
+   "branch": "t3/tithely-step2",
+   "srcTree": "17d7a73bec3d",
+   "createdAt": "2026-10-23T16:52:26.535Z",
+   "cli": "codex-cli 0.163.0",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "tasks": [
+    "tithely-fund-totals",
+    "tithely-recurring-join",
+    "tithely-account-paging",
+    "tithely-widget-hatch",
+    "tithely-refund-duplicate",
+    "tithely-cancel-recovery"
+   ],
+   "commit": "8776b91a0667",
+   "branch": "t3/tithely-step2",
+   "srcTree": "17d7a73bec3d",
+   "createdAt": "2026-10-23T16:52:28.900Z",
+   "cli": "2.1.309 (Claude Code)",
+   "taskDefinitionsHash": "27b74a9953d6105b7efe4963e41346afbe627027259d22d0792373604863464d",
+   "harnessHash": "791a0f77772656b84bf14f108e1a4e8475cc8d151445c6609c650357d3ac39a2"
+  },
+  {
+   "arm": "after4",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "tasks": [
+    "tithely-widget-hatch",
+    "tithely-donor-contact"
+   ],
+   "commit": "abc3f5241ed8",
+   "branch": "t3/tithely-step2",
+   "srcTree": "6747134d3648",
+   "createdAt": "2026-10-23T18:25:33.158Z",
+   "cli": "codex-cli 0.163.0",
+   "taskDefinitionsHash": "1ee343d5537f28102da59a82a0b8ed46a4a17bf2f5b96d1bf31c88df820851df",
+   "harnessHash": "f517c5e6a24bb22dc523a856537f248446042182be3476f438dd2685fc3094c9"
+  },
+  {
+   "arm": "after4",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "tasks": [
+    "tithely-widget-hatch",
+    "tithely-donor-contact"
+   ],
+   "commit": "abc3f5241ed8",
+   "branch": "t3/tithely-step2",
+   "srcTree": "6747134d3648",
+   "createdAt": "2026-10-23T18:25:36.415Z",
+   "cli": "2.1.309 (Claude Code)",
+   "taskDefinitionsHash": "1ee343d5537f28102da59a82a0b8ed46a4a17bf2f5b96d1bf31c88df820851df",
+   "harnessHash": "f517c5e6a24bb22dc523a856537f248446042182be3476f438dd2685fc3094c9"
+  }
+ ],
+ "trials": [
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 4,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 20035
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 17022,
+   "finalAnswer": "Grace Church’s September 2026 charged giving, by fund (UTC):\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Missions | $550.00 | $531.31 |\n| Building Fund | $600.00 | $579.60 |\n| Youth | $550.00 | $531.00 |\n\nSource: Tithe.ly Giving (Grace Church charges, filtered to status “charged” and September 1–October 1, 2026 UTC)."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 4,
+   "guestCalls": 6,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 15899
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 21691,
+   "finalAnswer": "Naomi Castillo — naomi.castillo@gracechurch.example  \nLydia Marsh — lydia.marsh@example.net  \nPeter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 19642
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 12288,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 12385
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_organization": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 13476,
+   "finalAnswer": "Grace Church’s Tithe.ly giving widget ID is **48213**."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 5,
+   "guestCalls": 7,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 20186
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_charges": 1,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 19684,
+   "finalAnswer": "Refunded the later duplicate charge: `ch_Dup2bW5n7R`. The earlier charge, `ch_Dup1aQ8m2K`, was left alone."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 10,
+   "programs": 10,
+   "guestCalls": 14,
+   "downstreamRequests": 8,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 44483
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 4,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 34804,
+   "finalAnswer": "Bob Smith’s weekly recurring gift to Grace Church (ID **rc_B0bWk1y9Tz**) is now cancelled."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 4,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 19642
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16002,
+   "finalAnswer": "**Grace Church — September 2026 (UTC)**  \nOnly charges with status **charged** are included. Amounts are in USD.\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Missions | $550.00 | $531.31 |\n| Building Fund | $600.00 | $579.60 |\n| Youth | $550.00 | $531.00 |\n\n**Source:** Tithe.ly Giving (Grace Church charges)."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 6,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 26583
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 16246,
+   "finalAnswer": "- Peter Lindqvist — peter.lindqvist@example.org\n- Lydia Marsh — lydia.marsh@example.net\n- Naomi Castillo — naomi.castillo@gracechurch.example"
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 17405
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 17167,
+   "finalAnswer": "There are 37 donor accounts with an email address at gracechurch.example.\n\nANSWER: 37"
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 0,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 11292
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {},
+   "wallMs": 11976,
+   "finalAnswer": "I couldn’t find a Tithe.ly giving widget ID in the available connector tools. They expose organization and giving data, but no widget or embed-form ID."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 13,
+   "programs": 3,
+   "guestCalls": 8,
+   "downstreamRequests": 11,
+   "discoveryBytes": {
+    "topLevelText": 13888,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 9,
+    "tithely.list_charges": 1,
+    "tithely.tithely_api_mutate": 2,
+    "undefined": 1
+   },
+   "wallMs": 34262,
+   "finalAnswer": "Refunded the later duplicate charge: **ch_Dup2bW5n7R**. The earlier charge, **ch_Dup1aQ8m2K**, was left unchanged."
+  },
+  {
+   "arm": "before",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 5,
+   "guestCalls": 8,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 31155
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 19857,
+   "finalAnswer": "Bob Smith’s weekly recurring gift to Grace Church, **rc_B0bWk1y9Tz**, no longer appears in the recurring-gifts list after the cancellation request. It is **cancelled**."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 12768,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 21037,
+   "finalAnswer": "Grace Church's September 2026 giving (UTC), by fund. It counts only charges with status \"charged\".\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| Building Fund | 10 | $600.00 | $579.60 |\n| General Fund | 11 | $525.00 | $506.47 |\n| Missions | 9 | $550.00 | $531.31 |\n| Youth | 10 | $550.00 | $531.00 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Source:** Tithe.ly Giving, using the `list_charges` call for Grace Church (org_Gr8cE21fQx). Gross is each charge's `amountCents`, and net is its `netAmountCents`, which is the amount after fees.\n- **Date range:** I pulled charges with a one-day margin on each side of September. I then kept only those whose `chargedAt` falls from 2026-09-01 00:00 UTC up to, but not including, 2026-10-01 00:00 UTC.\n- **Excluded:** The pull returne"
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 14739,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 19203,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and made no one-time gift to Grace Church in October 2026 (UTC):\n\n| Name | Email |\n|---|---|\n| Naomi Castillo | naomi.castillo@gracechurch.example |\n| Lydia Marsh | lydia.marsh@example.net |\n| Peter Lindqvist | peter.lindqvist@example.org |\n\nI pulled Grace Church's recurring gifts and its October charges. I counted a charge as one-time when it wasn't flagged as recurring. All 54 October charges had a status of \"charged\".\n\nI didn't separately check charges dated exactly at the start or end of October. The date filter returned only October charges, so I don't expect any were missed."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 5202,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 14076,
+   "finalAnswer": "37 donor accounts have an email address at gracechurch.example. I paged through all 130 accounts with the connector's `all` scope and matched on the email domain. The `api` scope is a subset of 13 accounts, 3 of which match, and those 3 are already part of the 37.\n\nANSWER: 37"
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 4,
+   "programs": 3,
+   "guestCalls": 5,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3140,
+    "guestResults": 24148
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_organization": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 21977,
+   "finalAnswer": "I couldn't find a separate giving widget id for Grace Church. The connector has no widget field or widget endpoint.\n\nThe only identifier it gives for Grace Church is the organization id:\n\n**`org_Gr8cE21fQx`**\n\nBoth `list_organizations` and `get_organization` returned that id. I'm not certain the web developer can use it as the widget id, so they should check it against Tithe.ly's embed instructions. If the embed code needs a different value, it would have to come from the Tithe.ly dashboard's embed or widget settings.\n\nThe developer may also want the fund ids for the form:\n- 10: General Fund (active)\n- 11: Missions (active)\n- 12: Building Fund (active)\n- 13: Youth (hidden)\n- 14: Benevolence (archived)\n\nDon't confuse this with Hope Chapel, whose id is `org_H0peC9pLm2`."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 2,
+   "guestCalls": 9,
+   "downstreamRequests": 10,
+   "discoveryBytes": {
+    "topLevelText": 4353,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 7,
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 23144,
+   "finalAnswer": "I refunded the later of the two duplicate charges: **ch_Dup2bW5n7R**. It was Jane Doe's $50 gift to Grace Church's General Fund, charged at 14:05:47 UTC on October 12, 2026. Tithe.ly confirmed the full $50 refund.\n\nI left the earlier charge, ch_Dup1aQ8m2K (14:02:11 UTC), alone. Her $50 gift from October 5 was also untouched."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 7,
+   "discoveryBytes": {
+    "topLevelText": 3140,
+    "guestResults": 10720
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 2,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 35516,
+   "finalAnswer": "Bob Smith's weekly gift to Grace Church is cancelled. Its id is **rc_B0bWk1y9Tz**. It was $25.00 a week to the General Fund.\n\nThe cancel request returned an upstream \"Internal server error\" and said it couldn't tell whether the cancel went through. I didn't repeat it. I checked afterwards instead:\n- Looking up `rc_B0bWk1y9Tz` now returns \"Recurring charge not found\".\n- Bob's recurring gift list no longer includes it.\n\nTithe.ly never confirmed the cancel directly, but both checks show the gift is gone.\n\nBob's separate monthly $40.00 gift to Hope Chapel (`rc_B0bH0pe3Lx`) wasn't touched and is still active."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 12768,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 38843,
+   "finalAnswer": "Grace Church's September 2026 giving (UTC), by fund. The source is Tithe.ly, from the charges list for Grace Church (org_Gr8cE21fQx). Only charges with status \"charged\" are counted.\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | 40 | **$2,225.00** | **$2,148.38** |\n\n- **Excluded charge:** One charge in the period had status \"refunded\", so I left it out.\n- **Date range:** I queried September 1 through September 30, 2026 (UTC). Every charge returned fell inside that range.\n- **Gross and net:** Gross is the charge amount. Net is the amount after fees, as Tithe.ly reports it on each charge."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 12768,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 20978,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and no one-time gift there in October 2026 (UTC):\n\n- Naomi Castillo, naomi.castillo@gracechurch.example\n- Lydia Marsh, lydia.marsh@example.net\n- Peter Lindqvist, peter.lindqvist@example.org\n\nSeven donors have a monthly gift to Grace Church. The other four (Tobias Wren, Simon Ferreira, Joy Adeyemi and Grace Holloway) each made a one-time gift there in October, so I left them out.\n\nI pulled October charges with a created-date filter of Oct 1 to Nov 1 (UTC). I didn't separately check for gifts stamped exactly on a boundary. The earliest October charge returned was at 00:10 on Oct 1 and the latest was on Oct 30."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 12768,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 12362,
+   "finalAnswer": "37 donor accounts have an email address at gracechurch.example. I paged through all 130 donor accounts (scope \"all\") and counted the ones whose email ends in `@gracechurch.example`, ignoring case. No account was counted twice.\n\nANSWER: 37"
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 0,
+   "guestCalls": 0,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 7825,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 14507,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nThe Tithe.ly connector returned it as the `widget_id` on Grace Church's organization record. That record's organization id is `org_Gr8cE21fQx`. The widget id for Hope Chapel, the other organization on this account, is 51990. Your web developer should not use that one."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 2,
+   "guestCalls": 9,
+   "downstreamRequests": 10,
+   "discoveryBytes": {
+    "topLevelText": 4353,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 7,
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 26314,
+   "finalAnswer": "I refunded the later of the two duplicate charges: **ch_Dup2bW5n7R**. It was the $50 gift to Grace Church's General Fund, charged at 14:05:47 UTC on October 12, 2026. Tithe.ly confirmed the refund.\n\nI left the earlier charge, ch_Dup1aQ8m2K (14:02:11 UTC, also $50), as it was."
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 6,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 6766,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_mutate": 1
+   },
+   "wallMs": 28711,
+   "finalAnswer": "The recurring gift is `rc_B0bWk1y9Tz`, and it now looks cancelled, though Tithe.ly never confirmed it.\n\nThe cancel request came back with an \"Internal server error\", and Tithe.ly said it couldn't tell whether the cancel went through. I checked afterward:\n- **Direct lookup:** `rc_B0bWk1y9Tz` now returns \"Recurring charge not found\".\n- **Bob's other gifts:** it no longer appears among his recurring gifts. Only his separate monthly $40 Outreach gift to Hope Chapel (`rc_B0bH0pe3Lx`) is left, and I didn't touch it.\n\nThe gift I cancelled was Bob Smith's weekly $25 General Fund gift to Grace Church. Cancelling stops future charges and refunds nothing."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 13215
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 21999,
+   "finalAnswer": "Grace Church’s September 2026 giving in UTC, counting only charges with status **charged**:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Missions | $550.00 | $531.31 |\n| Building Fund | $600.00 | $579.60 |\n| Youth | $550.00 | $531.00 |\n\n**Total:** $2,225.00 gross; $2,170.38 net across 40 charges.\n\nSource: **Tithe.ly Giving** (Grace Church organization). Date window: 2026-09-01 00:00 UTC inclusive through 2026-10-01 00:00 UTC exclusive."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 5,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21334
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 20420,
+   "finalAnswer": "- Naomi Castillo — naomi.castillo@gracechurch.example\n- Lydia Marsh — lydia.marsh@example.net\n- Peter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21381
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 18422,
+   "finalAnswer": "There are 37 donor accounts with an email address at gracechurch.example.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 3,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 14090
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 13094,
+   "finalAnswer": "Grace Church’s Tithe.ly organization ID is **`org_Gr8cE21fQx`**."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 6,
+   "guestCalls": 8,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 14594
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 189,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_charges": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 25079,
+   "finalAnswer": "Refunded the later $50 charge, **`ch_Dup2bW5n7R`** (charged at 14:05:47 UTC). The earlier charge was left untouched."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 9,
+   "programs": 9,
+   "guestCalls": 12,
+   "downstreamRequests": 6,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 18911
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 766,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 319,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 3,
+    "tithely.list_recurring_charges": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 28711,
+   "finalAnswer": "Bob Smith’s weekly recurring gift to Grace Church was **rc_B0bWk1y9Tz**. The cancellation request was sent, but its outcome was unknown. A follow-up lookup reported “Recurring charge not found,” so I can’t confirm whether it is cancelled."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21334
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16862,
+   "finalAnswer": "Grace Church’s September 2026 giving, counting only **charged** transactions dated in September UTC:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Youth | $550.00 | $531.00 |\n| Building Fund | $600.00 | $579.60 |\n| Missions | $550.00 | $531.31 |\n\n**Source:** Tithe.ly Giving (Grace Church charges)."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 10584
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 22492,
+   "finalAnswer": "- Naomi Castillo — naomi.castillo@gracechurch.example\n- Lydia Marsh — lydia.marsh@example.net\n- Peter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 3,
+   "guestCalls": 5,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 14786
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 21251,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 14151
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 14906,
+   "finalAnswer": "Grace Church’s Tithe.ly organization ID is **`org_Gr8cE21fQx`**. I couldn’t find a separate giving-widget ID in the connector’s available data."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 9,
+   "programs": 9,
+   "guestCalls": 11,
+   "downstreamRequests": 6,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21785
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 189,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 0,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_details": 2,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 29023,
+   "finalAnswer": "Refunded the later charge, **ch_Dup2bW5n7R** (October 12, 2026 at 14:05:47 UTC). The earlier charge was left alone."
+  },
+  {
+   "arm": "after1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 10,
+   "programs": 8,
+   "guestCalls": 12,
+   "downstreamRequests": 7,
+   "discoveryBytes": {
+    "topLevelText": 2132,
+    "guestResults": 19720
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 766,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 319,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 3,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 26956,
+   "finalAnswer": "The recurring gift ID is **rc_B0bWk1y9Tz**. The cancellation call returned an internal-server error, and a follow-up lookup says the recurring charge was not found. That suggests it may have been cancelled, but I can’t confirm its status from Tithe.ly, so I can’t say definitively that it is cancelled."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14049,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16297,
+   "finalAnswer": "**Grace Church, September 2026 giving (UTC), by fund**\n\nSource: Tithe.ly Giving, using the `list_charges` read for organization `org_Gr8cE21fQx`. I counted only charges with status `charged`. That is 40 charges. One refunded charge is excluded.\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Missions | 9 | $550.00 | $531.31 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Youth | 10 | $550.00 | $531.00 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Net:** Net is the amount after Tithe.ly's processing fees, as reported on each charge.\n- **Youth fund:** Youth is marked \"hidden\" in the organization's fund list, but it has charged gifts in September, so I included it.\n- **Benevolence fund:** Benevolence has no September charges."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16190,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 27996,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and no one-time gift to Grace Church in October 2026 (UTC):\n\n| Name | Email |\n|---|---|\n| Naomi Castillo | naomi.castillo@gracechurch.example |\n| Lydia Marsh | lydia.marsh@example.net |\n| Peter Lindqvist | peter.lindqvist@example.org |\n\n- **Date range:** Some October charges are dated after today (2026-10-23), up to Oct 30. I counted them anyway because they're in the data.\n- **Charge status:** Every October charge had a status of \"charged\", so no failed charges needed excluding."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 5079,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 14330,
+   "finalAnswer": "37 of the 130 donor accounts visible to these keys have an email address ending in @gracechurch.example. I paged through every account, matched the domain case-insensitively, and counted each account id once. Subdomains such as @mail.gracechurch.example would not be counted.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 3,
+   "guestCalls": 8,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14049,
+    "guestResults": 1071
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 781,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 6
+   },
+   "wallMs": 22395,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nIt comes from the `widget_id` field on the organization record for Grace Church (`org_Gr8cE21fQx`). The connector's named organization list leaves that field out, so I read the record directly with `GET /organizations/org_Gr8cE21fQx`."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 4,
+   "guestCalls": 5,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 5356,
+    "guestResults": 7495
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 2,
+    "tithely.list_organizations": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 22277,
+   "finalAnswer": "I refunded the later of Jane Doe's two duplicate charges: **ch_Dup2bW5n7R**. It was the $50 gift to Grace Church charged at 14:05:47 UTC on October 12, 2026. The refund returned a success status for the full $50.\n\nI left the earlier charge, ch_Dup1aQ8m2K (14:02:11 UTC, also $50), untouched."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 4,
+   "guestCalls": 5,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 7654,
+    "guestResults": 4240
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 66520,
+   "finalAnswer": "The recurring gift is `rc_B0bWk1y9Tz`, and it is now cancelled.\n\nThe cancel request came back with an \"Internal server error\", so I checked the result afterward. Tithe.ly no longer finds `rc_B0bWk1y9Tz`. It also no longer appears in Bob's list of recurring gifts. That gift was $25.00 a week to the General Fund at Grace Church, started 2025-06-01.\n\nBob still has a separate monthly recurring gift to Hope Chapel (`rc_B0bH0pe3Lx`). I didn't touch it, since you only asked about Grace Church."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14049,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 15326,
+   "finalAnswer": "Grace Church's September 2026 giving, from Tithe.ly (org_Gr8cE21fQx). It covers 40 charges with status `charged`, dated 2026-09-01 through 2026-09-30 UTC.\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\nNet is the amount after processing fees. I excluded one refunded charge from the query window, because only `charged` status counts."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16190,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 18542,
+   "finalAnswer": "Three donors match. Each has a monthly recurring gift to Grace Church and no one-time gift to Grace Church in October 2026 (UTC):\n\n- **Naomi Castillo**: naomi.castillo@gracechurch.example\n- **Lydia Marsh**: lydia.marsh@example.net\n- **Peter Lindqvist**: peter.lindqvist@example.org\n\nSeven donors have a monthly recurring gift to Grace Church. The other four (Tobias Wren, Simon Ferreira, Joy Adeyemi and Grace Holloway) each made a one-time gift in October, so I left them out.\n\nI counted only gifts to Grace Church, not Hope Chapel. October's charges ran from Oct 1 to Oct 30."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 5079,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 18152,
+   "finalAnswer": "37 of the 130 donor accounts have an email address ending in @gracechurch.example. I paged through every account the connector can see and matched the domain case-insensitively. Subdomains such as @mail.gracechurch.example wouldn't have matched, and I didn't check whether any exist.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 3,
+   "guestCalls": 8,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 6578,
+    "guestResults": 1071
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 781,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 6
+   },
+   "wallMs": 32502,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nI got it from the `widget_id` field on Grace Church's organization record (`org_Gr8cE21fQx`). The connector's `list_organizations` tool doesn't return that field, so I read the record directly with `tithely_api_read`."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 17226,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 16589,
+   "finalAnswer": "I refunded the later of the two duplicate charges: **ch_Dup2bW5n7R**. It was the $50 General Fund gift to Grace Church made at 14:05:47 UTC on October 12, 2026. Tithe.ly returned a success response showing the full $50 refunded.\n\nI left the earlier charge, ch_Dup1aQ8m2K (14:02:11 UTC), alone."
+  },
+  {
+   "arm": "after1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 6541,
+    "guestResults": 4240
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 29953,
+   "finalAnswer": "The recurring gift is `rc_B0bWk1y9Tz`, and it now looks cancelled, though Tithe.ly never confirmed the cancellation.\n\nIt was Bob Smith's $25.00 weekly gift to Grace Church's General Fund, which started 2025-06-01.\n\nMy delete request came back with an \"Internal server error\" that said whether it took effect was unknown. I then checked:\n- **Direct lookup:** Tithe.ly now says `rc_B0bWk1y9Tz` is \"not found\". It was in Grace Church's list before the delete.\n- **Bob's recurring gifts:** only his monthly $40.00 Outreach gift to Hope Chapel (`rc_B0bH0pe3Lx`) remains. I left it alone because it wasn't part of the request.\n\nI didn't send the delete a second time."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 4,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 8450
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 24215,
+   "finalAnswer": "Grace Church’s **September 2026 giving (UTC)**, counting only charges with status **charged**:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Missions | $550.00 | $531.31 |\n| Building Fund | $600.00 | $579.60 |\n| Youth | $550.00 | $531.00 |\n\n**Source system:** Tithe.ly Giving connector. Summed from charges dated September 1 through September 30, 2026 UTC; 40 qualifying charges total."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 3,
+   "guestCalls": 5,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 4328,
+    "guestResults": 14221
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 18968,
+   "finalAnswer": "Ella Nguyen — ella.nguyen52@gracechurch.example  \nNoah Rossi — noah.rossi51@example.org  \nMia Brooks — mia.brooks50@example.com  \nNaomi Castillo — naomi.castillo@gracechurch.example  \nBob Smith — bob.smith@example.net  \nLydia Marsh — lydia.marsh@example.net  \nPeter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 5077
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 11392,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 16479
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 11375,
+   "finalAnswer": "Grace Church’s Tithe.ly organization ID is **`org_Gr8cE21fQx`**. I couldn’t find a separate giving-widget ID in the available Tithe.ly connector data."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 7,
+   "guestCalls": 9,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 38629
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 189,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 1,
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 22621,
+   "finalAnswer": "Refunded the later duplicate charge: **ch_Dup2bW5n7R**. The earlier charge was left alone."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 6,
+   "programs": 6,
+   "guestCalls": 10,
+   "downstreamRequests": 8,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21070
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 4,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 23015,
+   "finalAnswer": "Bob Smith’s weekly gift to Grace Church was recurring gift **rc_B0bWk1y9Tz**. The cancellation request was sent, but its outcome is uncertain; a follow-up lookup reported “Recurring charge not found.” I can’t confirm from that response alone whether the gift is now cancelled."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 13242
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 14825,
+   "finalAnswer": "Grace Church’s **September 2026 UTC** giving from **charged** transactions, by fund:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Youth | $550.00 | $531.00 |\n| Building Fund | $600.00 | $579.60 |\n| Missions | $550.00 | $531.31 |\n\n**Source system:** Tithe.ly Giving. Totals use each charge’s gross and net amounts; 40 charged transactions were included."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 6,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 18386
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 17866,
+   "finalAnswer": "Naomi Castillo — naomi.castillo@gracechurch.example  \nLydia Marsh — lydia.marsh@example.net  \nPeter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 5088
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 10185,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 3,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 19725
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 11173,
+   "finalAnswer": "Grace Church’s Tithe.ly organization ID is **`org_Gr8cE21fQx`**. I couldn’t find a separate giving-widget ID in the Tithe.ly connector; it exposes the organization ID and giving funds, but no widget ID."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 14,
+   "programs": 10,
+   "guestCalls": 11,
+   "downstreamRequests": 7,
+   "discoveryBytes": {
+    "topLevelText": 5586,
+    "guestResults": 12572
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 189,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 4,
+    "tithely.list_charges": 2,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 26761,
+   "finalAnswer": "Refunded the later duplicate charge: **`ch_Dup2bW5n7R`**. The earlier charge was left alone."
+  },
+  {
+   "arm": "after2",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    "correct-destination",
+    "no-blind-resend",
+    "reconciled",
+    "state"
+   ],
+   "mcpCalls": 7,
+   "programs": 3,
+   "guestCalls": 8,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 20306,
+    "guestResults": 13838
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 21419,
+   "finalAnswer": "I found Bob Smith’s weekly Grace Church recurring gift: **`rc_B0bWk1y9Tz`**. I haven’t cancelled it—the connector requires approval for this destructive change."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14076,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16159,
+   "finalAnswer": "**Grace Church, September 2026 giving (UTC), status \"charged\" only**\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Source:** Tithe.ly, using the Giving connector's `list_charges` for Grace Church (`org_Gr8cE21fQx`).\n- **Date range:** 2026-09-01 00:00 UTC up to, but not including, 2026-10-01 00:00 UTC.\n- **Excluded:** The query returned 41 charges for the month. One has status \"refunded\", so I left it out.\n- **Net:** Net is gross minus processing fees, as Tithe.ly reports it on each charge."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16217,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 29413,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and made no one-time gift to Grace Church in October 2026 (UTC):\n\n- Naomi Castillo, naomi.castillo@gracechurch.example\n- Lydia Marsh, lydia.marsh@example.net\n- Peter Lindqvist, peter.lindqvist@example.org\n\nI counted a donor as having a one-time gift if they had any non-recurring charge to Grace Church dated 1–31 October 2026 (UTC). All the October charges had the status \"charged\", so no failed charges needed excluding."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 9045,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 21404,
+   "finalAnswer": "37 of the 130 donor accounts have an email address ending in @gracechurch.example. I paged through every account and counted the matches, ignoring case and stray spaces. No other email contained \"gracechurch\", so near-miss spellings don't affect the count.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 4,
+   "guestCalls": 5,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14154,
+    "guestResults": 839
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 781,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 2
+   },
+   "wallMs": 36701,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nI read it from the `widget_id` field on Grace Church's organization record (`org_Gr8cE21fQx`). The connector's standard organization list leaves that field out, so I pulled the full record instead."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 4,
+   "guestCalls": 5,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 5356,
+    "guestResults": 7511
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 2,
+    "tithely.list_organizations": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 29368,
+   "finalAnswer": "I refunded the later of Jane Doe's two duplicate $50 charges to Grace Church. Its id is **ch_Dup2bW5n7R**. Tithe.ly returned a success status with `refunded: true`.\n\nThe two charges were both on October 12, 2026, to the General Fund:\n- **ch_Dup1aQ8m2K** was charged at 14:02:11 UTC. I left it alone.\n- **ch_Dup2bW5n7R** was charged at 14:05:47 UTC. This is the one I refunded."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 7654,
+    "guestResults": 7832
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 26215,
+   "finalAnswer": "Bob Smith's weekly recurring gift to Grace Church is cancelled. Its id is **rc_B0bWk1y9Tz**. It was $25.00 a week to the General Fund, started 2025-06-01.\n\nThe cancel request came back with an \"Internal server error\", so I checked the result separately:\n- Looking up `rc_B0bWk1y9Tz` now returns \"Recurring charge not found\".\n- Bob's recurring gifts no longer include it. The only one left is his monthly $40 Outreach gift to Hope Chapel (`rc_B0bH0pe3Lx`), which I didn't touch.\n\nCancelling stops future charges only. It doesn't refund anything already given."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14076,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 18874,
+   "finalAnswer": "**Grace Church (org_Gr8cE21fQx), September 2026 giving (UTC), by fund**\n\nI counted only charges with status \"charged\".\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Excluded charge:** One September charge had status \"refunded\", so I left it out.\n- **Date range:** I took charges dated 2026-09-01 through 2026-09-30 UTC.\n- **Net amounts:** Net is the amount after fees, as Tithe.ly reports it on each charge.\n- **Source:** Tithe.ly Giving (tithe.ly), read live through the connector's `list_organizations` and `list_charges` tools."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16217,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 16631,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and made no one-time gift to Grace Church in October 2026 (UTC):\n\n- **Naomi Castillo**: naomi.castillo@gracechurch.example\n- **Lydia Marsh**: lydia.marsh@example.net\n- **Peter Lindqvist**: peter.lindqvist@example.org\n\nGrace Church has seven monthly recurring donors. The other four each made a one-time gift in October, so I left them out: Tobias Wren, Simon Ferreira, Joy Adeyemi and Grace Holloway.\n\nI pulled Grace Church's October charges with a created-date filter from 2026-10-01 to 2026-11-01. I didn't separately check charges at the exact start and end of that range. If a one-time gift landed right on a boundary, it could be missing."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 14076,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 16978,
+   "finalAnswer": "37 of the 130 donor accounts have an email address at gracechurch.example. I paged through every account and matched on the domain after the @, ignoring case. No other emails contained \"gracechurch\", so there were no near-miss domains to consider.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 6,
+   "guestCalls": 6,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3968,
+    "guestResults": 7485
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 781,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 2,
+    "tithely.tithely_api_search": 2
+   },
+   "wallMs": 26748,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nI got it from the organization record for Grace Church (`org_Gr8cE21fQx`), where it appears as `widget_id`. The standard organization list doesn't include that field, so I read it from the full organization record instead."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 17253,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 19943,
+   "finalAnswer": "I refunded the later of the two duplicate charges: **ch_Dup2bW5n7R**. It was the $50 General Fund gift charged at 14:05:47 UTC on October 12, 2026. Tithe.ly returned a success status and marked it as refunded.\n\nI left the earlier charge, ch_Dup1aQ8m2K (14:02:11 UTC), alone. Both charges used the same payment method."
+  },
+  {
+   "arm": "after2",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 7654,
+    "guestResults": 10134
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 40914,
+   "finalAnswer": "Bob Smith's weekly recurring gift to Grace Church is cancelled. Its id is **rc_B0bWk1y9Tz**. It was $25.00 a week to the General Fund.\n\nThe cancel request returned an \"Internal server error\" and said it couldn't confirm the result. I didn't resend it. I listed Grace Church's recurring gifts afterward, and rc_B0bWk1y9Tz is no longer on the list. It was there before the cancel. A lookup with `get_recurring_charge` would give a direct confirmation, but I didn't run one.\n\nCancelling stops future charges only. It doesn't refund any gifts already made."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 501,
+    "guestResults": 13235
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 17070,
+   "finalAnswer": "Grace Church giving in September 2026 (UTC), counting only charges with status **charged**:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Youth | $550.00 | $531.00 |\n| Building Fund | $600.00 | $579.60 |\n| Missions | $550.00 | $531.31 |\n\n**Source:** Tithe.ly Giving (40 charged transactions)."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 4,
+   "guestCalls": 7,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 20493
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 18632,
+   "finalAnswer": "Naomi Castillo — naomi.castillo@gracechurch.example  \nLydia Marsh — lydia.marsh@example.net  \nPeter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 3,
+   "guestCalls": 5,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 6197
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 13340,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 30783
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 9253,
+   "finalAnswer": "Grace Church’s Tithe.ly organization ID is **`org_Gr8cE21fQx`**."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    "correct-destination",
+    "state",
+    "only-requested-writes"
+   ],
+   "mcpCalls": 6,
+   "programs": 5,
+   "guestCalls": 6,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 3827,
+    "guestResults": 5680
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_charges": 1
+   },
+   "wallMs": 16299,
+   "finalAnswer": "I found the two $50 Grace Church charges. The later one was **ch_Dup2bW5n7R** (October 12 at 14:05:47 UTC); the earlier charge was left alone. I haven’t issued the refund because Tithe.ly requires approval for the money-moving action."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 10,
+   "programs": 7,
+   "guestCalls": 9,
+   "downstreamRequests": 8,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21740
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 243,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 4,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 2
+   },
+   "wallMs": 25405,
+   "finalAnswer": "Bob Smith’s weekly Grace Church recurring gift is **rc_B0bWk1y9Tz**. The cancellation attempt returned an internal server error with an unknown outcome; a follow-up lookup says the recurring charge was not found. I can’t confirm whether it is cancelled."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 4,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 13242
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 15926,
+   "finalAnswer": "Grace Church’s **September 2026 UTC** giving, counting only charges with status **charged**:\n\n| Fund | Gross | Net |\n|---|---:|---:|\n| General Fund | $525.00 | $506.47 |\n| Youth | $550.00 | $531.00 |\n| Building Fund | $600.00 | $579.60 |\n| Missions | $550.00 | $531.31 |\n\n**Source system:** Tithe.ly Giving. I used the charge date range from 2026-09-01 00:00 UTC (inclusive) to 2026-10-01 00:00 UTC (exclusive) and summed the charge gross and net amounts by fund."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 5,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21497
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 12678,
+   "finalAnswer": "- Naomi Castillo — naomi.castillo@gracechurch.example\n- Lydia Marsh — lydia.marsh@example.net\n- Peter Lindqvist — peter.lindqvist@example.org"
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 21497
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 2
+   },
+   "wallMs": 11170,
+   "finalAnswer": "ANSWER: 37"
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 10848
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 10561,
+   "finalAnswer": "The Tithe.ly widget ID for Grace Church is **`org_Gr8cE21fQx`**."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 8,
+   "programs": 8,
+   "guestCalls": 9,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 22196
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 601,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.list_charges": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_search": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 26987,
+   "finalAnswer": "Refunded the later $50 Grace Church charge, **`ch_Dup2bW5n7R`** (charged at 14:05:47 UTC). The earlier charge was left alone."
+  },
+  {
+   "arm": "after3",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 10,
+   "programs": 10,
+   "guestCalls": 12,
+   "downstreamRequests": 6,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 23124
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 58,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 1250,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 0,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 319,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_accounts": 3,
+    "tithely.list_recurring_charges": 1,
+    "tithely.tithely_api_details": 2,
+    "tithely.tithely_api_search": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 24530,
+   "finalAnswer": "Bob Smith’s weekly gift to Grace Church has recurring gift ID **rc_B0bWk1y9Tz**. I attempted to cancel it, but the connector reported an unknown write outcome. A follow-up lookup says the recurring charge was not found, so I **can’t confirm whether it is now cancelled**."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 14094,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 2,
+    "tithely.list_organizations": 2
+   },
+   "wallMs": 28589,
+   "finalAnswer": "Grace Church's September 2026 giving (UTC), counting only charges with status `charged`:\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Source:** Tithe.ly Giving, using the `list_charges` read for Grace Church (`org_Gr8cE21fQx`). I filtered on created dates from 2026-09-01 to before 2026-10-01 UTC.\n- **Excluded:** One refunded charge fell in the range, and I left it out. All 40 `charged` charges had charge dates inside September.\n- **Net:** Net is the amount Tithe.ly reports on each charge after fees."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16235,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 22951,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and made no one-time gift to Grace Church in October 2026 (UTC):\n\n| Name | Email |\n|---|---|\n| Naomi Castillo | naomi.castillo@gracechurch.example |\n| Lydia Marsh | lydia.marsh@example.net |\n| Peter Lindqvist | peter.lindqvist@example.org |\n\nI counted a gift as one-time when its charge had `recurring: false`. I took October 2026 as 1 October through 31 October, UTC. I didn't separately check charges at the very start or end of the month, so a gift right at either boundary could be missed."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 9045,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 12207,
+   "finalAnswer": "37 of the 130 donor accounts have an email address at gracechurch.example. I paged through every account and matched the domain after the \"@\", ignoring case and stray spaces. No other email contained \"gracechurch\", so there are no near-miss domains that could change the count.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 6594,
+    "guestResults": 1375
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 1375,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 10838,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nI got it from the `widget_id` field on Grace Church's organization record (`org_Gr8cE21fQx`). The web developer needs the widget id, not the organization id, so use 48213 in the embed."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 12896,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 262,
+     "route": "top"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 2,
+    "tithely.list_charges": 1,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_write": 2
+   },
+   "wallMs": 18892,
+   "finalAnswer": "I refunded the later of the two duplicate charges: **ch_Dup2bW5n7R**. Tithe.ly returned `status: \"success\"` and `refunded: true` for the full $50.\n\nBoth charges were Jane Doe's $50 gifts to Grace Church's General Fund on October 12, 2026. The earlier one, ch_Dup1aQ8m2K at 14:02:11 UTC, is untouched. The refunded one was made at 14:05:47 UTC.\n\nI didn't touch Jane's separate $25 Outreach gift to Hope Chapel from the same day."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 7,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 6541,
+    "guestResults": 7832
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 32688,
+   "finalAnswer": "The recurring gift is **rc_B0bWk1y9Tz**. It looks cancelled, but Tithe.ly never confirmed it directly.\n\n- **What I cancelled:** Bob Smith's weekly $25.00 General Fund gift to Grace Church. It was the only recurring gift of his at Grace Church.\n- **The error:** The cancel request returned an \"Internal server error\", and Tithe.ly said it couldn't tell whether the cancellation went through.\n- **How I checked:** I didn't send the cancel again. Looking up `rc_B0bWk1y9Tz` now returns \"Recurring charge not found\". Bob's account now lists only his monthly $40 Outreach gift to Hope Chapel (`rc_B0bH0pe3Lx`). The Grace Church gift is gone from that list.\n- **Hope Chapel gift:** I left it alone, since you only asked about Grace Church.\n\nIf you need certainty, check the gift in the Tithe.ly dashboard."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-fund-totals",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 4,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 14094,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 2,
+    "tithely.list_organizations": 2
+   },
+   "wallMs": 20346,
+   "finalAnswer": "Grace Church's September 2026 giving (UTC), counting only charges with status \"charged\":\n\n| Fund | Charges | Gross | Net |\n|---|---|---|---|\n| General Fund | 11 | $525.00 | $506.47 |\n| Youth | 10 | $550.00 | $531.00 |\n| Building Fund | 10 | $600.00 | $579.60 |\n| Missions | 9 | $550.00 | $531.31 |\n| **Total** | **40** | **$2,225.00** | **$2,148.38** |\n\n- **Source:** Tithe.ly Giving, read live through the Tithe.ly connector (`list_charges` for Grace Church, org_Gr8cE21fQx). Hope Chapel is a separate organization and is not included.\n- **Excluded:** The organization had 41 charges in the window. One was refunded, and I left it out.\n- **Net:** Net is each charge's `netAmountCents`, which is the gross minus processing fees."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-recurring-join",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 16235,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 1
+   },
+   "wallMs": 19449,
+   "finalAnswer": "Three donors have a monthly recurring gift to Grace Church and made no one-time gift to Grace Church in October 2026 (UTC):\n\n| Name | Email |\n|---|---|\n| Naomi Castillo | naomi.castillo@gracechurch.example |\n| Lydia Marsh | lydia.marsh@example.net |\n| Peter Lindqvist | peter.lindqvist@example.org |\n\nI checked Grace Church's recurring gifts and its charges dated 1 to 31 October 2026 (UTC). A donor counted as having a one-time gift if they had any charge with `recurring: false` in that window. All October charges had the status \"charged\"."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-account-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 5088,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_accounts": 3
+   },
+   "wallMs": 16104,
+   "finalAnswer": "37 of the 130 donor accounts have an email address at gracechurch.example. I paged through every account and matched the email domain, ignoring case and surrounding spaces. I didn't check for lookalike domains such as subdomains.\n\nANSWER: 37"
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 3,
+   "guestCalls": 4,
+   "downstreamRequests": 2,
+   "discoveryBytes": {
+    "topLevelText": 6594,
+    "guestResults": 1375
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 1375,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_read": 2,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 15504,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nI got it from the `widget_id` field on the organization record for Grace Church (`org_Gr8cE21fQx`). Don't hand the developer the organization id, because that's a different value."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-refund-duplicate",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 6,
+   "programs": 1,
+   "guestCalls": 2,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 15473,
+    "guestResults": 0
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_charges": 1,
+    "tithely.list_organizations": 1,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 36369,
+   "finalAnswer": "I refunded the later of Jane Doe's two duplicate charges: **ch_Dup2bW5n7R**. Tithe.ly confirmed the $50 refund.\n\nThe two charges were both $50 to Grace Church's General Fund on October 12, 2026. The refunded one was made at 14:05:47 UTC. I left the earlier one, ch_Dup1aQ8m2K (14:02:11 UTC), alone."
+  },
+  {
+   "arm": "after3",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-cancel-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 9,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 5,
+   "discoveryBytes": {
+    "topLevelText": 7654,
+    "guestResults": 17869
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.get_recurring_charge": 1,
+    "tithely.list_organizations": 1,
+    "tithely.list_recurring_charges": 2,
+    "tithely.tithely_api_write": 1
+   },
+   "wallMs": 29142,
+   "finalAnswer": "Bob Smith's weekly recurring gift to Grace Church is cancelled, as far as I can tell. Tithe.ly didn't confirm it directly.\n\n- **Recurring gift id:** `rc_B0bWk1y9Tz`. It was $25.00 a week to the General Fund, started 2025-06-01.\n- **What happened:** I sent the cancel request. Tithe.ly returned an \"Internal server error\" and said it couldn't tell whether the cancel took effect.\n- **Why I think it worked:** I then looked the gift up by id and Tithe.ly said \"Recurring charge not found.\" Bob's account (`user_B0bSm1th4q`) now lists only his monthly $40 gift to Hope Chapel (`rc_B0bH0pe3Lx`), which I left alone. I didn't send the cancel a second time.\n- **Caveat:** Tithe.ly gives the same \"not found\" reply for unknown ids, so this is strong evidence rather than proof. You may want to check Grace C"
+  },
+  {
+   "arm": "after4",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 20688
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 13690,
+   "finalAnswer": "Grace Church’s Tithe.ly giving widget ID is **48213**."
+  },
+  {
+   "arm": "after4",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-donor-contact",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 5,
+   "guestCalls": 8,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 31059
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 978,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 21360,
+   "finalAnswer": "Tithe.ly has Bob Smith’s phone number as **555-106-3352** and street address as **18 Oak Ave** (Nashville, TN 37209).\n\n**Source:** Tithe.ly account record for `user_B0bSm1th4q`, retrieved via `tithely_api_read` at `/accounts/user_B0bSm1th4q`."
+  },
+  {
+   "arm": "after4",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 2,
+   "programs": 2,
+   "guestCalls": 3,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 0,
+    "guestResults": 17180
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16332,
+   "finalAnswer": "Grace Church’s Tithe.ly giving widget ID is **48213**."
+  },
+  {
+   "arm": "after4",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "tithely-donor-contact",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 4,
+   "guestCalls": 8,
+   "downstreamRequests": 4,
+   "discoveryBytes": {
+    "topLevelText": 3802,
+    "guestResults": 9244
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 531,
+     "route": "guest"
+    },
+    {
+     "address": "tithely.tithely_api_details",
+     "bytes": 263,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 3,
+    "tithely.tithely_api_details": 1,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 17776,
+   "finalAnswer": "Tithe.ly has Bob Smith’s phone number as **555-106-3352** and street address as **18 Oak Ave**.\n\n**Source:** Tithe.ly donor account record (`GET /accounts/{account_id}`), for account `user_B0bSm1th4q`."
+  },
+  {
+   "arm": "after4",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 2,
+   "guestCalls": 2,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 3943,
+    "guestResults": 6667
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 13226,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nIt comes from the connector's organization list, where Grace Church is `org_Gr8cE21fQx`. Don't confuse it with Hope Chapel's widget id, which is 51990."
+  },
+  {
+   "arm": "after4",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-donor-contact",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 4,
+   "programs": 1,
+   "guestCalls": 4,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 13124,
+    "guestResults": 8192
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 978,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 2,
+    "tithely.tithely_api_read": 1,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 18535,
+   "finalAnswer": "Tithe.ly has this on file for Bob Smith:\n\n- **Phone:** 5551063352\n- **Street address:** 18 Oak Ave, Nashville, TN 37209, US\n\n**Source:** Tithe.ly API v1, `GET /accounts/user_B0bSm1th4q` (read through the connector's `tithely_api_read`). The account is Bob Smith, bob.smith@example.net, created 2024-02-10. I found it by paging through `list_accounts`, and it was the only Bob Smith among the 130 accounts."
+  },
+  {
+   "arm": "after4",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-widget-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 3,
+   "programs": 2,
+   "guestCalls": 2,
+   "downstreamRequests": 1,
+   "discoveryBytes": {
+    "topLevelText": 3943,
+    "guestResults": 11263
+   },
+   "hatchDiscoveryCalls": [],
+   "connectaTools": {
+    "tithely.list_organizations": 1
+   },
+   "wallMs": 16322,
+   "finalAnswer": "Grace Church's Tithe.ly giving widget id is **48213**.\n\nThe Tithe.ly connector lists it as the `widgetId` for the organization `org_Gr8cE21fQx`. Don't confuse it with Hope Chapel's widget id, which is 51990."
+  },
+  {
+   "arm": "after4",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "tithely-donor-contact",
+   "repeat": 2,
+   "status": "pass",
+   "failedChecks": [],
+   "mcpCalls": 5,
+   "programs": 1,
+   "guestCalls": 3,
+   "downstreamRequests": 3,
+   "discoveryBytes": {
+    "topLevelText": 7603,
+    "guestResults": 978
+   },
+   "hatchDiscoveryCalls": [
+    {
+     "address": "tithely.tithely_api_search",
+     "bytes": 978,
+     "route": "guest"
+    }
+   ],
+   "connectaTools": {
+    "tithely.list_accounts": 2,
+    "tithely.tithely_api_read": 2,
+    "tithely.tithely_api_search": 1
+   },
+   "wallMs": 23617,
+   "finalAnswer": "Tithe.ly has this on file for Bob Smith:\n\n- **Phone number:** 5551063352\n- **Street address:** 18 Oak Ave, Nashville, TN 37209, US\n\n**Source:** the Tithe.ly API record `GET /accounts/user_B0bSm1th4q` (operation `getAccount`), read through the Tithe.ly Giving connector. I found the account ID by searching `list_accounts` for Bob Smith. He was the only match, with the email bob.smith@example.net."
+  }
+ ]
+}

@@ -651,7 +651,7 @@ export type AuthResult =
       /** Human owner represented by a non-interactive access credential. */
       principal?: IdentityReference;
       /**
-       * Declared agent name. Only the built-in `accessTokens()` adapter may
+       * Declared agent name. Only built-in agent credential adapters may
        * set it; a result from any other provider that carries it is refused.
        */
       agent?: string;
@@ -680,7 +680,7 @@ export interface AuthenticatedIdentity {
   principal?: IdentityReference;
   /**
    * Name of the code-declared agent this caller is, from `agents`. Set only
-   * when the built-in access-token adapter admitted a `cta_` token bound to
+   * when a built-in agent adapter admitted a credential bound to
    * a currently declared agent; an agent never has a `principal`.
    */
   agent?: string;

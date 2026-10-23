@@ -1,4 +1,4 @@
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // Q8 is decided once per logical call, over everything it recorded: nested
 // api() calls, remote MCP, guarded transports, custom wrappers, programs, the
 // invocation's deadline and the caller's cancellation. Boundaries only record
@@ -42,11 +42,10 @@ const sentence = (vendor: string) =>
 const CREATE = { name: "create", description: "Create", annotations: { readOnlyHint: false } } as const;
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 

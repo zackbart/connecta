@@ -75,13 +75,35 @@ function hatchLine(name, hatch) {
   );
 }
 
+/** The vendor's declared error meanings (`VendorErrors.meanings`, carried as `kit.errors`). */
+function errorsLine(name, errors) {
+  if (
+    errors === undefined ||
+    typeof errors.unknownId !== "string" ||
+    typeof errors.provesAbsence !== "boolean" ||
+    !Array.isArray(errors.conflicts)
+  ) {
+    fail(name, "a standard provider declares VendorErrors.meanings (unknownId, provesAbsence, conflicts)");
+  }
+  const absence = errors.provesAbsence
+    ? "`not_found` means the record does not exist; this API tells absence from a permission gap."
+    : `An unknown id, or one these credentials cannot reach, fails as \`${errors.unknownId}\`; this API does not tell the two apart.`;
+  const conflict = errors.conflicts.length
+    ? `\`conflict\` means: ${errors.conflicts.join("; ")}.`
+    : "It documents no conflict.";
+  return [
+    `- **Errors:** codes come from the vendor's statuses and error facts, never its prose. ${absence} ${conflict}`,
+  ];
+}
+
 /**
  * The generated `## Conventions` (decision 0011): what the provider's
  * declarations mean for an agent. `kit` is the definition's `ProviderKitFacts`
- * (page size and hatch verdicts arrive with the provider kit); `withheld` says
- * the folder holds a reviewed value-safety table.
+ * (page size, hatch verdicts, error meanings and the idempotency fact). The
+ * withheld-values line renders only for a kit whose hatch refuses a write
+ * carrying a withheld placeholder (`kit.refusesWithheld`); none does yet.
  */
-export function renderConventions({ name, kind, kit, withheld }) {
+export function renderConventions({ name, kind, kit }) {
   if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
   const api = [];
   const tail = [];
@@ -94,7 +116,8 @@ export function renderConventions({ name, kind, kit, withheld }) {
       if (pageSize.max < pageSize.default) fail(name, "kit.pageSize default exceeds its maximum");
       api.push(
         `- **Paging:** a paged \`list_*\` or \`search_*\` read takes \`limit\` (default ${pageSize.default}, at most ` +
-          `${pageSize.max}) and \`cursor\`. While \`page.hasMore\` is true, pass \`page.nextCursor\` back unchanged as \`cursor\`.`,
+          `${pageSize.max}) and \`cursor\`. While \`page.hasMore\` is true, pass \`page.nextCursor\` back unchanged as \`cursor\`; ` +
+          "the last page has no `nextCursor`.",
       );
     }
     api.push(
@@ -102,14 +125,18 @@ export function renderConventions({ name, kind, kit, withheld }) {
         "result cut for size; the ids that fetch what was cut stay in the result.",
     );
     if (kit?.hatch !== undefined) api.push(hatchLine(name, kit.hatch));
-    if (withheld) {
+    if (kit?.refusesWithheld === true) {
       tail.push(
         '- **Withheld values:** a value withheld for safety reads `"[redacted]"`, and a write that carries one is refused.',
       );
     }
   }
+  if (typeof kit?.idempotencyKey !== "boolean") fail(name, "a standard provider declares idempotencyKey");
   const writes =
-    "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it.";
-  const lines = [...api, writes, ...tail];
+    "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it." +
+    (kit.idempotencyKey
+      ? " A write that takes `idempotencyKey` may be repeated with the same key and arguments while the vendor retains it."
+      : " Writes take no idempotency key.");
+  const lines = [...api, writes, ...errorsLine(name, kit?.errors), ...tail];
   return `## Conventions\n\n${lines.join("\n")}`;
 }

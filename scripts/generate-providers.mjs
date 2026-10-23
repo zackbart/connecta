@@ -3,7 +3,7 @@
 // and `drift.json`'s `generated` block. A provider past step 1 must meet D,
 // and one past step 2 must meet G; this refuses a violation before writing.
 import { readdirSync, readFileSync } from "node:fs";
-import { access, readFile, realpath, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
@@ -91,7 +91,8 @@ function knipEntries(source, providers) {
   const position = matches[0]?.index ?? entries[2].length;
   const before = entries[2].slice(0, position);
   const after = entries[2].slice(position).replace(membership, "");
-  const additions = providers.map(({ name }) => `    "src/providers/${name}/index.ts",\n`).join("");
+  const indent = /\n([ \t]*)\]/.exec(entries[3])?.[1] ?? "  ";
+  const additions = providers.map(({ name }) => `${indent}  "src/providers/${name}/index.ts",\n`).join("");
   return source.replace(
     entries[0],
     entries[1] + before + (before.endsWith("\n") ? "" : "\n") + additions + after + entries[3],
@@ -153,15 +154,6 @@ function walk(directory, prefix = "") {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? walk(join(directory, entry.name), `${prefix}${entry.name}/`) : [`${prefix}${entry.name}`],
   );
-}
-
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // Bundling is a loader here, not a production build. Virtual skill modules
@@ -308,7 +300,6 @@ export async function generateProviders({ root = repositoryRoot, check = false }
         name: provider.name,
         kind: definition.kind,
         kit: definition.kit,
-        withheld: await exists(join(provider.directory, "safety.ts")),
         keys,
       });
       const skill = {

@@ -593,8 +593,8 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
       expect(entry.documentation).toBe(`https://api.planningcenteronline.com/${app}/v2/documentation`);
     }
 
-    const { configureGuardedTransport } = await import("../src/guarded-transport.js");
-    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    const { installOwnedTransport } = await import("./fixtures/owned-transport.js");
+    const transport = installOwnedTransport();
 
     // Call every named tool with its smallest valid arguments and require
     // each request to be a reviewed row: a tool that starts calling a new
@@ -654,7 +654,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
         await connector.callTool(tool, args, ctx);
       }
     } finally {
-      configureGuardedTransport(undefined);
+      transport.restore();
       globalThis.fetch = realFetch;
     }
     const matches = (request: string, endpoint: Endpoint) => {
@@ -1026,7 +1026,7 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
   });
 });
 
-it("INV-11: ref-graph-v1 matches acyclic inline sensitivity and also tracks cycle member names and back-edge siblings", () => {
+it("INV-11: ref-graph-v1 matches locally resolvable acyclic inline sensitivity and also tracks cycle member names and back-edge siblings", () => {
   const base: any = {
     "openapi": "3.1.0",
     "info": {
@@ -1178,18 +1178,33 @@ it("INV-11: ref-graph-v1 matches acyclic inline sensitivity and also tracks cycl
       d.components.schemas.Item.properties.child.nullable = true;
     },
   ];
-  for (const mutate of mutations) {
+  const agreementPairs = mutations.map((mutate) => {
     const changed = structuredClone(base);
     mutate(changed);
+    return { before: base, after: changed };
+  });
+  // Swapping targets inside one component must still change the digest when
+  // the component's members and reachable structure remain the same.
+  const backEdgeTargets = structuredClone(base);
+  backEdgeTargets.components.schemas.Cycle.properties.other = { $ref: "#/components/schemas/Edge" };
+  backEdgeTargets.components.schemas.Edge = {
+    type: "object",
+    properties: { next: { $ref: "#/components/schemas/Cycle" } },
+  };
+  const swappedTargets = structuredClone(backEdgeTargets);
+  swappedTargets.components.schemas.Cycle.properties.next.$ref = "#/components/schemas/Edge";
+  swappedTargets.components.schemas.Cycle.properties.other.$ref = "#/components/schemas/Cycle";
+  agreementPairs.push({ before: backEdgeTargets, after: swappedTargets });
+  for (const { before, after } of agreementPairs) {
     for (const [path, method] of [
       ["/items", "get"],
       ["/cycle", "post"],
     ]) {
       const oldChanged =
-        contractDigest(base, base.paths[path!][method!]) !== contractDigest(changed, changed.paths[path!][method!]);
+        contractDigest(before, before.paths[path!][method!]) !== contractDigest(after, after.paths[path!][method!]);
       expect(
-        contractDigest(base, base.paths[path!][method!], "ref-graph-v1") !==
-          contractDigest(changed, changed.paths[path!][method!], "ref-graph-v1"),
+        contractDigest(before, before.paths[path!][method!], "ref-graph-v1") !==
+          contractDigest(after, after.paths[path!][method!], "ref-graph-v1"),
       ).toBe(oldChanged);
     }
   }
@@ -1197,8 +1212,9 @@ it("INV-11: ref-graph-v1 matches acyclic inline sensitivity and also tracks cycl
   const cyclePairs: Array<{ label: string; before: any; after: any }> = [];
   const recursiveSibling = structuredClone(base);
   recursiveSibling.components.schemas.Cycle.properties.next.nullable = true;
+  recursiveSibling.components.schemas.Cycle.properties.next.items = { $ref: "#/components/schemas/Cycle" };
   cyclePairs.push({
-    label: "self-reference with a structural sibling stays bounded",
+    label: "self-reference with a sibling containing an intra-component reference stays bounded",
     before: base,
     after: recursiveSibling,
   });
@@ -1225,9 +1241,9 @@ it("INV-11: ref-graph-v1 matches acyclic inline sensitivity and also tracks cycl
   delete renamedCycleMember.components.schemas.Edge;
   renamedCycleMember.components.schemas.Cycle.properties.next.$ref = "#/components/schemas/Edge2";
   cyclePairs.push({ label: "non-entry cycle member rename", before: twoMemberCycle, after: renamedCycleMember });
-  // Graph sensitivity agrees for the acyclic mutations above. In cycles it
-  // also retains all member identities and structural back-edge siblings;
-  // inline drops the siblings and only retains the entry reference's name.
+  // Graph sensitivity agrees for locally resolvable acyclic mutations. In cycles
+  // it also retains all member identities and structural back-edge siblings;
+  // inline drops the siblings and retains the reference name where expansion stops.
   for (const { label, before, after } of cyclePairs) {
     expect(contractDigest(before, cycleOperation(before)), label).toBe(contractDigest(after, cycleOperation(after)));
     expect(contractDigest(before, cycleOperation(before), "ref-graph-v1"), label).not.toBe(

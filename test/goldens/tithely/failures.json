@@ -182,7 +182,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs. Wait before retrying.",
+            "message": "Tithe.ly: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -207,7 +207,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Tithe.ly: Golden 500 failure Tithe.ly is failing upstream.",
+            "message": "Tithe.ly: Golden 500 failure",
             "retryable": true
           }
         }
@@ -309,16 +309,10 @@
     }
   },
   "write": {
-    "tool": "tithely_api_mutate",
+    "tool": "tithely_api_write",
     "args": {
       "method": "POST",
-      "path": "/charges",
-      "form": [
-        {
-          "name": "account_id",
-          "value": "user_jane"
-        }
-      ]
+      "path": "/refunds/ch_1"
     },
     "cases": {
       "400": {
@@ -327,19 +321,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -361,19 +346,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -387,7 +363,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "giving",
-            "operation": "giving.tithely_api_mutate",
+            "operation": "giving.tithely_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -407,19 +383,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -433,7 +400,7 @@
             "message": "Tithe.ly: Golden 403 failure Tithe.ly refused the request: the key pair may not reach this resource, or API access may not be enabled for this environment. Tithe.ly does not say which. Ask the account administrator to grant API access to this resource and environment.",
             "retryable": false,
             "connector": "giving",
-            "operation": "giving.tithely_api_mutate",
+            "operation": "giving.tithely_api_write",
             "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
           }
         }
@@ -444,19 +411,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -478,19 +436,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -512,19 +461,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -546,19 +486,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -569,7 +500,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs. Wait before retrying.",
+            "message": "Tithe.ly: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -581,19 +512,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -603,7 +525,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Tithe.ly: Golden 500 failure Tithe.ly is failing upstream. Whether the write took effect at Tithe.ly is unknown; check the target before repeating it.",
+            "message": "Tithe.ly: Golden 500 failure Whether the write took effect at Tithe.ly is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -615,19 +537,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -641,7 +554,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "giving",
-            "operation": "giving.tithely_api_mutate",
+            "operation": "giving.tithely_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -661,19 +574,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -695,19 +599,10 @@
             {
               "after": 0,
               "method": "POST",
-              "url": "https://tithe.ly/api/v1/charges",
+              "url": "https://tithe.ly/api/v1/refunds/ch_1",
               "headers": {
                 "accept": "application/json",
-                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "account_id",
-                    "user_jane"
-                  ]
-                ]
+                "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
               }
             }
           ]
@@ -717,29 +612,23 @@
           "dispatched": true,
           "error": {
             "code": "write_outcome_unknown",
-            "message": "Operation \"giving.tithely_api_mutate\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "message": "Operation \"giving.tithely_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
             "details": {
               "host": "https://tithe.ly",
               "code": "timeout",
-              "operation": "giving.tithely_api_mutate",
+              "operation": "giving.tithely_api_write",
               "stage": "downstream",
               "elapsedMs": 0
             },
             "writeOutcome": "unknown",
             "connector": "giving",
-            "operation": "giving.tithely_api_mutate",
+            "operation": "giving.tithely_api_write",
             "uncertainCall": {
-              "address": "giving.tithely_api_mutate",
+              "address": "giving.tithely_api_write",
               "args": {
                 "method": "POST",
-                "path": "/charges",
-                "form": [
-                  {
-                    "name": "account_id",
-                    "value": "user_jane"
-                  }
-                ]
+                "path": "/refunds/ch_1"
               }
             },
             "retry": "Do not retry automatically. Check whether the write took effect first."

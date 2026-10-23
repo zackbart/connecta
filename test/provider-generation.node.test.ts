@@ -151,6 +151,32 @@ afterEach(() => {
 });
 
 describe("provider folder generation", () => {
+  it("preserves workspace-specific Knip entries and provider indentation", () => {
+    const root = repository();
+    write(
+      root,
+      "knip.jsonc",
+      `{
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/index.ts",
+        "src/providers/retired.ts",
+        "src/worker.ts"
+      ]
+    },
+    "packages/connecta-eve": { "entry": ["src/index.ts"] }
+  }
+}\n`,
+    );
+    provider(root, "alpha");
+    const result = run(root);
+    expect(result.status, result.stderr).toBe(0);
+    expect(read(root, "knip.jsonc")).toContain('        "src/providers/alpha/index.ts",');
+    expect(json(root, "knip.jsonc").workspaces["packages/connecta-eve"]).toEqual({ entry: ["src/index.ts"] });
+    expect(run(root, true).status).toBe(0);
+  });
+
   it("adds a provider to every generated membership without central edits and excludes _shared", () => {
     const root = repository();
     provider(root, "alpha");
@@ -280,6 +306,10 @@ interface StandardOptions {
 }
 
 /** A provider past both steps: a standard guide, a version-2 drift record, and its providers.md section. */
+// Standard providers declare their error meanings and idempotency fact for the Conventions.
+const KIT_FACTS = `errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] }, idempotencyKey: false`;
+const DEFAULT_KIT = `kit: { operations: [], ${KIT_FACTS} },`;
+
 function standardProvider(root: string, name: string, options: StandardOptions = {}) {
   const folder = `src/providers/${name}`;
   mkdirSync(join(root, folder, "evidence"), { recursive: true });
@@ -289,7 +319,7 @@ function standardProvider(root: string, name: string, options: StandardOptions =
     `import { skill } from "./skill.generated.js";
 export const factory = Object.assign((id: string) => ({ id }), {
   definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)},
-    kind: ${JSON.stringify(options.kind ?? "api")}, skill, bundle: { baselineGzip: 17 }, ${options.definition ?? ""} }
+    kind: ${JSON.stringify(options.kind ?? "api")}, skill, bundle: { baselineGzip: 17 }, ${options.definition ?? DEFAULT_KIT} }
 });\n`,
   );
   write(
@@ -342,7 +372,7 @@ const generatedSkill = (root: string, name: string) => {
 };
 
 describe("decision 0011 guides and drift records", () => {
-  const KIT = `kit: { operations: ["POST /b", "GET /a", "GET /a"], pageSize: { default: 25, max: 100 },
+  const KIT = `kit: { operations: ["POST /b", "GET /a", "GET /a"], pageSize: { default: 25, max: 100 }, ${KIT_FACTS},
     hatch: { name: "alpha", verdicts: { "GET /a": "read", "POST /b": "write", "DELETE /c": "refuse" } } },`;
 
   it.each([

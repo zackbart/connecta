@@ -4,7 +4,7 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts;
 // what this suite adds is that Drive's two transports act as the same account.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { drive } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
@@ -371,7 +371,7 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
     });
 
     it("tells a write that applied to re-read, never to repeat", async () => {
-      const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+      const restore = installOwnedTransport();
       try {
         sizing.oversized = (value) => (value as any)?.trashed === true;
         route = () => ({ body: { id: "f1", trashed: true } });
@@ -381,7 +381,7 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
         expect(failure.message).toContain("do not repeat the write");
         expect(calls.filter((entry) => entry.method === "PATCH")).toHaveLength(1);
       } finally {
-        configureGuardedTransport(restore);
+        restore.restore();
       }
     });
   });

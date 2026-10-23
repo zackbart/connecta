@@ -1163,7 +1163,10 @@ operator page may show catalog metadata the operator loaded (descriptions,
 schemas), but withholds a tool name outside the grammar as it does in records.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
-the next one.
+the next one. Recorded HTTP status facts survive the bare write-401 fallback,
+Google's uncertain-write wording, and oversized-response mapping; see
+[Read failure records](./operating.md#read-failure-records) for their operator
+meaning. These facts do not change agent error fields or write outcomes.
 
 ## Configuration
 
@@ -2005,7 +2008,35 @@ Provider declarations use `src/http/vendor.ts` for HttpApi operations and
 ordinary Promise-based Connector factory. The kit stays outside the root
 graph and its Effect types are internal. Tithe.ly is the first provider on
 it (B.5): `api.ts` declares the vendor, `tools.ts` the tools, and its goldens
-are unchanged. The helper derives connection metadata and probe messages from
+are unchanged.
+
+Decision 0011's standard surface (Tithe.ly's step 2) adds four kit pieces.
+A `list` without the legacy `key` returns `{ items, page }`, with
+`page.nextCursor` only while `hasMore`, and the kit appends `limit` (the
+declared default and maximum), `cursor` and `fields` to the tool's filters;
+`read` and `get` take `fields: true`. `src/http/fields.ts` narrows after every
+projection and refuses an unknown first segment before dispatch; a selected
+result renders against a sparse output schema. `src/http/hatch.ts` is the
+standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
+an `OperationIndex` with explicit verdicts. It keeps the REST family's
+argument and envelope names and validates `fields` against the operation's
+declared response roots before dispatch. Search answers stay within 16 KiB
+(at most eight compact entries, long labels cut and marked, continuation by
+cursor); details stay within 32 KiB, paging whole parameters and body
+properties, and chunking any piece larger than one answer, behind a bound
+cursor. Search ranks exact path nouns, root collections and authored
+operations first, then operations found by a field they return or take, and
+points at the authored tool that serves an operation. `_api_read` omits
+`method` only when GET is its one reviewed read method.
+`src/http/vendor-index.ts` derives that index from a kit vendor's own
+declarations when the vendor has no pinned OpenAPI document: `form()` request
+contracts, `Summary` annotations and lenient success schemas become the
+index's parameters, bodies, summaries and declared fields (optional
+`OpenApiData.fields`). Kit facts carry the vendor's declared
+`VendorErrors.meanings` and an `idempotencyKey` checked against the write
+builders at construction, which the generated Conventions state.
+
+The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. Its optional `authScope(options)`
@@ -2036,12 +2067,16 @@ resends a write, and the defaults are unchanged. Google Workspace uses both,
 because its delegated tokens are minted per call and a refused write only
 needs the next call to mint again.
 
-The Google Workspace layer (`src/providers/_shared/google/kit.ts`) puts the
-delegated service account on a machine grant. The subject resolves once per
-call from deployment config and the admitted caller, and the private token
-exchange keeps its in-memory cache, so only token strings and expiries cross
-requests. Each product declares its operations, and a value-safety resolver
-refuses any path it does not declare. Revision-guarded writes set the
+All Google Workspace products use `src/providers/_shared/google/kit.ts`, which
+puts the delegated service account on a machine grant. `workspace.ts` owns
+shared options, connection parsing and subject resolution; `service-account.ts`
+owns token exchange and caching. JSON requests use `googleClient`, and
+Drive's `driveClient` adds binary and charset-aware text projections over
+that adapter. The subject resolves once per call from deployment config and
+the admitted caller, and the private token exchange keeps its in-memory
+cache, so only token strings and expiries cross requests. Each product
+declares its operations, and a value-safety resolver refuses any path it does
+not declare. Revision-guarded writes set the
 `revisionGuarded` request flag that Google's error table reads. For step 1, a
 catalog bridge builds kit `read` and `write` tools that keep each legacy
 declaration's annotations and schema bytes. `api()` validates every call

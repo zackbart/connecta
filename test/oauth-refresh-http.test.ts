@@ -1,10 +1,11 @@
 import { UnauthorizedError } from "@modelcontextprotocol/client";
-import { describe, expect, inject, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthGrantKeys, oauthRefreshKeys, oauthRefreshSpentKeys, scopes } from "../src/storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
+import { nativeOAuthServer } from "./fixtures/oauth-native-sdk.js";
 import { api } from "../src/connectors/api.js";
 import { createTestConnecta } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -72,17 +73,8 @@ async function isolate(storage: KVStorage, coordinator = new OAuthRefreshCoordin
   };
 }
 async function tokenServer(mode: string) {
-  const base = inject("oauthHttpServer");
-  const { id } = (await (await fetch(`${base}/new`, { method: "POST", body: mode })).json()) as { id: string };
-  const finish = async () => {
-    await (await fetch(`${base}/session/${id}/finish`, { method: "POST" })).text();
-  };
-  onTestFinished(finish);
-  return {
-    url: `${base}/session/${id}/token`,
-    finish,
-    sent: async () => ((await (await fetch(`${base}/session/${id}`)).json()) as { redeemed: string[] }).redeemed,
-  };
+  const server = await nativeOAuthServer(mode);
+  return { ...server, url: `${server.issuer}/token`, sent: server.redeemed };
 }
 
 describe("native HTTP refresh on delayed storage", () => {
@@ -108,7 +100,8 @@ describe("native HTTP refresh on delayed storage", () => {
       const first = a
         .refresh(server.url, owner.signal, runtimeHook ? waitUntil : undefined, sdk.signal)
         .catch((error: unknown) => error);
-      await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+      await server.waitForRefresh();
+      expect(await server.sent()).toEqual([tokens.refresh_token]);
       const joined = local.refresh(server.url);
       const second = b.refresh(server.url);
       const reason = new DOMException("Owner request ended", "AbortError");
@@ -142,7 +135,8 @@ describe("native HTTP refresh on delayed storage", () => {
       const local = await isolate(storage, a.coordinator);
       const server = await tokenServer(mode);
       const first = a.refresh(server.url).catch((error: unknown) => error);
-      await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+      await server.waitForRefresh();
+      expect(await server.sent()).toEqual([tokens.refresh_token]);
       const joined = local.refresh(server.url).catch((error: unknown) => error);
       const second = b.refresh(server.url).catch((error: unknown) => error);
       await server.finish();
@@ -177,7 +171,8 @@ describe("native HTTP refresh on delayed storage", () => {
     const request = init();
     const first = owner.coordinator.coordinatedFetch(owner.provider, fetch)(server.url, request);
     request.body.set("refresh_token", "changed-during-preparation");
-    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.waitForRefresh();
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
     await server.finish();
     expect(await (await first).json()).toEqual(next);
     expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
@@ -235,7 +230,8 @@ describe("native HTTP refresh on delayed storage", () => {
     const local = await isolate(storage, owner.coordinator);
     const waiter = await isolate(storage);
     const first = owner.refresh(server.url).catch((error: unknown) => error);
-    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.waitForRefresh();
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
     const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
     const spent = await backing.get(spentKey);
     expect(JSON.parse(spent!)).toMatchObject({
@@ -288,7 +284,8 @@ describe("native HTTP refresh on delayed storage", () => {
       const local = await isolate(storage, owner.coordinator);
       const waiter = await isolate(storage);
       const first = owner.refresh(server.url);
-      await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+      await server.waitForRefresh();
+      expect(await server.sent()).toEqual([tokens.refresh_token]);
       const waiting = [local.refresh(server.url), waiter.refresh(server.url)];
       await server.finish();
       for (const answer of await Promise.all([first, ...waiting])) expect(await answer.json()).toEqual(next);
@@ -316,7 +313,8 @@ describe("native HTTP refresh on delayed storage", () => {
     const server = await tokenServer("success");
     const owner = await isolate(storage);
     const first = owner.refresh(server.url).catch((error: unknown) => error);
-    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.waitForRefresh();
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
     await server.finish();
     expect(await first).toBeInstanceOf(UnauthorizedError);
     const grant = (await storedGrant(backing))!;
@@ -420,7 +418,8 @@ it.each([
     const first = mcpRpc(a, "tools/call", params, { signal: owner.signal, runtimeContext }).catch(
       (error: unknown) => error,
     );
-    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.waitForRefresh();
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
     if (!exhausted) {
       owner.abort(new DOMException("Caller left", "AbortError"));
       await first;

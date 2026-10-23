@@ -5,7 +5,7 @@ import { attachCallClassification } from "../src/call-classification.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { keys, optionsOf } from "../src/config-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { Refusal, RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { bearer } from "../src/http/oauth.js";
 import { defineApiProvider } from "../src/http/provider.js";
@@ -36,6 +36,11 @@ const errors: VendorErrors = {
     404: () => ({ code: "not_found" }),
   },
   unreadable: "Tickets returned unreadable JSON.",
+  meanings: {
+    unknownId: "not_found",
+    provesAbsence: true,
+    conflicts: ["HTTP 409 when a ticket changed since it was read"],
+  },
 };
 const safety = (options: Readonly<Options>) => ({
   review: "Fixture replies have no stored secrets.",
@@ -50,6 +55,7 @@ const definition = {
   baseUrl: (options: Readonly<Options>) => options.baseUrl ?? "https://tickets.example/v1",
   maxResponseBytes: 1024,
   pageSize: { default: 10, max: 50 },
+  idempotencyKey: false,
   credential: { label: "Token" },
   authenticate: Credentials.use((credentials) => credentials.values).pipe(
     Effect.mapError((error) => new Refusal({ error })),
@@ -89,9 +95,10 @@ const definition = {
   ],
 };
 
-beforeEach(() => configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) }));
+beforeEach(() => {
+  installOwnedTransport();
+});
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -107,6 +114,19 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
     { pageSize: { default: 11, max: 10 } },
     { pageSize: { default: 1, max: 1.5 } },
     { pageSize: null as never },
+    // Declared error meanings are consistent: not_found exactly when the vendor proves absence.
+    {
+      errors: {
+        ...errors,
+        meanings: { unknownId: "connector_call_failed", provesAbsence: true, conflicts: [] } as const,
+      },
+    },
+    {
+      errors: {
+        ...errors,
+        meanings: { unknownId: "not_found", provesAbsence: true, conflicts: ["two\nlines"] } as const,
+      },
+    },
     {
       oauth: () => ({
         authorizationEndpoint: "https://tickets.example/auth",
@@ -139,6 +159,10 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
       { purpose: "Support" },
     ),
   ).toThrow(/review/);
+  // A declared idempotency fact must match the write builders.
+  expect(() => defineApiProvider({ ...definition, idempotencyKey: true })("tickets", { purpose: "Support" })).toThrow(
+    /idempotencyKey/,
+  );
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -201,6 +225,12 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     operations: ["GET /tickets/{id}", "GET /who"],
     pageSize: { default: 10, max: 50 },
     hatch: { name: "tickets", verdicts: { "GET /who": "read" } },
+    errors: {
+      unknownId: "not_found",
+      provesAbsence: true,
+      conflicts: ["HTTP 409 when a ticket changed since it was read"],
+    },
+    idempotencyKey: false,
   });
   expect(Object.isFrozen(factory.definition.kit?.hatch?.verdicts)).toBe(true);
   expect(first.describe?.().source.provider).toBe("tickets");
@@ -246,7 +276,9 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   for (const row of rows) {
     const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       if (row.accept)
-        expect(new Headers(init?.headers).get("accept")).toBe(tithelyCalls[0]!.steps[0]![0]!.headers.accept);
+        expect(new Headers(init?.headers).get("accept")).toBe(
+          tithelyCalls.find(({ steps }) => steps.length > 0)!.steps[0]![0]!.headers.accept,
+        );
       return Response.json({ envelope: { visible: "yes", private: "drop" } });
     });
     vi.stubGlobal("fetch", fetch);
@@ -292,13 +324,12 @@ it("INV-4 INV-5 INV-7: probes authenticate with candidate services and close ret
       ...definition,
       authenticate,
       probe: {
-        ...definition.probe,
         ...(mode === "program"
           ? {
               run: (connection: import("../src/http/vendor.js").Connection) =>
                 connection.send(who, {}).pipe(Effect.map(({ data }) => data)),
             }
-          : {}),
+          : { operation: definition.probe.operation, request: definition.probe.request }),
         check: (values, options) => {
           expect(options.purpose).toBe("Support");
           return Object.values(values).includes("invalid") ? "Replace this candidate." : undefined;
@@ -412,7 +443,6 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
     const connector = defineApiProvider({
       ...definition,
       probe: {
-        ...definition.probe,
         run: () =>
           Signal.use((value) => {
             signal = value;
@@ -441,7 +471,7 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
   const writeProbe = defineApiProvider({
     ...definition,
     probe: {
-      ...definition.probe,
+      describe: definition.probe.describe,
       run: (connection) =>
         connection
           .sendPath({ method: "POST", path: "/tickets", template: "/tickets" })
@@ -457,7 +487,7 @@ it("INV-5 INV-7: maps probe refusals through vendor rules and closes failed prob
       sensitiveFields: { names: [], choice: "drop" },
     }),
     probe: {
-      ...definition.probe,
+      describe: definition.probe.describe,
       run: (connection) =>
         connection
           .send(who, {})

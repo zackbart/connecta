@@ -73,44 +73,36 @@ export default defineGoldenSpec({
   basic: [["publicKey", "privateKey"]],
   failureReply: (status, message) => ({ status, body: { status: "fail", reason: message } }),
   calls: [
+    { tool: "tithely_api_search", args: { query: "refund charge" } },
+    { tool: "tithely_api_details", args: { method: "POST", path: "/charges" } },
     {
-      tool: "tithely_api_get",
-      args: { path: "/payment-methods/pm_9", query: [{ name: "account_id", value: "user_jane" }] },
+      tool: "tithely_api_read",
+      args: { path: "/payment-methods/pm_9", query: { account_id: "user_jane" } },
       replies: [{ body: { status: "success", pm_id: "pm_9", type: "Payment Method", object: PAYMENT_METHOD } }],
     },
     {
-      tool: "tithely_api_mutate",
+      label: "tithely_api_read organization",
+      tool: "tithely_api_read",
+      args: { path: "/organizations/org_1", fields: ["object.name", "object.widget_id", "object.bank"] },
+      replies: [{ body: { status: "success", organization_id: "org_1", type: "Organization", object: ORGANIZATION } }],
+    },
+    {
+      tool: "tithely_api_write",
       args: {
         method: "POST",
         path: "/charges",
-        form: [
-          { name: "account_id", value: "user_jane" },
-          { name: "pm_id", value: "pm_9" },
-          { name: "organization_id", value: "org_1" },
-          { name: "amount", value: 2555 },
-          { name: "giving_type", value: "Tithe" },
-        ],
+        body: { account_id: "user_jane", pm_id: "pm_9", organization_id: "org_1", amount: 2555, giving_type: "Tithe" },
       },
       replies: [{ body: { status: "success", charge_id: "ch_new", type: "Charge", object: CHARGE } }],
     },
     {
-      label: "tithely_api_mutate DELETE",
-      tool: "tithely_api_mutate",
-      args: { method: "DELETE", path: "/payment-methods/pm_9", query: [{ name: "account_id", value: "user_jane" }] },
+      label: "tithely_api_write DELETE",
+      tool: "tithely_api_write",
+      args: { method: "DELETE", path: "/payment-methods/pm_9", query: { account_id: "user_jane" } },
       replies: [{ body: { status: "success", note: "Payment method removed." } }],
     },
     { tool: "list_organizations", args: { limit: 5 }, replies: list([ORGANIZATION]) },
-    {
-      tool: "get_organization",
-      args: { organizationId: "org_1" },
-      replies: [{ body: { status: "success", organization_id: "org_1", type: "Organization", object: ORGANIZATION } }],
-    },
     { tool: "list_accounts", replies: list([DONOR]) },
-    {
-      tool: "get_account",
-      args: { accountId: "user_jane" },
-      replies: [{ body: { status: "success", account_id: "user_jane", type: "Account", object: DONOR } }],
-    },
     {
       tool: "list_charges",
       args: { organizationId: "org_1", limit: 1, createdAfter: "2026-01-01" },
@@ -121,7 +113,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "get_charge",
-      args: { chargeId: "ch_1" },
+      args: { chargeId: "ch_1", fields: ["chargeId", "amountCents", "donor.email"] },
       replies: [{ body: { status: "success", charge_id: "ch_1", type: "Charge", object: CHARGE } }],
     },
     {
@@ -134,11 +126,15 @@ export default defineGoldenSpec({
       args: { recurringId: "rc_1" },
       replies: [{ body: { status: "success", recurring_id: "rc_1", type: "Recurring", object: RECURRING } }],
     },
-    { tool: "list_payment_methods", args: { accountId: "user_jane" }, replies: list([PAYMENT_METHOD]) },
+    {
+      tool: "list_payment_methods",
+      args: { accountId: "user_jane", limit: 1, fields: ["paymentMethodId", "last4"] },
+      replies: list([PAYMENT_METHOD, { ...PAYMENT_METHOD, pm_id: "pm_10", last_4_digits: "1881" }]),
+    },
   ],
   echo: {
-    tool: "tithely_api_get",
-    args: { path: "/payment-methods/pm_9", query: [{ name: "account_id", value: "user_jane" }] },
+    tool: "tithely_api_read",
+    args: { path: "/payment-methods/pm_9", query: { account_id: "user_jane" } },
     replies: (text) => [
       {
         body: { status: "success", pm_id: "pm_9", type: "Payment Method", object: { ...PAYMENT_METHOD, brand: text } },
@@ -148,8 +144,8 @@ export default defineGoldenSpec({
   failures: {
     read: { tool: "get_charge", args: { chargeId: "ch_1" } },
     write: {
-      tool: "tithely_api_mutate",
-      args: { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] },
+      tool: "tithely_api_write",
+      args: { method: "POST", path: "/refunds/ch_1" },
     },
   },
 });

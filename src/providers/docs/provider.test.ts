@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { docs } from "./index.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
@@ -95,17 +95,6 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
     subject: "pastor@church.example",
     ...overrides,
   } as Parameters<typeof docs>[1]);
-}
-
-/** Kit writes use the owned transport that listen() installs on Node. */
-function ownedTransport(): void {
-  let previous: ReturnType<typeof configureGuardedTransport>;
-  beforeEach(() => {
-    previous = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
-  });
-  afterEach(() => {
-    configureGuardedTransport(previous);
-  });
 }
 
 function context(): ConnectorContext {
@@ -298,7 +287,9 @@ describe("reading a document (H9)", () => {
 });
 
 describe("editing a document", () => {
-  ownedTransport();
+  beforeEach(() => {
+    installOwnedTransport();
+  });
   it("keeps a large reply inside the result budget, still saying the batch applied", async () => {
     const BUDGET = 192 * 1024;
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -360,7 +351,9 @@ describe("editing a document", () => {
 });
 
 describe("failures, mapped to what the caller does next (H11)", () => {
-  ownedTransport();
+  beforeEach(() => {
+    installOwnedTransport();
+  });
   it.each([["a 400 FAILED_PRECONDITION", 400, "FAILED_PRECONDITION"]])(
     "answers a stale requiredRevisionId (%s) with conflict, reading nothing more",
     async (_kind, status, reason) => {

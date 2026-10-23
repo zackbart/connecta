@@ -221,6 +221,19 @@ export interface VendorErrors<F extends Facts = Facts> {
    * refusal, and a 5xx never proves a write unapplied.
    */
   readonly authBeforeExecution?: AuthBeforeExecution<F>;
+  /**
+   * What this vendor's failures mean for an agent, declared by review for the
+   * generated Conventions (decision 0011): the code an unknown id fails with,
+   * whether that code proves absence (only the vendor's documentation can
+   * say so), and each documented source of `conflict`, one line each, such
+   * as "HTTP 409 when the record changed since it was read". Never inferred
+   * from the status table or the rules.
+   */
+  readonly meanings?: {
+    readonly unknownId: ConnectorCallErrorCode;
+    readonly provesAbsence: boolean;
+    readonly conflicts: readonly string[];
+  };
 }
 
 /** A trusted per-vendor declaration: the reviewer verifies the cited documentation and the narrow raw-fact predicate. */
@@ -382,6 +395,22 @@ export interface MapOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
+/** Shed a defect's text and typed identity when any request withholds vendor text. */
+export function withheldDefect(
+  defect: unknown,
+  options: Pick<MapOptions, "dispatches"> & { readonly withholds: (operation: OperationRef) => boolean },
+  // Custom probe programs may send outside this ledger, so always withhold their defects.
+  always = false,
+): unknown {
+  try {
+    if (!always && !options.dispatches.some(({ operation }) => operation && options.withholds(operation)))
+      return defect;
+  } catch {
+    // A broken visibility hook cannot authorize exposing a defect's text.
+  }
+  return new Error("A provider hook withholding vendor text failed.");
+}
+
 /**
  * The single mapping from a kit failure to what an agent reads. It decides
  * no write: the core does, from its ledger (`providerCallFailure` at the
@@ -436,7 +465,7 @@ function resent(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
       { retryable: false },
     );
   }
-  const error = verdict(own, vendor, options);
+  const error = verdict(own, vendor, options, first);
   const marked = first.request ? vendorRefusal(error, first.request) : error;
   return providerFailureMessage(marked, `${marked.message} ${RESEND}`);
 }
@@ -492,6 +521,7 @@ function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
   options: Pick<MapOptions, "withholds" | "signal" | "dispatches">,
+  dispatch = options.dispatches.find((entry) => entry.failure === failure),
 ): ConnectorCallError {
   switch (failure._tag) {
     case "Refusal":
@@ -512,7 +542,10 @@ function verdict(
         { retryable: false },
       );
     case "ResponseTooLarge":
-      return new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false });
+      return attachFailureFacts(
+        new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }),
+        dispatch?.status === undefined ? {} : { httpStatus: dispatch.status },
+      );
     case "ResendRefused":
       return new ConnectorCallError(
         "connector_call_failed",
@@ -619,6 +652,32 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
     operation: failure.operation,
     withheld,
   };
+}
+
+/** The reviewed meanings a vendor declares for the generated Conventions; see `VendorErrors.meanings`. */
+export type ErrorMeanings = NonNullable<VendorErrors["meanings"]>;
+
+/**
+ * A frozen copy of a vendor's declared meanings, refused when inconsistent
+ * (INV-11): `not_found` exactly when the vendor tells absence from a
+ * permission gap, and each conflict source a one-line documented fact.
+ */
+export function errorMeanings(vendor: VendorErrors<any>): ErrorMeanings | undefined {
+  const declared = vendor.meanings;
+  if (declared === undefined) return undefined;
+  const { unknownId, provesAbsence, conflicts } = declared;
+  if (
+    typeof unknownId !== "string" ||
+    typeof provesAbsence !== "boolean" ||
+    (unknownId === "not_found") !== provesAbsence ||
+    !Array.isArray(conflicts) ||
+    conflicts.some((fact) => typeof fact !== "string" || !fact.trim() || /[\r\n]/.test(fact))
+  ) {
+    throw new Error(
+      `${vendor.provider} error meanings need unknownId "not_found" exactly when provesAbsence is true, and one-line conflict facts.`,
+    );
+  }
+  return Object.freeze({ unknownId, provesAbsence, conflicts: Object.freeze([...conflicts]) });
 }
 
 function classified(input: Classified, vendor: VendorErrors<any>): Verdict {

@@ -27,6 +27,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
 import { redactionAltered } from "../redaction-marker.js";
 import { parameterPairs } from "./write-request.js";
@@ -64,6 +65,14 @@ export const post = HttpApiEndpoint.post;
 export const put = HttpApiEndpoint.put;
 export const patch = HttpApiEndpoint.patch;
 export const del = HttpApiEndpoint.delete;
+
+/** A form-encoded request payload: `post("createCharge", "/charges", { payload: form(Schema.Struct(…)) })`. */
+export function form<S extends Schema.Top>(schema: S): S["Rebuild"] {
+  return HttpApiSchema.asFormUrlEncoded()(schema);
+}
+
+/** The vendor's one-line operation summary, for the manifest and a hatch index: `get(…).annotate(Summary, "…")`. */
+export const Summary = OpenApi.Summary;
 
 export type Operation = HttpApiEndpoint.ConstraintRequest;
 
