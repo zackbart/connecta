@@ -5,7 +5,7 @@ import { credentialUrlViews } from "./credential-url.js";
 import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
-import { REDACTED } from "./redaction-marker.js";
+import { REDACTED, redactionAltered, splitRemainder } from "./redaction-marker.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -698,7 +698,62 @@ function replace(text: string, spans: number[]): string {
     cursor = ranges[index + 1]!;
   }
   parts.push(text.slice(cursor));
-  return parts.join("").replace(headerLine, `$1$2${REDACTED}`);
+  return splitHeaderLines(parts.join("").replace(headerLine, `$1$2${REDACTED}`));
+}
+
+/** A line's leading run of header-name characters and placeholders, and what follows it. */
+/** A character of a header line's name, as `headerLine` reads one. */
+const HEADER_NAME = /[a-z0-9-]/i;
+
+/**
+ * Header lines whose name redaction altered (#703). A name holding a placeholder before its `:`
+ * may have named a credential, so the line's value goes. A placeholder in the name followed
+ * directly by a credential's remainder may stand for the name, its `:` and a credential prefix
+ * (`Authorization: Bearer `), so that remainder goes with it. A line that begins with a placeholder
+ * and a space, or fewer credential characters, keeps its text: a private word opening a line is not
+ * taken for a header. One linear pass from each line's first placeholder.
+ */
+function splitHeaderLines(text: string): string {
+  if (!redactionAltered(text)) return text;
+  let out = "";
+  let copied = 0;
+  for (let at = text.indexOf(REDACTED); at >= 0;) {
+    let lineEnd = at;
+    while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") lineEnd++;
+    // The name runs back from the placeholder to the line's start, after any indentation.
+    let name = at;
+    while (name > 0) {
+      if (text.endsWith(REDACTED, name)) name -= REDACTED.length;
+      else if (HEADER_NAME.test(text[name - 1]!)) name--;
+      else break;
+    }
+    let indent = name;
+    while (indent > 0 && (text[indent - 1] === " " || text[indent - 1] === "\t")) indent--;
+    if (indent === 0 || text[indent - 1] === "\n" || text[indent - 1] === "\r") {
+      let end = at;
+      while (end < lineEnd) {
+        if (text.startsWith(REDACTED, end)) end += REDACTED.length;
+        else if (HEADER_NAME.test(text[end]!)) end++;
+        else break;
+      }
+      const colon = /^[\t ]*:[\t ]*/.exec(text.slice(end, Math.min(lineEnd, end + 64)));
+      if (colon) {
+        const value = end + colon[0].length;
+        if (/[A-Za-z0-9]/.test(text.slice(value, lineEnd).replaceAll(REDACTED, ""))) {
+          out += `${text.slice(copied, value)}${REDACTED}`;
+          copied = lineEnd;
+        }
+      } else {
+        const remainder = splitRemainder(text, at);
+        if (remainder > at) {
+          out += `${text.slice(copied, at)}${REDACTED}`;
+          copied = remainder;
+        }
+      }
+    }
+    at = text.indexOf(REDACTED, lineEnd);
+  }
+  return copied === 0 ? text : out + text.slice(copied);
 }
 
 /** Spans of the joined pieces, replaced in each piece they touch: a match across pieces leaves

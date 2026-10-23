@@ -27,8 +27,9 @@
 //   safety, a private value echoed as a key, or a decision input a private
 //   value alters (a type discriminator, a record's label or type, an
 //   environment entry, a destination's scheme, a link's parameter name, a
-//   Content-Type, a streamed row's key) that fails open, called directly or
-//   from a program on a writable or read-only endpoint;
+//   Content-Type, a streamed row's key, a credential's public prefix) that
+//   fails open, called directly or from a program on a writable or read-only
+//   endpoint;
 // - a moved verdict count (a reviewed change updates it with the table).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { api } from "../../src/connectors/api.js";
@@ -580,10 +581,11 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       // Sent-secret redaction runs before value safety; renaming `client_secret` there would hide it (#703).
       const held = "pi_1_secret_VENDOR_HELD_0001";
       const [short, long] = ["ecre", "my-client_se-key"];
-      // Each alters one value a rule decides on; none alters another's (#703).
-      const altering = ["TOKE", "head", "KEY=", "https:/", "on/js"];
-      const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok"] : [];
-      const signing = table.embeddedUrls ? ["Signatur"] : [];
+      // Each alters one value a rule decides on, or takes a credential's public prefix; none alters
+      // another's (#703).
+      const altering = ["TOKE", "head", "KEY=", "https:/", "on/js", "Authorization: Bearer sk_live_"];
+      const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok", "secret=whsec_"] : [];
+      const signing = table.embeddedUrls ? ["Signatur", "X-Goog-Credential="] : [];
       const all = [short, long, ...altering, ...resources, ...signing];
       const pins = {
         type: "object",
@@ -603,6 +605,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         ],
         env: ["API_KEY=VENDOR_HELD_ENV"],
         destination: "https://hooks.example/services/VENDOR_HELD_DEST",
+        // A header line whose name and credential prefix a private value took.
+        echo: "Authorization: Bearer sk_live_VENDOR_HELD_BEARER",
         // The Content-Type itself (`on/js`) would hand this body over as bytes or one string.
         ...(table.resources
           ? {
@@ -618,10 +622,16 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
                   },
                 },
                 { object: "charge", failure_message: "see http://bank.example/r?access_token=VENDOR_HELD_PARAM now" },
+                { object: "charge", failure_message: "hook http://hooks.example/w?secret=whsec_VENDOR_HELD_WHSEC now" },
               ],
             }
           : {}),
-        ...(table.embeddedUrls ? { note: "get http://bucket.s3.amazonaws.com/f?X-Amz-Signature=VENDOR_HELD_SIGN now" } : {}),
+        ...(table.embeddedUrls
+          ? {
+              note: "get http://bucket.s3.amazonaws.com/f?X-Amz-Signature=VENDOR_HELD_SIGN now",
+              split: "get http://bucket.storage.example/f?X-Goog-Credential=VENDOR_HELD_GOOG now",
+            }
+          : {}),
       };
       // A streamed row's keys are text the kit redacted whole, then parsed.
       const stream = '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n';

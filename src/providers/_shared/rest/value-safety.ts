@@ -37,13 +37,14 @@
 // (#703): an altered type discriminator applies every resource rule; an
 // altered label or type makes a secret record or a header rule; an altered
 // URL scheme or parameter name withholds the whole URL or its value; an
-// altered key withholds its value.
+// altered key withholds its value; a placeholder that may stand for a
+// credential's public prefix withholds the remainder after it.
 //
 // The key-name rules combine Cloudflare's and Vercel's former engines.
 // URL policy and exemptions are reviewed per vendor in its table (`keep`,
 // `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
 import { ConnectorCallError } from "../../../errors.js";
-import { REDACTED, redactionAltered } from "../../../redaction-marker.js";
+import { REDACTED, redactionAltered, splitRemainder } from "../../../redaction-marker.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
@@ -974,10 +975,12 @@ const EQUALS_BEFORE = /(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)$/i;
 const NAME_CHAR = /[\w.~-]/;
 
 /**
- * Where the value of the next parameter whose name redaction altered starts,
- * at or after `from`, or `-1` (#703): a placeholder inside a run of name
- * characters that ends at an `=`. Such a name may have been a signing
- * parameter's. A placeholder right after an `=` is a withheld value.
+ * Where the next placeholder that may hide a signing parameter starts, at or
+ * after `from`, or `-1` (#703); its value goes with it. Either it sits in a
+ * run of name characters that ends at an `=` (a name redaction altered), or
+ * credential characters follow it (it may stand for a signing name, its `=`
+ * and the value's start, leaving the rest). A placeholder right after an `=`
+ * with no name after it is a withheld value.
  */
 function alteredParameter(text: string, from: number): number {
   for (let at = text.indexOf(REDACTED, from); at >= 0;) {
@@ -990,7 +993,8 @@ function alteredParameter(text: string, from: number): number {
     EQUALS.lastIndex = end;
     const name = text.slice(at, end);
     if (redactionAltered(name) && !EQUALS_BEFORE.test(text.slice(Math.max(0, at - 12), at)) && EQUALS.test(text))
-      return EQUALS.lastIndex;
+      return at;
+    if (splitRemainder(text, at) > at) return at;
     at = text.indexOf(REDACTED, end);
   }
   return -1;

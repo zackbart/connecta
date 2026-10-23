@@ -55,7 +55,7 @@ async function exercise(connector: Connector, options: Parameters<typeof makeReg
 }
 
 describe("call-scoped sent credentials", () => {
-  it("INV-5: copies nested error data and causes without raw, prefixed, encoded or Basic credentials", () => {
+  it("INV-5: copies nested error data and causes without raw, prefixed, encoded or Basic credentials, and withholds a header line whose name or credential prefix a private value took", () => {
     const secrets = new SentSecrets();
     secrets.header(`Basic ${btoa(`account:${SECRET}`)}`);
     const cause = new Error(diagnostic(SECRET));
@@ -80,6 +80,16 @@ describe("call-scoped sent credentials", () => {
     expect(redacted.message).toContain("Permission refused");
     expect(redacted.message).toContain("Retry after checking permissions");
     expect(error.message).toContain(SECRET);
+    // A private value that took a header's name, or its name and a credential's public prefix,
+    // leaves no name to match; the line fails closed. A private word opening prose keeps it (#703).
+    const split = new SentSecrets();
+    split.arguments(
+      { pins: ["Authorization: Bearer sk_live_", "X-Api-", "hunter22"] },
+      { type: "object", properties: { pins: { type: "array", items: { type: "string", writeOnly: true } } } },
+    );
+    expect(split.redact("Authorization: Bearer sk_live_VENDOR_HELD_0001\nRetry")).toBe("[redacted]\nRetry");
+    expect(split.redact("X-Api-Key: VENDOR_HELD_0002")).toBe("[redacted]Key: [redacted]");
+    expect(split.redact("hunter22 opens this line")).toBe("[redacted] opens this line");
   });
 
   it("INV-5: ordinary diagnostics and results keep their text, and plain results their identity", () => {

@@ -1467,7 +1467,10 @@ contain `key`, `token`, `secret`, `auth`, `signature`, or `session`. Custom
 `api()` handlers use `ctx.fetch` for this tracking; `ctx.oauth.fetch` and
 maintained-provider transports track the final request too. Credential-slot
 reads cover values sent in headers, queries, or bodies. Echoed sensitive
-header lines are also withheld.
+header lines are also withheld, including a line whose header name a private
+value changed or whose name and credential prefix (such as
+`Authorization: Bearer sk_live_`) one took; a line that only opens with a
+private word keeps its text.
 
 Redaction removes every registered form whole and every run of eight
 consecutive code units (K) of a registered form of a value at least eight units

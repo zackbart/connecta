@@ -1138,7 +1138,10 @@ including titles, descriptions, schemas and annotations. If a tool name would
 change, the complete catalog is refused. Rewriting a name changes dispatch;
 dropping only that tool would publish a partial catalog, against INV-8. Later
 cached reads need no credential set because the stored facts are already clean.
-Echoed sensitive header lines are also withheld. The set is never persisted
+Echoed sensitive header lines are also withheld, and so is a line whose
+name a private value altered, or whose name, `:` and credential prefix one
+took with at least eight credential characters after it (#703); a line that
+only opens with a private word keeps its text. The set is never persisted
 or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
@@ -1473,10 +1476,21 @@ every vendor ships one reviewed table through one mechanism
    withholds the query and fragment. A key that carries it (text a result
    hook parses after the kit redacted it whole, such as NDJSON and log
    streams) loses its value, and its record's key-based decisions take their
-   protective outcome. Value safety's own placeholders are not alterations:
-   `@keys` map keys, a withheld value right after `=`, and a withheld
-   `#[redacted]` fragment. More is withheld only when a private value occurs
-   in a decision input.
+   protective outcome. A placeholder can also stand for a credential's public
+   prefix (`sk_live_`, `whsec_`, `Bearer `, or a signing parameter's name and
+   `=`) and leave its secret remainder. Wherever signing parameters are
+   scanned, a placeholder followed by at least eight credential characters
+   (letters, digits, and `_.~+/=-`, one a letter or digit) is withheld with
+   that remainder through the end of its value (`splitRemainder`); fewer than
+   eight, K, is not taken for a credential's remainder. Value safety's own
+   placeholders are not alterations: `@keys` map keys, a withheld value right
+   after `=`, and a withheld `#[redacted]` fragment. More is withheld only
+   when a private value occurs in a decision input, and then deliberately:
+   a placeholder inside a base64 value before its `=` padding counts as a
+   parameter name, so its link goes whole; an altered fragment withholds the
+   query and fragment; a Content-Type redaction altered on a body that is not
+   JSON leaves it unreadable (see "Contributor provider kit"); a vendor key
+   spelled with the placeholder loses its value.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in
