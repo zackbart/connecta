@@ -1,3 +1,4 @@
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   apiFixture,
@@ -10,15 +11,16 @@ import {
 } from "../../../test/fixtures/github-api.js";
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
-import { AppAuth } from "./auth.js";
-import { appJwt, privateKeyDer } from "./key.js";
-import { parseScopes, ScopePolicy } from "./scope.js";
+import { AppAuth } from "./lib/auth.js";
+import { appJwt, privateKeyDer } from "./lib/key.js";
+import { parseScopes, ScopePolicy } from "./lib/scope.js";
 
 function value(result: any): any {
   return result.structuredContent;
 }
 
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -162,6 +164,7 @@ describe("GitHub App provider", () => {
   it.each(["retargeted-base", "foreign-head", "stale-sha"])(
     "INV-4: explicit workflow scope covers base-retarget races and merge refuses unsafe head case %s",
     async (kind) => {
+      configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
       const fixture = apiFixture();
       const sha = "a".repeat(40);
       const base = "b".repeat(40);
@@ -198,6 +201,7 @@ describe("GitHub App provider", () => {
   );
 
   it("INV-6: permission 403 with unused rate budget is auth failure and evicts its token", async () => {
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     const fixture = apiFixture();
     fixture.respond((request) =>
       request.url.pathname === "/repos/acme/one/releases"
@@ -219,6 +223,7 @@ describe("GitHub App provider", () => {
   });
 
   it("INV-6: REST malformed/sentinel error responses produce typed facts without body or content-type", async () => {
+    configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
     const fixture = apiFixture();
     const logger = spyLogger();
     fixture.respond((request) =>
@@ -233,6 +238,9 @@ describe("GitHub App provider", () => {
     expect(JSON.stringify(activity.events)).not.toContain(SENTINEL);
     expect(logger.warnings().join(" ")).not.toContain(SENTINEL);
     expect(activity.events[0]?.errorCode).toBe("auth_required");
+    expect(logger.warn.mock.calls.find(([message]) => String(message).includes("call failed"))?.[1]).toMatchObject({
+      httpStatus: 403,
+    });
     expect(fixture.requests.filter((request) => request.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
   });
 
