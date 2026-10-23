@@ -40,7 +40,7 @@
     "./providers/sheets measures 334,571 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/slides measures 344,074 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/stripe measures 379,663 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
-    "./providers/tithely remeasures at 331,894 B gzip in its decision 0011 step 2, from 324,056 B on main at 9ceec06e (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
+    "./providers/tithely remeasures at 333,313 B gzip in its decision 0011 step 2, from 323,386 B on main at 57176ce1 (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations (budgeted, paged discovery), and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
     "./providers/vercel measures 371,275 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899)."
   ],
   "entries": {
@@ -100,7 +100,7 @@
       "baselineGzip": 379663
     },
     "./providers/tithely": {
-      "baselineGzip": 331894
+      "baselineGzip": 333313
     },
     "./providers/vercel": {
       "baselineGzip": 371275
