@@ -399,6 +399,81 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(facts).toMatchObject({ list: ["token", 1, true] });
       expect(JSON.stringify(facts)).not.toMatch(/text with spaces|https|Infinity/);
       expect(body.prose).toBe("the token expired");
+      for (const [value, expected] of [
+        [0, 0],
+        [5, 5],
+        ["+5", 5],
+        [" 5 ", 5],
+        ["", undefined],
+        [" ", undefined],
+        [null, undefined],
+        [-1, undefined],
+        ["private prose", undefined],
+        [Infinity, undefined],
+      ] as const) {
+        let numeric: unknown;
+        const reviewed: VendorErrors = {
+          ...VENDOR,
+          numericFacts: {
+            wait: { path: ["retry_after"], review: "Fixture retry delay in seconds; raw prose stays unavailable." },
+          },
+          classify: [
+            (input) => {
+              numeric = input.numbers;
+              return undefined;
+            },
+          ],
+        };
+        toConnectorCallError(status(429, {}, { retry_after: value }), reviewed, {
+          classification: "read",
+          dispatches: [],
+          withholds: () => true,
+        });
+        expect(numeric).toEqual({ wait: expected });
+      }
+
+      // Presence is a closed structural declaration: neither callback sees the text it classifies.
+      for (const [field, content, value, present, nonBlank] of [
+        ["retry_guidance", "text", undefined, false, false],
+        ["retry_guidance", "text", "", false, false],
+        ["retry_guidance", "text", " ", true, false],
+        ["retry_guidance", "text", "private prose here", true, true],
+        ["retry_guidance", "text", ["private prose", "more prose"], true, true],
+        ["retry_guidance", "text", ["", " \n\t "], true, false],
+        ["retry_guidance", "text", ["", " ", "private prose"], true, true],
+        ["retry_guidance", "text", 42, false, false],
+        ["retry_guidance", "text", [null, 1], false, false],
+        ["retry_guidance", "text", { value: "private prose" }, false, false],
+        ["committed_resource_id", "string", "5c6a2821-6bb1-4a7e-b6e1-c50111515c3d", true, true],
+        ["committed_resource_id", "string", "private non-token id", true, true],
+        ["committed_resource_id", "string", "", false, false],
+      ] as const) {
+        let seen: unknown;
+        const shaped: VendorErrors = {
+          ...VENDOR,
+          presence: { reviewed: { path: ["additional_data", field], content } },
+          classify: [
+            (input) => {
+              seen = input.presence;
+              return undefined;
+            },
+          ],
+          detail: (input) => {
+            expect(input).not.toHaveProperty("body");
+            return "Withheld.";
+          },
+        };
+        toConnectorCallError(status(503, {}, { additional_data: { [field]: value } }), shaped, {
+          classification: "read",
+          dispatches: [],
+          withholds: () => true,
+        });
+        expect(seen).toEqual({ reviewed: { present, nonBlank } });
+        expect(JSON.stringify(seen)).not.toContain("private");
+      }
+      expect(() => validateVendorErrors({ ...VENDOR, presence: { bad: { path: [], content: "text" } } })).toThrow(
+        /presence/,
+      );
     },
   ],
   [
@@ -434,6 +509,24 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       expect(resendAdviceOf(mapped)).toBe(" Back off.");
       expect(order).toEqual(["rule", "detail"]);
       expect(display).toEqual(reasons.slice(0, 8));
+      const recoveryIds = Array.from({ length: 20 }, (_, i) => `id_${i}`);
+      const reviewed: VendorErrors = {
+        ...VENDOR,
+        facts: () => ({ ids: recoveryIds }),
+        displayFacts: {
+          ids: { maxItems: 12, review: "All ids in this fixture's bounded write are needed for recovery." },
+        },
+        detail: (input) => {
+          expect(input).not.toHaveProperty("body");
+          display = input.facts.ids;
+          return "Withheld.";
+        },
+      };
+      validateVendorErrors(reviewed);
+      (reviewed.displayFacts!.ids as { maxItems: number }).maxItems = 20;
+      toConnectorCallError(status(503), reviewed, { classification: "read", dispatches: [], withholds: () => true });
+      expect(display).toEqual(recoveryIds.slice(0, 12));
+
       expectTypeOf<Classified>().not.toHaveProperty("body");
       expectTypeOf<Classified>().not.toHaveProperty("detail");
       expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
@@ -1284,6 +1377,72 @@ function acme(
     ...(options.result ? { result: options.result } : {}),
   }) as Connection;
 }
+
+it(
+  "INV-5 INV-7 INV-11: presence reviews freeze body paths and use redacted errors without changing withholding",
+  WORKERS,
+  async () => {
+    for (const withheld of [false, true]) {
+      const secret = "sk_test_0123456789";
+      const path = ["additional_data", "retry_guidance"];
+      const review: { path: string[]; content: "string" | "text" } = { path, content: "text" };
+      const declarations = {
+        guidance: review,
+        credentialKey: { path: [secret], content: "string" as const },
+        headerOnly: { path: ["x-presence"], content: "string" as const },
+      };
+      const expected = {
+        guidance: { present: true, nonBlank: true },
+        credentialKey: { present: false, nonBlank: false },
+        headerOnly: { present: false, nonBlank: false },
+      };
+      const connection = acme({
+        withholds: withheld,
+        errors: {
+          ...VENDOR,
+          presence: declarations,
+          classify: [
+            (input) => {
+              expect(input.presence).toEqual(expected);
+              expect(input.withheld).toBe(withheld);
+              expect(input).not.toHaveProperty("body");
+              return undefined;
+            },
+          ],
+          detail: (input) => {
+            expect(input.presence).toEqual(expected);
+            expect(input.withheld).toBe(withheld);
+            if (withheld) expect(input).not.toHaveProperty("body");
+            return withheld ? "Vendor text withheld." : JSON.stringify(input.body);
+          },
+        },
+      });
+      // A connection captures the original declaration, including each path and content mode.
+      path[0] = "changed";
+      review.content = "string";
+      declarations.guidance = { path: ["missing"], content: "string" };
+      answers.push(() =>
+        Response.json(
+          { additional_data: { retry_guidance: ["private prose"] }, [secret]: "present before redaction" },
+          { status: 400, headers: { "x-presence": "header prose" } },
+        ),
+      );
+      const tool = read(connection, {
+        name: "presence",
+        description: "Read a reviewed error shape.",
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        run: () => connection.send(keys, {}).pipe(Effect.map(({ data }) => data)),
+      });
+      const result = await through(tool, {});
+      expect(result.error).toMatchObject({
+        code: "invalid_args",
+        message: withheld ? "Vendor text withheld." : expect.stringContaining("private prose"),
+      });
+      expect((result.error as Error).message).not.toContain(secret);
+    }
+  },
+);
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
   it("INV-5: a result hook redacts split rich text through this call's request-secret service", async () => {

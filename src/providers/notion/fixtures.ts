@@ -1,7 +1,6 @@
 import { notion } from "./index.js";
 type Options = Parameters<typeof notion>[1];
-// The token connector is the default: its tools are Connecta's own, so the
-// hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+// The maintained token connector exposes every Connecta-authored API tool offline.
 const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "notion",
