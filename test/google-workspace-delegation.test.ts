@@ -15,13 +15,12 @@ import { slides } from "../src/providers/slides/index.js";
 // subject comes from deployment config applied to the admitted identity, and
 // from nothing a call, a header, or a program sends (#678).
 import { AsyncLocalStorage } from "node:async_hooks";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import {
   googleOutcomeOf,
-  googleReasonsOf,
   googleWorkspaceClient,
   workspaceConnection,
 } from "../src/providers/_shared/google/workspace.js";
@@ -29,7 +28,10 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { isKnownProviderFailure } from "../src/provider-call.js";
+import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
+import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -1274,37 +1276,42 @@ describe("the in-memory token cache", () => {
     ]);
   });
 
-  it(
-    "INV-9: a read's 401 the fresh token replaced leaves a later write's failure to decide the call",
-    NODE,
-    async () => {
-      apiReplies.push(
-        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-        () =>
-          Response.json({
-            id: "d1",
-            message: {
-              id: "m1",
-              threadId: "t1",
-              payload: { mimeType: "text/plain", headers: [{ name: "To", value: "bob@org.example" }], body: {} },
-            },
-          }),
-        () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
-      );
-      // A direct call: update_draft's GET is a read, so its 401 earns the replay.
+  it("INV-9: an auxiliary read inside a write stops on 401 before sending the draft write", NODE, async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () =>
+        Response.json({
+          id: "d1",
+          message: {
+            id: "m1",
+            threadId: "t1",
+            payload: { mimeType: "text/plain", headers: [{ name: "To", value: "bob@org.example" }], body: {} },
+          },
+        }),
+      () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
+    );
+    // A write call never replays even its auxiliary GET (0010 B.2).
+    const restoreTransport = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
       const failure = await mailbox()
         .callTool("update_draft", { draftId: "d1", body: "Revised." }, context(identity("alice")))
         .catch((error: unknown) => error);
       const error = classifyCallError(failure);
-      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-      expect(error.message).toContain("answered HTTP 503 after receiving the request");
-      expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual([
-        "GET Bearer token-1",
-        "GET Bearer token-2",
-        "PUT Bearer token-2",
-      ]);
-    },
-  );
+      expect(error).toMatchObject({ code: "auth_required", retryable: false });
+      expect(error.message).toContain("Google rejected a freshly minted delegated token");
+      expect(error).not.toHaveProperty("writeOutcome");
+      expect(error).not.toHaveProperty("reconciliationRequired");
+      expect(isKnownProviderFailure(failure)).toBe(true);
+      expect(
+        classifyWriteOutcome({ ok: false, dispatched: true, answered: isKnownProviderFailure(failure), error }),
+      ).toBe("failed");
+      expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual(["GET Bearer token-1"]);
+      expect(apiCalls.filter(({ method }) => method === "POST" || method === "PUT")).toHaveLength(0);
+      expect(tokenCalls).toHaveLength(1);
+    } finally {
+      configureGuardedTransport(restoreTransport);
+    }
+  });
 });
 
 describe("Workspace served classification on unauthorized requests", () => {
@@ -1343,9 +1350,57 @@ describe("Workspace served classification on unauthorized requests", () => {
     // A deliberate repeat is a new call and uses a fresh token.
     expect((await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} })).isError).toBeFalsy();
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+
+    // Every multi-request mail read also completes when served as a write.
+    // Distinct body and row steps must survive more than one summary or body.
+    const stored = (id: string) => ({
+      id,
+      threadId: "t1",
+      payload: { mimeType: "text/plain", body: { attachmentId: "body", size: 3 } },
+    });
+    const body = { data: "YWJj", size: 3 };
+    const messages = [stored("m1"), stored("m2"), stored("m3")];
+    const thread = { id: "t1", messages };
+    const draft = { id: "d1", message: stored("m1") };
+    for (const [tool, args, replies] of [
+      ["get_message", { messageId: "m1" }, [stored("m1"), body]],
+      ["get_draft", { draftId: "d1" }, [draft, body]],
+      [
+        "get_attachment",
+        { messageId: "m1", partId: "1" },
+        [
+          {
+            id: "m1",
+            payload: { partId: "1", mimeType: "text/plain", filename: "a.txt", body: { attachmentId: "a1", size: 3 } },
+          },
+          body,
+        ],
+      ],
+      ["get_thread", { threadId: "t1" }, [thread, body, body, body]],
+      ["search_threads", { limit: 2 }, [{ threads: [{ id: "t1" }, { id: "t2" }] }, thread, { ...thread, id: "t2" }]],
+      ["list_drafts", { limit: 2 }, [{ drafts: [{ id: "d1" }, { id: "d2" }] }, draft, { ...draft, id: "d2" }]],
+    ] as const) {
+      let expected;
+      for (const served of ["read", "write"] as const) {
+        apiReplies.push(...replies.map((reply) => () => Response.json(reply)));
+        const meta = createMetaTools(
+          makeRegistry([connector], { classification: { gmail: { [tool]: served } } }),
+          "https://connecta.example",
+        );
+        const sent = apiCalls.length;
+        const answer = await (served === "write" ? meta.callDestructiveTool : meta.callTool)({
+          address: `gmail.${tool}`,
+          args,
+        });
+        expect(answer.isError, `${tool}: ${JSON.stringify(answer.structuredContent)}`).toBeFalsy();
+        expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(replies.map(() => "GET"));
+        if (served === "read") expected = answer.content;
+        else expect(answer.content, tool).toEqual(expected);
+      }
+    }
   });
 
-  it("INV-9: a served read-classified POST replays once after 401 with the same body", NODE, async () => {
+  it("INV-9: a served read-classified POST is never replayed after 401", NODE, async () => {
     apiReplies.push(
       () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
       () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
@@ -1356,13 +1411,12 @@ describe("Workspace served classification on unauthorized requests", () => {
       address: "gmail.create_draft",
       args: { body: "Draft text" },
     });
-    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "auth_required", retryable: false } });
     expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
       { method: "POST", authorization: "Bearer token-1" },
-      { method: "POST", authorization: "Bearer token-2" },
     ]);
-    expect(apiCalls[1]!.body).toEqual(apiCalls[0]!.body);
-    expect(tokenCalls).toHaveLength(2);
+    expect(apiCalls[0]!.body).toBeTypeOf("string");
+    expect(tokenCalls).toHaveLength(1);
   });
 
   it.each([503, "reset"] as const)(
@@ -1646,6 +1700,13 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
 });
 
 describe("API refusals map by Google's reason codes", () => {
+  // The kit passes only bounded token facts to its detail mapper. These replace
+  // assertions against the legacy client's private googleReasonsOf WeakMap.
+  let detail: MockInstance<typeof gmailErrors.detail>;
+  beforeEach(() => {
+    detail = vi.spyOn(gmailErrors, "detail");
+  });
+  const displayedReasons = () => detail.mock.calls.at(-1)?.[0].facts.reasons ?? [];
   async function apiFailure(status: number, error: Record<string, unknown>) {
     apiReplies.push(() => Response.json({ error: { code: status, ...error } }, { status }));
     return await labels(mailbox(), context(identity("alice"))).catch((failure) => failure);
@@ -1739,14 +1800,14 @@ describe("API refusals map by Google's reason codes", () => {
       retryable: false,
     });
     expect(failure.message).toContain(words);
-    expect(googleReasonsOf(failure)).toEqual([reason, "PERMISSION_DENIED"]);
+    expect(displayedReasons()).toEqual([reason, "PERMISSION_DENIED"]);
   });
 
   it("maps either rate-limit reason to rate_limited, whatever the status", NODE, async () => {
     for (const reason of ["rateLimitExceeded", "userRateLimitExceeded"]) {
       const failure = await apiFailure(403, { message: "Rate Limit Exceeded", errors: [{ reason }] });
       expect(failure.code).toBe("rate_limited");
-      expect(googleReasonsOf(failure)).toEqual([reason]);
+      expect(displayedReasons()).toEqual([reason]);
     }
   });
 
@@ -1757,13 +1818,14 @@ describe("API refusals map by Google's reason codes", () => {
       errors: [
         { reason: "cannotDownloadAbusiveFile", message: "prose" },
         { reason: "has spaces; and punctuation" },
-        { reason: "x".repeat(65) },
+        { reason: "x".repeat(129) },
         { reason: 42 },
         ...Array.from({ length: 10 }, (_, index) => ({ reason: `extra${index}` })),
       ],
       details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "cannotDownloadAbusiveFile" }],
     });
-    const reasons = googleReasonsOf(failure);
+    expect(failure).toMatchObject({ code: "provider_permission_denied", retryable: false });
+    const reasons = displayedReasons();
     expect(reasons).toEqual([
       "cannotDownloadAbusiveFile",
       "extra0",
@@ -1774,7 +1836,9 @@ describe("API refusals map by Google's reason codes", () => {
       "extra5",
       "extra6",
     ]);
-    expect(Object.isFrozen(reasons)).toBe(true);
+    expect(reasons).toHaveLength(8);
+    expect(reasons).not.toContain("has spaces; and punctuation");
+    expect(reasons).not.toContain("x".repeat(129));
     expect(JSON.stringify(reasons)).not.toContain("payroll");
   });
 });

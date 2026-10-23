@@ -346,8 +346,8 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 
 **Step 1: onto the kit and the standard folder.** Agent output does not move.
 
-1. Build `api.ts` and `tools.ts` on the kit. Replace `asProviderFactory`
-   with `defineProvider` (through `defineApiProvider` where appropriate).
+1. Build `api.ts` and `tools.ts` on the kit. Use `defineProvider`
+   (through `defineApiProvider` where appropriate).
 2. Move every file to its standard name (0011's table maps each existing
    file), convert evidence to its format, and rewrite `drift.json` as
    version 2 (`rationale` → `reason`, `reviewedAt` → `lastVerified`).
@@ -382,9 +382,10 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 
 This section applies only to providers in `PENDING`, and S.2 deletes it.
 
-- Legacy API-only providers attach their definition with `asProviderFactory()`
-  and keep their constructor's option policy. Do not convert one outside its
-  step 1.
+- Every API provider has completed step 1 and uses `defineProvider()`
+  (through `defineApiProvider` where appropriate). The final migration removed
+  the unused `asProviderFactory()` adapter. Providers still in `PENDING.step2`
+  retain their step-1 surface and guide until their separate step-2 migration.
 - Legacy `SKILL.md` files mark exact text with `<!-- fragment: key -->` and
   `<!-- endfragment -->`. The frontmatter `content` names the published
   fragment for a guide whose fragments serve different implementations.

@@ -407,25 +407,6 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
 }
 
 /**
- * Attach the same validated definition to an existing provider constructor.
- * Its option policy stays in its builder during the mechanical folder move;
- * adopting defineProvider's common-value policy is a separate conversion.
- */
-export function asProviderFactory<O extends ProviderOptions>(
-  definition: Omit<ProviderDefinition<O>, "create"> & {
-    create(id: string, options: Readonly<O>): Connector;
-  },
-): ProviderFactory<O> {
-  const frozen = defineProvider(definition).definition;
-  const create = definition.create;
-  const factory = (id: string, options: O): Connector => asProvider(frozen.name, frozen.options, id, options, create);
-  Object.defineProperty(factory, "name", {
-    value: frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()),
-  });
-  return Object.freeze(Object.assign(factory, { definition: frozen }));
-}
-
-/**
  * Build a maintained provider's connector: refuse unknown options and
  * accessors by path before the builder reads any of them, then stamp the
  * provider onto its description, so the operator surface can say "Stripe"

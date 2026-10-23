@@ -26,7 +26,7 @@ import type { Connector, ConnectorContext } from "../src/types.js";
 
 export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
-  step1: new Set(["gmail"]),
+  step1: new Set<string>(),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
   step2: new Set([
     "breeze",
