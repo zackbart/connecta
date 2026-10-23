@@ -1405,9 +1405,9 @@ response. Breeze selects text for
 error statuses and JSON-or-text for its legacy hatches only, so malformed
 JSON on named tools still fails as `UnreadableBody`.
 
-C.6 adds opt-in vendor deadlines (`timeoutMs`), which cannot extend a caller's
-signal, and preserves explicitly empty form bodies through `sendPath`'s
-`emptyForm: true` opt-in; existing empty declarations still omit their bodies. Its reviewed
+C.6 adds optional vendor `timeoutMs`: the earlier vendor or invocation deadline ends the request and response stream; caller cancellation and lease closure still win (INV-7).
+C.6 preserves explicit empty form bodies through `sendPath`'s `emptyForm: true`: `{}` sends form Content-Type and zero body bytes; JSON and existing omitted empty forms retain their framing.
+Its reviewed
 `binaryBodies` selector keeps bounded response bytes inside the connection and
 checks them with `RequestSecrets.encode` before base64. Text selection receives
 only redacted, normalized Content-Type; fixed secondary origins use separate
