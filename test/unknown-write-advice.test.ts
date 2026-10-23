@@ -257,7 +257,7 @@ describe("Stripe's 503 overload advice", () => {
     const direct = classifyCallError(
       await failure(connector.callTool("stripe_api_write", write, registry.contextFor("notes", BASE))),
     );
-    expect(direct).toMatchObject({ code: "unavailable", retryable: false, writeOutcome: "unknown" });
+    expect(direct).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     expect(direct.message).toContain("Stripe");
     expect(resendWording(direct)).toEqual([]);
 

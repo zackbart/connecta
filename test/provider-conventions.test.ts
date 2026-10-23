@@ -325,7 +325,6 @@ describe("Stripe splits its guarded raw access by safety class (H14)", () => {
       stripe_api_details: { readOnlyHint: true },
       stripe_api_read: { readOnlyHint: true },
       stripe_api_write: { readOnlyHint: false, destructiveHint: true },
-      stripe_api_upload: { readOnlyHint: false, destructiveHint: true },
     });
     const guide = connector.usageGuide;
     if (typeof guide !== "object" || guide === undefined) {

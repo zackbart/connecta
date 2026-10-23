@@ -939,20 +939,19 @@ const frozen = JSON.parse(
   await readFile(new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url), "utf8"),
 ) as AgentResultFile;
 for (const [name, expected, denominator] of [
-  ["sonnet-5-5", 30, 34],
-  ["gpt-6-luna", 36, 38],
+  ["sonnet-5-5", 28, 32],
+  ["gpt-6-luna", 34, 36],
 ] as const) {
   const file = JSON.parse(
     await readFile(new URL(`./baselines/${name}-0.29.json`, import.meta.url), "utf8"),
   ) as AgentResultFile;
-  const trials = file.trials.map((t) =>
-    regradeTrial(
-      ACTIVE_TASKS.find((task) => task.id === t.task)!,
-      t,
-      file.config.runner ?? (file.claudeVersion ? "claude" : "codex"),
-      "outcome",
-    ),
-  );
+  // Frozen baselines keep removed tasks as history; grade only the current roster.
+  const trials = file.trials.flatMap((t) => {
+    const task = ACTIVE_TASKS.find((task) => task.id === t.task);
+    return task
+      ? [regradeTrial(task, t, file.config.runner ?? (file.claudeVersion ? "claude" : "codex"), "outcome")]
+      : [];
+  });
   if (
     trials.filter((t) => t.status === "pass").length !== expected ||
     trials.filter((t) => t.status !== "skipped").length !== denominator ||
