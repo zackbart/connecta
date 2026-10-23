@@ -8,6 +8,7 @@ import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
+import { requestSentSecrets } from "../src/sent-secrets.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
@@ -258,6 +259,45 @@ describe("Sheets", () => {
         connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"], maxCellChars: 500 }, caller()),
       );
       expectNoFragment(result.valueRanges[0].values[0][0], form);
+      // A private argument submitted earlier in this request may equal a
+      // public Sheets wire key. Keep the rows for projection; their cell
+      // values stay redacted, and the final boundary still protects keys
+      // that match the private value, exactly as the legacy result did.
+      for (const privateValue of ["values", "range", "sheets", "properties"]) {
+        const ctx = caller();
+        requestSentSecrets(ctx).arguments(
+          { private: privateValue },
+          { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+        );
+        stubGoogle(() => ({
+          spreadsheetId: ID,
+          properties: { title: "Budget" },
+          sheets: [{ properties: { sheetId: 2, title: "Summary" } }],
+          valueRanges: [{ range: "Sheet1!A1:A2", values: [["kept"], [privateValue]] }],
+        }));
+        const projected = await read(
+          connector.callTool(
+            privateValue === "values" || privateValue === "range" ? "get_values" : "get_spreadsheet",
+            privateValue === "values" || privateValue === "range"
+              ? { spreadsheetId: ID, ranges: ["Sheet1!A1:A2"] }
+              : { spreadsheetId: ID },
+            ctx,
+          ),
+        );
+        if (privateValue === "values" || privateValue === "range") {
+          expect(projected.valueRanges[0][privateValue === "values" ? "[redacted]" : "values"]).toEqual([
+            ["kept"],
+            ["[redacted]"],
+          ]);
+          expect(projected.cellCount).toBe(2);
+        } else {
+          expect(projected.title).toBe("Budget");
+          expect(projected[privateValue === "sheets" ? "[redacted]" : "sheets"][0]).toMatchObject({
+            sheetId: 2,
+            title: "Summary",
+          });
+        }
+      }
     },
   );
 
