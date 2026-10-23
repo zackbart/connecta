@@ -73,6 +73,12 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
 }
 
 const inputs = new WeakMap<ApiTool, Input>();
+const keyed = new WeakSet<ApiTool>();
+
+/** Whether a kit write builder declared an idempotency key for this tool. */
+export function takesIdempotencyKey(tool: ApiTool): boolean {
+  return keyed.has(tool);
+}
 
 /** Copy decoded values only; the input supplies key order, never values or admission. */
 function originalOrder<A>(decoded: A, original: unknown): A {
@@ -476,5 +482,6 @@ function build<I extends Input, O extends Schema.Top>(
     },
   };
   inputs.set(tool, spec.input);
+  if (idempotency) keyed.add(tool);
   return tool;
 }

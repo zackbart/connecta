@@ -75,20 +75,22 @@ function hatchLine(name, hatch) {
   );
 }
 
-/** What the vendor's status table makes of absence and conflict (`kit.errors`). */
+/** The vendor's declared error meanings (`VendorErrors.meanings`, carried as `kit.errors`). */
 function errorsLine(name, errors) {
-  if (errors === undefined) return [];
-  if (typeof errors.notFound !== "boolean" || !["status", "rules", "none"].includes(errors.conflict)) {
-    fail(name, 'kit.errors needs a boolean notFound and a conflict of "status", "rules" or "none"');
+  if (
+    errors === undefined ||
+    typeof errors.unknownId !== "string" ||
+    typeof errors.provesAbsence !== "boolean" ||
+    !Array.isArray(errors.conflicts)
+  ) {
+    fail(name, "a standard provider declares VendorErrors.meanings (unknownId, provesAbsence, conflicts)");
   }
-  const absence = errors.notFound
+  const absence = errors.provesAbsence
     ? "`not_found` means the record does not exist; this API tells absence from a permission gap."
-    : "This API does not tell a missing record from one these credentials cannot reach, so an unknown id fails as `connector_call_failed`, never `not_found`.";
-  const conflict = {
-    status: "`conflict` means it answered 409: read the target again before deciding.",
-    rules: "`conflict` appears only where its own error facts report one.",
-    none: "It documents no conflict.",
-  }[errors.conflict];
+    : `An unknown id, or one these credentials cannot reach, fails as \`${errors.unknownId}\`; this API does not tell the two apart.`;
+  const conflict = errors.conflicts.length
+    ? `\`conflict\` means: ${errors.conflicts.join("; ")}.`
+    : "It documents no conflict.";
   return [
     `- **Errors:** codes come from the vendor's statuses and error facts, never its prose. ${absence} ${conflict}`,
   ];
@@ -128,9 +130,10 @@ export function renderConventions({ name, kind, kit, withheld }) {
       );
     }
   }
+  if (typeof kit?.idempotencyKey !== "boolean") fail(name, "a standard provider declares idempotencyKey");
   const writes =
     "- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it." +
-    (kit?.idempotencyKey === true
+    (kit.idempotencyKey
       ? " A write that takes `idempotencyKey` may be repeated with the same key and arguments while the vendor retains it."
       : " Writes take no idempotency key.");
   const lines = [...api, writes, ...errorsLine(name, kit?.errors), ...tail];

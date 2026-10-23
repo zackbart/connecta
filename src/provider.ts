@@ -151,9 +151,17 @@ export interface ProviderKitFacts {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
   };
-  /** What the vendor's status table makes of absence (404) and conflict, for the Errors convention. */
-  readonly errors?: { readonly notFound: boolean; readonly conflict: "status" | "rules" | "none" };
-  /** Whether a write takes an idempotency key the vendor honors, for the Writes convention. */
+  /**
+   * The vendor's declared error meanings, for the Errors convention: the code
+   * an unknown id fails with, whether it proves absence, and each documented
+   * conflict source.
+   */
+  readonly errors?: {
+    readonly unknownId: string;
+    readonly provesAbsence: boolean;
+    readonly conflicts: readonly string[];
+  };
+  /** Whether a write takes an idempotency key the vendor honors, checked against the built tools. */
   readonly idempotencyKey?: boolean;
 }
 
@@ -279,7 +287,9 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
     ...(kit.hatch
       ? { hatch: Object.freeze({ name: kit.hatch.name, verdicts: Object.freeze({ ...kit.hatch.verdicts }) }) }
       : {}),
-    ...(kit.errors ? { errors: Object.freeze({ ...kit.errors }) } : {}),
+    ...(kit.errors
+      ? { errors: Object.freeze({ ...kit.errors, conflicts: Object.freeze([...kit.errors.conflicts]) }) }
+      : {}),
     ...(kit.idempotencyKey !== undefined ? { idempotencyKey: kit.idempotencyKey } : {}),
   });
 }

@@ -36,6 +36,11 @@ const errors: VendorErrors = {
     404: () => ({ code: "not_found" }),
   },
   unreadable: "Tickets returned unreadable JSON.",
+  meanings: {
+    unknownId: "not_found",
+    provesAbsence: true,
+    conflicts: ["HTTP 409 when a ticket changed since it was read"],
+  },
 };
 const safety = (options: Readonly<Options>) => ({
   review: "Fixture replies have no stored secrets.",
@@ -50,6 +55,7 @@ const definition = {
   baseUrl: (options: Readonly<Options>) => options.baseUrl ?? "https://tickets.example/v1",
   maxResponseBytes: 1024,
   pageSize: { default: 10, max: 50 },
+  idempotencyKey: false,
   credential: { label: "Token" },
   authenticate: Credentials.use((credentials) => credentials.values).pipe(
     Effect.mapError((error) => new Refusal({ error })),
@@ -107,6 +113,19 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
     { pageSize: { default: 11, max: 10 } },
     { pageSize: { default: 1, max: 1.5 } },
     { pageSize: null as never },
+    // Declared error meanings are consistent: not_found exactly when the vendor proves absence.
+    {
+      errors: {
+        ...errors,
+        meanings: { unknownId: "connector_call_failed", provesAbsence: true, conflicts: [] } as const,
+      },
+    },
+    {
+      errors: {
+        ...errors,
+        meanings: { unknownId: "not_found", provesAbsence: true, conflicts: ["two\nlines"] } as const,
+      },
+    },
     {
       oauth: () => ({
         authorizationEndpoint: "https://tickets.example/auth",
@@ -139,6 +158,10 @@ it("INV-11: checks provider, confinement, ceiling, page and privacy configuratio
       { purpose: "Support" },
     ),
   ).toThrow(/review/);
+  // A declared idempotency fact must match the write builders.
+  expect(() => defineApiProvider({ ...definition, idempotencyKey: true })("tickets", { purpose: "Support" })).toThrow(
+    /idempotencyKey/,
+  );
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -201,7 +224,11 @@ it("INV-11: renders guides, carries common options and snapshots code-derived ki
     operations: ["GET /tickets/{id}", "GET /who"],
     pageSize: { default: 10, max: 50 },
     hatch: { name: "tickets", verdicts: { "GET /who": "read" } },
-    errors: { notFound: true, conflict: "none" },
+    errors: {
+      unknownId: "not_found",
+      provesAbsence: true,
+      conflicts: ["HTTP 409 when a ticket changed since it was read"],
+    },
     idempotencyKey: false,
   });
   expect(Object.isFrozen(factory.definition.kit?.hatch?.verdicts)).toBe(true);
