@@ -2090,7 +2090,10 @@ validated options and accepts complete legacy usage guides, which providers in
 `PENDING.step2` keep. Candidate checks can refuse before authentication while
 preserving the provider's exact diagnostic. On Node, kit writes go through the
 owned transport `listen` installs, so suites that call one without `listen`
-configure it themselves, as the goldens harness does.
+configure it themselves, as the goldens harness does. Anything a connection
+caches across calls, such as its typed HttpApi client, is built with no
+services, because Effect constructors close over the context they run in and a
+cached value would otherwise keep its first caller's request alive (INV-7).
 
 Every answer passes through bounded reading, sent-secret redaction, vendor
 result handling, reviewed value safety and the deployment privacy projection
