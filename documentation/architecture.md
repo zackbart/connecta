@@ -1716,16 +1716,8 @@ settlement without duplicating their policy matrices. `vitest.config.ts`
 selects these files with globs that tolerate test-file deletion. Portable
 filenames alone do not enroll a new file in workerd.
 
-Required PR CI runs static/build, the complete Node suite with INV/spec evidence
-enforcement, and the selected workerd cases, then the fail-closed `check` gate.
-An inline changed-files step selects browser and dependency audit on relevant
-PRs; both block `check` when selected and always run on main and nightly.
-Its path expressions and import rationale live in `.github/workflows/ci.yml`.
-Examples and package/Docker smoke report separately on main and nightly.
-Provider drift runs weekly and manually. Local `check` runs unconditional PR
-checks; run browser/audit locally when applicable. `release:check` adds every
-moved check. Repository
-verification policy and exact commands live in `AGENTS.md`.
+Repository verification policy, CI requirements, and exact commands live in
+[AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md#verification).
 
 JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
 import/sign/verify self-test. This avoids expensive key generation on every
@@ -1936,8 +1928,9 @@ Structured resend advice reaches output only when the core permits it. Generic
 unknown writes retain the core's diagnostic wait; Q8 removes it. The mapping
 adds no Promise entry or lifetime owner. The rule tables in `http-kit.test.ts`,
 Stripe's sixteen-branch comparison and `kit-core-verdicts.test.ts` establish
-these internal contracts. No maintained provider uses the kit yet; it stays
-off the root import graph and published declarations stay unchanged.
+these internal contracts. Maintained API providers use the kit through their
+explicit provider subpaths; it stays off the root import graph and published
+declarations expose Promises.
 
 ### What stays plain
 
@@ -2703,8 +2696,10 @@ compiling and configuring the real thing.
   for a direct caller of the one boundary that sent the key.
   An authorization or credential handoff on an
   unknown write says to re-read the target before any fresh call instead of
-  "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2
-  guarded `HttpClient`. Reads keep their retry advice. Every maintained
+  "retry the original call" (`src/authorization-handoff.ts`). The guarded
+  `HttpClient` owns transport attempts through `src/guarded-transport.ts`;
+  Node uses the owned sender in `src/http/node-transport.ts`, installed by
+  `/node` when `listen()` starts serving. Reads keep their retry advice. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty
   ledger is no evidence, so its served write fails unknown once the handler

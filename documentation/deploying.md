@@ -62,62 +62,22 @@ fetch transport.
 
 ## Start on Workers
 
-Deploy the Worker with [Alchemy](https://alchemy.run) from the example's
-`alchemy.run.ts`, following the [Worker example](../examples/worker/README.md#deploy).
-The stack declares the Worker, its vars and secrets, the one D1 database, the
-`LOADER` Worker Loader, the Worker-level Access application, and the agent
-bypass application, and `npx alchemy deploy --stage production` reconciles all
-of them. Install `alchemy`, `effect`, and `@effect/platform-node` at the exact
-versions the example names, with `effect` matching Connecta's own pin. When
-copying it into a separate repository, follow
-[the separate-project installation](../examples/worker/README.md#copied-into-its-own-repository)
-and pin Connecta's exact version. npm strips `.gitignore` from the package,
-so the example ships its ignore rules as `gitignore`: rename it to
-`.gitignore` in the copy before the first `git add`, so `.alchemy/`, `.env`,
-`.dev.vars`, `.wrangler/`, and `node_modules/` stay uncommitted. The optional `@cloudflare/codemode` peer
-must be installed for the Worker executor. `wrangler.jsonc` serves only
-`wrangler dev`, because `alchemy dev` does not supply `ctx.access` to this
-Worker. A Worker already deployed with Wrangler moves once by
-[taking its resources over](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy).
+Use the [Worker example](../examples/worker/README.md) as the canonical runnable
+setup and upgrade guide. Alchemy deploys that example's stack; it owns the
+Worker, D1 database, Worker Loader, secrets, and Access applications.
 
-Five Alchemy rules protect a deployment:
+| Task                                 | Canonical procedure                                                                                                                                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Copy and install a deployment        | [Separate-project installation](../examples/worker/README.md#copied-into-its-own-repository), including exact versions, peers, ignore files, and trusted tooling                                               |
+| Deploy or update the stack           | [Deploy](../examples/worker/README.md#deploy), including account permissions and consistent stage selection                                                                                                    |
+| Protect secrets and retain data      | [Secrets and state](../examples/worker/README.md#secrets-and-state) and [destroying and recovering](../examples/worker/README.md#destroying-and-recovering)                                                    |
+| Configure human and agent access     | [Cloudflare Access](../examples/worker/README.md#cloudflare-access), [agent bypass](../examples/worker/README.md#let-agents-through-access), and [machine tokens](../examples/worker/README.md#machine-tokens) |
+| Move an existing Wrangler deployment | [Take over existing resources](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy)                                                                                                      |
+| Run locally and verify a deploy      | [Local development](../examples/worker/README.md#local-development) and [verification](../examples/worker/README.md#verify-after-deploying)                                                                    |
 
-- Declare every secret in the stack. Each deploy replaces the Worker's whole
-  binding set, so a secret set any other way is deleted by the next deploy.
-- Never commit `.alchemy/` or `.env`. Alchemy's local state records secret
-  values, `CREDENTIAL_ENCRYPTION_KEY` included, in plaintext. Deploying from
-  CI or several machines needs `Cloudflare.state()`, which encrypts state at
-  rest; it has not been verified with Connecta.
-- Keep `RemovalPolicy.retain()` on the D1 database, so `alchemy destroy`
-  forgets it instead of deleting the deployment's state.
-- Pass the same `--stage` to every Alchemy command; Alchemy keys its state by
-  stage.
-- Treat Alchemy and Wrangler as privileged local tooling. They hold the
-  account API token, are not bundled into the Worker, and are outside
-  Connecta's production dependency audit; their own dependencies carry
-  published advisories. Run `npm audit` in the deployment, run them only on a
-  trusted machine, keep `alchemy dev` and `wrangler dev` on localhost, and give
-  the token only the permissions the
-  [Worker example](../examples/worker/README.md#deploy) lists, with a short
-  expiry.
-
-Attach Cloudflare Access to the Worker destination; the stack does this with
-the Worker's `access` property. Interactive MCP clients
-need Managed OAuth, Dynamic Client Registration, and the documented redirect
-allowlist. Machines are declared agents: they use `/agent/<pool>` with the
-agent's `cta_` bearer as their only credential, once the
-[agent bypass application](#agent-endpoints-behind-cloudflare-access) exists;
-Access service identity alone is refused. Keep `enable_request_signal` and
-`enable_weak_ref`, construct Connecta once per isolate, and pass `ctx` through
-to `fetch`. The example owns those details and
-[the machine-token procedure](../examples/worker/README.md#machine-tokens).
-
-Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
-and `wrangler.jsonc`: it defers unhandled-rejection reporting until the microtask
-checkpoint finishes, avoiding false reports when a handler attaches later in the
-same checkpoint ([Cloudflare compatibility flag](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#defer-unhandled-rejection-processing-to-after-microtask-checkpoint)).
-Existing deployments receive this behavior on their next deploy after adding the
-flag to their stack.
+Retain the example's [compatibility flags and entrypoint wiring](../examples/worker/README.md#files).
+The [agent bypass notes](#agent-endpoints-behind-cloudflare-access) below record
+verified ingress behavior and the cases that still require verification.
 
 ## Agent endpoints behind Cloudflare Access
 
