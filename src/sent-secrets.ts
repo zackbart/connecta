@@ -5,9 +5,9 @@ import { credentialUrlViews } from "./credential-url.js";
 import { viewSecrets, wrapViewCredentials } from "./runtime/call.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
+import { REDACTED } from "./redaction-marker.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
-const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
 const requests = new WeakMap<object, SentSecrets>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
@@ -690,7 +690,7 @@ function merged(spans: number[]): number[] {
 /** Replace each merged span once, from the original text: no replacement can split another
  * view's match. Header-line scrubbing belongs to an actual echo. */
 function replace(text: string, spans: number[]): string {
-  const ranges = merged(spans);
+  const ranges = merged(headerValues(text, spans));
   const parts: string[] = [];
   let cursor = 0;
   for (let index = 0; index < ranges.length; index += 2) {
@@ -699,6 +699,54 @@ function replace(text: string, spans: number[]): string {
   }
   parts.push(text.slice(cursor));
   return parts.join("").replace(headerLine, `$1$2${REDACTED}`);
+}
+
+/** A unit of a header line's name, as `headerLine` reads one. */
+function headerNameUnit(code: number): boolean {
+  return (
+    (code >= 0x61 && code <= 0x7a) || (code >= 0x41 && code <= 0x5a) || (code >= 0x30 && code <= 0x39) || code === 0x2d
+  );
+}
+
+/** Whitespace as `headerLine`'s `\s` reads it around a header's `:`. */
+function headerSpace(text: string, at: number): boolean {
+  return /\s/.test(text[at]!);
+}
+
+/**
+ * The echo's spans with the value of every sensitive header line (`headerLine`'s names) added,
+ * read on the text before the echo is replaced (#703). An echoed private value can take part of a
+ * header's name, its `:`, or a credential prefix such as `Bearer `, so the line cannot be read
+ * after replacement; read here, the whole value goes, every cookie pair and any short tail with
+ * it. A line that is not a sensitive header keeps its text. One forward pass; nothing is kept.
+ */
+function headerValues(text: string, spans: number[]): number[] {
+  const out = [...spans];
+  for (let line = 0; line < text.length;) {
+    let at = line;
+    while (at < text.length && (text[at] === " " || text[at] === "\t")) at++;
+    const name = at;
+    while (at < text.length && headerNameUnit(text.charCodeAt(at))) at++;
+    let next = at;
+    while (next < text.length && text[next] !== "\n" && text[next] !== "\r") next++;
+    if (at > name) {
+      const word = text.slice(name, at).toLowerCase();
+      if (word === "cookie" || word === "set-cookie" || /key|token|secret|auth|signature|session/.test(word)) {
+        let colon = at;
+        while (colon < text.length && headerSpace(text, colon)) colon++;
+        if (text[colon] === ":") {
+          let value = colon + 1;
+          while (value < text.length && headerSpace(text, value)) value++;
+          let end = value;
+          while (end < text.length && text[end] !== "\n" && text[end] !== "\r") end++;
+          if (end > value) out.push(value, end);
+          next = Math.max(next, end);
+        }
+      }
+    }
+    line = next + 1;
+  }
+  return out;
 }
 
 /** Spans of the joined pieces, replaced in each piece they touch: a match across pieces leaves

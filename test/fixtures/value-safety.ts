@@ -24,8 +24,12 @@
 // - a `refuse` verdict that reaches transport through the generic tools;
 // - a reviewed operation whose failure echoes the vendor's error text;
 // - a credential name that a private value sharing part of it hides from value
-//   safety, or a private value echoed as a key, called directly or from a
-//   program on a writable or read-only endpoint;
+//   safety, a private value echoed as a key, or a decision input a private
+//   value alters (a type discriminator, a record's label or type, an
+//   environment entry, a destination's scheme, a link's parameter name, a
+//   Content-Type, a streamed row's key, a credential's public prefix) that
+//   fails open, called directly or from a program on a writable or read-only
+//   endpoint;
 // - a moved verdict count (a reviewed change updates it with the table).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { api } from "../../src/connectors/api.js";
@@ -571,30 +575,139 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       expect(counts).toEqual(harness.counts);
     });
 
-    it("INV-5: a reviewed path removes a client secret by name on any operation, beside private values sharing part of its name or echoed as keys, directly and from programs on writable and read-only endpoints", async () => {
+    it("INV-5: a reviewed path removes a client secret by name on any operation, beside private values sharing part of its name or echoed as keys, and every decision input a private value alters fails closed, directly and from programs on writable and read-only endpoints", async () => {
       const safety = valueSafety(table, () => harness.index);
       expect(safety.redact({ client_secret: "S" }, "GET", "/")).toEqual({ client_secret: REDACTED });
       // Sent-secret redaction runs before value safety; renaming `client_secret` there would hide it (#703).
       const held = "pi_1_secret_VENDOR_HELD_0001";
       const [short, long] = ["ecre", "my-client_se-key"];
-      const pins = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
-      const realFetch = globalThis.fetch;
-      globalThis.fetch = (async () => {
+      // Each alters one value a rule decides on, or takes a credential's public prefix; none alters
+      // another's (#703).
+      // Hex signatures and a token whose public prefix a private value takes: what stays visible must
+      // not rebuild them, however short or encoded.
+      const [hex, tailHex, entityHex] = [
+        "2a4d6bf783019ec5a87b2c04ef6d319c7b4e05f2a619e8bd3c07e9a5f8ae5c9d",
+        "9f1c3e5a7b2d4f6081a3c5e7f9b1d3f5a7c9e1b3d5f7091a2b3c4d5e6f708192",
+        "c4e1a7d3f9b5208e6a1c7d3f9b5e2a8c4f0d6b2e8a4c1f7d3b9e5a2c8f4d0b6e",
+      ];
+      const token = "sk_live_A7vJp9nR-2tW6qK8c-M4zX1sF5-hL3dB0uY";
+      // Base64 values whose known prefix a private value takes, leaving only `+/` or `-_` data.
+      const [plus, url] = ["QUJD".repeat(20), "QkNE".repeat(20)];
+      const encode = (text: string, form: (code: number) => string) => Array.from(text, (c) => form(c.charCodeAt(0))).join("");
+      const altering = [
+        "TOKE",
+        "head",
+        "KEY=",
+        "https:/",
+        "on/js",
+        "alue",
+        "Authorization: Bearer",
+        "Cookie: public=",
+        `Authorization: Bearer ${token.slice(0, -7)}`,
+      ];
+      const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok", "secret=whsec_"] : [];
+      const signing = table.embeddedUrls
+        ? [
+            "Signatur",
+            "X-Goog-Credential=",
+            "X-Amz-Security-Token=",
+            `X-Goog-Signature=${tailHex.slice(0, -7)}`,
+            `X-Amz-Security-Token=${plus}`,
+            `X-Goog-Security-Token=${url}`,
+          ]
+        : [];
+      const all = [short, long, ...altering, ...resources, ...signing];
+      const pins = {
+        type: "object",
+        properties: { pins: { type: "array", items: { type: "string", writeOnly: true } } },
+      } as const;
+      const body = {
+        client_secret: held,
         // A credential-named key a deployment chose itself (`crm_secret`) is found by name too.
-        const body = { client_secret: held, settings: { crm_secret: `${held}2` }, [short]: "echoed", [long]: "echoed" };
-        return Response.json({ success: true, result: body, ...body });
-      }) as typeof fetch;
+        settings: { crm_secret: `${held}2` },
+        [short]: "echoed",
+        [long]: "echoed",
+        // A label, a secret type, and a header rule's type (`ecre` alters `secret_text`).
+        records: [
+          { name: "STRIPE_API_TOKEN", text: "VENDOR_HELD_LABEL" },
+          { type: "secret_text", name: "x", text: "VENDOR_HELD_TYPE" },
+          { type: "header", key: "X-Custom", value: "VENDOR_HELD_HEADER" },
+        ],
+        env: ["API_KEY=VENDOR_HELD_ENV"],
+        destination: "https://hooks.example/services/VENDOR_HELD_DEST",
+        // Header lines whose name, `:` and credential prefix a private value took: the whole value
+        // goes, every cookie pair after an altered name, and a short tail.
+        echo: "Authorization: Bearer sk_live_VENDOR_HELD_BEARER\nRetry after checking permissions.",
+        trace: "Cookie: public=tracking123456; session=VENDOR_HELD_COOKIE\nRetry after checking permissions.",
+        dump: `Authorization: Bearer ${token}\nRetry after checking permissions.`,
+        // The Content-Type itself (`on/js`) would hand this body over as bytes or one string.
+        ...(table.resources
+          ? {
+              data: [
+                { object: "billing_portal.session", url: "http://billing.stripe.com/p/session/VENDOR_HELD_PORTAL" },
+                { object: "login_link", url: "http://connect.stripe.com/express/VENDOR_HELD_LOGIN" },
+                { object: "webhook_endpoint", url: "http://hooks.example/p/VENDOR_HELD_HOOK" },
+                {
+                  object: "event",
+                  data: {
+                    object: { object: "login_link", url: "http://connect.stripe.com/express/x" },
+                    previous_attributes: { url: "http://connect.stripe.com/express/VENDOR_HELD_PARTIAL" },
+                  },
+                },
+                { object: "charge", failure_message: "see http://bank.example/r?access_token=VENDOR_HELD_PARAM now" },
+                { object: "charge", failure_message: "hook http://hooks.example/w?secret=whsec_VENDOR_HELD_WHSEC now" },
+                {
+                  object: "charge",
+                  failure_message: `sig http://storage.example/f?X-Goog-Credential=${encode(entityHex, (code) => `&#${code};`)} now`,
+                },
+              ],
+            }
+          : {}),
+        ...(table.embeddedUrls
+          ? {
+              note: "get http://bucket.s3.amazonaws.com/f?X-Amz-Signature=VENDOR_HELD_SIGN now",
+              split: "get http://bucket.storage.example/f?X-Goog-Credential=VENDOR_HELD_GOOG now",
+              encoded: `get http://bucket.storage.example/f?X-Amz-Security-Token=${encode(hex, (code) => `%${code.toString(16)}`)} now`,
+              tail: `get http://bucket.storage.example/f?X-Goog-Signature=${tailHex} now`,
+              symbols: `diagnostic X-Amz-Security-Token=${plus}+/+/+/+/ now`,
+              safe: `diagnostic X-Goog-Security-Token=${url}-_-_-_-_ now`,
+            }
+          : {}),
+      };
+      // A streamed row's keys are text the kit redacted whole, then parsed, route header pairs included.
+      const stream =
+        '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n' +
+        '{"src":"/","headers":[{"key":"X-Custom","value":"VENDOR_HELD_ROUTE"}]}\n';
+      let streaming = false;
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        streaming
+          ? new Response(stream, { headers: { "content-type": "application/x-ndjson" } })
+          : Response.json({ success: true, result: body, ...body })) as typeof fetch;
       const clean = (out: unknown) => {
         const text = JSON.stringify(out);
         expect(text).toContain("echoed");
-        expect(text).not.toContain("VENDOR_HELD");
+        expect(text).toContain("streamed");
+        // What an agent can decode: percent escapes and numeric character references.
+        const shown = text
+          .replace(/%([0-9a-f]{2})/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+        expect(shown.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
+        for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7), "+/+/+/+/", "-_-_-_-_"])
+          expect(shown, text).not.toContain(held);
         expect(text).not.toContain(long);
         expect(text).not.toMatch(/\\?"ecre\\?"/);
       };
+      const both = async (call: () => Promise<unknown>) => {
+        streaming = false;
+        const json = await call();
+        streaming = true;
+        return [json, await call()];
+      };
       try {
         const ctx = { ...harness.ctx(), requestScope: {} };
-        for (const pin of [short, long]) requestSentSecrets(ctx).arguments({ pin }, pins);
-        clean(await harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx));
+        requestSentSecrets(ctx).arguments({ pins: all }, pins);
+        clean(await both(() => harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx)));
         const credential = (await harness.ctx().credential!.getAll())!["value"]!;
         for (const readOnly of [false, true]) {
           const connector = harness.connector();
@@ -604,8 +717,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const writer = api("pins", {
             tools: [
               {
-                name: "set_pin",
-                description: "Save a PIN",
+                name: "set_pins",
+                description: "Save PINs",
                 annotations: { readOnlyHint: false },
                 inputSchema: pins,
                 handler: async () => ({ ok: true }),
@@ -616,9 +729,11 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const executor: Executor = {
             execute: async (_code, providers) => {
               const host = providers[0]!.fns;
-              for (const pin of [short, long])
-                await host.call!("pins.set_pin", { pin }).catch((error: unknown) => refusals.push(error));
-              return { result: await host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args), logs: [] };
+              await host.call!("pins.set_pins", { pins: all }).catch((error: unknown) => refusals.push(error));
+              return {
+                result: await both(() => host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args)),
+                logs: [],
+              };
             },
           };
           const registry = makeRegistry([writer, connector], { storage, credentialVault });
@@ -627,7 +742,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           });
           const result = await run({ code: "async () => {}" });
           expect(result.isError, JSON.stringify(result)).toBeFalsy();
-          expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" }), expect.objectContaining({ code: "read_only_endpoint" })] : []);
+          expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" })] : []);
           clean(result);
         }
       } finally {

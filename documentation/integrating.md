@@ -356,3 +356,13 @@ and [provider construction](https://github.com/zackbart/connecta/blob/main/src/p
 [provider contracts](https://github.com/zackbart/connecta/blob/main/test/provider-contracts.test.ts),
 and the [write-once tests](https://github.com/zackbart/connecta/blob/main/test/remote-mcp-write-once.test.ts)
 check shared behavior. Provider-specific tests remain beside each provider.
+
+## Connect an Eve agent
+
+Use [`@zackbart/connecta-eve`](https://github.com/zackbart/connecta/blob/main/packages/connecta-eve/README.md)
+in the Eve app for an app-owned connection and endpoint instructions refreshed
+at turn start. It requires Node 24 and Eve 0.83.x, and installs separately from
+Connecta. Follow its README for the two agent files, token environment variables,
+optional write approval and Vercel OIDC token source. Configure the server's
+[agent and pool membership](./auth.md#issue-rotate-or-revoke-an-agent-token)
+before connecting.

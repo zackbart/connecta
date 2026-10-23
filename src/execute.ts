@@ -6,7 +6,7 @@ import type { AuthElicitation } from "./auth-elicitation.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
-import { z } from "zod";
+import * as z from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
 import {

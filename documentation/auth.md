@@ -1559,7 +1559,11 @@ contain `key`, `token`, `secret`, `auth`, `signature`, or `session`. Custom
 `api()` handlers use `ctx.fetch` for this tracking; `ctx.oauth.fetch` and
 maintained-provider transports track the final request too. Credential-slot
 reads cover values sent in headers, queries, or bodies. Echoed sensitive
-header lines are also withheld.
+header lines are also withheld, read before any echoed value in them is
+replaced: a private value that changes part of a header's name or takes a
+credential prefix (such as `Authorization: Bearer`) still leaves the whole
+header value withheld, every cookie pair included. A line that is not a
+sensitive header keeps its text.
 
 Redaction removes every registered form whole and every run of eight
 consecutive code units (K) of a registered form of a value at least eight units
@@ -1618,7 +1622,10 @@ A maintained provider's parsed vendor JSON has every value redacted on arrival
 and keeps its object keys until the connector returns, so the provider's value
 safety finds each field by the name the vendor gave it. The connector boundary
 then applies payload rules to the whole result or failure, keys included.
-Response header names are kept; their values are redacted.
+Response header names are kept; their values are redacted. When a redacted
+value is one value safety decides on, such as an object's type, a record's
+label, a link's parameter name or the response's Content-Type, value safety
+takes its most protective choice, so more of that response may be withheld.
 
 Every string that can reach an agent, an executor, a page or storage goes
 through one checker that applies all of the checks in this section: text and

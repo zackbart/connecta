@@ -1,7 +1,7 @@
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { Validator } from "@cfworker/json-schema";
 import { CATALOG_SEARCH_RESULT_SCHEMA, type CatalogSearchResult } from "./catalog-service.js";
-import { z } from "zod";
+import * as z from "zod";
 import { advertisedSchema } from "./advertised-schema.js";
 
 const error = z

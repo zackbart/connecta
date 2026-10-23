@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @zackbart/connecta install --frozen-lockfile --ignore-scripts
       - name: Compare public provider contracts
         id: report
         continue-on-error: true
