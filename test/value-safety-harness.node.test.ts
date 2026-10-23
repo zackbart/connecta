@@ -7,9 +7,9 @@ import { describe, expect, it } from "vitest";
 import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/operation-index.js";
 import { redact, type ValueSafetyTable } from "../src/providers/_shared/rest/value-safety.js";
 import { openapi as stripeOpenapi } from "../src/providers/stripe/openapi.generated.js";
-import stripeSource from "../src/providers/stripe/openapi.source.json";
-import stripeCandidates from "../src/providers/stripe/value-safety.candidates.json";
-import { STRIPE_VALUE_SAFETY } from "../src/providers/stripe/value-safety.js";
+import stripeSource from "../src/providers/stripe/evidence/openapi.json";
+import stripeCandidates from "../src/providers/stripe/evidence/value-safety.json";
+import { STRIPE_VALUE_SAFETY } from "../src/providers/stripe/safety.js";
 import { reviewProblems, type Candidates, type ValueSafetyReview } from "./fixtures/value-safety.js";
 
 const script = (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {

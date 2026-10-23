@@ -1,7 +1,7 @@
 import { stripe } from "./index.js";
 type Options = Parameters<typeof stripe>[1];
-// The REST connector is the default: its tools are Connecta's own, so the
-// hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+// The API-key connector exposes Connecta-authored tools; the legacy
+// hosted selector is a construction-time migration error.
 const options: Options = { "purpose":"Audit fixture", "auth":{"type":"apiKey"}, "mode":"sandbox" };
 export const fixture = {
   name: "stripe",

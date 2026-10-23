@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { contractDigest } from "../scripts/drift-contract.mjs";
 import { checkView } from "../scripts/drift-validate.mjs";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
 const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.url));
@@ -945,4 +946,173 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
       expect.objectContaining({ kind: "spec-drift", detail: expect.stringContaining("evidence/openapi.json") }),
     ]);
   });
+});
+
+it("INV-11: ref-graph-v1 changes exactly with inline contracts on small-provider mutation pairs", () => {
+  const base: any = {
+    "openapi": "3.1.0",
+    "info": {
+      "version": "1",
+    },
+    "components": {
+      "schemas": {
+        "Child": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+            },
+          },
+          "required": ["id"],
+        },
+        "Item": {
+          "type": "object",
+          "properties": {
+            "child": {
+              "$ref": "#/components/schemas/Child",
+            },
+          },
+          "required": ["child"],
+        },
+        "Cycle": {
+          "type": "object",
+          "properties": {
+            "next": {
+              "$ref": "#/components/schemas/Cycle",
+            },
+            "label": {
+              "type": "string",
+            },
+          },
+        },
+      },
+      "responses": {
+        "Ok": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Item",
+              },
+            },
+          },
+        },
+      },
+    },
+    "paths": {
+      "/items": {
+        "get": {
+          "parameters": [
+            {
+              "name": "limit",
+              "in": "query",
+              "schema": {
+                "type": "integer",
+              },
+            },
+          ],
+          "responses": {
+            "200": {
+              "$ref": "#/components/responses/Ok",
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "string",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/cycle": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cycle",
+                },
+              },
+            },
+          },
+          "responses": {
+            "204": {},
+          },
+        },
+      },
+    },
+  };
+  const mutations: Array<(d: any) => void> = [
+    (d) => {
+      d.info.version = "2";
+    },
+    (d) => {
+      d.components.schemas.Child.description = "reworded";
+    },
+    (d) => {
+      d.components.schemas.Child["x-vendor-hint"] = { anything: true };
+    },
+    (d) => {
+      d.paths["/items"].get.responses["400"].content["application/json"].schema.type = "number";
+    },
+    (d) => {
+      d.components.schemas.Unused = { type: "boolean" };
+    },
+    (d) => {
+      d.components.schemas.Child.properties.id.type = "integer";
+    },
+    (d) => {
+      d.components.schemas.Child.required = [];
+    },
+    (d) => {
+      d.components.schemas.Child.properties.id.enum = ["one", "two"];
+    },
+    (d) => {
+      d.paths["/items"].get.parameters[0].name = "cursor";
+    },
+    (d) => {
+      d.paths["/items"].get.responses["201"] = d.paths["/items"].get.responses["200"];
+    },
+    (d) => {
+      d.components.schemas.Cycle.properties.label.type = "boolean";
+    },
+    (d) => {
+      d.components.schemas.Item.properties.child = structuredClone(d.components.schemas.Child);
+    },
+    (d) => {
+      d.components.schemas.Renamed = d.components.schemas.Child;
+      delete d.components.schemas.Child;
+      d.components.schemas.Item.properties.child.$ref = "#/components/schemas/Renamed";
+    },
+    (d) => {
+      d.components.schemas.Item = {
+        required: ["child"],
+        properties: { child: { $ref: "#/components/schemas/Child" } },
+        type: "object",
+      };
+    },
+    (d) => {
+      d.components.schemas.Item.properties.child.description = "reference prose";
+    },
+    (d) => {
+      d.components.schemas.Item.properties.child.nullable = true;
+    },
+  ];
+  for (const mutate of mutations) {
+    const changed = structuredClone(base);
+    mutate(changed);
+    for (const [path, method] of [
+      ["/items", "get"],
+      ["/cycle", "post"],
+    ]) {
+      const oldChanged =
+        contractDigest(base, base.paths[path!][method!]) !== contractDigest(changed, changed.paths[path!][method!]);
+      expect(
+        contractDigest(base, base.paths[path!][method!], "ref-graph-v1") !==
+          contractDigest(changed, changed.paths[path!][method!], "ref-graph-v1"),
+      ).toBe(oldChanged);
+    }
+  }
 });
