@@ -165,8 +165,8 @@ export const tithely = defineApiProvider<TithelyOptions>({
   title: "Tithe.ly",
   readme: "Tithe.ly",
   bundle: {
-    baselineGzip: 330895,
-    note: "./providers/tithely remeasures at 330,895 B gzip in its decision 0011 step 2, from 323,147 B on main at 94d925cc (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
+    baselineGzip: 331894,
+    note: "./providers/tithely remeasures at 331,894 B gzip in its decision 0011 step 2, from 324,056 B on main at 9ceec06e (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: TITHELY_OPTIONS,

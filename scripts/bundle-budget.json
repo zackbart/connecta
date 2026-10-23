@@ -43,7 +43,7 @@
     "./providers/sheets measured 334,866 B gzip in C.7 CI on Node 22 at 20a268ff, including reviewed fixed JSON keys: the shared Google Workspace layer now runs on the Effect provider kit, from 26,026 B for the api() provider (#682). A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
     "./providers/slides remeasures at 343,647 B gzip in C.7 (decision 0010), on a local Node 26 measure, from 35,074 B for the api() provider: it now runs on the Effect provider kit through the shared Google Workspace layer. A deployment pays the kit once. Reported against this baseline, not capped (#899).",
     "./providers/stripe remeasures at 377,374 B gzip in C.6 (decision 0010, #703, PR #951), Node 22 CI static at d39a49fa: its API tools now run on the Effect provider kit with the pinned compact operation index (638 operations), reviewed text and bounded binary bodies, and connected-account routing. This replaces the historical 232,089 B baseline that included the hosted MCP half removed by C.0c. Root and examples/worker remain unchanged at 398,591 B and 738,601 B in CI. Reported against this baseline, not capped (#899).",
-    "./providers/tithely remeasures at 330,895 B gzip in its decision 0011 step 2, from 323,147 B on main at 94d925cc (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
+    "./providers/tithely remeasures at 331,894 B gzip in its decision 0011 step 2, from 324,056 B on main at 9ceec06e (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations, and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
     "./providers/vercel was measured at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): that historical entry carried the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. C.0c removes the hosted half; this historical baseline remains for size comparison, not a cap (#899)."
   ],
   "entries": {
@@ -112,7 +112,7 @@
       "baselineGzip": 377374
     },
     "./providers/tithely": {
-      "baselineGzip": 330895
+      "baselineGzip": 331894
     },
     "./providers/vercel": {
       "baselineGzip": 228431
