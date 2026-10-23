@@ -1906,10 +1906,17 @@ storage is the root's namespaced to its principal.
 
 The kit's `src/http/errors.ts` maps every `HttpFailure` tag through
 `toConnectorCallError`. Its completeness-checked tag vocabulary is also the
-typed-client boundary's guard. Vendor classification reads a token-only copy,
-complete bounded facts and reviewed headers; only after the verdict is fixed
-does wording receive display facts (eight list entries) and, where the
-operation's value-safety review permits it, the body. Required vendor meanings
+typed-client boundary's guard. Vendors declare closed public value vocabularies
+for body facts that select a failure meaning. Before sent-secret value redaction,
+the kit extracts those facts from a token-only copy and retains only declared
+values; unknown reasons or codes contribute no classification fact and fall
+back to status rules. The captured facts stay in request-local identity metadata,
+outside the failure's enumerable data. Classification reads them with complete
+bounded facts and reviewed headers. Only after the verdict is fixed does wording
+receive facts extracted separately from the redacted body (eight list entries)
+and, where the operation's value-safety review permits it, that redacted body.
+Pre-redaction facts never supply message text, logs, or operator records.
+The same path covers non-2xx responses and in-band refusals. Required vendor meanings
 for 401/403/404 precede the other defaults; 409 has no shared conflict default.
 A 421 is `unavailable` and retryable only when the transport's core
 positive-read classification proves that request a read, including its actual

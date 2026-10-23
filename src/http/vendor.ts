@@ -11,7 +11,8 @@
 // `Answer`, never a response. HttpApiClient's own decoding would read the
 // whole body without a ceiling, quote the body in a SchemaError, and fail an
 // empty 200. Every answer, from a declared operation or a hatch's path, takes
-// one route: bounded read, JSON, the request's sent secrets redacted from
+// one route: bounded read, JSON, closed public classifier facts captured,
+// the request's sent secrets redacted from
 // every value of the whole body before anything can cut or extract from it
 // (#911), its keys kept for value safety to match by name, status (with
 // its operation, so value safety decides what a failure may quote), the
@@ -35,6 +36,8 @@ import type { SentSecrets } from "../sent-secrets.js";
 import type { GuardedClient, SuccessPrefix, PrefixResult } from "./client.js";
 import {
   validateVendorErrors,
+  captureClassifierFacts,
+  withClassifierFacts,
   isHttpFailure,
   RequestRefused,
   ResendRefused,
@@ -321,7 +324,8 @@ export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
   readonly safety: ResultSafety;
   /**
-   * Unwrap a vendor envelope or fail an in-band refusal, before redaction.
+   * Unwrap a vendor envelope or fail an in-band refusal, after sent-secret
+   * value redaction and before result safety.
    * `withheld` says whether this operation's failures may quote vendor text.
    */
   readonly result?: (
@@ -431,6 +435,7 @@ export function connect<R>(
         const headers = new Headers(entries.map(([name], index) => [name, values[index]!]));
         // Whole, before a detail line trims it or a projection extracts from it. Values only:
         // result safety and projections match fields by their vendor names (#703).
+        let classifierFacts: ReturnType<typeof captureClassifierFacts> | undefined;
         const parsed =
           reply.bytes !== undefined
             ? {
@@ -447,6 +452,8 @@ export function connect<R>(
             : parse(
                 reply.text,
                 (value, format) => {
+                  if (reply.status < 200 || reply.status > 299 || options.result)
+                    classifierFacts = captureClassifierFacts(value, options.errors);
                   const provenance =
                     format === "json" && encodedFields.length > 0
                       ? normalizeEncodedFields(value, encodedFields, secrets)
@@ -464,13 +471,16 @@ export function connect<R>(
 
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
-            new StatusFailure({
-              status: reply.status,
-              headers,
-              body: parsed?.value,
-              ...(parsed ? {} : { unreadable: true as const }),
-              operation,
-            }),
+            withClassifierFacts(
+              new StatusFailure({
+                status: reply.status,
+                headers,
+                body: parsed?.value,
+                ...(parsed ? {} : { unreadable: true as const }),
+                operation,
+              }),
+              classifierFacts,
+            ),
           );
         }
         if (!parsed) return yield* Effect.fail(new UnreadableBody());
@@ -487,7 +497,10 @@ export function connect<R>(
               }),
             ).pipe(
               Effect.catch((failure): Effect.Effect<never, HttpFailure> => {
-                if (failure._tag === "StatusFailure") return Effect.fail(new StatusFailure({ ...failure, operation }));
+                if (failure._tag === "StatusFailure")
+                  return Effect.fail(
+                    withClassifierFacts(new StatusFailure({ ...failure, operation }), classifierFacts),
+                  );
                 if (!withheld || failure._tag === "UnreadableBody") return Effect.fail(failure);
                 return Effect.die(
                   new Error("A result hook withholding vendor text must report an in-band refusal as StatusFailure."),

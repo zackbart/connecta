@@ -44,6 +44,7 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
     matches: ({ operation, headers }) => operation.template.startsWith("/v1/") && !!headers["request-id"],
   },
   provider: "Stripe",
+  factVocabulary: { code: ["lock_timeout"] },
   facts: (body) => {
     const error = record(record(body)["error"]);
     return {

@@ -92,6 +92,23 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
   return {
     provider,
     facts: (tokens) => ({ reasons: reasonsOf(tokens) }),
+    factVocabulary: {
+      reasons: [
+        "accessNotConfigured",
+        "SERVICE_DISABLED",
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "RATE_LIMIT_EXCEEDED",
+        "insufficientPermissions",
+        "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+        "exportSizeLimitExceeded",
+        "domainPolicy",
+        "insufficientFilePermissions",
+        "forbidden",
+        ...PRECONDITION_REASONS,
+        ...ABORTED_REASONS,
+      ],
+    },
     detail: ({ status, body }) => {
       const message = asRecord(asRecord(body)["error"])["message"];
       // The body arrives redacted whole, before anything here cuts it.
