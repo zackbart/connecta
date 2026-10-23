@@ -288,6 +288,58 @@ describe("native tool surface", () => {
     expect(listed.error.message).toContain("over the 1000-tool native listing cap");
   });
 
+  it("INV-2: resolves truncated connector prefixes and refuses every colliding read or write claimant", async () => {
+    const longId = `a__${"b".repeat(50)}`;
+    const name = await nativeToolName(longId, "get");
+    for (const write of [false, true]) {
+      for (const collision of [false, true]) {
+        const storage = memoryStorage();
+        const sent: string[] = [];
+        const connectors = [longId, "a"].map((id) =>
+          api(id, {
+            description: "Fixture",
+            tools: [
+              {
+                name: id === longId ? "get" : collision ? name.slice(3) : "other",
+                description: "Read fixture",
+                annotations: { readOnlyHint: id === longId || !write },
+                inputSchema: { type: "object" },
+                handler: async () => {
+                  sent.push(id);
+                  return {};
+                },
+              },
+            ],
+          }),
+        );
+        const member = { tools: [longId, "a"], members: ["agent:assistant"], surface: "native" as const };
+        const app = createTestConnecta({
+          connectors,
+          agents: ["assistant"],
+          pools: {
+            native: member,
+            reads: { ...member, readOnly: true },
+          },
+          storage,
+          accessTokens: accessTokens(storage),
+          logger: silentLogger,
+        });
+        const token = await issueAgentToken(storage, "assistant");
+        try {
+          for (const pool of ["native", "reads"]) {
+            const listed = await rpc(app, token, pool, "tools/list", {});
+            expect(listed.result.tools.some((tool: { name: string }) => tool.name === name)).toBe(!collision);
+            const called = await rpc(app, token, pool, "tools/call", { name, arguments: {} });
+            expect(called.result.isError === true).toBe(collision);
+          }
+          expect(sent).toEqual(collision ? [] : [longId, longId]);
+        } finally {
+          await app.close();
+        }
+      }
+    }
+  });
+
   it("INV-11: refuses executeCode without the native surface, and an unknown surface", () => {
     const storage = memoryStorage();
     const make = (pool: Record<string, unknown>) => () =>

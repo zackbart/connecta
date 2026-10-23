@@ -158,7 +158,7 @@ export class NativeSurface {
    * name are both omitted and stay reachable by address in execute_code.
    */
   async list(): Promise<NativeTool[]> {
-    const loaded = await this.catalog.listCatalogs();
+    const loaded = await this.catalog.listCatalogs(true);
     const byName = new Map<string, NativeTool[]>();
     for (const entry of loaded) {
       if ("error" in entry) {
@@ -177,7 +177,9 @@ export class NativeSurface {
     const tools: NativeTool[] = [];
     for (const claimants of byName.values()) {
       if (claimants.length === 1) {
-        tools.push(claimants[0]!);
+        const entry = claimants[0]!;
+        if (!(this.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read")
+          tools.push(entry);
         continue;
       }
       for (const claimant of claimants) {
@@ -201,7 +203,13 @@ export class NativeSurface {
     name: string,
   ): Promise<{ kind: "found"; entry: NativeTool } | { kind: "ambiguous" } | { kind: "missing"; address: string }> {
     const connectors = this.registry.listConnectors();
-    const prefixed = connectors.filter((connector) => name.startsWith(`${connectorPart(connector.id)}${SEPARATOR}`));
+    const prefixed = connectors.filter((connector) => {
+      const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
+      // A hashed name can truncate even the connector prefix, and strips
+      // trailing underscores from its head. Include every possible claimant.
+      const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
+      return name.startsWith(prefix) || name.startsWith(`${head}_`);
+    });
     const found: NativeTool[] = [];
     let failed: Connector | undefined;
     for (const connector of prefixed.length > 0 ? prefixed : connectors) {

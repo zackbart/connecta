@@ -759,6 +759,7 @@ export class CatalogService {
   private discoveryCatalogs(
     ids: readonly string[],
     route: SearchRoute | "connecta.describe" | "tools/list",
+    includeWrites = false,
   ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
     return Effect.forEach(
       ids,
@@ -766,7 +767,7 @@ export class CatalogService {
         Effect.result(
           withDeadlineEffect(
             (signal) =>
-              this.readOnly || this.registry.getConnector(id)?.readOnly === true
+              !includeWrites && (this.readOnly || this.registry.getConnector(id)?.readOnly === true)
                 ? Effect.map(this.catalog(id, { signal }), (tools) =>
                     tools.filter((tool) => tool.classification === "read"),
                   )
@@ -791,9 +792,9 @@ export class CatalogService {
    * settles on its own, so one unavailable connector is an `error` entry
    * beside the others rather than a failed listing.
    */
-  listCatalogs(): Promise<
-    Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>
-  > {
+  listCatalogs(
+    includeWrites = false,
+  ): Promise<Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>> {
     const connectors = this.registry.listConnectors();
     return settleOnClose({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       runEdge(
@@ -801,6 +802,7 @@ export class CatalogService {
           this.discoveryCatalogs(
             connectors.map((connector) => connector.id),
             "tools/list",
+            includeWrites,
           ),
           (results) =>
             results.map((result, index) => {
