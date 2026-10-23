@@ -168,7 +168,7 @@ export interface ConnectOptions {
       readonly operation: OperationRef;
       readonly withheld: boolean;
     },
-  ) => Effect.Effect<unknown, HttpFailure>;
+  ) => Effect.Effect<unknown, HttpFailure, RequestSecrets>;
 }
 
 /** A vendor bound to one connection: its transport, its failure table, and its value-safety boundary. */

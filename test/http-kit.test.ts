@@ -1225,6 +1225,25 @@ function acme(
 }
 
 describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
+  it("INV-5: a result hook redacts split rich text through this call's request-secret service", async () => {
+    const secret = "split-credential-value";
+    const secrets = new SentSecrets();
+    secrets.add(secret);
+    const pieces = Array.from({ length: Math.ceil(secret.length / 4) }, (_, i) => secret.slice(i * 4, i * 4 + 4));
+    answers.push(() => Response.json(pieces.map((plain_text) => ({ plain_text, annotation: "unrelated annotation" }))));
+    const connection = acme({
+      result: (body) =>
+        RequestSecrets.use((secrets) =>
+          Effect.succeed({
+            parts: secrets.parts((body as { plain_text: string }[]).map((run) => run.plain_text)),
+          }),
+        ),
+    });
+    const reply = await runEdge(connection.send(keys, {}).pipe(Effect.provideContext(services("read", secrets))));
+    expect(JSON.stringify(reply.data)).not.toContain("credential");
+    expect(reply.data).not.toEqual({ parts: pieces });
+  });
+
   it("INV-5: redacts and drops sensitive fields before a paging strategy or a projection reads a body", async () => {
     const rows = [1, 2, 3].map((n) => ({ token: `sk_live_secret_${n}`, owner: { email: "alice@example.com" }, n }));
     answers.push(() => Response.json(rows));
