@@ -2000,6 +2000,16 @@ caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
 
+Credential descriptions may derive from validated connection options, and a
+probe may reject a successful answer that identifies the wrong account.
+Transport diagnostics use the vendor error label rather than the provider
+definition's title. A vendor may declare reviewed `textBodies` by status and
+operation: `text` retains decoded UTF-8 and `json-or-text` parses JSON with a
+text fallback. Other responses still require JSON. The bounded byte reader,
+sent-secret redaction, and withheld-error policy apply before text can reach
+vendor wording or a result hook; a legacy hatch's text contract does not admit
+malformed JSON on named tools.
+
 The helper's connection-specific `transport(options)` supplies constant
 headers and final-URL admission outside any caller context. Admission receives
 the request method and encoded text body before authentication, so product

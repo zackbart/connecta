@@ -1,16 +1,379 @@
 {
-  "version": 1,
+  "version": 2,
   "provider": "breeze",
+  "generated": {
+    "operations": [
+      "GET /account/list_log",
+      "GET /account/summary",
+      "GET /events",
+      "GET /events/add",
+      "GET /events/attendance/add",
+      "GET /events/attendance/delete",
+      "GET /events/attendance/eligible",
+      "GET /events/attendance/list",
+      "GET /events/calendars/list",
+      "GET /events/delete",
+      "GET /events/list_event",
+      "GET /events/locations",
+      "GET /families/add",
+      "GET /families/create",
+      "GET /families/destroy",
+      "GET /families/remove",
+      "GET /forms/list_form_entries",
+      "GET /forms/list_form_fields",
+      "GET /forms/list_forms",
+      "GET /forms/remove_form_entry",
+      "GET /funds/list",
+      "GET /giving/add",
+      "GET /giving/delete",
+      "GET /giving/edit",
+      "GET /giving/list",
+      "GET /giving/view",
+      "GET /people",
+      "GET /people/add",
+      "GET /people/delete",
+      "GET /people/update",
+      "GET /people/{PERSON_ID}",
+      "GET /pledges/list_campaigns",
+      "GET /pledges/list_pledges",
+      "GET /profile",
+      "GET /tags/add_tag",
+      "GET /tags/add_tag_folder",
+      "GET /tags/assign",
+      "GET /tags/delete_tag",
+      "GET /tags/delete_tag_folder",
+      "GET /tags/list_folders",
+      "GET /tags/list_tags",
+      "GET /tags/unassign",
+      "GET /volunteers/add",
+      "GET /volunteers/add_role",
+      "GET /volunteers/list",
+      "GET /volunteers/list_roles",
+      "GET /volunteers/remove",
+      "GET /volunteers/remove_role",
+      "GET /volunteers/update"
+    ],
+    "evidence": {
+      "openapi.document.json": "sha256:a1ffe0232115624a773f5c504fd4f6a905811e66b3df807c15abeaaa6dd6edb4",
+      "openapi.json": "sha256:ef8673378705e0ee99ea85f598e670cfac0f2beafe5f7970ddec8a2a4604bb9d"
+    }
+  },
   "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "src/providers/breeze/evidence/openapi.document.json",
+        "documentation": "https://app.breezechms.com/api"
+      },
+      "endpoints": [
+        {
+          "operation": "GET /account/list_log",
+          "page": "https://app.breezechms.com/api#list_account_log",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:eae2067d1368cac5e404b699aa10031e92354e731984d48ae8af23d54086b51c"
+        },
+        {
+          "operation": "GET /account/summary",
+          "page": "https://app.breezechms.com/api#account_summary",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /events",
+          "page": "https://app.breezechms.com/api#list_events",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:e5f55d829edbc908f0bea7e28a79c4057053ddc44302df97ea710a65c24b486c"
+        },
+        {
+          "operation": "GET /events/add",
+          "page": "https://app.breezechms.com/api#add_event",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:d1ace016578623ab522bd6cc54010890c207ca06816532401184e678b3201e7b"
+        },
+        {
+          "operation": "GET /events/attendance/add",
+          "page": "https://app.breezechms.com/api#add_attendance_record",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:13380c26a2ea1d6c3eb188531e13e01069dbfd2fec2a9d37023e3e9c126d1177"
+        },
+        {
+          "operation": "GET /events/attendance/delete",
+          "page": "https://app.breezechms.com/api#remove_attendance_record",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:20d340a3e6fd05cc8f406d43cc5f4294095a9f9b8e3ce0e7014bee9f4ea62f4e"
+        },
+        {
+          "operation": "GET /events/attendance/eligible",
+          "page": "https://app.breezechms.com/api#list_eligible_people",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:4702cf21c4af78073e85d6ab12f54791bf57ed2677cde8de0d0a134321e66f41"
+        },
+        {
+          "operation": "GET /events/attendance/list",
+          "page": "https://app.breezechms.com/api#list_attendance",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:31074213ffc72fe2ee55c0495177da75de26cc386f3a61b7a45d32dd7c801167"
+        },
+        {
+          "operation": "GET /events/calendars/list",
+          "page": "https://app.breezechms.com/api#list_calendars",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /events/delete",
+          "page": "https://app.breezechms.com/api#delete_event",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:4702cf21c4af78073e85d6ab12f54791bf57ed2677cde8de0d0a134321e66f41"
+        },
+        {
+          "operation": "GET /events/list_event",
+          "page": "https://app.breezechms.com/api#list_event",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:1341fc13538e648409d2c3235013e2731ed6c648f0e760303727bae1781b84df"
+        },
+        {
+          "operation": "GET /events/locations",
+          "page": "https://app.breezechms.com/api#list_locations",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /families/add",
+          "page": "https://app.breezechms.com/api#families_add",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:cb8ca17fcd3255d96091a944ea77d84f76c82fd1f3408d609f1929ca1f752d35"
+        },
+        {
+          "operation": "GET /families/create",
+          "page": "https://app.breezechms.com/api#families_create",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:0b2d722245659c73070c3392946304a37a4acad5e783dabc3936577fb63c1e70"
+        },
+        {
+          "operation": "GET /families/destroy",
+          "page": "https://app.breezechms.com/api#families_destroy",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:0b2d722245659c73070c3392946304a37a4acad5e783dabc3936577fb63c1e70"
+        },
+        {
+          "operation": "GET /families/remove",
+          "page": "https://app.breezechms.com/api#families_remove",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:0b2d722245659c73070c3392946304a37a4acad5e783dabc3936577fb63c1e70"
+        },
+        {
+          "operation": "GET /forms/list_form_entries",
+          "page": "https://app.breezechms.com/api#list_form_entries",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:6d82e665c34e2dcc514a095a95ca6b1491aa2aa4613322c7a091f7f7ec71675f"
+        },
+        {
+          "operation": "GET /forms/list_form_fields",
+          "page": "https://app.breezechms.com/api#list_form_fields",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:6694c63db755304e6ada64e04415055afb3c84be21eb5c48112954de453088b8"
+        },
+        {
+          "operation": "GET /forms/list_forms",
+          "page": "https://app.breezechms.com/api#list_forms",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:13e37f18da8ef8bc3d36d41490ff768840250c3cdc8bcec857306dec790b8b3e"
+        },
+        {
+          "operation": "GET /forms/remove_form_entry",
+          "page": "https://app.breezechms.com/api#remove_form_entry",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:b9127628ff6b695306044b1084eeb5e4187383063f83a79b9e1c0f124e878bff"
+        },
+        {
+          "operation": "GET /funds/list",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:706ea4bf3885ff62b26e52f76224096a37861e4661e4c693d90db06460224f59"
+        },
+        {
+          "operation": "GET /giving/add",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /giving/delete",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:e6a212922fe298bf78c16ea636715703a821d38d66d7c95a553e608913056572"
+        },
+        {
+          "operation": "GET /giving/edit",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /giving/list",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:aca8fa8798f1c7c2567b668369ea57f29bad7f237e065d99d8d6e2a0307f75a5"
+        },
+        {
+          "operation": "GET /giving/view",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:e6a212922fe298bf78c16ea636715703a821d38d66d7c95a553e608913056572"
+        },
+        {
+          "operation": "GET /people",
+          "page": "https://app.breezechms.com/api#list_people",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:66f5968eabfe2a0b89cce9dec96ed4ba09c70cad2d7665d795a8d6e479c48d58"
+        },
+        {
+          "operation": "GET /people/add",
+          "page": "https://app.breezechms.com/api#add_person",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8bad14cfca1f8ff0c41b1710bf5df8f836380d6420b6e5af2161344d95251216"
+        },
+        {
+          "operation": "GET /people/delete",
+          "page": "https://app.breezechms.com/api#delete_person",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:ac66924d2f1274dd58976f37e70d8eb1cf88efa4f986356d94c8e187359f4d4d"
+        },
+        {
+          "operation": "GET /people/update",
+          "page": "https://app.breezechms.com/api#update_person",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:93d28d0bf9b39cf86f8a98bf4cee206bf3169054adff7fc60dd1cae919678931"
+        },
+        {
+          "operation": "GET /people/{PERSON_ID}",
+          "page": "https://app.breezechms.com/api#show_person",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:2d47ea32a18b31ac88b8c2ac01988d7b9980e616cd47824600486598c62a81f1"
+        },
+        {
+          "operation": "GET /pledges/list_campaigns",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /pledges/list_pledges",
+          "page": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:285e044c80edf9b89a582d3265a0ed6b4777024c69e92cae9401265e8d9bd8e5"
+        },
+        {
+          "operation": "GET /profile",
+          "page": "https://app.breezechms.com/api#list_profile_fields",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /tags/add_tag",
+          "page": "https://app.breezechms.com/api#add_tag",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:65582847f084a12220ab91480ae42700d880e4c361955197aa0adc2c66d98c15"
+        },
+        {
+          "operation": "GET /tags/add_tag_folder",
+          "page": "https://app.breezechms.com/api#add_tag_folder",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:225ab067490fc8d7a5a3c40f387d56056419b0457b580feaba7eaeddfc671ef4"
+        },
+        {
+          "operation": "GET /tags/assign",
+          "page": "https://app.breezechms.com/api#assign_tag",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:6a7c999b35b67c982a9bb78720696351365f4d4e48c14459a6167b131ba7755e"
+        },
+        {
+          "operation": "GET /tags/delete_tag",
+          "page": "https://app.breezechms.com/api#delete_tag",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:4d2333de3278c18cf5463883f720778a64ea121083c04147fce350ae71a93187"
+        },
+        {
+          "operation": "GET /tags/delete_tag_folder",
+          "page": "https://app.breezechms.com/api#delete_tag_folder",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:656cfcf829956ba03fb15ff9c62795318bbd2b7bc19048e8b8c06f2a5c294fd5"
+        },
+        {
+          "operation": "GET /tags/list_folders",
+          "page": "https://app.breezechms.com/api#list_tag_folders",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8a5c6bd1ddac61f5dab98ea978fb20a775d708605341e6b9628df74ebb50b54d"
+        },
+        {
+          "operation": "GET /tags/list_tags",
+          "page": "https://app.breezechms.com/api#list_tags",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:656cfcf829956ba03fb15ff9c62795318bbd2b7bc19048e8b8c06f2a5c294fd5"
+        },
+        {
+          "operation": "GET /tags/unassign",
+          "page": "https://app.breezechms.com/api#unassign_tag",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:6a7c999b35b67c982a9bb78720696351365f4d4e48c14459a6167b131ba7755e"
+        },
+        {
+          "operation": "GET /volunteers/add",
+          "page": "https://app.breezechms.com/api#add_volunteer",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:51eae8b109428c02ea5416c8a0038543b3aaca59a40ae1949abe6e236dfa4a83"
+        },
+        {
+          "operation": "GET /volunteers/add_role",
+          "page": "https://app.breezechms.com/api#add_volunteer_role",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:0eb7058e7054ef4cfaf15d7d0d3d774d1a666f8d5f492977b6425f064d650b65"
+        },
+        {
+          "operation": "GET /volunteers/list",
+          "page": "https://app.breezechms.com/api#list_volunteers",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:4702cf21c4af78073e85d6ab12f54791bf57ed2677cde8de0d0a134321e66f41"
+        },
+        {
+          "operation": "GET /volunteers/list_roles",
+          "page": "https://app.breezechms.com/api#list_volunteer_roles",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:8d505d861157f1594481619604a61bc3033e6b82623dd8ec60963414567cbff3"
+        },
+        {
+          "operation": "GET /volunteers/remove",
+          "page": "https://app.breezechms.com/api#remove_volunteer",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:51eae8b109428c02ea5416c8a0038543b3aaca59a40ae1949abe6e236dfa4a83"
+        },
+        {
+          "operation": "GET /volunteers/remove_role",
+          "page": "https://app.breezechms.com/api#remove_volunteer_role",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:d9322371b71631b29673fa14757115560f3edb1cca84275c8de2bd650584667b"
+        },
+        {
+          "operation": "GET /volunteers/update",
+          "page": "https://app.breezechms.com/api#update_volunteer",
+          "specRevision": "2026-10-23",
+          "contract": "sha256:bdc122897befa3723037c7e9f5de30cf9c58617d151235216629654069c9085e"
+        }
+      ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
     {
       "type": "manual",
       "source": "https://app.breezechms.com/api",
-      "rationale": "Breeze publishes hand-written HTML, not a machine-readable specification. Argument tables can contradict examples; HTTP GET also performs writes. Review the reference against READ_ENDPOINTS and the named tools' paths before accepting changes.",
+      "reason": "Breeze publishes HTML only. Compare its endpoint paths, query names and GET-write semantics with the reviewed JSON conversion and per-operation reference pages. The conversion pins current public bytes; archival giving routes remain a reviewed legacy exception, and the destructive hatch still admits unindexed paths. Automated digests cannot establish their semantics or continued availability.",
+      "lastVerified": "2026-10-23",
       "evidence": {
-        "reviewedAt": "2026-10-05",
         "documentedEndpointRows": 42,
         "distinctDocumentedPaths": 41,
-        "notes": "The Tags section's List People points back at /people. Giving, funds, and pledges left the public reference around September 2023; their parameters remain based on the archived vendor reference and corroborating pyBreezeChMS list_contributions/list_funds implementations. Unauthenticated 403 proves only the controller exists, not that each action works.",
         "archivedReference": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
       }
     }

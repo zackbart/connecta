@@ -43,7 +43,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly transport?: (options: Readonly<O>) => Pick<GuardedOptions, "headers" | "admit">;
   readonly defaultCallAdmission?: import("../types.js").ConnectorCallAdmissionPolicy;
   readonly pageSize?: { readonly default: number; readonly max: number };
-  readonly credential?: ConnectorCredentialConfig;
+  readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
@@ -54,7 +54,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     readonly request: unknown;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
-    readonly describe: (reply: unknown, options: Readonly<O>) => string;
+    readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
   };
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
@@ -132,6 +132,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       ...(hatchOptions ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts } } : {}),
     },
     create(id, options, provider) {
+      const connectionCredential = typeof credential === "function" ? credential(options) : credential;
       const override = "defaultPageSize" in options ? options.defaultPageSize : undefined;
       if (
         override !== undefined &&
@@ -147,7 +148,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       }
       const configured = transport?.(options);
       const guarded = guardedClient({
-        provider: metadata.title,
+        provider: errors.provider,
         baseUrl: baseUrl(options),
         maxResponseBytes,
         ...(headers === undefined ? {} : { headers }),
@@ -187,7 +188,10 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           connection.send(probe.operation, probe.request as Parameters<Connection["send"]>[1]).pipe(
             Effect.flatMap(({ data }) =>
               Effect.try({
-                try: () => ({ ok: true, message: probe.describe(data, options) }),
+                try: () => {
+                  const described = probe.describe(data, options);
+                  return typeof described === "string" ? { ok: true, message: described } : described;
+                },
                 catch: (error) => error,
               }).pipe(
                 Effect.catch((error) =>
@@ -220,9 +224,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
           usageGuide: "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide),
-          ...(credential
+          ...(connectionCredential
             ? {
-                credential,
+                credential: connectionCredential,
                 testCredential: (value, ctx) => test({ value }, ctx),
                 testCredentials: (values, ctx) => test(values, ctx),
               }

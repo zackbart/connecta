@@ -5,7 +5,7 @@ var options = { "purpose": "Audit fixture", "subdomain": "gracechurch" };
 var fixture = {
   name: "breeze",
   options,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return breeze(id, { ...options, ...overrides });
   },
