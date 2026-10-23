@@ -53,8 +53,12 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 
 Retain the Node template's `undici` dependency and serve with `listen` from
 `@zackbart/connecta/node`. That entry configures the owned transport for
-guarded provider writes. A Node deployment using only the root entry refuses
-those writes before sending them. Workers use their native fetch transport.
+guarded provider writes and requests whose physical HTTP method is neither GET
+nor HEAD, including reviewed read-only POSTs. For example, an `assistant` using
+`vercel_api_read` to POST `/v1/registrar/domains/availability` needs that
+transport even on a read-only endpoint. A Node deployment using only the root
+entry refuses those requests before sending them. Workers use their native
+fetch transport.
 
 ## Start on Workers
 

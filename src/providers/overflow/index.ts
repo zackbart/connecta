@@ -61,7 +61,7 @@ export interface OverflowOptions {
   /**
    * Required, with no default. Production is live donor data and real money;
    * staging is a separate sandbox with its own credentials. Neither is a safe
-   * thing to land on by omission — see the constructor for the argument.
+   * thing to select by omission.
    */
   environment: OverflowEnvironment;
   /** Which nonprofit this connection reaches, and for whom. */

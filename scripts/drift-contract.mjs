@@ -197,10 +197,15 @@ function referenceGraph(document) {
       const ref = value.$ref;
       const rest = entries(value).filter(([key]) => key !== "$ref");
       if (typeof ref === "string" && componentOf.has(ref)) {
+        const id = componentOf.get(ref);
         digest =
           rest.length === 0
             ? hashRef(ref, inside)
-            : hashValue({ ...shallow(pointer(document, ref)), ...Object.fromEntries(rest) }, inside);
+            : components[id].length > 1 || edges.get(ref).has(ref)
+              ? // Cyclic targets stay references even at a sibling-bearing entry.
+                // Inside their SCC, hashRef returns a cycle reference, never an expansion.
+                sha(["ref-siblings", hashRef(ref, inside), hashValue(Object.fromEntries(rest), inside)])
+              : hashValue({ ...shallow(pointer(document, ref)), ...Object.fromEntries(rest) }, inside);
       } else digest = sha(["object", entries(value).map(([key, item]) => [key, hashValue(item, inside)])]);
     }
     if (inside === undefined) nodeHashes.set(value, digest);
