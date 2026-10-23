@@ -28,6 +28,7 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { isKnownProviderFailure } from "../src/provider-call.js";
 import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
@@ -1255,9 +1256,10 @@ describe("the in-memory token cache", () => {
       expect(error.message).toContain("Google rejected a freshly minted delegated token");
       expect(error).not.toHaveProperty("writeOutcome");
       expect(error).not.toHaveProperty("reconciliationRequired");
-      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: failure as ConnectorCallError })).toBe(
-        "failed",
-      );
+      expect(isKnownProviderFailure(failure)).toBe(true);
+      expect(
+        classifyWriteOutcome({ ok: false, dispatched: true, answered: isKnownProviderFailure(failure), error }),
+      ).toBe("failed");
       expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual(["GET Bearer token-1"]);
       expect(apiCalls.filter(({ method }) => method === "POST" || method === "PUT")).toHaveLength(0);
       expect(tokenCalls).toHaveLength(1);
