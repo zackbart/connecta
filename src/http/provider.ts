@@ -238,6 +238,15 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
             Effect.catch((failure) =>
               Effect.succeed({ ok: false, message: toConnectorCallError(failure, errors, map).message }),
             ),
+            Effect.catchDefect((defect) => {
+              try {
+                if (!map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
+                  return Effect.die(defect);
+              } catch {
+                // A broken visibility hook cannot authorize exposing a defect's text.
+              }
+              return Effect.die(new Error("A provider hook withholding vendor text failed."));
+            }),
             Effect.provideContext(lease.services),
             Effect.ensuring(Effect.sync(lease.close)),
           ),
