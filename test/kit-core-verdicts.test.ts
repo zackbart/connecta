@@ -1,3 +1,4 @@
+import { NODE } from "./fixtures/runtime-tags.js";
 import { configureGuardedTransport } from "../src/guarded-transport.js";
 // Decision 0010's shared case table: the provider kit and today's api() core
 // run the same cases, served by the invocation and called directly, and must
@@ -544,4 +545,3 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
     },
   );
 });
-import { NODE } from "./fixtures/runtime-tags.js";

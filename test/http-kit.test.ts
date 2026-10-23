@@ -974,6 +974,7 @@ function acme(
     safety: resultSafety({
       review: "Fixture paths share the same redaction and error policy, including unindexed paths.",
       reviewed: {
+        resolve: (method, path) => ({ method, template: path }),
         // The review: a key's `token` is a credential wherever it appears.
         redact: (data) =>
           Array.isArray(data)
@@ -1057,6 +1058,7 @@ describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
     for (const [binding, path, sends] of [
       ["missing", "/secrets/1", 0],
       ["blank-review", "/secrets/1", 0],
+      ["global-review", "/secrets/1", 0],
       ["indexed", "/secrets/1", 1],
       ["indexed", "/secrets/1/unknown", 0],
     ] as const) {
@@ -1077,6 +1079,7 @@ describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
           },
           safety: resultSafety({
             ...(binding === "blank-review" ? { review: " " } : {}),
+            ...(binding === "global-review" ? { review: "Globally reviewed fixture paths." } : {}),
             reviewed:
               binding === "indexed"
                 ? restSafety(reviewed, index)
@@ -1116,6 +1119,7 @@ describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
       "Refusal",
       "RequestRefused",
       "ResponseTooLarge",
+      "ConnectorCallErrorDefect",
     ] as const) {
       const connection = connect(ACME_API, guardedClient(OPTIONS), {
         errors: {
@@ -1151,6 +1155,10 @@ describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
               return Effect.fail(new RequestRefused({ message: "stored-secret-never-sent" }));
             case "ResponseTooLarge":
               return Effect.fail(new ResponseTooLarge({ detail: "stored-secret-never-sent" }));
+            case "ConnectorCallErrorDefect":
+              return Effect.sync(() => {
+                throw new ConnectorCallError("invalid_args", "stored-secret-never-sent");
+              });
           }
         },
       });
@@ -2073,15 +2081,27 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
   );
 
   it("INV-9: a retried program that runs Send again is the same logical write, not a new one", NODE, async () => {
-    answers.push(() => new Response(null, { status: 503 }));
-    const outcome = await invoke(acme(), (connection) =>
-      Effect.gen(function* () {
-        return (yield* connection.sendPath(POST_ITEMS)).data;
-      }).pipe(Effect.retry({ times: 2 })),
-    );
-    expect(sent).toHaveLength(1);
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect((outcome.error as Error).message).toBe(`Acme returned HTTP 503. ${STOPPED} ${UNKNOWN}`);
+    for (const accepted of [false, true]) {
+      sent = [];
+      answers = [];
+      answers.push(() =>
+        accepted ? Response.json({ ok: true }, { status: 201 }) : new Response(null, { status: 503 }),
+      );
+      const outcome = await invoke(acme(), (connection) =>
+        Effect.gen(function* () {
+          const answer = yield* connection.sendPath(POST_ITEMS);
+          if (accepted) return yield* Effect.fail(new RequestRefused({ message: "Retry the program." }));
+          return answer.data;
+        }).pipe(Effect.retry({ times: 2 })),
+      );
+      expect(sent).toHaveLength(1);
+      expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect((outcome.error as Error).message).toBe(
+        accepted
+          ? `This call had already sent its write to Acme, which answered HTTP 201. ${STOPPED}`
+          : `Acme returned HTTP 503. ${STOPPED} ${UNKNOWN}`,
+      );
+    }
   });
 
   it.each([307, 308])(
