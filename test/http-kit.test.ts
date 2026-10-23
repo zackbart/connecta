@@ -690,7 +690,32 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     const object = Schema.Record(Schema.String, Schema.Unknown);
     const array = Schema.Array(Schema.Unknown);
     expect(catalogSchema(Schema.Union([object, array]), "input")).toEqual({ type: ["object", "array"] });
-    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toHaveProperty("anyOf");
+    expect(catalogSchema(Schema.Union([object, array.check(Schema.isMinLength(1))]), "input")).toEqual({
+      type: ["object", "array"],
+      minItems: 1,
+    });
+    const constrained = Schema.Union([
+      Schema.String,
+      Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(2), Schema.isUnique()),
+    ]);
+    const rendered = catalogSchema(constrained, "input");
+    expect(rendered).toEqual({
+      type: ["string", "array"],
+      minItems: 1,
+      maxItems: 2,
+      uniqueItems: true,
+      items: { type: "string" },
+    });
+    for (const value of ["", "one", [], ["one"], ["one", "one"], ["one", "two"], ["one", "two", "three"], [1]]) {
+      const admitted = Schema.decodeUnknownSync(Schema.Unknown)(value);
+      expect(
+        validateToolInput(
+          catalogSchema(Schema.Struct({ value: constrained }), "input"),
+          { value: admitted },
+          { address: "acme.union", failClosed: true },
+        ) === null,
+      ).toBe(Schema.is(constrained)(value));
+    }
   });
 
   it("renders every bound the decoder enforces: Integer has none past finiteness, Schema.Int says its own", () => {
