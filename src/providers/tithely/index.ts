@@ -21,7 +21,8 @@ import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { defineApiProvider } from "../../http/provider.js";
-import type { ConnectorCallAdmissionPolicy, ConnectorUsageGuide } from "../../types.js";
+import type { ProviderGuideInput } from "../../provider.js";
+import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import { sensitiveFieldsOption } from "../_shared/sensitive-fields.js";
 import {
   authenticate,
@@ -32,6 +33,9 @@ import {
   probe,
   result,
   TITHELY_MAX_RESPONSE_BYTES,
+  TITHELY_INDEX,
+  TITHELY_NAMED,
+  TITHELY_VERDICTS,
   TithelyApi,
   tithelySafety,
 } from "./api.js";
@@ -90,9 +94,9 @@ export interface TithelyOptions {
    * Whether results may carry {@link TITHELY_SENSITIVE_FIELDS}: an
    * organization's payout `bank` (bank name and account last four) and
    * `legal` contact (name and date of birth). `"drop"` (default) removes them
-   * wherever they appear in every result: the named tools, `raw: true`,
-   * `tithely_api_get`, and `tithely_api_mutate` replies. `"return"` lets
-   * `raw: true` and the hatches return Tithe.ly's records untouched. Only
+   * wherever they appear, in every named read and `tithely_api_read` and
+   * `tithely_api_write` replies. `"return"` lets the hatch return Tithe.ly's
+   * records with them; the named projections never include them. Only
    * deployment code decides; no tool argument can.
    */
   sensitiveFields?: "drop" | "return";
@@ -126,31 +130,31 @@ const sensitiveFields = (options: Readonly<TithelyOptions>) =>
   sensitiveFieldsOption("tithely", options.sensitiveFields);
 
 /**
- * The step-1 guide (decision 0011): its fragments with the environment,
- * purpose, and the deployment's sensitive-field choice between them, as
- * shipped, complete. Step 2 renders it through `ProviderContext.usageGuide`.
+ * The connection context ahead of the maintained guide (decision 0011, G):
+ * the environment, purpose, the deployment's sensitive-field choice, and the
+ * options that change what an agent can do. `ProviderContext.usageGuide`
+ * renders it with `SKILL.md`'s body and the generated Conventions.
  */
-function usageGuide(options: Readonly<TithelyOptions>): ConnectorUsageGuide {
+function usageGuide(options: Readonly<TithelyOptions>): ProviderGuideInput {
   const live = environmentOf(options) === "live";
-  const accountInstructions = options.instructions?.trim();
-  const where = live
-    ? "Live Tithe.ly (tithe.ly): real donors and real money."
-    : "Test Tithe.ly (tithelydev.com): a test account; no real money moves.";
-  const sensitive =
-    sensitiveFields(options) === "return"
-      ? "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n"
-      : "  Every result, `raw: true` and the hatches included, leaves them out.\n";
   return {
-    content: `# Tithe.ly giving usage
-
-${where}
-
-Account purpose: ${options.purpose}${skill.fragments.guide_0}${sensitive}${skill.fragments.guide_1}${
-      accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
-    }`,
-    summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
-    // Required: the reduction rule for donor data and the write map behind
-    // the mutate hatch live only here. No schema can carry either.
+    heading: "Tithe.ly giving usage",
+    context: [
+      live
+        ? "Live Tithe.ly (tithe.ly): real donors and real money."
+        : "Test Tithe.ly (tithelydev.com): a test account; no real money moves.",
+      `Account purpose: ${options.purpose}`,
+      sensitiveFields(options) === "return"
+        ? "This connection returns organizations' payout bank and legal-contact details through tithely_api_read; the named reads still omit them."
+        : "This connection withholds organizations' payout bank and legal-contact details from every result.",
+      ...(options.readOnly === true ? ["This connection is read-only: every write is refused."] : []),
+      ...(options.defaultPageSize !== undefined
+        ? [`List tools return ${options.defaultPageSize} rows by default on this connection.`]
+        : []),
+    ],
+    summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, ids that join, and the approval-gated write hatch.`,
+    // Required: the reduction rule for donor data and the id joins live only
+    // in the guide. No schema can carry either.
     required: true,
   };
 }
@@ -161,8 +165,8 @@ export const tithely = defineApiProvider<TithelyOptions>({
   title: "Tithe.ly",
   readme: "Tithe.ly",
   bundle: {
-    baselineGzip: 320935,
-    note: "./providers/tithely remeasures at 320,935 B gzip in B.5 (decision 0010), Node 22 CI static at 0b919ab7: the provider now runs on the Effect provider kit (Schema, Stream, effect/http, effect/http-api and src/http), from 83,800 B for the guarded-fetch provider on the same local measure. Over the root it adds about 170 KB, which a deployment pays once for its first kit provider. Reported against this baseline, not capped (#899).",
+    baselineGzip: 333313,
+    note: "./providers/tithely remeasures at 333,313 B gzip in its decision 0011 step 2, from 323,386 B on main at 57176ce1 (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations (budgeted, paged discovery), and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: TITHELY_OPTIONS,
@@ -176,6 +180,8 @@ export const tithely = defineApiProvider<TithelyOptions>({
   maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
   headers: { Accept: "application/json" },
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
+  // No Tithe.ly write takes an idempotency key; construction checks this against the write tools.
+  idempotencyKey: false,
   credential: KEY_PAIR_CREDENTIAL,
   authenticate,
   errors,
@@ -183,5 +189,19 @@ export const tithely = defineApiProvider<TithelyOptions>({
   result,
   probe,
   guide: usageGuide,
+  hatch: {
+    name: "tithely",
+    title: "Tithe.ly",
+    index: TITHELY_INDEX,
+    verdicts: TITHELY_VERDICTS,
+    named: TITHELY_NAMED,
+    pathExample: "/charges/ch_123",
+    notes: (options) => ({
+      read:
+        sensitiveFields(options) === "return"
+          ? "Organization bank and legal details are returned."
+          : "Organization bank and legal details are dropped.",
+    }),
+  },
   tools: tithelyTools,
 });

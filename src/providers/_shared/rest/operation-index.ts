@@ -53,6 +53,19 @@ export interface OpenApiData {
   readonly ops: readonly OperationRow[];
   /** JSON: `{ d: SchemaNode[], o: (0 | [params, body])[] }`, aligned with `ops`. */
   readonly details: string;
+  /**
+   * Optional, aligned with `ops`: each operation's declared request-body and
+   * success-response property paths (`data[].widget_id`). The standard hatch
+   * validates `fields` against the response roots and searches these names;
+   * an index without them declares no response contract.
+   */
+  readonly fields?: readonly (readonly OperationField[])[];
+}
+
+/** A property an operation's request body or success response declares, as a dot path (`data[].widget_id`). */
+export interface OperationField {
+  readonly in: "body" | "response";
+  readonly path: string;
 }
 
 type ParamRow = readonly [
@@ -241,6 +254,29 @@ export class OperationIndex {
     });
     this.#segments = this.ops.map((op) => op.path.slice(1).split("/"));
     this.methods = [...METHODS].filter((method) => this.ops.some((op) => op.method === method)) as RestMethod[];
+  }
+
+  /** The request and response properties this operation declares; none when the index carries no fields. */
+  fields(op: Operation): readonly OperationField[] {
+    return this.#data.fields?.[op.row] ?? [];
+  }
+
+  /**
+   * The names a result's first dot-path segment may take: the success
+   * response's own properties, or its items' properties when it is an array.
+   * Undefined when the operation declares no response contract.
+   */
+  responseRoots(op: Operation): ReadonlySet<string> | undefined {
+    const paths = this.fields(op).filter((field) => field.in === "response");
+    if (paths.length === 0) return undefined;
+    return new Set(
+      paths.map((field) =>
+        field.path
+          .replace(/^\[\]\./, "")
+          .split(".")[0]!
+          .replace(/\[\]$/, ""),
+      ),
+    );
   }
 
   /** The operation with this exact method and path template, if any. */

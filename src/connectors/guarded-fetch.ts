@@ -20,7 +20,6 @@ import { callerSignal, duringViewCall, settleOnClose, viewSignal } from "../runt
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import {
   assertProviderCallOpen,
-  bindProviderRequest,
   dispatchProviderRequest,
   handoffProviderRequest,
   isRecordingFetch,
@@ -649,7 +648,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           }
           headers[name] = value;
         }
-        bindProviderRequest(init, dispatch);
         if (oauthSenders.has(send) && isRecordingFetch((ctx as ApiHandlerContext).oauth?.fetch))
           handoffProviderRequest(init, dispatch);
         else dispatchProviderRequest(ctx, dispatch, headers, init.method);

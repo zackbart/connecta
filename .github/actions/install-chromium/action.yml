@@ -4,15 +4,17 @@ runs:
   using: composite
   steps:
     # The frozen pnpm install resolves this version from pnpm-lock.yaml.
-    - name: Read resolved Playwright version
+    - name: Read Playwright and runner image versions
       id: playwright
       shell: bash
-      run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      run: |
+        echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@v5
       id: browsers
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ steps.playwright.outputs.version }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.image }}-playwright-${{ steps.playwright.outputs.version }}
     - name: Install Chromium system dependencies (one retry)
       shell: bash
       run: |

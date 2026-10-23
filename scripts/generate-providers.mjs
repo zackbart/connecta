@@ -3,7 +3,7 @@
 // and `drift.json`'s `generated` block. A provider past step 1 must meet D,
 // and one past step 2 must meet G; this refuses a violation before writing.
 import { readdirSync, readFileSync } from "node:fs";
-import { access, readFile, realpath, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
@@ -156,15 +156,6 @@ function walk(directory, prefix = "") {
   );
 }
 
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // Bundling is a loader here, not a production build. Virtual skill modules
 // allow --check to import current definitions even when generated files are
 // missing or stale, without a write or a stale-module import deadlock.
@@ -309,7 +300,6 @@ export async function generateProviders({ root = repositoryRoot, check = false }
         name: provider.name,
         kind: definition.kind,
         kit: definition.kit,
-        withheld: await exists(join(provider.directory, "safety.ts")),
         keys,
       });
       const skill = {

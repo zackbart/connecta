@@ -278,6 +278,15 @@ vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
+Seven [Tithe.ly tasks](tasks/tithely.ts) cover decision 0011's first step-2
+surface against a loopback Tithe.ly v1 fake reached through the real
+`tithely()` factory's `baseUrl`: filtered fund totals, a recurring/one-time
+join, account paging, an organization's widget id, a donor's phone and street
+address (fields only the hatch returns), one duplicate refund, and a
+cancellation that commits before answering HTTP 500. Their graders read only
+fake state, the HTTP ledger and the final answer, so they grade any Tithe.ly
+surface. `eval:selftest --tasks <ids>` checks a subset. The
+[before/after notes](baselines/notes-tithely-step2.md) record the runs.
 [Planned tasks](tasks/planned.ts) is currently empty.
 The historical #765 paired comparison registered 19 tasks. The current roster
 retains 18 of them after removing the Mixpanel bootstrap; frozen comparison

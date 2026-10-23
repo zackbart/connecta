@@ -1,9 +1,16 @@
+import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import goldenSpec from "../../../test/goldens/planning-center/spec.js";
+import { resultSafety } from "../../http/safety.js";
+import type { Connection } from "../../http/vendor.js";
+import { validateToolInput } from "../../validate.js";
+import { errors, safety } from "./api.js";
+import { planningCenterTools } from "./tools.js";
 // The Planning Center connection uses the provider kit over JSON:API. Request
 // shapes, projections, and typed failures live in the characterization
 // goldens; these tests pin what the goldens do not: credential admission, the
 // hatch confinement, credential stripping, and the excludeApps boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { ConnectorCallError } from "../../errors.js";
 import { planningCenter } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -33,7 +40,7 @@ function queue(...items: StubResponse[]): void {
 }
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -54,7 +61,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   globalThis.fetch = realFetch;
 });
 
@@ -98,7 +104,20 @@ function person(id: string, attributes: Record<string, unknown>, relationships: 
 }
 
 describe("Planning Center credentials", () => {
-  it("INV-5: never returns a webhook signing secret or the Services organization secret, on any path", async () => {
+  it("INV-5 INV-11: keeps catalog decoding aligned and never returns webhook or organization secrets", async () => {
+    const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
+    for (const tool of planningCenterTools({
+      connection: kitConnection,
+      pageSize: 100,
+      options: { purpose: "Catalog agreement" },
+    })) {
+      const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
+      expect(
+        validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }),
+        tool.name,
+      ).toBeNull();
+      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
+    }
     const subscription = {
       type: "WebhookSubscription",
       id: "w1",

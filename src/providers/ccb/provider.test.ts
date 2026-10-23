@@ -11,7 +11,7 @@ import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
-import { configureGuardedTransport } from "../../guarded-transport.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
 import { resultSafety } from "../../http/safety.js";
 import { ccbSafety, errors } from "./api.js";
@@ -140,11 +140,10 @@ function install(fake: Fake): void {
 }
 
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 

@@ -83,8 +83,9 @@ must never silently select an API credential.
 - A Node-only suite starts with `// Node-only: <reason>`. Tests and fixtures do
   not ship; generated skill strings do.
 - Every fixture exports `createAuthored()` returning a connector whose nonempty
-  catalog contains every Connecta-authored tool, offline on both runtimes.
-  This is required even without H-convention metadata.
+  catalog contains every Connecta-authored tool, offline. This is required
+  even without H-convention metadata. The S rules check it structurally on
+  Node; workerd's native evidence is the provider's goldens and focused cases.
 - Characterization goldens live in `test/goldens/<name>/`, never in the
   provider folder. `goldens:update [provider]` rewrites them on Node.
 
@@ -190,11 +191,15 @@ guide text. The guide leads with the routing fact, keeps its summary within
 120 bytes, and never restates a schema (H13).
 
 `providers:generate` appends `## Conventions` to `skill.generated.ts` from the
-definition: results (`fields`, `truncated`) for an `api` surface, the
-withheld-value rule when the folder has `safety.ts`, paging from
+definition: results (`fields`, `truncated`) for an `api` surface, paging from
 `kit.pageSize`, the hatch's tools, approval and refused operations from
-`kit.hatch` and the write-once rule. The error and idempotency-key conventions arrive with the kit's
-`VendorErrors` and write declarations (B.4).
+`kit.hatch`, the write-once rule with the declared `idempotencyKey` (checked
+against the kit write builders at construction), and the Errors line from
+`VendorErrors.meanings` (the code an unknown id fails with, whether it proves
+absence, and each documented conflict source); a standard provider must
+declare both. The withheld-value rule renders only with `kit.refusesWithheld`,
+which nothing sets yet: the hatch refuses withheld links, not withheld scalar
+placeholders.
 
 ## The agent-facing surface (S)
 
@@ -202,7 +207,11 @@ withheld-value rule when the folder has `safety.ts`, paging from
   `_api_details`, and `_api_read`, plus `_api_write` and `_api_upload` where
   the index has those verdicts. `_api_write` is always destructive. A data
   search is a named `search_<object>` read. Never `_api_get` or
-  `_api_mutate`.
+  `_api_mutate`. Declare it through `defineApiProvider`'s `hatch` (the kit's
+  `src/http/hatch.ts`, with 0014's discovery budgets); a vendor without a
+  pinned OpenAPI document derives its index with `vendorIndex`, declaring
+  request contracts with `form()`, `Summary` annotations and lenient success
+  schemas. Name the authored tool serving an operation in `named`.
 - **S2 paging:** a paged `list_*` or `search_*` takes `limit` and `cursor`; a
   page is `{ hasMore, nextCursor?, total? }`. Never `page`, `perPage`,
   `page_size`, `offset`, `start_cursor`, or `maxRows`.
@@ -372,6 +381,12 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    references in maintained guidance. Tithe.ly's results do not validate
    Planning Center joins, CCB search routing or Google batch edits.
 6. Remove the provider from `PENDING.step2` and its committed baseline entry.
+7. A provider with a reviewed value-safety table (`safety.ts`) waits for the
+   hatch to refuse writes carrying withheld scalar placeholders, and for
+   `kit.refusesWithheld`, before its step 2.
+8. A hatch over a compiled REST pin declares response fields in its index
+   (`OpenApiData.fields`) before `fields` can narrow it; operations without a
+   declared response refuse `fields`.
 
 ## Changing a provider that has not migrated (transitional)
 

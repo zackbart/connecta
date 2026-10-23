@@ -86,8 +86,8 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   title: "Planning Center",
   readme: "Planning Center",
   bundle: {
-    baselineGzip: 26970,
-    note: "./providers/planning-center migrates onto the Effect provider kit from its 26,970 B guarded-fetch baseline; reported, not capped (#899).",
+    baselineGzip: 336325,
+    note: "./providers/planning-center measures 336,325 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: PLANNING_CENTER_OPTIONS,

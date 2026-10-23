@@ -104,9 +104,8 @@ export const stripe = defineApiProvider<StripeOptions>({
   title: "Stripe",
   readme: "Stripe",
   bundle: {
-    "baselineGzip": 377374,
-    "note":
-      "./providers/stripe remeasures at 377,374 B gzip in C.6 (decision 0010, #703, PR #951), Node 22 CI static at d39a49fa: its API tools now run on the Effect provider kit with the pinned compact operation index (638 operations), reviewed text and bounded binary bodies, and connected-account routing. This replaces the historical 232,089 B baseline that included the hosted MCP half removed by C.0c. Root and examples/worker remain unchanged at 398,591 B and 738,601 B in CI. Reported against this baseline, not capped (#899).",
+    baselineGzip: 379663,
+    note: "./providers/stripe measures 379,663 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: STRIPE_OPTIONS,

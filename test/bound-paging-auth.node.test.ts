@@ -4,37 +4,50 @@ import { createConnecta, customExecutor } from "../src/index.js";
 import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys } from "../src/storage/keys.js";
-import { planningCenter } from "../src/providers/planning-center/index.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
-it(
-  "INV-4 INV-10: agent search paging bounds token reads per pass as dependencies grow",
-  { timeout: 25_000 },
-  async () => {
-    const inner = memoryStorage();
-    let tokenReads = 0;
-    let delayMs = 0;
-    const storage = {
-      ...inner,
-      async get(key: string) {
-        if (key.startsWith("access-token:")) {
-          tokenReads++;
-          if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        return inner.get(key);
-      },
-    };
-    const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
-    let work: (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => Promise<unknown>;
+it("INV-4: agent search paging bounds token reads per pass as dependencies grow", { timeout: 25_000 }, async () => {
+  const inner = memoryStorage();
+  let tokenReads = 0;
+  let delayMs = 0;
+  const storage = {
+    ...inner,
+    async get(key: string) {
+      if (key.startsWith("access-token:")) {
+        tokenReads++;
+        if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      return inner.get(key);
+    },
+  };
+  const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant")).token;
+  let work: (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => Promise<unknown>;
+  const counts: number[] = [];
+  for (const size of [1, 30]) {
     const app = createConnecta({
       readOnly: false,
-      connectors: [planningCenter("pco", { purpose: "Paging regression fixture" })],
+      connectors: [
+        {
+          id: "notes",
+          kind: "api",
+          async listTools() {
+            return Array.from({ length: size }, (_, index) => ({
+              name: `read_${index}`,
+              description: "Paging regression fixture",
+              annotations: { readOnlyHint: true },
+            }));
+          },
+          async callTool() {
+            return {};
+          },
+        },
+      ],
       storage,
       logger: "silent",
       agents: ["assistant"],
       accessTokens: accessTokens(storage),
-      pools: { research: { tools: ["pco"], members: ["agent:assistant"] } },
+      pools: { research: { tools: ["notes"], members: ["agent:assistant"] } },
       executor: customExecutor(
         scriptedExecutor((fns) => work(fns)),
         { lifecycle: "self-managed" },
@@ -50,50 +63,43 @@ it(
       expect(response.status).toBe(200);
       return (await readJsonRpc(response)).result;
     };
-    const counts: number[] = [];
     try {
-      for (const limit of [30, 1]) {
-        delayMs = 0;
-        let toolCount = 0;
-        work = async (fns) => {
-          const search = (await fns.search!({
-            connector: "pco",
-            query: "workflow forms check-in attendance people profiles",
-            includeSchemas: "compact",
-            limit,
-          })) as { tools: unknown[] };
-          toolCount = search.tools.length;
-          // Keep the one-tool comparison pageable without adding dependencies.
-          return limit === 1 ? { search, padding: "x".repeat(24_000) } : search;
-        };
-        const minted = await rpc();
-        const handle = minted.structuredContent.result;
-        expect(toolCount).toBeGreaterThanOrEqual(limit === 1 ? 1 : 20);
-        if (limit === 1) expect(toolCount).toBe(1);
-        expect(handle.truncated).toBe(true);
-        expect(handle.resultId).toBeTypeOf("string");
-        work = (fns) => fns.result!(handle.resultId, { offset: 0, maxBytes: 10000 });
-        tokenReads = 0;
-        delayMs = 120;
-        const started = Date.now();
-        const page = await rpc();
-        const elapsedMs = Date.now() - started;
-        console.log("AGENT_SEARCH_PAGE", { limit, toolCount, totalBytes: handle.totalBytes, tokenReads, elapsedMs });
-        expect(page.isError, JSON.stringify(page.structuredContent)).not.toBe(true);
-        expect(page.structuredContent.result).toMatchObject({ offset: 0, bytes: 10000, totalBytes: handle.totalBytes });
-        expect(elapsedMs).toBeLessThan(15_000);
-        // Three reads for request admission, then three for each fresh validation pass.
-        expect(tokenReads).toBe(9);
-        counts.push(tokenReads);
-      }
-      expect(counts).toEqual([9, 9]);
+      delayMs = 0;
+      work = async (fns) => {
+        const search = (await fns.search!({
+          connector: "notes",
+          query: "paging",
+          includeSchemas: "compact",
+          limit: size,
+        })) as { tools: unknown[] };
+        expect(search.tools).toHaveLength(size);
+        // Both sizes must page, independently of the catalog's rendered length.
+        return { search, padding: "x".repeat(24_000) };
+      };
+      const minted = await rpc();
+      const handle = minted.structuredContent.result;
+      expect(handle.truncated).toBe(true);
+      expect(handle.resultId).toBeTypeOf("string");
+      work = (fns) => fns.result!(handle.resultId, { offset: 0, maxBytes: 10000 });
+      tokenReads = 0;
+      delayMs = 120;
+      const started = Date.now();
+      const page = await rpc();
+      const elapsedMs = Date.now() - started;
+      expect(page.isError, JSON.stringify(page.structuredContent)).not.toBe(true);
+      expect(page.structuredContent.result).toMatchObject({ offset: 0, bytes: 10000, totalBytes: handle.totalBytes });
+      expect(elapsedMs).toBeLessThan(15_000);
+      // Three token reads for admission and each of two fresh validation passes.
+      expect(tokenReads).toBe(9);
+      counts.push(tokenReads);
     } finally {
       await app.close();
     }
-  },
-);
+  }
+  expect(counts[1]).toBe(counts[0]);
+});
 
-it("INV-4 INV-10: revoking an agent token between page validation passes refuses the page", async () => {
+it("INV-4: revoking an agent token between page validation passes refuses the page", async () => {
   const inner = memoryStorage();
   let resultId = "";
   let revokeDuringPage = false;

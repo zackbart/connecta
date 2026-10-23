@@ -1,7 +1,7 @@
 // Security-review regressions for original-span matching, all derived copies,
 // normalization/extraction, tiny tails, and cross-request paging stability.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { breeze } from "../src/providers/breeze/index.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
@@ -71,7 +71,7 @@ describe("bounded reads match original spans", () => {
       expect(listing[key === "incompleteSearch" ? MARKER : "incompleteSearch"]).toBe(true);
     }
 
-    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    const restore = installOwnedTransport();
     try {
       for (const key of ["parents", "rent"]) {
         const requests: { method: string; removeParents: string | null }[] = [];
@@ -91,7 +91,7 @@ describe("bounded reads match original spans", () => {
         expect(moved[key === "parents" ? MARKER : "pa[redacted]s"]).toEqual(["new-1"]);
       }
     } finally {
-      configureGuardedTransport(restore);
+      restore.restore();
     }
 
     for (const key of ["error", "errors", "details", "reason", "status", "message"]) {

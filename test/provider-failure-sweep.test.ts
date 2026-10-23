@@ -9,7 +9,7 @@ import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { CredentialVault } from "../src/credentials.js";
 import { deriveContext } from "../src/derived-context.js";
 import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
-import { configureGuardedTransport } from "../src/guarded-transport.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { providerRequests, readRequest, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
@@ -35,7 +35,7 @@ const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
   "github.list_scopes",
-  ...["cloudflare", "stripe", "vercel"].flatMap((name) => [
+  ...["cloudflare", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -79,11 +79,10 @@ function credential(name: string): Record<string, string> {
 
 // Kit providers (Tithe.ly) send writes through the owned transport listen() installs on Node.
 beforeEach(() => {
-  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  installOwnedTransport();
 });
 
 afterEach(() => {
-  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -752,9 +751,9 @@ describe("round-5 whole-call failure sweep", () => {
     const requests = googleFetch(() => Response.json({ error: "Unknown or inaccessible" }, { status: 404 }));
     const result = await invoke(
       provider("tithely"),
-      "tithely_api_mutate",
+      "tithely_api_write",
       "write",
-      argumentsTable.tithely!["tithely_api_mutate"]!,
+      argumentsTable.tithely!["tithely_api_write"]!,
     );
     expect(requests).toHaveLength(1);
     expect(result).toMatchObject({ ok: false, error: { code: "connector_call_failed", retryable: false } });
