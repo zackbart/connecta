@@ -10,8 +10,7 @@
     "mixpanel",
     "notion",
     "sheets",
-    "slides",
-    "vercel"
+    "slides"
   ],
   "step2": [
     "breeze",
