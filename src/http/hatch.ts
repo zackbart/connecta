@@ -22,6 +22,7 @@ import { Refusal } from "./errors.js";
 import { dataKeys, fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
 import { boundCursor, StandardPage } from "./paging.js";
+import { operationFields, type OperationField } from "./vendor-index.js";
 import { read, write } from "./tools.js";
 import type { Connection } from "./vendor.js";
 import type { Parameters, WriteRequest } from "./write-request.js";
@@ -195,6 +196,61 @@ export function hatch(
       );
     return [...lead, ...found.filter((op) => !exact(op))];
   };
+  // Find operations by the request or response properties they declare: a
+  // query word must equal a word of a property's name. Rarer words weigh more,
+  // and words most operations' own records carry (id, status) decide nothing.
+  // Reads, then the shallowest best match, lead.
+  const words = (text: string) =>
+    text
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 2);
+  const same = (term: string, word: string) => term === word || term === `${word}s` || word === `${term}s`;
+  const byField = (query: string, method: RestMethod | undefined, found: ReadonlySet<Operation>) => {
+    const candidates = index.ops.filter((op) => method === undefined || op.method === method);
+    const leaf = (field: OperationField) => words(field.path.split(".").at(-1)!);
+    // Commonness counts the record's own properties, not those of records embedded in it.
+    const carries = (op: Operation, term: string) =>
+      operationFields(index, op).some(
+        (field) => field.path.split(".").length <= 2 && leaf(field).some((word) => same(term, word)),
+      );
+    const weights = new Map(
+      [...new Set(words(query))].flatMap((term) => {
+        const share = candidates.filter((op) => carries(op, term)).length;
+        return share > 0 && share <= Math.max(1, (candidates.length * 2) / 3)
+          ? [[term, Math.log2(1 + candidates.length / share)] as const]
+          : [];
+      }),
+    );
+    if (weights.size === 0) return [];
+    const order = new Map(index.ops.map((op, position) => [op, position]));
+    return candidates
+      .filter((op) => !found.has(op))
+      .flatMap((op) => {
+        const best = operationFields(index, op)
+          .map((field) => ({
+            field,
+            score: [...weights].reduce(
+              (sum, [term, weight]) => sum + (leaf(field).some((word) => same(term, word)) ? weight : 0),
+              0,
+            ),
+            depth: field.path.split(".").length + (field.in === "body" ? 0.5 : 0),
+          }))
+          .filter(({ score }) => score > 0)
+          .sort((a, b) => b.score - a.score || a.depth - b.depth)[0];
+        return best ? [{ op, ...best }] : [];
+      })
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          Number(b.op.method === "GET") - Number(a.op.method === "GET") ||
+          a.depth - b.depth ||
+          a.op.path.split("/").length - b.op.path.split("/").length ||
+          order.get(a.op)! - order.get(b.op)!,
+      )
+      .map(({ op, field }) => ({ op, field }));
+  };
   const methodsWith = (wanted: (verdict: Verdict) => boolean) =>
     index.methods.filter((method) => index.ops.some((op) => op.method === method && wanted(verdictOf(op))));
   const readMethods = methodsWith((verdict) => verdict === "read");
@@ -212,6 +268,11 @@ export function hatch(
       }),
     ),
   };
+  const Matched = Schema.optionalKey(
+    Schema.String.annotate({
+      description: "The request or response field this operation was found by; call its tool to read the field.",
+    }),
+  );
   const searchTool = tool("search");
   const tools = [
     read(connection, {
@@ -238,6 +299,7 @@ export function hatch(
             operationId: Schema.String,
             summary: Schema.String,
             ...Routing,
+            matched: Matched,
           }),
         ),
         revision: Schema.String.annotate({ description: "Operation index revision." }),
@@ -254,20 +316,30 @@ export function hatch(
                 error: new ConnectorCallError("invalid_args", "This search cursor is not one search returned."),
               }),
             );
-          const ranked = rank(
+          const primary = rank(
             yield* checked(() => index.search(args.query, { ...scope, limit: index.ops.length })),
             args.query,
           );
-          const operations = ranked.slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits)).map((op) => ({
-            method: op.method,
-            path: op.path,
-            operationId: op.operationId,
-            summary:
-              op.summary.length > SEARCH_BUDGET.summaryChars
-                ? `${op.summary.slice(0, SEARCH_BUDGET.summaryChars - 1)}…`
-                : op.summary,
-            ...route(op),
-          }));
+          // Operations found only by a field they return or take rank after every path, id or summary match.
+          const ranked: Array<{ op: Operation; field?: OperationField }> = [
+            ...primary.map((op) => ({ op })),
+            ...byField(args.query, args.method, new Set(primary)),
+          ];
+          const operations = ranked.slice(offset, offset + (args.limit ?? SEARCH_BUDGET.hits)).map(({ op, field }) => {
+            const { named: authored, ...routed } = route(op);
+            return {
+              method: op.method,
+              path: op.path,
+              operationId: op.operationId,
+              summary:
+                op.summary.length > SEARCH_BUDGET.summaryChars
+                  ? `${op.summary.slice(0, SEARCH_BUDGET.summaryChars - 1)}…`
+                  : op.summary,
+              ...routed,
+              // A named tool's projection may omit the matched field, so a field match points at the hatch only.
+              ...(field ? { matched: `${field.in} field ${field.path}` } : authored ? { named: authored } : {}),
+            };
+          });
           // The budget holds before the result leaves the tool; what it cuts stays reachable by cursor.
           while (operations.length > 1 && bytes({ operations, revision: index.revision }) > SEARCH_BUDGET.bytes)
             operations.pop();

@@ -238,7 +238,7 @@ it(
               ...optional,
             }),
           ),
-          success: Schema.Unknown,
+          success: Schema.Struct({ object: Schema.optionalKey(Schema.Struct({ widget_id: Schema.String })) }),
         }).annotate(Summary, "Create a thing"),
       ),
       { prefix: "forms", title: "Forms", revision: "v1" },
@@ -258,6 +258,10 @@ it(
         summary: "Create a thing",
         tool: "forms_api_write",
       },
+    ]);
+    // A field the operation returns finds it too, marked, after every path or summary match.
+    expect((await formsCall("search", { query: "widget" })).operations).toEqual([
+      expect.objectContaining({ path: "/things/{thing_id}", matched: "response field object.widget_id" }),
     ]);
     const contract = await formsCall("details", { method: "POST", path: "/things/t1" });
     expect(new TextEncoder().encode(JSON.stringify(contract)).length).toBeLessThanOrEqual(DETAILS_BUDGET_BYTES);

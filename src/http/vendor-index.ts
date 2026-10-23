@@ -6,7 +6,12 @@
 // derives it here from its own declarations, through `manifest(vendor)`. The
 // vendor stays the one operation list: what the typed client sends, what drift
 // checks compare and what the hatch admits are the same declarations.
-import { OperationIndex, type OpenApiData, type SchemaNode } from "../providers/_shared/rest/operation-index.js";
+import {
+  OperationIndex,
+  type OpenApiData,
+  type Operation,
+  type SchemaNode,
+} from "../providers/_shared/rest/operation-index.js";
 import { manifest, type Vendor } from "./vendor.js";
 
 type Json = Record<string, unknown>;
@@ -54,10 +59,54 @@ function node(schema: unknown, components: Json, seen: ReadonlySet<string> = new
   return out;
 }
 
+/** A property an operation's request body or success response declares, as a dot path (`data[].widget_id`). */
+export interface OperationField {
+  readonly in: "body" | "response";
+  readonly path: string;
+}
+
+const FIELDS = new WeakMap<OperationIndex, ReadonlyMap<number, readonly OperationField[]>>();
+
+/**
+ * The request and response properties an index's operation declares, so
+ * search can find an operation by a field it returns. Indexes without them,
+ * such as the REST family's compiled pins, answer none.
+ */
+export function operationFields(index: OperationIndex, op: Operation): readonly OperationField[] {
+  return FIELDS.get(index)?.get(op.row) ?? [];
+}
+
+/** Every property path a schema declares, local references resolved once each. */
+function propertyPaths(
+  schema: unknown,
+  components: Json,
+  prefix = "",
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const source = record(schema);
+  const ref = typeof source["$ref"] === "string" ? source["$ref"].replace(/^#\/components\/schemas\//, "") : undefined;
+  if (ref !== undefined)
+    return seen.has(ref) ? [] : propertyPaths(components[ref], components, prefix, new Set([...seen, ref]));
+  const branches = [source["anyOf"], source["oneOf"], source["allOf"]].flatMap((list) =>
+    Array.isArray(list) ? list : [],
+  );
+  return [
+    ...Object.entries(record(source["properties"])).flatMap(([name, child]) => [
+      `${prefix}${name}`,
+      ...propertyPaths(child, components, `${prefix}${name}.`, seen),
+    ]),
+    ...(source["items"] === undefined
+      ? []
+      : propertyPaths(source["items"], components, prefix ? `${prefix.slice(0, -1)}[].` : "[].", seen)),
+    ...branches.flatMap((branch) => propertyPaths(branch, components, prefix, seen)),
+  ];
+}
+
 /**
  * An operation index over a kit vendor's own declarations: every operation's
  * method, path, `operationId`, `Summary`, path and query parameters, and
- * request body with its content type. `prefix` names the hatch tools in
+ * request body with its content type, plus the request and response
+ * properties `operationFields` answers. `prefix` names the hatch tools in
  * refusals; `revision` identifies the declared API version.
  */
 export function vendorIndex(
@@ -68,6 +117,7 @@ export function vendorIndex(
   const components = record(record(document["components"])["schemas"]);
   const ops: Array<[string, string, string, string, number]> = [];
   const details: Array<0 | [unknown[], unknown]> = [];
+  const fields = new Map<number, readonly OperationField[]>();
   for (const [path, item] of Object.entries(record(document["paths"]))) {
     for (const method of METHODS) {
       const operation = record(record(item)[method]);
@@ -97,6 +147,13 @@ export function vendorIndex(
           ? 0
           : [contentType, node(record(media)["schema"], components), ...(requestBody["required"] === true ? [1] : [])];
       details.push(params.length === 0 && body === 0 ? 0 : [params, body]);
+      const success = Object.entries(record(operation["responses"])).find(([status]) => /^2/.test(status))?.[1];
+      const paths = (where: OperationField["in"], schema: unknown) =>
+        [...new Set(propertyPaths(schema, components))].map((path) => ({ in: where, path }));
+      fields.set(ops.length - 1, [
+        ...paths("response", record(record(record(success)["content"])["application/json"])["schema"]),
+        ...paths("body", record(media)["schema"]),
+      ]);
     }
   }
   const data: OpenApiData = {
@@ -109,5 +166,7 @@ export function vendorIndex(
     ops,
     details: JSON.stringify({ d: [], o: details }),
   };
-  return new OperationIndex(data, { vendor: names.prefix, title: names.title });
+  const index = new OperationIndex(data, { vendor: names.prefix, title: names.title });
+  FIELDS.set(index, fields);
+  return index;
 }
