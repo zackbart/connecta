@@ -338,7 +338,7 @@ describe("connection modes the goldens do not build", () => {
             sensitiveFields === "return" ? "details are returned." : "details are dropped.",
           );
           expect(description("list_organizations")).toContain(
-            sensitiveFields === "return" ? "tithely_api_read returns them" : "withheld from every result",
+            sensitiveFields === "return" ? "legal-contact details included" : "legal-contact details stay withheld",
           );
         }
       }

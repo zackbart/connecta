@@ -152,10 +152,11 @@ export function tithelyTools({
       limit: size,
       fetch: (ask) => fetch(ask).pipe(Effect.flatMap(({ data }) => listRows(data))),
     });
+  // S6: a projection that drops fields points to the hatch, which passes the same privacy boundary.
   const sensitive =
     options.sensitiveFields === "return"
-      ? "Omits payout bank and legal-contact details; tithely_api_read returns them on this connection."
-      : "Payout bank and legal-contact details are withheld from every result.";
+      ? "Fields this omits, payout bank and legal-contact details included, come from tithely_api_read."
+      : "Fields this omits come from tithely_api_read; payout bank and legal-contact details stay withheld.";
   return [
     list(connection, {
       name: "list_organizations",
@@ -172,7 +173,7 @@ export function tithelyTools({
     list(connection, {
       name: "list_accounts",
       description:
-        "List donor accounts by name, email, and id. Giving history is list_charges by accountId; phone and postal address are on the account record.",
+        "List donor accounts by name, email, and id. Giving history is list_charges by accountId; phone, address, and other fields come from tithely_api_read.",
       filters: {
         scope: Schema.optionalKey(
           Schema.Literals(["all", "api"]).annotate({
@@ -238,7 +239,7 @@ export function tithelyTools({
     getTool(connection, {
       name: "get_charge",
       description:
-        "Get one charge by id: amounts in cents, status, fund, deposit date, donor, and payment method. Use it to check a charge after a refund or charge write.",
+        "Get one charge by id: amounts in cents, status, fund, deposit date, donor, and payment method. Use it to check a charge after a write; tithely_api_read returns the full record.",
       input: Schema.Struct({ chargeId: Id.annotate({ description: "Charge id (ch_…) from list_charges." }) }),
       output: Charge,
       fields: true,

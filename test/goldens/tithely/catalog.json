@@ -30,7 +30,7 @@
   "tools": [
     {
       "name": "list_organizations",
-      "description": "List the organizations these keys manage, with their funds (giving types) and status. Payout bank and legal-contact details are withheld from every result.",
+      "description": "List the organizations these keys manage, with their funds (giving types) and status. Fields this omits come from tithely_api_read; payout bank and legal-contact details stay withheld.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -166,7 +166,7 @@
     },
     {
       "name": "list_accounts",
-      "description": "List donor accounts by name, email, and id. Giving history is list_charges by accountId; phone and postal address are on the account record.",
+      "description": "List donor accounts by name, email, and id. Giving history is list_charges by accountId; phone, address, and other fields come from tithely_api_read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -443,7 +443,7 @@
     },
     {
       "name": "get_charge",
-      "description": "Get one charge by id: amounts in cents, status, fund, deposit date, donor, and payment method. Use it to check a charge after a refund or charge write.",
+      "description": "Get one charge by id: amounts in cents, status, fund, deposit date, donor, and payment method. Use it to check a charge after a write; tithely_api_read returns the full record.",
       "inputSchema": {
         "type": "object",
         "properties": {
