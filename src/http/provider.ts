@@ -25,7 +25,7 @@ import type {
 import { guardedClient, type GuardedOptions } from "./client.js";
 import { Refusal, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
 import { hatch } from "./hatch.js";
-import { Grant, grantFromOAuth, refreshOnce } from "./oauth.js";
+import { Grant, grantFromOAuth, refreshOnce, type Write401Renewal } from "./oauth.js";
 import { resultSafety, type SafetyOptions } from "./safety.js";
 import { Classification, Dispatches, Signal, fromConnectorContext, type CallServices } from "./services.js";
 import { connect, operations, type Connection, type ConnectOptions, type Vendor } from "./vendor.js";
@@ -54,6 +54,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
   /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
+  /** Renewable machine login, constructed outside every caller context. Exclusive with static OAuth. */
+  readonly grant?: (
+    options: Readonly<O>,
+  ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
+  /** Optional legacy diagnostic over renewal facts; settleWrite still owns the outcome. */
+  readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError;
   readonly authenticate:
     | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
     | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
@@ -63,6 +69,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly probe: {
     readonly operation: ProbeOperation;
     readonly request: unknown | ((options: Readonly<O>) => unknown);
+    /** Auth-dependent read-only probe programs use the same candidate services and failure edge. */
+    readonly run?: (connection: Connection, options: Readonly<O>) => Effect.Effect<unknown, HttpFailure, CallServices>;
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
     readonly describe: (reply: unknown, options: Readonly<O>) => string | CredentialTestResult;
@@ -110,6 +118,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     credential,
     oauth,
     oauthWrite401,
+    grant,
+    writeUnauthorized,
     authenticate,
     errors,
     safety,
@@ -124,6 +134,8 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
+  if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
+  if (writeUnauthorized && !grant) throw new Error("writeUnauthorized requires a machine grant declaration.");
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new Error(`${metadata.title} maxResponseBytes must be a whole number of bytes >= 1.`);
   }
@@ -163,6 +175,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       }
       const configured = transport?.(options);
+      const machineGrant = grant?.(options);
       const guarded = guardedClient({
         provider: errors.provider,
         baseUrl: baseUrl(options),
@@ -176,7 +189,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       });
       const connected = connect(
         vendor,
-        oauth
+        oauth || machineGrant
           ? refreshOnce(
               guarded,
               oauthWrite401
@@ -196,7 +209,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                         "downstream_oauth_required",
                       ),
                   }
-                : undefined,
+                : writeUnauthorized
+                  ? { writeUnauthorized }
+                  : undefined,
             )
           : guarded,
         {
@@ -208,13 +223,26 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       const authorize = <A>(
         work: Effect.Effect<A, HttpFailure, CallServices | Grant>,
       ): Effect.Effect<A, HttpFailure, CallServices> =>
-        work.pipe(Effect.provideServiceEffect(Grant, oauth ? callGrant : Effect.succeed(missingGrant)));
+        work.pipe(
+          Effect.provideServiceEffect(Grant, machineGrant ?? (oauth ? callGrant : Effect.succeed(missingGrant))),
+        );
       const connection: Connection = {
         ...connected,
         send: (...args) => authorize(connected.send(...args)),
         sendPath: (...args) => authorize(connected.sendPath(...args)),
         sendItem: (...args) => authorize(connected.sendItem(...args)),
       };
+      // Construct programs outside every caller context; only execution receives candidate services.
+      const probeProgram = probe.run
+        ? probe.run(connection, options)
+        : connection
+            .send(
+              probe.operation,
+              (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
+                Connection["send"]
+              >[1],
+            )
+            .pipe(Effect.map(({ data }) => data));
       const test = (values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> => {
         const problem = probe.check?.(values, options);
         if (problem !== undefined) return Promise.resolve({ ok: false, message: problem });
@@ -229,45 +257,39 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           signal,
         };
         return runEdge(
-          connection
-            .send(
-              probe.operation,
-              (typeof probe.request === "function" ? probe.request(options) : probe.request) as Parameters<
-                Connection["send"]
-              >[1],
-            )
-            .pipe(
-              Effect.flatMap(({ data }) =>
-                Effect.try({
-                  try: () => {
-                    const described = probe.describe(data, options);
-                    return typeof described === "string" ? { ok: true, message: described } : described;
-                  },
-                  catch: (error) => error,
-                }).pipe(
-                  Effect.catch((error) =>
-                    error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
-                  ),
+          probeProgram.pipe(
+            Effect.flatMap((data) =>
+              Effect.try({
+                try: () => {
+                  const described = probe.describe(data, options);
+                  return typeof described === "string" ? { ok: true, message: described } : described;
+                },
+                catch: (error) => error,
+              }).pipe(
+                Effect.catch((error) =>
+                  error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
                 ),
               ),
-              Effect.catch((failure) =>
-                Effect.sync(() => {
-                  const error = toConnectorCallError(failure, errors, map);
-                  return probe.failure?.(error, options) ?? { ok: false, message: error.message };
-                }),
-              ),
-              Effect.catchDefect((defect) => {
-                try {
-                  if (!map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
-                    return Effect.die(defect);
-                } catch {
-                  // A broken visibility hook cannot authorize exposing a defect's text.
-                }
-                return Effect.die(new Error("A provider hook withholding vendor text failed."));
-              }),
-              Effect.provideContext(lease.services),
-              Effect.ensuring(Effect.sync(lease.close)),
             ),
+            Effect.catch((failure) =>
+              Effect.sync(() => {
+                const error = toConnectorCallError(failure, errors, map);
+                return probe.failure?.(error, options) ?? { ok: false, message: error.message };
+              }),
+            ),
+            Effect.catchDefect((defect) => {
+              try {
+                // Custom probes may send outside this ledger, so always withhold their defects.
+                if (!probe.run && !map.dispatches.some(({ operation }) => operation && map.withholds(operation)))
+                  return Effect.die(defect);
+              } catch {
+                // A broken visibility hook cannot authorize exposing a defect's text.
+              }
+              return Effect.die(new Error("A provider hook withholding vendor text failed."));
+            }),
+            Effect.provideContext(lease.services),
+            Effect.ensuring(Effect.sync(lease.close)),
+          ),
           { signal: ctx.signal },
         );
       };

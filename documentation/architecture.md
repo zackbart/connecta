@@ -2009,6 +2009,22 @@ caches across calls, such as its typed HttpApi client, is built with no
 services, because Effect constructors close over the context they run in and a
 cached value would otherwise keep its first caller's request alive (INV-7).
 
+The optional `grant(options)` factory supplies a renewable machine-login
+`Grant`, exclusive with static OAuth. It is built outside caller contexts;
+each send binds the active call to its token, refresh and rejected effects.
+Infisical uses credential-bound login flights shared within one request, while
+only token strings and expiry cross requests. An optional `writeUnauthorized`
+mapper receives token-free `Renewed`, `Unchanged` or `Failed` facts to preserve
+the provider's diagnostic; `settleWrite` still decides the outcome and handoff.
+Reads replay once after renewal; writes are never resent.
+
+The optional `probe.run(connection, options)` program replaces the operation
+probe when authentication needs a different read or a private login transport.
+It is constructed outside caller contexts and executes with the same anonymous,
+uncharged candidate services, failure mapping and finalizer. Every defect from
+a run probe or its hooks uses the generic withheld notice, even without a kit
+dispatch, because a private transport leaves no kit visibility evidence.
+
 The REST bridge in `src/providers/_shared/rest/kit.ts` retains pinned index
 validation and legacy hatch schemas while the kit owns tool leases, fixed write
 capacity, transport, failures and result safety. It verifies schema equality
@@ -2348,8 +2364,8 @@ compiling and configuring the real thing.
   The recorders are the guarded transport (dispatch, status, declaration
   match, mapped verdict), `ctx.fetch` (dispatch, status), static OAuth
   (status, verdict, renewal), Google (per-attempt entry, renewal of a read's
-  replay), Infisical (renewal, through `answeredRequest`), the kit (core
-  ledger entry, status, `recordUnauthorized`, refresh-once renewal),
+  replay), the kit (core ledger entry, status, `recordUnauthorized`,
+  refresh-once renewal, including Infisical's machine-login `Grant`),
   `remoteMcp()` (each `tools/call` as an entry under its caller's ledger and
   logical call, status, the verdict, and renewal by comparing the
   `Authorization` of the resend the SDK attempts), and `api()` itself (one
@@ -2389,8 +2405,10 @@ compiling and configuring the real thing.
   custom delegation and copied init objects remain conservative.
   Remote MCP captures
   each physical read's entry before awaiting its response; a later send
-  cannot overwrite it. Infisical's response identity and Google's init
-  identity only identify the request whose credential was renewed.
+  cannot overwrite it. The kit's response identity and Google's init identity
+  identify the request whose credential was renewed. The legacy guarded-fetch
+  `answeredRequest` helper has no production caller; tests retain it to exercise
+  renewal provenance outside the kit.
   The decider normalizes every failure it settles,
   typed or not (a raw network error, an `AbortError`, a thrown string). Its
   verdict is final (`settledWrite`, which follows copies and redaction): the
