@@ -1353,15 +1353,13 @@ export class SentSecrets {
   }
 
   /** Text pieces a provider reads as one lane, such as rich-text runs with metadata between
-   * them: checked joined, each match replaced in every piece it touches. A `bounded` lane is
-   * one the vendor cut short, so it also loses an unfinished tail. */
-  parts(parts: string[], bounded = false): string[] {
+   * them: checked joined, each match replaced in every piece it touches. */
+  parts(parts: string[]): string[] {
     if (this.idle()) return parts;
     return this.checked(
       parts,
       parts.map(() => TEXT),
       this.scan(true),
-      bounded,
     );
   }
 
