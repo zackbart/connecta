@@ -603,7 +603,11 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
     Effect.gen(function* () {
       const page = spec.args["page"] ?? 1;
       const limit = spec.args["limit"] ?? pageSize;
-      const payload = yield* strict(spec.fetch(compact({ ...spec.query, page, limit })));
+      // Compact's conditional keys do not unify across the callback's generic
+      // instantiation. Its argument is this exact filter set plus both page fields.
+      const payload = yield* strict(
+        spec.fetch(compact({ ...spec.query, page, limit }) as unknown as Parameters<typeof spec.fetch>[0]),
+      );
       const rows = asArray(asRecord(payload)["data"]);
       return {
         [spec.key]: projectRows(rows, spec.args["raw"], spec.project),
