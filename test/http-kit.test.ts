@@ -1156,44 +1156,94 @@ async function binaryReplyEvidence() {
 }
 
 it(
-  "INV-7 INV-9: explicit empty forms retain wire bytes and vendor deadlines cannot outlive caller cancellation",
+  "INV-9: explicit empty forms retain their content type and zero wire bytes without changing other encodings",
   WORKERS,
   async () => {
     const safety = resultSafety({
       review: "Fixture paths carry no stored values.",
       sensitiveFields: { names: [], choice: "drop" },
     });
-    let body: BodyInit | null | undefined;
-    let type: string | null = null;
+    const requests: Array<{ type: string | null; body: BodyInit | null | undefined; bytes: number[] }> = [];
     globalThis.fetch = (async (_url, init) => {
-      body = init?.body;
-      type = new Headers(init?.headers).get("content-type");
+      requests.push({
+        type: new Headers(init?.headers).get("content-type"),
+        body: init?.body,
+        bytes: [...new TextEncoder().encode(typeof init?.body === "string" ? init.body : "")],
+      });
       return Response.json({});
     }) as typeof fetch;
     const connection = connect(ACME_API, guardedClient(OPTIONS), { errors: VENDOR, safety });
-    await runEdge(
-      connection.sendPath({ ...POST_ITEMS, form: {}, emptyForm: true }).pipe(Effect.provideContext(services("write"))),
-    );
-    expect(body).toBe("");
-    expect(type).toBe("application/x-www-form-urlencoded");
-    globalThis.fetch = (async (_url, init) =>
-      new Promise((_resolve, reject) => {
-        const signal = init!.signal!;
-        if (signal.aborted) reject(signal.reason);
-        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      })) as typeof fetch;
-    const guarded = guardedClient({ ...OPTIONS, timeoutMs: 10 });
-    const deadline = await runEdge(Effect.result(guarded.client.get("/keys")).pipe(Effect.provideContext(services())));
-    expect(deadline._tag).toBe("Failure");
-    const controller = new AbortController();
-    const caller = services().pipe(Context.add(Signal, controller.signal));
-    const pending = runEdge(
-      Effect.result(guardedClient({ ...OPTIONS, timeoutMs: 60_000 }).client.get("/keys")).pipe(
-        Effect.provideContext(caller),
-      ),
-    );
-    controller.abort(new Error("caller closed"));
-    expect((await pending)._tag).toBe("Failure");
+    for (const request of [
+      { ...POST_ITEMS, form: {}, emptyForm: true as const },
+      { ...POST_ITEMS, form: {} },
+      { ...POST_ITEMS, json: "{}" },
+      { ...POST_ITEMS, form: { name: "Café" } },
+    ])
+      await runEdge(connection.sendPath(request).pipe(Effect.provideContext(services("write"))));
+    expect(requests).toEqual([
+      { type: "application/x-www-form-urlencoded", body: "", bytes: [] },
+      { type: null, body: undefined, bytes: [] },
+      { type: "application/json", body: "{}", bytes: [123, 125] },
+      {
+        type: "application/x-www-form-urlencoded",
+        body: "name=Caf%C3%A9",
+        bytes: [110, 97, 109, 101, 61, 67, 97, 102, 37, 67, 51, 37, 65, 57],
+      },
+    ]);
+  },
+);
+
+it(
+  "INV-7 INV-9: a vendor stream deadline only tightens the caller's deadline and preserves request bytes",
+  WORKERS,
+  async () => {
+    for (const first of ["vendor", "caller"] as const) {
+      const caller = new AbortController();
+      const reason = new Error("invocation deadline");
+      const requests: Array<{ method: string | undefined; type: string | null; bytes: number[] }> = [];
+      let signal: AbortSignal | null | undefined;
+      globalThis.fetch = (async (_url, init) => {
+        signal = init?.signal;
+        requests.push({
+          method: init?.method,
+          type: new Headers(init?.headers).get("content-type"),
+          bytes: [...new TextEncoder().encode(String(init?.body))],
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([123]));
+              signal!.addEventListener("abort", () => controller.error(signal!.reason), { once: true });
+              if (first === "caller") queueMicrotask(() => caller.abort(reason));
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch;
+      const connection = connect(ACME_API, guardedClient({ ...OPTIONS, timeoutMs: first === "vendor" ? 50 : 60_000 }), {
+        errors: VENDOR,
+        safety: resultSafety({
+          review: "Fixture paths carry no stored values.",
+          sensitiveFields: { names: [], choice: "drop" },
+        }),
+      });
+      const outcome = await runEdge(
+        connection
+          .sendPath({ ...POST_ITEMS, json: '{"name":"Café"}' })
+          .pipe(Effect.result, Effect.provideContext(services("write").pipe(Context.add(Signal, caller.signal)))),
+      );
+      expect(outcome._tag).toBe("Failure");
+      expect(signal?.aborted).toBe(true);
+      expect(caller.signal.aborted).toBe(first === "caller");
+      if (first === "caller") expect(signal?.reason).toBe(reason);
+      expect(requests).toEqual([
+        {
+          method: "POST",
+          type: "application/json",
+          bytes: [123, 34, 110, 97, 109, 101, 34, 58, 34, 67, 97, 102, 195, 169, 34, 125],
+        },
+      ]);
+    }
   },
 );
 
@@ -1203,12 +1253,14 @@ function acme(
     sensitive?: "drop" | "return";
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
+    timeoutMs?: number;
     result?: Parameters<typeof connect>[2]["result"];
   } = {},
 ) {
   const guarded = guardedClient({
     ...OPTIONS,
     maxResponseBytes: 4096,
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.refresh ? { authenticate: bearer } : {}),
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
   });
@@ -2472,7 +2524,9 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     const scope = {};
     const request = openRequest(scope);
     callView(operationView({ ...context(), requestScope: scope }, undefined), call);
-    const pending = runEdge(acme().sendPath(POST_ITEMS).pipe(Effect.result, Effect.provideContext(call.services)));
+    const pending = runEdge(
+      acme({ timeoutMs: 60_000 }).sendPath(POST_ITEMS).pipe(Effect.result, Effect.provideContext(call.services)),
+    );
     await started;
     (boundary === "call" ? call : request).close();
     expect(transportSignal?.aborted).toBe(true);
