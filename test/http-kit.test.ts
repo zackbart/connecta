@@ -788,9 +788,8 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
         ["GET", "/items/{item-id}", "item", "Read item", 0],
         ["GET", "/items", "list", "List items", 0],
         ["POST", "/items", "create", "Create item", 0],
-        ["PUT", "/items", "replace", "Replace item", 0],
       ],
-      details: '{"d":[],"o":[0,0,0,0]}',
+      details: '{"d":[],"o":[0,0,0]}',
     } as const;
     const index = new OperationIndex(source, { vendor: "acme", title: "Acme" });
     const named = get("list", "/items", { success: Schema.Unknown });
@@ -834,6 +833,11 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
           if (mode === "repeat") yield* connection.sendPath(POST_ITEMS);
           return answer;
         }),
+    });
+    expect(tools.find((tool) => tool.name === "acme_api_write")?.inputSchema?.properties).toHaveProperty("method", {
+      type: "string",
+      enum: ["POST"],
+      description: "The operation's HTTP method.",
     });
     delete steps["write"];
     steps["extra"] = "once";

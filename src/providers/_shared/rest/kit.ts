@@ -73,7 +73,8 @@ export function schema(node: JsonSchema): Schema.Codec<unknown> {
   let out: Schema.Codec<unknown>;
   const types = n["type"];
   if (n["truncated"] === true) out = Schema.Unknown;
-  else if (Array.isArray(n["enum"])) out = Schema.Literals(n["enum"] as [string, ...string[]]);
+  else if (Array.isArray(n["enum"]))
+    out = n["enum"].length === 1 ? Schema.Literal(n["enum"][0]) : Schema.Literals(n["enum"] as [string, ...string[]]);
   else if (Array.isArray(n["anyOf"])) out = Schema.Union(n["anyOf"].map((v) => schema(v as JsonSchema)));
   else if (Array.isArray(types))
     out = Schema.Union(types.map((type) => schema({ ...n, type, description: undefined } as JsonSchema)));
