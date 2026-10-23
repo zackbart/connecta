@@ -5,10 +5,22 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { slides } from "./index.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { validateToolInput } from "../../validate.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
+
+// Existing write cases use the same owned transport as a Node deployment.
+function ownedTransport(): void {
+  let restore: ReturnType<typeof configureGuardedTransport>;
+  beforeEach(() => {
+    restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+  });
+  afterEach(() => {
+    configureGuardedTransport(restore);
+  });
+}
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -503,6 +515,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
 });
 
 describe("round four: nested reply ids, and every write result bounded", () => {
+  ownedTransport();
   const BRIDGE_BYTES = 256 * 1024;
   const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const batch = (count: number) => ({
@@ -586,6 +599,7 @@ describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
 });
 
 describe("comments: writes (#696)", () => {
+  ownedTransport();
   const sent = (index = 0) => calls[index]!.body.requests;
 
   it("comments on a page, an element, a range of text, a cell's text, or a whole cell, each as Slides' one anchor", async () => {
@@ -638,6 +652,7 @@ describe("comments: writes (#696)", () => {
 });
 
 describe("comments: partial saves are reported, not hidden (#696)", () => {
+  ownedTransport();
   const unsaved = {
     presentationId: "deck1",
     replies: [{}],
