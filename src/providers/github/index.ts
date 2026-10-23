@@ -25,8 +25,8 @@ export const github = defineProvider<GitHubOptions>({
   skill,
   kit,
   bundle: {
-    baselineGzip: 321215,
-    note: "./providers/github remeasures at 321,215 B gzip in C.8 step 1 (#703), local Node 26 with system zlib: the six REST tools now run on the Effect provider kit, with private GitHub App signing, scoped installation tokens and lazy rejection recovery. This replaces the historical 164,063 B baseline that included the hosted half removed by C.0c. Provider entries are reported, not capped (#899); CI supplies the final measurement.",
+    baselineGzip: 322737,
+    note: "./providers/github remeasures at 322,737 B gzip in C.8 step 1 (#703), Node 22 CI static at f36b60e6: the six REST tools now run on the Effect provider kit, with private GitHub App signing, scoped installation tokens and lazy rejection recovery. This replaces the historical 164,063 B baseline that included the hosted half removed by C.0c. Provider entries are reported, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,

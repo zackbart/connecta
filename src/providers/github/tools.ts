@@ -169,21 +169,13 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       const data = yield* json(
         { method, path: `${repoPath(t)}${suffix}`, ...(body !== undefined ? { body } : {}) },
         token,
-        ctx,
-        true,
       );
       return data ?? { deleted: true };
     });
   // A resource response can fail while its body is being read. Inspect the
   // request's recorded status in a finalizer so rejection always invalidates
   // the exact token, including malformed, oversized or interrupted bodies.
-  const json = (
-    request: Parameters<AppAuth["json"]>[0],
-    bearer: string,
-    _ctx: ConnectorContext,
-    _write = false,
-    step = "write",
-  ) =>
+  const json = (request: Parameters<AppAuth["json"]>[0], bearer: string, step = "write") =>
     Effect.gen(function* () {
       const dispatches = yield* Dispatches;
       const start = dispatches.length;
@@ -254,11 +246,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           if (page > 1000) throw new ConnectorCallError("invalid_args", "Repository page must be at most 1000.");
           const token = yield* authCall(ctx, (view) => auth.token(owner, undefined, { metadata: "read" }, view));
           const data = row(
-            yield* json(
-              { method: "GET", path: "/installation/repositories", query: { page, per_page: count } },
-              token,
-              ctx,
-            ),
+            yield* json({ method: "GET", path: "/installation/repositories", query: { page, per_page: count } }, token),
           );
           if (!Array.isArray(data.repositories))
             throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid repository list.");
@@ -353,8 +341,6 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
               yield* json(
                 { method: "GET", path: `/search/${kind}`, query: { q: query, page, per_page: count } },
                 token,
-                ctx,
-                false,
                 `partition${partitionIndex}`,
               ),
             );
@@ -484,13 +470,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
             auth.repo(t, { pull_requests: "read", contents: "read" }, view),
           );
           const pr = row(
-            yield* json(
-              { method: "GET", path: `${repoPath(t)}/pulls/${args.pull_number}` },
-              reader,
-              ctx,
-              false,
-              "pull",
-            ),
+            yield* json({ method: "GET", path: `${repoPath(t)}/pulls/${args.pull_number}` }, reader, "pull"),
           );
           const head = row(pr.head);
           const base = row(pr.base);
@@ -514,8 +494,6 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
               body: { sha: args.sha, merge_method: args.merge_method ?? "merge" },
             },
             token,
-            ctx,
-            true,
           );
         }),
     },
