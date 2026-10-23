@@ -8,8 +8,6 @@ import {
   DEFAULT_PAGE_SIZE,
   errors,
   MAX_PAGE_SIZE,
-  NOTION_API_BASE_URL,
-  NOTION_API_VERSION,
   NOTION_MAX_RESPONSE_BYTES,
   NotionApi,
   probe,
@@ -19,6 +17,7 @@ import {
 } from "./api.js";
 import { notionTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
+import { NOTION_API_BASE_URL, NOTION_API_VERSION } from "./lib/config.js";
 
 export { NOTION_API_BASE_URL, NOTION_API_VERSION };
 

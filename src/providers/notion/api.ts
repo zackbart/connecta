@@ -14,9 +14,6 @@ import { openapi } from "./openapi.generated.js";
 import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./safety.js";
 import { skill } from "./skill.generated.js";
 
-export const NOTION_API_BASE_URL = "https://api.notion.com";
-// Equal to the compact index: projections and authoring shapes assume this version.
-export const NOTION_API_VERSION = "2026-03-11";
 export const MAX_PAGE_SIZE = 100;
 export const DEFAULT_PAGE_SIZE = 25;
 export const NOTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
