@@ -11,6 +11,7 @@ import {
   type ProviderOptions,
 } from "../provider.js";
 import { tracksEveryRequest } from "../provider-call.js";
+import { unsentAfterUnauthorized } from "../write-outcome.js";
 import { Operation } from "../runtime/call.js";
 import { runEdge } from "../runtime/run.js";
 import type {
@@ -34,6 +35,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   /** Connection defaults; an explicit options.title still wins. */
   readonly displayTitle?: (options: Readonly<O>) => string;
   readonly description?: (options: Readonly<O>) => string;
+  /** Deployment mode fixes grant ownership; tool arguments cannot select it. */
+  readonly authScope?: (options: Readonly<O>) => "shared" | "personal";
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;
   readonly maxResponseBytes: number;
@@ -45,6 +48,8 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly pageSize?: { readonly default: number; readonly max: number };
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
+  /** Step-1 static OAuth parity: preserve the grant's write-401 diagnostic. */
+  readonly oauthWrite401?: "grant";
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
@@ -85,6 +90,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   const {
     displayTitle,
     description,
+    authScope,
     vendor,
     baseUrl,
     maxResponseBytes,
@@ -95,6 +101,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     pageSize: declaredPageSize,
     credential,
     oauth,
+    oauthWrite401,
     authenticate,
     errors,
     safety,
@@ -108,6 +115,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
   if (credential !== undefined && oauth !== undefined) {
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
+  if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new Error(`${metadata.title} maxResponseBytes must be a whole number of bytes >= 1.`);
   }
@@ -156,11 +164,36 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         authenticate,
         ...configured,
       });
-      const connected = connect(vendor, oauth ? refreshOnce(guarded) : guarded, {
-        errors,
-        safety: resultSafety(safety(options)),
-        ...(result ? { result } : {}),
-      });
+      const connected = connect(
+        vendor,
+        oauth
+          ? refreshOnce(
+              guarded,
+              oauthWrite401
+                ? {
+                    writeUnauthorized: (renewal) =>
+                      unsentAfterUnauthorized(
+                        `Connector "${id}"'s API`,
+                        renewal._tag === "Renewed"
+                          ? undefined
+                          : renewal._tag === "Failed"
+                            ? renewal.failure
+                            : new ConnectorCallError(
+                                "downstream_oauth_required",
+                                `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+                              ),
+                        "downstream_oauth_required",
+                      ),
+                  }
+                : undefined,
+            )
+          : guarded,
+        {
+          errors,
+          safety: resultSafety(safety(options)),
+          ...(result ? { result } : {}),
+        },
+      );
       const authorize = <A>(
         work: Effect.Effect<A, HttpFailure, CallServices | Grant>,
       ): Effect.Effect<A, HttpFailure, CallServices> =>
@@ -221,6 +254,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         api(id, {
           ...(defaultCallAdmission ? { callAdmission: defaultCallAdmission } : {}),
           ...provider.connectorOptions,
+          ...(authScope ? { authScope: authScope(options) } : {}),
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
           usageGuide: "content" in usageGuide ? usageGuide : provider.usageGuide(usageGuide),

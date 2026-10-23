@@ -4,13 +4,20 @@
 // characterization goldens; these tests pin the consent URL, the code exchange
 // with CCB's own Accept header, rotating single-use refresh tokens, one-attempt
 // POST renewal, paging edges, the sensitive-field boundary, and grant isolation.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
+import { configureGuardedTransport } from "../../guarded-transport.js";
+import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import { resultSafety } from "../../http/safety.js";
+import { ccbSafety, errors } from "./api.js";
+import { ccbTools } from "./tools.js";
+import goldenSpec from "../../../test/goldens/ccb/spec.js";
+import type { Connection } from "../../http/vendor.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -132,7 +139,12 @@ function install(fake: Fake): void {
   vi.stubGlobal("fetch", vi.fn(fake.stub));
 }
 
+beforeEach(() => {
+  configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -183,12 +195,21 @@ async function failure(promise: Promise<unknown>) {
 }
 
 describe("ccb() construction", () => {
-  it.each([
-    ["no environment", { environment: undefined }, /requires environment/],
-    ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
-    ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
-  ])("refuses %s", (_label, overrides, message) => {
-    expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
+  it("INV-11: refuses invalid deployment options and keeps every kit decoder aligned with its catalog", () => {
+    for (const [_label, overrides, message] of [
+      ["no environment", { environment: undefined }, /requires environment/],
+      ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
+      ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
+    ] as const) {
+      expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
+    }
+    const kitConnection = { errors, safety: resultSafety(ccbSafety(OPTIONS)) } as Connection;
+    for (const tool of ccbTools({ connection: kitConnection, options: { ...OPTIONS, access: "read-write" } })) {
+      expect(
+        kitInputDisagreements(tool, goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {}),
+        tool.name,
+      ).toEqual([]);
+    }
   });
 });
 

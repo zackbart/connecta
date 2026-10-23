@@ -1620,6 +1620,7 @@ common options and the title, and renders the guide through
 function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderDefinition<O>, "kind" | "create"> & {
   readonly displayTitle?: (options: Readonly<O>) => string;          // options.title wins; definition.title remains the provider name
   readonly description?: (options: Readonly<O>) => string;
+  readonly authScope?: (options: Readonly<O>) => "shared" | "personal"; // deployment mode fixes OAuth ownership
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;                 // environment or override; checked at construction
   readonly maxResponseBytes: number;
@@ -1628,6 +1629,7 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
   readonly pageSize?: { readonly default: number; readonly max: number }; // becomes the `defaultPageSize` option and its check
   readonly credential?: ConnectorCredentialConfig;                    // exclusive with oauth
   readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
+  readonly oauthWrite401?: "grant";                                   // opt-in legacy static OAuth write-401 diagnostic
   readonly authenticate: Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>;
   readonly errors: VendorErrors;
   readonly safety: (options: Readonly<O>) => SafetyOptions;           // reviewed table or reason, and the sensitiveFields option
@@ -1653,6 +1655,23 @@ The success description receives the validated options. It copies no context.
 options; an explicit `options.title` takes precedence. A complete usage guide
 passes through unchanged so step-1 migrations preserve legacy fragments and
 option-dependent text without changing `SKILL.md`.
+
+CCB's C.4 migration adds the optional `authScope(options)` selector. Its
+deployment mode fixes grant ownership: System Auth is shared and Identity
+Auth is personal. The selector runs at construction from validated deployment
+options, never tool arguments; its result overrides a common scope option.
+The provider still uses `Grant`, refresh-once and the static OAuth coordinator's
+claim-CAS renewal ownership unchanged.
+
+CCB also opts into `oauthWrite401: "grant"` to preserve the static grant's
+write-401 diagnostic. `refreshOnce` accepts an optional `writeUnauthorized`
+mapper over three renewal facts: `Renewed`, `Unchanged`, or `Failed` with
+the typed failure. It receives neither token. The static bridge reuses the
+core's `unsentAfterUnauthorized`, retaining an authorization refusal's exact
+message, or the diagnostic for a renewed credential whose write was never
+replayed. The failure belongs to the same resource dispatch; `settleWrite`
+still decides the final outcome. Without the opt-in the B.2 behavior is
+unchanged, and a failed renewal never makes the resource write retryable.
 
 `defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
 every kit request enters the core ledger, so an empty ledger proves a write

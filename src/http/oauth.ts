@@ -24,7 +24,7 @@
 // The grant itself (storage, coordination across isolates, the token
 // request, the request-scope latch) stays in src/auth/.
 
-import { Context, Effect } from "effect";
+import { Cause, Context, Effect, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -84,8 +84,17 @@ export const bearer: Effect.Effect<Readonly<Record<string, string>>, HttpFailure
   Effect.map(grant.token, (token) => ({ Authorization: `Bearer ${token}` })),
 );
 
+/** Renewal facts only: a mapper never receives either access token. */
+type Write401Renewal =
+  | { readonly _tag: "Renewed" }
+  | { readonly _tag: "Unchanged" }
+  | { readonly _tag: "Failed"; readonly failure: unknown };
+
 /** Wrap a guarded client whose `authenticate` is {@link bearer}. */
-export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): GuardedClient<CallServices | Grant> {
+export function refreshOnce(
+  guarded: GuardedClient<CallServices | Grant>,
+  options?: { readonly writeUnauthorized?: (renewal: Write401Renewal) => ConnectorCallError },
+): GuardedClient<CallServices | Grant> {
   const inner = guarded.client;
   const execute = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
@@ -105,6 +114,23 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
         // other than the one it sent; the core decides from it (Q8).
         if (renewal._tag === "Success" && !(yield* Signal)?.aborted)
           renewedAfterUnauthorized(entry, stale, renewal.value);
+        if (options?.writeUnauthorized) {
+          const cause = renewal._tag === "Failure" ? Cause.findErrorOption(renewal.cause) : Option.none();
+          const failure = Option.isSome(cause) ? cause.value : undefined;
+          const facts: Write401Renewal =
+            renewal._tag === "Success"
+              ? { _tag: renewal.value === stale ? "Unchanged" : "Renewed" }
+              : {
+                  _tag: "Failed",
+                  failure:
+                    failure?._tag === "Refusal"
+                      ? failure.error
+                      : (failure ?? new Error("OAuth renewal did not complete.")),
+                };
+          // This is still the resource request's own 401. The common failure
+          // mapper attaches its provenance; settleWrite decides the outcome.
+          return yield* Effect.fail(new Refusal({ error: options.writeUnauthorized(facts) }));
+        }
         return HttpClientResponse.fromWeb(
           request,
           new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),
