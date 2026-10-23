@@ -370,6 +370,23 @@ async function sweepCall(
             expires_in: 7200,
             scope: "read:individuals",
           });
+        if (provider.name === "gmail" && tool === "update_draft") {
+          // Let the auxiliary lookup succeed so the sweep refuses the draft
+          // replacement itself, rather than a write that was never sent.
+          if (request.method === "GET")
+            return Response.json({
+              id: "d1",
+              message: {
+                id: "m1",
+                payload: {
+                  mimeType: "text/plain",
+                  headers: [{ name: "To", value: "bob@example.com" }],
+                  body: { data: "T2xk" },
+                },
+              },
+            });
+          expect(request.method).toBe("PUT");
+        }
         return fail(request);
       }),
     );
