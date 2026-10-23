@@ -35,7 +35,7 @@ export const github = defineProvider<GitHubOptions>({
   }),
   create(id, options, provider) {
     if (options.authScope === "personal")
-      throw new Error("shared GitHub App identity; per-user OAuth attribution is planned separately for 0.29.");
+      throw new Error("shared GitHub App identity; per-user OAuth attribution is planned separately.");
     const policy = new ScopePolicy(parseScopes(options.scopes));
     const auth = new AppAuth(options.app, policy);
     const rest = restConnector(id, auth, policy);
