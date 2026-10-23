@@ -24,8 +24,11 @@
 // - a `refuse` verdict that reaches transport through the generic tools;
 // - a reviewed operation whose failure echoes the vendor's error text;
 // - a credential name that a private value sharing part of it hides from value
-//   safety, or a private value echoed as a key, called directly or from a
-//   program on a writable or read-only endpoint;
+//   safety, a private value echoed as a key, or a decision input a private
+//   value alters (a type discriminator, a record's label or type, an
+//   environment entry, a destination's scheme, a link's parameter name, a
+//   Content-Type, a streamed row's key) that fails open, called directly or
+//   from a program on a writable or read-only endpoint;
 // - a moved verdict count (a reviewed change updates it with the table).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { api } from "../../src/connectors/api.js";
@@ -571,30 +574,81 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       expect(counts).toEqual(harness.counts);
     });
 
-    it("INV-5: a reviewed path removes a client secret by name on any operation, beside private values sharing part of its name or echoed as keys, directly and from programs on writable and read-only endpoints", async () => {
+    it("INV-5: a reviewed path removes a client secret by name on any operation, beside private values sharing part of its name or echoed as keys, and every decision input a private value alters fails closed, directly and from programs on writable and read-only endpoints", async () => {
       const safety = valueSafety(table, () => harness.index);
       expect(safety.redact({ client_secret: "S" }, "GET", "/")).toEqual({ client_secret: REDACTED });
       // Sent-secret redaction runs before value safety; renaming `client_secret` there would hide it (#703).
       const held = "pi_1_secret_VENDOR_HELD_0001";
       const [short, long] = ["ecre", "my-client_se-key"];
-      const pins = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
-      const realFetch = globalThis.fetch;
-      globalThis.fetch = (async () => {
+      // Each alters one value a rule decides on; none alters another's (#703).
+      const altering = ["TOKE", "head", "KEY=", "https:/", "on/js"];
+      const resources = table.resources ? ["portal", "login_li", "webhook_", "ess_tok"] : [];
+      const signing = table.embeddedUrls ? ["Signatur"] : [];
+      const all = [short, long, ...altering, ...resources, ...signing];
+      const pins = {
+        type: "object",
+        properties: { pins: { type: "array", items: { type: "string", writeOnly: true } } },
+      } as const;
+      const body = {
+        client_secret: held,
         // A credential-named key a deployment chose itself (`crm_secret`) is found by name too.
-        const body = { client_secret: held, settings: { crm_secret: `${held}2` }, [short]: "echoed", [long]: "echoed" };
-        return Response.json({ success: true, result: body, ...body });
-      }) as typeof fetch;
+        settings: { crm_secret: `${held}2` },
+        [short]: "echoed",
+        [long]: "echoed",
+        // A label, a secret type, and a header rule's type (`ecre` alters `secret_text`).
+        records: [
+          { name: "STRIPE_API_TOKEN", text: "VENDOR_HELD_LABEL" },
+          { type: "secret_text", name: "x", text: "VENDOR_HELD_TYPE" },
+          { type: "header", key: "X-Custom", value: "VENDOR_HELD_HEADER" },
+        ],
+        env: ["API_KEY=VENDOR_HELD_ENV"],
+        destination: "https://hooks.example/services/VENDOR_HELD_DEST",
+        // The Content-Type itself (`on/js`) would hand this body over as bytes or one string.
+        ...(table.resources
+          ? {
+              data: [
+                { object: "billing_portal.session", url: "http://billing.stripe.com/p/session/VENDOR_HELD_PORTAL" },
+                { object: "login_link", url: "http://connect.stripe.com/express/VENDOR_HELD_LOGIN" },
+                { object: "webhook_endpoint", url: "http://hooks.example/p/VENDOR_HELD_HOOK" },
+                {
+                  object: "event",
+                  data: {
+                    object: { object: "login_link", url: "http://connect.stripe.com/express/x" },
+                    previous_attributes: { url: "http://connect.stripe.com/express/VENDOR_HELD_PARTIAL" },
+                  },
+                },
+                { object: "charge", failure_message: "see http://bank.example/r?access_token=VENDOR_HELD_PARAM now" },
+              ],
+            }
+          : {}),
+        ...(table.embeddedUrls ? { note: "get http://bucket.s3.amazonaws.com/f?X-Amz-Signature=VENDOR_HELD_SIGN now" } : {}),
+      };
+      // A streamed row's keys are text the kit redacted whole, then parsed.
+      const stream = '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n';
+      let streaming = false;
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        streaming
+          ? new Response(stream, { headers: { "content-type": "application/x-ndjson" } })
+          : Response.json({ success: true, result: body, ...body })) as typeof fetch;
       const clean = (out: unknown) => {
         const text = JSON.stringify(out);
         expect(text).toContain("echoed");
+        expect(text).toContain("streamed");
         expect(text).not.toContain("VENDOR_HELD");
         expect(text).not.toContain(long);
         expect(text).not.toMatch(/\\?"ecre\\?"/);
       };
+      const both = async (call: () => Promise<unknown>) => {
+        streaming = false;
+        const json = await call();
+        streaming = true;
+        return [json, await call()];
+      };
       try {
         const ctx = { ...harness.ctx(), requestScope: {} };
-        for (const pin of [short, long]) requestSentSecrets(ctx).arguments({ pin }, pins);
-        clean(await harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx));
+        requestSentSecrets(ctx).arguments({ pins: all }, pins);
+        clean(await both(() => harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx)));
         const credential = (await harness.ctx().credential!.getAll())!["value"]!;
         for (const readOnly of [false, true]) {
           const connector = harness.connector();
@@ -604,8 +658,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const writer = api("pins", {
             tools: [
               {
-                name: "set_pin",
-                description: "Save a PIN",
+                name: "set_pins",
+                description: "Save PINs",
                 annotations: { readOnlyHint: false },
                 inputSchema: pins,
                 handler: async () => ({ ok: true }),
@@ -616,9 +670,11 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const executor: Executor = {
             execute: async (_code, providers) => {
               const host = providers[0]!.fns;
-              for (const pin of [short, long])
-                await host.call!("pins.set_pin", { pin }).catch((error: unknown) => refusals.push(error));
-              return { result: await host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args), logs: [] };
+              await host.call!("pins.set_pins", { pins: all }).catch((error: unknown) => refusals.push(error));
+              return {
+                result: await both(() => host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args)),
+                logs: [],
+              };
             },
           };
           const registry = makeRegistry([writer, connector], { storage, credentialVault });
@@ -627,7 +683,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           });
           const result = await run({ code: "async () => {}" });
           expect(result.isError, JSON.stringify(result)).toBeFalsy();
-          expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" }), expect.objectContaining({ code: "read_only_endpoint" })] : []);
+          expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" })] : []);
           clean(result);
         }
       } finally {

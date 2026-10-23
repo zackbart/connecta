@@ -16,7 +16,9 @@
 // (#911), its keys kept for value safety to match by name, status (with
 // its operation, so value safety decides what a failure may quote), the
 // vendor's `result` hook, then the connection's ResultSafety. A provider
-// cannot reach a body earlier.
+// cannot reach a body earlier. A Content-Type redaction altered selects the
+// format the vendor reads as JSON, so no altered type routes a body around
+// ResultSafety as text or bytes (#703).
 
 import { Context, Effect, type Schema } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -26,6 +28,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
+import { redactionAltered } from "../redaction-marker.js";
 import { parameterPairs } from "./write-request.js";
 import type { GuardedClient, SuccessPrefix, PrefixResult } from "./client.js";
 import {
@@ -249,7 +252,7 @@ export function connect<R>(
         }
         const secrets = yield* RequestSecrets;
         const reply = yield* Effect.flatMap(response, (response) => {
-          const contentType = secrets.redact(String(response.headers["content-type"] ?? "")).toLowerCase();
+          const contentType = formatType(secrets.redact(String(response.headers["content-type"] ?? "")));
           const binary =
             response.status >= 200 &&
             response.status <= 299 &&
@@ -292,7 +295,7 @@ export function connect<R>(
                   reply.prefix?.truncated && typeof value === "string"
                     ? secrets.redactOpenTail(value)
                     : secrets.redact(value, "values"),
-                textBodies?.forResponse(reply.status, operation, (headers.get("content-type") ?? "").toLowerCase()),
+                textBodies?.forResponse(reply.status, operation, formatType(headers.get("content-type") ?? "")),
               );
 
         if (reply.status < 200 || reply.status > 299) {
@@ -434,6 +437,15 @@ export function connect<R>(
     },
   };
   return connection;
+}
+
+/**
+ * The Content-Type a format decision reads. One redaction altered reads as
+ * `application/json`: a vendor's text or binary choice for it would hand
+ * result safety a body it cannot read field by field (#703).
+ */
+function formatType(redacted: string): string {
+  return redactionAltered(redacted) ? "application/json" : redacted.toLowerCase();
 }
 
 function parse(

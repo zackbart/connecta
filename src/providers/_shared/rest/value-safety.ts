@@ -36,7 +36,7 @@
 // wrote what the rule matches. Every such decision input fails closed
 // (#703): an altered type discriminator applies every resource rule; an
 // altered label or type makes a secret record or a header rule; an altered
-// URL scheme, parameter name, or file host withholds the whole URL; an
+// URL scheme or parameter name withholds the whole URL or its value; an
 // altered key withholds its value.
 //
 // The key-name rules combine Cloudflare's and Vercel's former engines.
@@ -798,12 +798,7 @@ function linkSpan(text: string, start: number, host: number | undefined, inline:
  * redaction (`failClosed`) also reads a link whose scheme and host
  * redaction took (#703); admission never does.
  */
-function* hostLinks(
-  text: string,
-  hosts: FileHosts | undefined,
-  redact: boolean,
-  failClosed = false,
-): Generator<Link> {
+function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean, failClosed = false): Generator<Link> {
   const matcher = hosts ? hostMatcher(hosts) : undefined;
   // The first URL delimiter in the current text run also protects relative
   // paths/queries such as /proxy/https://… and image?url=//… .
@@ -985,7 +980,7 @@ const NAME_CHAR = /[\w.~-]/;
  * parameter's. A placeholder right after an `=` is a withheld value.
  */
 function alteredParameter(text: string, from: number): number {
-  for (let at = text.indexOf(REDACTED, from); at >= 0; ) {
+  for (let at = text.indexOf(REDACTED, from); at >= 0;) {
     let end = at;
     while (end < text.length) {
       if (text.startsWith(REDACTED, end)) end += REDACTED.length;
@@ -1216,9 +1211,7 @@ function envTyped(value: unknown): boolean {
 
 /** A header, cookie, or query rule (`request.headers`, `header`, `cookie`, `query`, …); likewise (#703). */
 function headerLike(value: unknown): boolean {
-  return (
-    isRecord(value) && (keysAltered(value) || decides(value["type"], (type) => /header|cookie|query/i.test(type)))
-  );
+  return isRecord(value) && (keysAltered(value) || decides(value["type"], (type) => /header|cookie|query/i.test(type)));
 }
 
 /** A route-like object: its `headers` are set on requests or responses. */
@@ -1312,7 +1305,9 @@ function applyPath(body: unknown, raw: string, transform?: (value: unknown) => u
     }
     if (segment === "@keys") {
       if (!isRecord(current)) return current;
-      const keyed = Object.fromEntries(Object.values(current).map((item, position) => [`${REDACTED} ${position + 1}`, item]));
+      const keyed = Object.fromEntries(
+        Object.values(current).map((item, position) => [`${REDACTED} ${position + 1}`, item]),
+      );
       PLACEHOLDER_KEYS.add(keyed);
       return keyed;
     }
@@ -1479,8 +1474,9 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
       if (!exempt.reviewedUrls) return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
       // A placeholder's own brackets are not Markdown; a URL whose scheme redaction
       // altered may still carry userinfo, so it is withheld whole (#703).
-      if (TEXT.test(current.replaceAll(REDACTED, ""))) return current;
-      if (alteredScheme(current)) return REDACTED;
+      const altered = redactionAltered(current);
+      if (TEXT.test(altered ? current.replaceAll(REDACTED, "") : current)) return current;
+      if (altered && alteredScheme(current)) return REDACTED;
       return URL_SHAPE.test(current) ? sanitizeUrl(current, false) : current;
     }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));

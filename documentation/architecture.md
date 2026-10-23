@@ -1453,6 +1453,30 @@ every vendor ships one reviewed table through one mechanism
    span. Each string is scanned alone; split rich-text runs, encoded hosts
    or signing names, bare hosts without `//`, and userinfo before a reviewed
    host are outside this scan's threat model.
+   Sent-secret redaction runs before this step, in the provider kit's parse
+   pass, so a rule that decides on a value can read the `[redacted]`
+   placeholder where the vendor wrote what the rule matches. Every such
+   decision input fails closed through one check, `redactionAltered` in
+   `src/redaction-marker.ts`. A resource or embedded-URL type discriminator
+   that carries the placeholder applies every resource rule's paths and
+   withheld fields, never a verbatim URL. A label (`key`, `name`,
+   `target.key`) or `type` that carries it makes the record a labelled or
+   typed secret, a header, cookie, or query rule, and an environment item; an
+   environment list string that carries it is withheld like `NAME=value`. A
+   whole string whose scheme it may have taken (no whitespace, and only
+   scheme characters before the placeholder) is withheld, at a destination
+   key too. A parameter name it altered (the placeholder inside a run of name
+   characters that ends at a plain or encoded `=`, and not directly after an
+   `=`) loses its value wherever signing parameters are scanned, and in
+   reviewed text withholds the whole link, as does a placeholder opening a
+   word where a link's scheme and host would be; a fragment it altered
+   withholds the query and fragment. A key that carries it (text a result
+   hook parses after the kit redacted it whole, such as NDJSON and log
+   streams) loses its value, and its record's key-based decisions take their
+   protective outcome. Value safety's own placeholders are not alterations:
+   `@keys` map keys, a withheld value right after `=`, and a withheld
+   `#[redacted]` fragment. More is withheld only when a private value occurs
+   in a decision input.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in
@@ -2196,6 +2220,12 @@ Breeze's in-band failure text and Slides' raw chunks do. A private value of four
 to seven units that a vendor echoes only as an object key is therefore matched
 once, at the connector boundary; the agent boundary's envelope rules do not
 match values that short.
+
+Redacted values can still be decision inputs. `textBodies` and `binaryBodies`
+see a Content-Type that redaction altered as `application/json`, so no altered
+type routes a body around ResultSafety as one string or as bytes; a body that
+is not JSON is then unreadable. Value safety's own decisions on values fail
+closed the same way (see "Value safety for REST vendors").
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.
