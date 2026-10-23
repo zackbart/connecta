@@ -1,7 +1,7 @@
 # Tithe.ly step 2 eval (#703)
 
 Decision 0011 requires every step-2 PR to rerun its affected eval tasks with
-fresh before/after results. Tithe.ly had no tasks, so this PR adds six
+fresh before/after results. Tithe.ly had no tasks, so this PR adds seven
 ([tasks/tithely.ts](../tasks/tithely.ts), [fakes/tithely.ts](../fakes/tithely.ts)).
 The per-trial summary is [tithely-step2.json](./tithely-step2.json). Full result
 files (about 9 MB each, mostly the seeded fake state) are not committed.
@@ -16,7 +16,10 @@ files (about 9 MB each, mostly the seeded fake state) are not committed.
   organization field the named projection omits), `tithely-refund-duplicate`
   (refund only the later of two identical gifts) and
   `tithely-cancel-recovery` (a cancellation that commits, then answers HTTP
-  500).
+  500). `tithely-donor-contact` (a donor's phone and street address, which no
+  curated projection carries) was added held out in review round 2, after the
+  organization projection began keeping the widget id, so the hatch route
+  stays measured; it ran only in AFTER4.
 - **World.** A loopback Tithe.ly v1 fake with Tithe.ly's envelopes, id-cursor
   paging (default 10, at most 100, no `has_more`), created-date filters,
   in-band `status: "fail"` refusals and form writes. The real `tithely()`
@@ -34,12 +37,15 @@ files (about 9 MB each, mostly the seeded fake state) are not committed.
 | BEFORE | main's Tithe.ly (`tithely_api_get`/`_mutate`, `raw`, 11 tools)                           | `ac0d66ef` (main `dbce770f` + eval)      |
 | AFTER1 | standard surface, first build                                                            | `1b24bf28`                               |
 | AFTER2 | + S6 pointers from three named-read descriptions to `tithely_api_read`                   | `57879bf2`                               |
-| AFTER3 | + hatch search by response/body field names, Tithe.ly's documented response records      | `8776b91a` (final surface)               |
+| AFTER3 | + hatch search by response/body field names, Tithe.ly's documented response records      | `8776b91a`                               |
+| AFTER4 | review round 2: `widgetId` kept in the projection, hatch fixes; widget and donor-contact only | `abc3f524` (shipped surface)          |
 
 BEFORE ran before the join grader stopped failing correct answers that also
 named excluded donors outside their list (`524acbec`); its saved inputs were
 regraded offline with that grader, which AFTER used live. The harness hash is
-identical across all eight batches.
+identical across the first eight batches; AFTER4's differs only by main's
+provider-removal merge (#968) in the eval deployment, not in the Tithe.ly
+tasks or fake.
 
 ## Results
 
@@ -54,6 +60,20 @@ identical across all eight batches.
 | **Total**                  | **11/12**   | **11/12**     | **10/12**   | **12/12**     | **9/12**    | **12/12**     | **9/12**    | **12/12**     |
 
 Combined: BEFORE 22/24, AFTER1 22/24, AFTER2 21/24, AFTER3 21/24.
+
+AFTER4 reran only the two tasks review round 2 changed, on the shipped surface:
+
+| Task                    | AFTER4 Luna | AFTER4 Sonnet |
+| ----------------------- | ----------- | ------------- |
+| `tithely-widget-hatch`  | 2/2         | 2/2           |
+| `tithely-donor-contact` | 2/2         | 2/2           |
+
+With `widgetId` in the projection, all four widget trials read
+`list_organizations` and answered. All four donor-contact trials used the
+hatch: `tithely_api_search`, then `tithely_api_read` on the account (once
+with `tithely_api_details`). Mean MCP calls: Luna 3.50, Sonnet 3.75. The
+widget task's BEFORE and AFTER1–3 results remain hatch evidence for a field the
+projection omitted.
 
 | Arm    | Model  | Mean MCP calls | Mean discovery bytes per trial | Max discovery bytes per trial |
 | ------ | ------ | -------------- | ------------------------------ | ----------------------------- |
@@ -72,9 +92,9 @@ and `tithely_api_details` calls, plus the JSON of guest `connecta.search`,
 `connecta.describe` and `connecta.skill` results and of guest hatch discovery
 calls. Guest bytes are what the program received, not what the model did.
 
-Hatch discovery, per call: `tithely_api_search` at most 781 B (AFTER1/2) and
-1,375 B (AFTER3, with field matches; median 1,250 B); `tithely_api_details` at
-most 319 B (median 262 B). Both stay far inside 0014's 16 KiB and 32 KiB
+Hatch discovery, per call: `tithely_api_search` at most 781 B (AFTER1/2),
+1,375 B (AFTER3, with field matches; median 1,250 B) and 978 B (AFTER4);
+`tithely_api_details` at most 319 B (median 262 B). Both stay far inside 0014's 16 KiB and 32 KiB
 starting budgets; no call needed continuation or a cut.
 
 ## Tool use
@@ -110,14 +130,16 @@ reconciliation need for charge and refund writes), and drops
   sent; this is a safe non-completion. The host approves every tool in these
   runs.
 
-**Not implemented, for review.** S6 permits a projection to keep a field an
-agent needs instead of pointing to the hatch: adding `widgetId` to the
-organization projection would make the widget task pass without the hatch,
-and would stop measuring the hatch route.
+**Resolved in review round 2.** S6 lets a projection keep a field an agent
+needs instead of pointing to the hatch. `list_organizations` now keeps
+`widgetId` (decision 0014's curate-where-evals-show-need), and the held-out
+donor-contact task measures the hatch route instead.
 
 ## Caveats
 
-Six builder-authored tasks with two repeats per model are a small, correlated
-sample. AFTER1 and AFTER2 are diagnostic runs of intermediate surfaces; AFTER3
-is the shipped surface. The widget task was written to measure a field the
-projection drops, before any AFTER run.
+Seven builder-authored tasks with two repeats per model are a small,
+correlated sample. AFTER1 to AFTER3 are diagnostic runs of intermediate
+surfaces; AFTER4 reran the two changed tasks on the shipped surface. The
+widget task was written to measure a field the projection dropped, before any
+AFTER run; the donor-contact task was written after AFTER3 and has no BEFORE
+arm.
