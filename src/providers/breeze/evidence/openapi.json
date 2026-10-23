@@ -1,0 +1,9 @@
+{
+  "url": "https://app.breezechms.com/api",
+  "revision": "2026-10-23",
+  "digest": "sha256:4aebe0805d22ce1a28f3ef7fbe57c8f602485c165bc103a6e2394e45bbd7967d",
+  "vendored": true,
+  "options": {
+    "descriptionLength": 0
+  }
+}

@@ -74,6 +74,11 @@ type RequestOf<Op extends Operation> = Part<"params", Op["~Params"]> &
 export interface Vendor {
   // The group type is erased here: kit callers name operations, never groups.
   readonly api: HttpApi.HttpApi<string, any>;
+  /** Reviewed text contracts, selected by status and canonical operation; absent means JSON only. */
+  readonly textBodies?: {
+    readonly review: string;
+    readonly forResponse: (status: number, operation: OperationRef) => "text" | "json-or-text" | undefined;
+  };
 }
 
 /** Group a vendor's operations into one API, the source of its client and its manifest. */
@@ -129,6 +134,8 @@ export interface ConnectOptions {
     body: unknown,
     answer: {
       readonly status: number;
+      /** The decoded representation, so a legacy adapter can distinguish text from a JSON string. */
+      readonly bodyFormat: "json" | "text" | "empty";
       readonly headers: Headers;
       readonly operation: OperationRef;
       readonly withheld: boolean;
@@ -160,6 +167,9 @@ export function connect<R>(
   options: ConnectOptions,
 ): Connection<R | CallServices> {
   validateVendorErrors(options.errors);
+  const textBodies = vendor.textBodies ? { ...vendor.textBodies } : undefined;
+  if (textBodies && (!textBodies.review.trim() || typeof textBodies.forResponse !== "function"))
+    throw new Error("Text bodies require a nonempty vendor review and a response contract selector.");
   let built: Record<string, Method<R>> | undefined;
   // HttpApiClient closes over the services it is built in (its middleware
   // lookup), and the client outlives every call. Build it with none, so it
@@ -199,7 +209,11 @@ export function connect<R>(
         const reply = yield* Effect.flatMap(response, guarded.read);
         // Whole, before a detail line trims it or a projection extracts from it.
         const secrets = yield* RequestSecrets;
-        const parsed = parse(reply.text, (value) => secrets.redact(value));
+        const parsed = parse(
+          reply.text,
+          (value) => secrets.redact(value),
+          textBodies?.forResponse(reply.status, operation),
+        );
         // Hooks can cut header values too; redact their whole values before exposing them.
         const headers = new Headers(secrets.redact([...reply.headers]));
         if (reply.status < 200 || reply.status > 299) {
@@ -219,6 +233,7 @@ export function connect<R>(
           ? yield* options
               .result(parsed.value, {
                 status: reply.status,
+                bodyFormat: parsed.format,
                 headers,
                 operation: { ...operation },
                 withheld,
@@ -310,16 +325,22 @@ export function connect<R>(
   return connection;
 }
 
-function parse(text: string | undefined, redact: (value: unknown) => unknown): { value: unknown } | undefined {
+function parse(
+  text: string | undefined,
+  redact: (value: unknown) => unknown,
+  format?: "text" | "json-or-text",
+): { value: unknown; format: "json" | "text" | "empty" } | undefined {
   if (text === undefined) return undefined;
-  if (text.trim() === "") return { value: undefined };
+  if (format === "text") return { value: redact(text), format: "text" };
+  if (text.trim() === "")
+    return format === "json-or-text" ? { value: redact(text), format: "text" } : { value: undefined, format: "empty" };
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return undefined;
+    return format === "json-or-text" ? { value: redact(text), format: "text" } : undefined;
   }
-  return { value: redact(value) };
+  return { value: redact(value), format: "json" };
 }
 
 /** The endpoint manifest drift checks compare against the vendor's published contract. */

@@ -1,0 +1,1843 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Breeze reviewed reference conversion",
+    "version": "2026-10-23"
+  },
+  "servers": [
+    {
+      "url": "https://church.breezechms.com/api"
+    }
+  ],
+  "paths": {
+    "/account/list_log": {
+      "get": {
+        "operationId": "account_list_log",
+        "tags": ["account"],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_account_log"
+        }
+      }
+    },
+    "/account/summary": {
+      "get": {
+        "operationId": "account_summary",
+        "tags": ["account"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#account_summary"
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "events",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calendar_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "eligible",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_events"
+        }
+      }
+    },
+    "/events/add": {
+      "get": {
+        "operationId": "events_add",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "starts_on",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ends_on",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "all_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "description",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calendar_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_event"
+        }
+      }
+    },
+    "/events/attendance/add": {
+      "get": {
+        "operationId": "events_attendance_add",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_attendance_record"
+        }
+      }
+    },
+    "/events/attendance/delete": {
+      "get": {
+        "operationId": "events_attendance_delete",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#remove_attendance_record"
+        }
+      }
+    },
+    "/events/attendance/eligible": {
+      "get": {
+        "operationId": "events_attendance_eligible",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_eligible_people"
+        }
+      }
+    },
+    "/events/attendance/list": {
+      "get": {
+        "operationId": "events_attendance_list",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_attendance"
+        }
+      }
+    },
+    "/events/calendars/list": {
+      "get": {
+        "operationId": "events_calendars_list",
+        "tags": ["events"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_calendars"
+        }
+      }
+    },
+    "/events/delete": {
+      "get": {
+        "operationId": "events_delete",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#delete_event"
+        }
+      }
+    },
+    "/events/list_event": {
+      "get": {
+        "operationId": "events_list_event",
+        "tags": ["events"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "schedule",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "schedule_direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "schedule_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "eligible",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_event"
+        }
+      }
+    },
+    "/events/locations": {
+      "get": {
+        "operationId": "events_locations",
+        "tags": ["events"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_locations"
+        }
+      }
+    },
+    "/families/add": {
+      "get": {
+        "operationId": "families_add",
+        "tags": ["families"],
+        "parameters": [
+          {
+            "name": "people_ids_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target_person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#families_add"
+        }
+      }
+    },
+    "/families/create": {
+      "get": {
+        "operationId": "families_create",
+        "tags": ["families"],
+        "parameters": [
+          {
+            "name": "people_ids_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#families_create"
+        }
+      }
+    },
+    "/families/destroy": {
+      "get": {
+        "operationId": "families_destroy",
+        "tags": ["families"],
+        "parameters": [
+          {
+            "name": "people_ids_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#families_destroy"
+        }
+      }
+    },
+    "/families/remove": {
+      "get": {
+        "operationId": "families_remove",
+        "tags": ["families"],
+        "parameters": [
+          {
+            "name": "people_ids_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#families_remove"
+        }
+      }
+    },
+    "/forms/list_form_entries": {
+      "get": {
+        "operationId": "forms_list_form_entries",
+        "tags": ["forms"],
+        "parameters": [
+          {
+            "name": "form_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_form_entries"
+        }
+      }
+    },
+    "/forms/list_form_fields": {
+      "get": {
+        "operationId": "forms_list_form_fields",
+        "tags": ["forms"],
+        "parameters": [
+          {
+            "name": "form_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_form_fields"
+        }
+      }
+    },
+    "/forms/list_forms": {
+      "get": {
+        "operationId": "forms_list_forms",
+        "tags": ["forms"],
+        "parameters": [
+          {
+            "name": "is_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_forms"
+        }
+      }
+    },
+    "/forms/remove_form_entry": {
+      "get": {
+        "operationId": "forms_remove_form_entry",
+        "tags": ["forms"],
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#remove_form_entry"
+        }
+      }
+    },
+    "/funds/list": {
+      "get": {
+        "operationId": "funds_list",
+        "tags": ["funds"],
+        "parameters": [
+          {
+            "name": "include_totals",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/giving/add": {
+      "get": {
+        "operationId": "giving_add",
+        "tags": ["giving"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/giving/delete": {
+      "get": {
+        "operationId": "giving_delete",
+        "tags": ["giving"],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/giving/edit": {
+      "get": {
+        "operationId": "giving_edit",
+        "tags": ["giving"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/giving/list": {
+      "get": {
+        "operationId": "giving_list",
+        "tags": ["giving"],
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_family",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "amount_min",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "amount_max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fund_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "envelope_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "batches",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "forms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pledge_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/giving/view": {
+      "get": {
+        "operationId": "giving_view",
+        "tags": ["giving"],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/people": {
+      "get": {
+        "operationId": "people",
+        "tags": ["people"],
+        "parameters": [
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_people"
+        }
+      }
+    },
+    "/people/add": {
+      "get": {
+        "operationId": "people_add",
+        "tags": ["people"],
+        "parameters": [
+          {
+            "name": "first",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fields_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_person"
+        }
+      }
+    },
+    "/people/delete": {
+      "get": {
+        "operationId": "people_delete",
+        "tags": ["people"],
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#delete_person"
+        }
+      }
+    },
+    "/people/update": {
+      "get": {
+        "operationId": "people_update",
+        "tags": ["people"],
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fields_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#update_person"
+        }
+      }
+    },
+    "/people/{PERSON_ID}": {
+      "get": {
+        "operationId": "people_PERSON_ID",
+        "tags": ["people"],
+        "parameters": [
+          {
+            "name": "PERSON_ID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#show_person"
+        }
+      }
+    },
+    "/pledges/list_campaigns": {
+      "get": {
+        "operationId": "pledges_list_campaigns",
+        "tags": ["pledges"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/pledges/list_pledges": {
+      "get": {
+        "operationId": "pledges_list_pledges",
+        "tags": ["pledges"],
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+        }
+      }
+    },
+    "/profile": {
+      "get": {
+        "operationId": "profile",
+        "tags": ["profile"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_profile_fields"
+        }
+      }
+    },
+    "/tags/add_tag": {
+      "get": {
+        "operationId": "tags_add_tag",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "folder_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_tag"
+        }
+      }
+    },
+    "/tags/add_tag_folder": {
+      "get": {
+        "operationId": "tags_add_tag_folder",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_tag_folder"
+        }
+      }
+    },
+    "/tags/assign": {
+      "get": {
+        "operationId": "tags_assign",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#assign_tag"
+        }
+      }
+    },
+    "/tags/delete_tag": {
+      "get": {
+        "operationId": "tags_delete_tag",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#delete_tag"
+        }
+      }
+    },
+    "/tags/delete_tag_folder": {
+      "get": {
+        "operationId": "tags_delete_tag_folder",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#delete_tag_folder"
+        }
+      }
+    },
+    "/tags/list_folders": {
+      "get": {
+        "operationId": "tags_list_folders",
+        "tags": ["tags"],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_tag_folders"
+        }
+      }
+    },
+    "/tags/list_tags": {
+      "get": {
+        "operationId": "tags_list_tags",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_tags"
+        }
+      }
+    },
+    "/tags/unassign": {
+      "get": {
+        "operationId": "tags_unassign",
+        "tags": ["tags"],
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#unassign_tag"
+        }
+      }
+    },
+    "/volunteers/add": {
+      "get": {
+        "operationId": "volunteers_add",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_volunteer"
+        }
+      }
+    },
+    "/volunteers/add_role": {
+      "get": {
+        "operationId": "volunteers_add_role",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "quantity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#add_volunteer_role"
+        }
+      }
+    },
+    "/volunteers/list": {
+      "get": {
+        "operationId": "volunteers_list",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_volunteers"
+        }
+      }
+    },
+    "/volunteers/list_roles": {
+      "get": {
+        "operationId": "volunteers_list_roles",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "show_quantity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#list_volunteer_roles"
+        }
+      }
+    },
+    "/volunteers/remove": {
+      "get": {
+        "operationId": "volunteers_remove",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#remove_volunteer"
+        }
+      }
+    },
+    "/volunteers/remove_role": {
+      "get": {
+        "operationId": "volunteers_remove_role",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#remove_volunteer_role"
+        }
+      }
+    },
+    "/volunteers/update": {
+      "get": {
+        "operationId": "volunteers_update",
+        "tags": ["volunteers"],
+        "parameters": [
+          {
+            "name": "instance_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role_ids_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vendor-shaped response; projections retain the legacy contract.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "externalDocs": {
+          "url": "https://app.breezechms.com/api#update_volunteer"
+        }
+      }
+    }
+  }
+}
