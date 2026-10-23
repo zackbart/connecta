@@ -566,7 +566,7 @@ export const result: NonNullable<ConnectOptions["result"]> = (raw, answer) =>
           ? null
           : body;
     }
-    if (isEnvelope(body) && body["success"] === false)
+    if (answer.operation.flags?.["ownership"] !== true && isEnvelope(body) && body["success"] === false)
       return Effect.fail(
         new StatusFailure({
           status: answer.status === 200 ? 400 : answer.status,
@@ -703,7 +703,7 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
               if (error._tag === "UnreadableBody") return Effect.succeed({ status: 200, data: undefined });
               if (error._tag !== "ResponseTooLarge") return Effect.fail(error);
               return Dispatches.use((dispatches) => {
-                const own = dispatches.find((dispatch) => dispatch.step === `lookup${lookup}`);
+                const own = dispatches.filter((dispatch) => dispatch.operation?.flags?.["ownership"] === true).at(-1);
                 const length = Number(own?.headers?.get("content-length"));
                 // Legacy pin reads swallowed a streamed-body decode failure, but not a declared ceiling.
                 return own?.status === 200 && !(length > MAX_RESPONSE_BYTES)
@@ -712,8 +712,7 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
               });
             }),
           );
-        const value = isEnvelope(reply.data) ? reply.data["result"] : reply.data;
-        owner = text(record(record(value)["account"])["id"]) ?? "";
+        owner = text(record(record(record(reply.data)["result"])["account"])["id"]) ?? "";
         if (owner) owners.set(zone, owner);
       }
       yield* checked(() => {
@@ -820,11 +819,9 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
       return { query, headers: { ...headers, "Content-Type": type }, rawBody: form.toString() };
     }
     if (typeof call.body === "string") invalid(`${call.op.method} ${call.op.path} takes a JSON body, not a string.`);
-    return {
-      query,
-      headers: { ...headers, ...(type.endsWith("+json") ? { "Content-Type": type } : {}) },
-      body: call.body,
-    };
+    if (type.endsWith("+json"))
+      return { query, headers: { ...headers, "Content-Type": type }, rawBody: JSON.stringify(call.body) };
+    return { query, headers, body: call.body };
   };
 
   /** Fill configured default ids into `{account_id}` and `{zone_id}` placeholders. */

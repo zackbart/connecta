@@ -2025,8 +2025,19 @@ validation and legacy hatch schemas while the kit owns tool leases, fixed write
 capacity, transport, failures and result safety. It verifies schema equality
 before restoring legacy catalog key order. `indexedVendor` derives operation
 metadata from the index and builds the full manifest lazily; the typed client
-contains only named operations and probes. Manifest/index operation-set equality
-is checked independently of drift digests, which still use full vendor contracts.
+contains only named operations and probes. Bulk indexed declarations preserve
+the OpenAPI brace paths verbatim and carry explicit parameter Schemas. They
+serve the manifest only: typed sends refuse an undeclared operation name,
+and indexed hatches dispatch through `sendPath`. Parameter names outside
+`[A-Za-z0-9_-]+` fail construction. Manifest/index operation-set equality is
+checked independently of drift digests, which still use full vendor contracts.
+
+`restKitTools` may declare a `writeSteps` map whose values are `"once"`.
+Construction freezes the map; every named step sends at most once and an
+undeclared step is refused before dispatch. Omitting it retains the single
+implicit write step. Auxiliary ownership reads in a write call retain that
+call's write classification and consume their declared lookup steps, so the
+resource write cannot be resent.
 
 Reviewed response policies can select text using only the redacted, normalized
 Content-Type. A separate `binaryBodies` review opts into bounded byte reads.
@@ -2042,6 +2053,22 @@ failure (for example, an accepted key lacking account-read permission). Public
 routing/version headers remain request or constant headers, never authentication
 secrets. An optional positive `timeoutMs` retains a vendor's request and body
 deadline. A path request opting into `emptyForm: true` retains an explicitly empty form on the wire; other empty form declarations keep their previous omission.
+
+An optional `probe.run(connection, options)` replaces the fixed operation
+probe. Its Effect program is built once at provider construction outside a
+caller context and receives only the confined Connection. Execution uses the
+candidate credential's anonymous read-call services and an empty write-capacity
+map, so a write probe refuses before dispatch. It retains the ordinary probe
+accounting, settlement, failure description and withheld-defect rewrap at the
+credential-test edge.
+
+`PathRequest.rawBody` accepts a string, `Uint8Array` or `FormData`; it is
+exclusive with JSON, form, `emptyForm` and item/bulk identities. Conflicting
+combinations fail construction where possible and otherwise refuse before
+dispatch. Framing uses Effect's text, byte-array or form-data body helpers.
+An explicit Content-Type is preserved exactly; multipart callers omit it so
+fetch generates its boundary. This field does not change classification,
+write-step accounting or the sent-secret set, and existing size ceilings apply.
 
 A send may opt into a success-only `prefix` read with a byte ceiling, an optional
 tighter time limit and a boolean chunk-stop callback. Failure responses retain
@@ -2102,8 +2129,8 @@ result handling, reviewed value safety and the deployment privacy projection
 before paging or provider projections can read it. Read methods beyond GET
 and HEAD require a review. Construction fixes each write step's capacity;
 the guarded transport reserves it before preparation and the shared core
-decides the whole call's write outcome. Upload builders and byte-body request
-shapes wait for the Google Drive migration in C.7.
+decides the whole call's write outcome. Dedicated upload builders wait for
+the Google Drive migration in C.7.
 
 Reviewed path calls resolve their actual method and path through an indexed
 safety adapter; a provider-supplied template cannot bypass the policy.
