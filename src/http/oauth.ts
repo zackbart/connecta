@@ -99,7 +99,7 @@ export function refreshOnce(
   },
 ): GuardedClient<CallServices | Grant> {
   const inner = guarded.client;
-  const challengeFailure = (entry: ProviderRequest | undefined) =>
+  const challengeFailure = (entry: ProviderRequest | undefined): Effect.Effect<never, HttpFailure, CallServices> =>
     Effect.gen(function* () {
       const error = new ConnectorCallError(
         "connector_call_failed",
@@ -119,7 +119,7 @@ export function refreshOnce(
   const execute = (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
       const response = yield* inner.execute(request).pipe(
-        Effect.catchTag("ResponseTooLarge", (failure) => {
+        Effect.catchTag("ResponseTooLarge", (failure): Effect.Effect<never, HttpFailure, CallServices> => {
           const entry = responseRequest(failure);
           return options?.challengeMaxBytes !== undefined && entry?.status === 401
             ? challengeFailure(entry)
@@ -131,7 +131,7 @@ export function refreshOnce(
       const reply = yield* guarded
         .read(response, options?.challengeMaxBytes)
         .pipe(
-          Effect.catchTag("ResponseTooLarge", (failure) =>
+          Effect.catchTag("ResponseTooLarge", (failure): Effect.Effect<never, HttpFailure, CallServices> =>
             options?.challengeMaxBytes !== undefined
               ? challengeFailure(responseRequest(response))
               : Effect.fail(failure),
