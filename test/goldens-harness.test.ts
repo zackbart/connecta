@@ -20,7 +20,7 @@ import {
   type GoldenSpec,
   type StubResponse,
 } from "./goldens/harness.js";
-import infisical from "./goldens/infisical/spec.js";
+import forms from "./goldens/forms/spec.js";
 import planningCenter from "./goldens/planning-center/spec.js";
 
 import { canonicalGolden } from "./goldens/canonical.js";
@@ -38,7 +38,7 @@ const specs = Object.values(import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", 
   .slice()
   .sort((a, b) => a.provider.localeCompare(b.provider));
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
-const storedInfisicalCalls = canonicalGolden(stored["./goldens/infisical/calls.json"]!);
+const storedFormsCalls = canonicalGolden(stored["./goldens/forms/calls.json"]!);
 
 interface Row {
   label: string;
@@ -64,7 +64,7 @@ function probeSpec(work: () => Promise<unknown>, replies?: Replies): GoldenSpec 
     },
   ];
   return {
-    ...infisical,
+    ...forms,
     provider: "probe",
     auxiliary: [],
     create: () => ({ id: "probe", kind: "api", staticTools: tools, listTools: async () => tools, callTool: work }),
@@ -195,12 +195,12 @@ const savedScheduler = new Scheduler.MixedScheduler("async", (callback) => {
   return () => clearTimeout(handle);
 });
 
-const LOGIN = "/api/v1/auth/universal-auth/login";
-const CREATE_SECRET = "/api/v4/secrets/API_KEY";
+const LOGIN = "/token";
+const CREATE_FORM = "/v1/forms";
 
 const urlOf = (input: RequestInfo | URL) => String(input instanceof Request ? input.url : input);
-const isCreateSecret = (input: RequestInfo | URL, init?: RequestInit) =>
-  urlOf(input).endsWith(CREATE_SECRET) && init?.method === "POST";
+const isCreateForm = (input: RequestInfo | URL, init?: RequestInit) =>
+  urlOf(input).endsWith(CREATE_FORM) && init?.method === "POST";
 
 /** A provider that puts Authorization on a Request, then passes init.headers without it. */
 const authorizationOnRequestOnly: FetchSeam = (send) => (input, init) => {
@@ -211,31 +211,31 @@ const authorizationOnRequestOnly: FetchSeam = (send) => (input, init) => {
   return send(new Request(input, { headers: { authorization } }), { ...init, headers });
 };
 
-/** A provider that logs in to Infisical with an empty body. */
+/** A provider that logs in to Forms with an empty body. */
 const emptyLoginBody: FetchSeam = (send) => (input, init) =>
   urlOf(input).endsWith(LOGIN) ? send(input, { ...init, body: "{}" }) : send(input, init);
 
-/** A provider that serializes the same Infisical login fields differently. */
+/** A provider that serializes the same Forms login fields differently. */
 const reshapedLogin =
   (reshape: (fields: Record<string, unknown>) => string): FetchSeam =>
   (send) =>
   (input, init) => {
     if (!urlOf(input).endsWith(LOGIN)) return send(input, init);
-    if (typeof init?.body !== "string") throw new Error("the Infisical login body is no longer a string");
-    return send(input, { ...init, body: reshape(JSON.parse(init.body) as Record<string, unknown>) });
+    if (typeof init?.body !== "string") throw new Error("the Forms login body is no longer a string");
+    return send(input, { ...init, body: reshape(Object.fromEntries(new URLSearchParams(init.body))) });
   };
 
-/** A provider that sends its write before Infisical answers the login, holding a token it already has. */
+/** A provider that sends its write before Forms answers the login, holding a token it already has. */
 const writeBeforeLoginAnswer: FetchSeam = (send) => (input, init) => {
   if (!urlOf(input).endsWith(LOGIN)) return send(input, init);
   void send(input, init).catch(() => undefined);
-  const { body } = infisical.auxiliary!.find((route) => route.name === "universal-auth-login")!.reply as StubResponse;
+  const { body } = forms.auxiliary!.find((route) => route.name === "token")!.reply as StubResponse;
   return Promise.resolve(Response.json(body));
 };
 
-/** A provider that sends Infisical's create_secret write twice before either is answered. */
+/** A provider that sends Forms's create_form write twice before either is answered. */
 const writeTwiceAtOnce: FetchSeam = (send) => (input, init) => {
-  if (!isCreateSecret(input, init)) return send(input, init);
+  if (!isCreateForm(input, init)) return send(input, init);
   const first = send(input, init);
   void send(input, init).catch(() => undefined);
   return first;
@@ -243,7 +243,7 @@ const writeTwiceAtOnce: FetchSeam = (send) => (input, init) => {
 
 /** A provider that sends it again once the first is answered. */
 const writeTwiceInTurn: FetchSeam = (send) => async (input, init) => {
-  if (!isCreateSecret(input, init)) return send(input, init);
+  if (!isCreateForm(input, init)) return send(input, init);
   const first = await send(input, init);
   await send(input, init);
   return first;
@@ -343,36 +343,36 @@ describe(suiteName, { timeout: 120_000 }, () => {
     "INV-5: records init.headers replacing a Request's headers, so a dropped Authorization changes the goldens",
     NODE,
     async () => {
-      const baseline = (await captureGoldens(infisical)).calls!;
-      const { calls } = await captureGoldens(infisical, { seam: authorizationOnRequestOnly });
+      const baseline = (await captureGoldens(forms)).calls!;
+      const { calls } = await captureGoldens(forms, { seam: authorizationOnRequestOnly });
       expect(baseline).toContain('"authorization": "Bearer <secret:accessToken>"');
       expect(calls).not.toContain('"authorization": "Bearer <secret:accessToken>"');
       expect(calls).not.toBe(baseline);
     },
   );
 
-  it("INV-5: records auxiliary request bodies, so an emptied Infisical login changes the goldens", NODE, async () => {
-    const baseline = (await captureGoldens(infisical)).calls!;
-    const { calls } = await captureGoldens(infisical, { seam: emptyLoginBody });
+  it("INV-5: records auxiliary request bodies, so an emptied Forms login changes the goldens", NODE, async () => {
+    const baseline = (await captureGoldens(forms)).calls!;
+    const { calls } = await captureGoldens(forms, { seam: emptyLoginBody });
     expect(baseline).toContain('"clientSecret": "<secret:clientSecret>"');
     expect(calls).not.toContain('"clientSecret": "<secret:clientSecret>"');
     expect(calls).not.toBe(baseline);
   });
 
   it(
-    "records a JSON body's exact bytes, so respacing or reordering the Infisical login changes the goldens",
+    "records a JSON body's exact bytes, so respacing or reordering the Forms login changes the goldens",
     NODE,
     async () => {
-      const baseline = (await captureGoldens(infisical)).calls!;
+      const baseline = (await captureGoldens(forms)).calls!;
       expect(baseline).not.toContain('"text": "{');
       const spaced = (
-        await captureGoldens(infisical, { seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)) })
+        await captureGoldens(forms, { seam: reshapedLogin((fields) => new URLSearchParams(fields as Record<string, string>).toString() + "&unused=") })
       ).calls!;
       expect(spaced).toContain('"text": "{\\n \\"clientId\\": \\"<secret:clientId>\\"');
       expect(spaced).not.toBe(baseline);
       const reordered = (
-        await captureGoldens(infisical, {
-          seam: reshapedLogin((fields) => JSON.stringify(Object.fromEntries(Object.entries(fields).reverse()))),
+        await captureGoldens(forms, {
+          seam: reshapedLogin((fields) => new URLSearchParams(Object.fromEntries(Object.entries(fields).reverse()) as Record<string, string>).toString()),
         })
       ).calls!;
       expect(reordered).not.toBe(baseline);
@@ -383,11 +383,11 @@ describe(suiteName, { timeout: 120_000 }, () => {
   // Canonical order puts the login first in either case, so only the step
   // boundary tells the two apart.
   it(
-    "records causal steps, so a write sent before the Infisical login is answered changes the goldens",
+    "records causal steps, so a write sent before the Forms login is answered changes the goldens",
     NODE,
     async () => {
-      const baseline = await captureCall(infisical, "create_secret");
-      const early = await captureCall(infisical, "create_secret", { seam: writeBeforeLoginAnswer });
+      const baseline = await captureCall(forms, "create_form");
+      const early = await captureCall(forms, "create_form", { seam: writeBeforeLoginAnswer });
       expect(early).not.toBe(baseline);
       expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
       expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
@@ -398,12 +398,12 @@ describe(suiteName, { timeout: 120_000 }, () => {
   it("records a duplicated write, and whether its copies were sent together or in turn", NODE, async () => {
     // A duplicate must receive the same answer: distinct replies for identical
     // concurrent requests are an authoring error, tested separately below.
-    const call = infisical.calls.find((candidate) => candidate.tool === "create_secret")!;
+    const call = forms.calls.find((candidate) => candidate.tool === "create_form")!;
     const reply = (call.replies as StubResponse[])[0]!;
-    const spec = { ...infisical, calls: [{ ...call, replies: () => reply }] };
-    const baseline = await captureCall(spec, "create_secret");
-    const together = await captureCall(spec, "create_secret", { seam: writeTwiceAtOnce });
-    const inTurn = await captureCall(spec, "create_secret", { seam: writeTwiceInTurn });
+    const spec = { ...forms, calls: [{ ...call, replies: () => reply }] };
+    const baseline = await captureCall(spec, "create_form");
+    const together = await captureCall(spec, "create_form", { seam: writeTwiceAtOnce });
+    const inTurn = await captureCall(spec, "create_form", { seam: writeTwiceInTurn });
     expect(together).not.toBe(baseline);
     expect(inTurn).not.toBe(baseline);
     expect(together).not.toBe(inTurn);
@@ -1398,7 +1398,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
         vi.spyOn(module.SentSecrets.prototype, "redactOpenTail").mockImplementation((value) => value);
         return module;
       });
-      await expect(captureGoldens(infisical)).rejects.toThrow(/the caller-visible result leaks <secret:/);
+      await expect(captureGoldens(forms)).rejects.toThrow(/the caller-visible result leaks <secret:/);
       expect(await echoesThatPass()).toEqual([]);
     },
   );
@@ -1441,7 +1441,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     "matches the stored goldens without a mutation, so no earlier capture's state decided the tests above",
     NODE,
     async () => {
-      expect((await captureGoldens(infisical)).calls).toBe(storedInfisicalCalls);
+      expect((await captureGoldens(forms)).calls).toBe(storedFormsCalls);
     },
   );
 });

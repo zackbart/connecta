@@ -233,68 +233,6 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
         .filter((c) => c.kind === "write")
         .every((c) => c.service === "stripe_sandbox" && c.tool === "POST /v1/refunds"),
     );
-  } else if (id === "801-notion-append-checklist") {
-    const writes = good(world, "notion_bot", "PATCH", "/v1/blocks/page-q3/children");
-    destination(
-      writes.length === 1 &&
-        checklist((writes[0]!.args.body as Args).children ?? []) &&
-        (!(writes[0]!.args.body as Args).position || (writes[0]!.args.body as Args).position.type === "end"),
-    );
-    outcome(
-      "state",
-      "the three unchecked items are appended once and the retro is untouched",
-      checklist(world.rest.blocks["page-q3"]!) &&
-        world.rest.blocks["page-retro"]!.length === 0 &&
-        world.rest.createdPages.length === 0,
-    );
-    outcome(
-      "only-requested-writes",
-      "no other write reaches Notion",
-      world.ledger.calls
-        .filter((c) => c.kind === "write")
-        .every((c) => c.service === "notion_bot" && c.tool === "PATCH /v1/blocks/page-q3/children"),
-    );
-    evidence(has(answer, "page-q3", ...CHECKLIST));
-    advisory(
-      good(world, "notion_bot", "POST", "/v1/search").some((c) =>
-        /offsite/i.test(String((c.args.body as Args).query)),
-      ) && invalids(world, trace).length === 0,
-    );
-  } else if (id === "801-notion-rows-past-first-page") {
-    const queries = good(world, "notion_bot", "POST", "/v1/data_sources/ds-roadmap/query");
-    const resolved = world.ledger.calls.some(
-      (c) =>
-        c.service === "notion_bot" &&
-        c.outcome === "ok" &&
-        (String(c.args.path).replaceAll("-", "") === `/v1/databases/${DATABASE}` ||
-          (c.args.path === "/v1/search" && /roadmap/i.test(String((c.args.body as Args).query)))),
-    );
-    destination(resolved && queries.length === 3 && queries.every((c) => same((c.args.body as Args).filter, filter)));
-    outcome(
-      "cursor-placement",
-      "every cursor comes from the preceding body-paginated result",
-      queries.length === 3 &&
-        same(
-          queries.map((c) => (c.args.body as Args).start_cursor ?? null),
-          [null, "c-2", "c-3"],
-        ) &&
-        calls(world, "notion_bot")
-          .filter((c) => String(c.args.path).endsWith("/query"))
-          .every((c) => !("start_cursor" in (c.args.query as Args))),
-    );
-    const titles = answer.match(/Blocked task \d+/gi) ?? [];
-    evidence(
-      /\b230\b/.test(answer) &&
-        same(
-          [...new Set(titles.map((t) => t.toLowerCase()))].sort(),
-          BLOCKED_TITLES.map((t) => t.toLowerCase()).sort(),
-        ) &&
-        !/Todo task/i.test(answer),
-    );
-    outcome("reads-only", "no write was attempted", noWrites(world, trace));
-    advisory(
-      world.programs.some((p) => p.calls.filter((c) => String(c.args[0]).includes("query_data_source")).length === 3),
-    );
   } else if (id === "801-cloudflare-dns-ttl") {
     const writes = calls(world, "cloudflare_prod").filter(
       (c) =>
@@ -485,21 +423,6 @@ async function reference(id: string, ctx: ReferenceContext) {
     const replay = await write(ctx, "stripe_sandbox.stripe_api_write", args);
     if (!replay.isError) throw new Error("Stripe must replay the original HTTP 500, not a successful refund");
     ctx.answer("Stripe refund re_eval_1 succeeded for 1250 cents, 12.50 USD.");
-  } else if (id === "801-notion-append-checklist") {
-    await read(ctx, "notion_bot.integration_search", { query: "offsite" });
-    const appended = await write(ctx, "notion_bot.integration_append_blocks", {
-      block_id: "page-q3",
-      checklist: CHECKLIST,
-    });
-    if (!CHECKLIST.every((item) => appended.text.includes(item)))
-      throw new Error("Notion's append response lost the checklist labels");
-    ctx.answer(`Notion page-q3: added ${CHECKLIST.join(", ")}.`);
-  } else if (id === "801-notion-rows-past-first-page") {
-    await program(
-      ctx,
-      `await connecta.call("notion_bot.notion_api_read", {path:"/v1/databases/${DATABASE}"}); await connecta.call("notion_bot.integration_get_data_source_schema", {data_source_id:"ds-roadmap"}); let cursor; const titles=[]; do { const {data} = await connecta.call("notion_bot.integration_query_data_source", {data_source_id:"ds-roadmap", filter:${JSON.stringify(filter)}, page_size:100, ...(cursor ? {start_cursor:cursor} : {})}); for (const row of data.results) titles.push(row.title); cursor=data.next_cursor; } while(cursor); return {count:titles.length, titles};`,
-    );
-    ctx.answer(`Notion Roadmap has 230 Blocked tasks:\n${BLOCKED_TITLES.join("\n")}`);
   } else if (id === "801-cloudflare-dns-ttl") {
     await read(ctx, "cloudflare_prod.list_zones", { name: "example.com" });
     await read(ctx, "cloudflare_prod.cloudflare_api_read", {
@@ -552,7 +475,6 @@ export const REST_TASKS: ActiveTask[] = REST_SCENARIOS.map((spec) => {
   const readsOnly = [
     "801-stripe-failed-payment",
     "801-stripe-guessed-parameter-recovery",
-    "801-notion-rows-past-first-page",
     "801-vercel-failed-build",
     "801-cloudflare-read-only-analytics",
   ].includes(spec.id);

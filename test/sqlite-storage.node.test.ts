@@ -155,7 +155,7 @@ describe("importStateFile", () => {
     const db = track(openSqlite(join(directory, "connecta.sqlite")));
     const cases = [
       // V8's parse error quotes the text around the fault.
-      `{"conn:notion:oauth:tokens": {"value": "${secret}"`,
+      `{"conn:notes:oauth:tokens": {"value": "${secret}"`,
       `{"${secret}":{"value":"1"}, oops}`,
       JSON.stringify({ "a": { value: "1" }, [`conn:${secret}`]: { value: 2 } }),
     ];

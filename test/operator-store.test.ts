@@ -790,12 +790,12 @@ describe("operator connection writes", () => {
     fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
     // Personal, and the action is in `manage.actions`: sent.
     await store.startOAuth("slack", "continue");
-    await store.saveCredential("notion", { values: { token: "typed" } });
+    await store.saveCredential("notes", { values: { token: "typed" } });
     // Calendar may only disconnect; GitHub is shared; nothing else is listed.
     await store.startOAuth("calendar", "continue");
     await store.saveCredential("github", { value: "typed" });
     await store.disconnectOAuth("drive");
-    expect(writes(paths)).toEqual(["/ui/oauth/slack?mode=continue", "/ui/credentials/notion"]);
+    expect(writes(paths)).toEqual(["/ui/oauth/slack?mode=continue", "/ui/credentials/notes"]);
     expect(store.getState().oauthNotice?.tone).toBe("error");
     expect(store.getState().credentialNotice?.tone).toBe("error");
   });
@@ -862,11 +862,11 @@ describe("actions revalidate at dispatch", () => {
     }
   });
 
-  /** A member contract with Notion's credential actions replaced. */
+  /** A member contract with Notes's credential actions replaced. */
   function memberContract(actions: Array<"save" | "test" | "clear">): Response {
     const body = structuredClone(OPERATOR_V2_MEMBER) as typeof OPERATOR_V2_MEMBER & Record<string, unknown>;
-    const notion = body.connectors.find((c) => c.id === "notion")!;
-    (notion.manage as { actions: string[] }).actions = actions;
+    const notes = body.connectors.find((c) => c.id === "notes")!;
+    (notes.manage as { actions: string[] }).actions = actions;
     return Response.json(body);
   }
 
@@ -882,7 +882,7 @@ describe("actions revalidate at dispatch", () => {
     const held = heldSession();
     const { store, fetchMock, configMock } = await bootMember(held.session, ["save", "test", "clear"]);
     held.hold();
-    const clearing = store.removeCredential("notion");
+    const clearing = store.removeCredential("notes");
     configMock.mockResolvedValueOnce(memberContract(["save"]));
     const refresh = store.loadOperatorContract();
     await vi.waitFor(() => expect(configMock).toHaveBeenCalledTimes(2));

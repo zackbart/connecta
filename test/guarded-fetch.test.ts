@@ -1,5 +1,5 @@
 // The guarded transport hand-written connectors send every request through.
-// Cloudflare, Notion, and Vercel prove the shape in their own suites; this one
+// Cloudflare, the vendor, and Vercel prove the shape in their own suites; this one
 // pins the mechanics they all depend on and do not each exercise directly —
 // the confinement that only fails on a hostile path, the ceiling that only
 // fires on an absurd response, and the redirect nobody's provider sends.

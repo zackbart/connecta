@@ -236,24 +236,23 @@ retain the existing partial-evidence rules.
 ## Tasks and correctness
 
 Every downstream is a deterministic fake under `fakes/`; no task requires a
-real Mixpanel, RevenueCat, Supabase, GitHub or other third-party account.
+real RevenueCat, Supabase, GitHub or other third-party account.
 The existing five retained tasks keep their state/outcome checks and now require source
-calls and final-answer facts. Fourteen new active tasks cover:
+calls and final-answer facts. Thirteen additional active tasks cover:
 
 - a program write in a named writable pool and refusal in a named read-only pool;
 - `connecta.result` paging beyond a direct-call preview, with one log fetch;
 - direct MCP text/image content and program image/text emission;
 - OAuth recovery through `/connect` with capable and incapable hosts;
 - terminal fan-out budget exhaustion followed by smaller read programs;
-- Mixpanel organization/project/workspace/context/schema bootstrap;
 - RevenueCat plain text and the authoritative `gives_access` fact;
 - Supabase Production `project_ref`, with a Sandbox decoy;
 - honest GitHub absence, without substituting another service;
 - a known read routed through `call_tool`, with no program, discovery or other route;
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
-Ten [#801 REST tasks](tasks/rest.ts) are active against loopback fake Stripe,
-Notion, Cloudflare and Vercel HTTP services. The Node deployment uses the real
+Eight [#801 REST tasks](tasks/rest.ts) are active against loopback fake Stripe,
+Cloudflare and Vercel HTTP services. The Node deployment uses the real
 published provider factories with `apiKey`, `token`, `apiToken`, and
 `globalApiKey` auth, fake vault credentials, account pins and Vercel's default
 team. No hosted vendor MCP or real vendor credential is used. The REST ledger
@@ -262,8 +261,6 @@ credential framing without recording credential headers. These tasks cover:
 
 - Stripe charge declines, recovery after rejected parameters, and an HTTP 500
   after a committed refund followed by a retry with the same idempotency key;
-- Notion title resolution and append-once unchecked checklists, plus 230
-  filtered rows across three body-cursor pages of at most 100 rows;
 - one Cloudflare DNS TTL change with decoys, a Global API Key account-pin
   refusal, and GraphQL analytics from the named read-only pool;
 - Vercel's bounded non-following build logs and an environment rotation that
@@ -272,17 +269,16 @@ credential framing without recording credential headers. These tasks cover:
 The pin task's deployment instructions supply the operator's known zone id,
 because pinned zone lists intentionally omit other accounts. The agent still
 has to observe and report the real pin refusal. REST worlds expose only their
-vendor connectors. The Notion fixture uses 100-row pages and seeds 400 rows;
-its provider's default page size is 100. Refund retry metrics distinguish
+vendor connectors. Refund retry metrics distinguish
 vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
 [Planned tasks](tasks/planned.ts) is currently empty.
-The #765 paired comparison keeps its registered 19-task scope; these ten
+The #765 paired comparison keeps its registered 19-task scope; these retained
 follow-ups do not change that experiment's acceptance rule.
 An eval-only fetch adapter maps fresh per-world sentinel credentials to
-loopback HTTP, so Stripe and Notion keep their fixed public origins and the
+loopback HTTP, so Stripe keeps its fixed public origins and the
 providers retain their production host checks. Unregistered credentials and
 cross-vendor hosts fail before any network request. The last world to stop
 restores the original fetch function; concurrent worlds keep separate routes.

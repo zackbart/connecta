@@ -126,7 +126,7 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.rest, structuredClone(state.rest));
   } else if (
     state.calls.some((c) =>
-      /^(stripe_sandbox|notion_bot|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service),
+      /^(stripe_sandbox|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service),
     )
   )
     throw new Error("Incomplete saved grading evidence: rest");

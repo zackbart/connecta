@@ -105,7 +105,7 @@ const config: ConnectaConfigDescription = {
     {
       name: "team",
       path: "/mcp/team",
-      tools: ["slack", "notion", "calendar", "github.read"],
+      tools: ["slack", "notes", "calendar", "github.read"],
       members: [
         { kind: "human", namespace: CLERK, id: "user_ada" },
         { kind: "human", namespace: CLERK, id: "user_lin" },
@@ -137,7 +137,7 @@ const config: ConnectaConfigDescription = {
     connector("slack", "Slack", "personal", { auth: { mode: "oauth", scope: "search:read chat:write" } }),
     // Provisioned out of band: it has disconnectAuth but no startAuth.
     connector("calendar", "Calendar", "personal", { source: { kind: "custom" } }),
-    connector("notion", "Notion", "personal", {
+    connector("notes", "Notes", "personal", {
       auth: { mode: "credential", header: "Authorization", scheme: "Bearer" },
       credential: {
         label: "Integration token",
@@ -197,7 +197,7 @@ const pools: OperatorPoolV2[] = [
     owner: null,
     tools: [
       { connectorId: "slack", tools: "all" },
-      { connectorId: "notion", tools: "all" },
+      { connectorId: "notes", tools: "all" },
       { connectorId: "calendar", tools: "all" },
       // GitHub also reaches Lin through support, so it lists two pools.
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
@@ -239,8 +239,8 @@ const matrix: OperatorConnectorPoolCell[] = [
   },
   { connectorId: "slack", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
   { connectorId: "slack", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
-  { connectorId: "notion", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
-  { connectorId: "notion", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
+  { connectorId: "notes", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
+  { connectorId: "notes", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
   { connectorId: "calendar", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 2, members: 2 } },
   { connectorId: "calendar", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 2, members: 2 } },
 ];
@@ -271,7 +271,7 @@ export const OPERATOR_V2_MAINTAINER = {
         ["post", "write"],
       ]),
       overlay("calendar", [["list", "read"]]),
-      overlay("notion", [["query", "read"]], {
+      overlay("notes", [["query", "read"]], {
         status: "credential_required",
         problem: "credential_required",
         catalogAgeMs: null,
@@ -320,11 +320,11 @@ const memberConnectors: OperatorMemberConnector[] = [
     manage: { kind: "oauth", actions: ["connect", "restart", "disconnect"] },
   },
   {
-    id: "notion",
-    title: "Notion",
+    id: "notes",
+    title: "Notes",
     pools: ["team"],
     authScope: "personal",
-    tools: [{ address: "notion.query", classification: "read" }],
+    tools: [{ address: "notes.query", classification: "read" }],
     connection: { state: "credential_required", problem: "credential_required" },
     // Nothing is stored in Lin's partition, so only save is offered: test and
     // clear need a stored value, and the page reads stored-ness from actions.
@@ -366,7 +366,7 @@ export const OPERATOR_V2_MEMBER = {
   you: { interactive: true },
 } satisfies OperatorUiContractV2;
 
-const notionSlot = config.connectors.find((c) => c.id === "notion")!.credential!;
+const notesSlot = config.connectors.find((c) => c.id === "notes")!.credential!;
 
 /**
  * What each member may do with each personal connector here, as the server
@@ -378,11 +378,11 @@ const manage = {
   // disconnectAuth without startAuth: the member can only drop the grant.
   calendar: { kind: "oauth", actions: ["disconnect"] },
 } satisfies Record<string, OperatorMemberManage>;
-/** Notion has named fields with testCredentials and a vault: save always; test and clear once a value is stored. */
-const notionManage = (stored: boolean): OperatorMemberManage => ({
+/** Notes has named fields with testCredentials and a vault: save always; test and clear once a value is stored. */
+const notesManage = (stored: boolean): OperatorMemberManage => ({
   kind: "credential",
-  label: notionSlot.label,
-  fields: notionSlot.fields!,
+  label: notesSlot.label,
+  fields: notesSlot.fields!,
   actions: stored ? ["save", "test", "clear"] : ["save"],
 });
 
@@ -390,15 +390,15 @@ const notionManage = (stored: boolean): OperatorMemberManage => ({
 export const OPERATOR_V2_PARTITIONS = {
   user_lin: {
     slack: { state: "ok" },
-    notion: { state: "credential_required", problem: "credential_required" },
+    notes: { state: "credential_required", problem: "credential_required" },
     calendar: { state: "ok" },
   },
   user_ada: {
     slack: { state: "auth_required", problem: "oauth_required" },
-    notion: { state: "ok" },
+    notes: { state: "ok" },
     calendar: { state: "ok" },
   },
-} satisfies Record<string, Record<"slack" | "notion" | "calendar", MemberPartition["connection"]>>;
+} satisfies Record<string, Record<"slack" | "notes" | "calendar", MemberPartition["connection"]>>;
 
 /**
  * The trusted inputs for one member's view: config, catalog, membership, that
@@ -406,10 +406,10 @@ export const OPERATOR_V2_PARTITIONS = {
  * the way P6b gathers them from a real deployment, never from a member response.
  */
 export function operatorV2MemberSource(id: keyof typeof OPERATOR_V2_PARTITIONS): MemberViewSource {
-  const connections: Record<"slack" | "notion" | "calendar", MemberPartition["connection"]> =
+  const connections: Record<"slack" | "notes" | "calendar", MemberPartition["connection"]> =
     OPERATOR_V2_PARTITIONS[id];
-  // Ada's Notion is connected, so her partition holds a value; Lin's holds none.
-  const manages = { ...manage, notion: notionManage(connections.notion.state === "ok") };
+  // Ada's Notes is connected, so her partition holds a value; Lin's holds none.
+  const manages = { ...manage, notes: notesManage(connections.notes.state === "ok") };
   const partition = (connector: keyof typeof manages): MemberPartition => ({
     connection: { ...connections[connector] },
     manage: structuredClone(manages[connector]),
@@ -419,7 +419,7 @@ export function operatorV2MemberSource(id: keyof typeof OPERATOR_V2_PARTITIONS):
     pools: structuredClone(pools),
     connectors: structuredClone(config.connectors),
     catalog: OPERATOR_V2_MAINTAINER.live.connectors.flatMap((connector) => connector.tools),
-    personal: { slack: partition("slack"), notion: partition("notion"), calendar: partition("calendar") },
+    personal: { slack: partition("slack"), notes: partition("notes"), calendar: partition("calendar") },
   };
 }
 

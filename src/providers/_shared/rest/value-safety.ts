@@ -28,7 +28,7 @@
 //    statuses but never its text (`withholdsErrors`), unless its review
 //    found its errors cannot echo a stored secret (`vendorErrors`).
 //
-// Residual risk, as with Infisical: a secret a person typed into a free-text
+// Residual risk, as with a secret store: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 //
 // The key-name rules combine Cloudflare's and Vercel's former engines.
@@ -380,13 +380,13 @@ function sanitizeUrl(value: string, credentials = true): string {
 
 // Pre-signed links inside free text. The key-name heuristic sees a URL only
 // when a whole string is one; a vendor whose text embeds the links it signs
-// (Notion's page Markdown) scans its strings with these instead. The secret
+// (the vendor's page Markdown) scans its strings with these instead. The secret
 // in scope is a link the vendor minted. A link a person wrote (a rich-text
 // href, an external file, a URL property) is their content and comes back as
 // written unless it names a signing parameter. Not in scope, so withheld
 // only incidentally: a signed URL a person pasted into text, and one split
 // across separate strings (rich-text runs), each scanned alone. Nor is an
-// escape inside a host or signing parameter's name (`file&#46;notion.so`,
+// escape inside a host or signing parameter's name (`file&#46;notes.example`,
 // `X%2DAmz%2DSignature`): a vendor writes the hosts and names it signs with
 // literally, so only a person's own text spells them that way. Two passes,
 // each one linear scan:
@@ -401,10 +401,10 @@ function sanitizeUrl(value: string, credentials = true): string {
 //    must be the authority's host: after `//` however spelled (`https://`,
 //    `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, scheme-less `//`) and only
 //    subdomain labels, and before a port, path, query, fragment, or the
-//    link's end. So `file.notion.so.example.com`, `my-bucket.example.com`,
-//    `example.com/x.file.notion.so`, `example.com/bucket`, and
-//    `file.notion.so@evil.com` are other people's hosts and paths. Notion
-//    writes its links with a scheme, so a bare `file.notion.so/…` in prose,
+//    link's end. So `file.notes.example.example.com`, `my-bucket.example.com`,
+//    `example.com/x.file.notes.example`, `example.com/bucket`, and
+//    `file.notes.example@evil.com` are other people's hosts and paths. the vendor
+//    writes its links with a scheme, so a bare `file.notes.example/…` in prose,
 //    and a link with userinfo, are a person's and come back as written.
 //    Quoted and angle-delimited filenames may contain unmatched brackets;
 //    inline Markdown filenames respect balanced and escaped parentheses.
@@ -418,7 +418,7 @@ function sanitizeUrl(value: string, credentials = true): string {
 
 /** Where a vendor stores the files it signs. */
 export interface FileHosts {
-  /** Hosts matched whole or as a parent domain: `file.notion.so` covers `img.file.notion.so`. */
+  /** Hosts matched whole or as a parent domain: `file.notes.example` covers `img.file.notes.example`. */
   readonly domains: readonly string[];
   /** S3 buckets, virtual-hosted or as the first path segment on an S3 endpoint. Never all of S3. */
   readonly buckets: readonly string[];
@@ -554,7 +554,7 @@ function afterPort(text: string, at: number): number {
 /**
  * Whether a host or path segment ends at `at`: a slash, query, or fragment
  * however spelled, or the link's end. Never another
- * name character or an `@`: `file.notion.so@evil.com` names userinfo, and
+ * name character or an `@`: `file.notes.example@evil.com` names userinfo, and
  * `prod-files-secure@other` and `prod-files-securex` are other segments.
  */
 function boundary(text: string, at: number): boolean {
@@ -775,7 +775,7 @@ function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean)
 }
 
 /**
- * `text` with every pre-signed link withheld: at one of `hosts` (Notion's
+ * `text` with every pre-signed link withheld: at one of `hosts` (the vendor's
  * file storage, say), its whole query and fragment; anywhere, a signing
  * parameter's value. Everything else comes back byte for byte.
  */
@@ -917,7 +917,7 @@ function decodeLinkText(text: string, percent = true): string {
  * closing `)`, so `[f](…?a=1)[redacted]` is ordinary text after it.
  * The word alone (`unredacted`) or the placeholder away from a file link is
  * a person's text. When `hosts` is supplied, require its actual authority
- * to match that policy, preserving Notion's external-proxy boundary.
+ * to match that policy, preserving the vendor's external-proxy boundary.
  */
 export function carriesWithheldLink(value: unknown, hosts?: FileHosts): boolean {
   const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];

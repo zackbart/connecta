@@ -1680,7 +1680,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     ["require('fs')", "ReferenceError", "Imports, require, and filesystem access"],
     ["fs.readFile('secret')", "ReferenceError", "Imports, require, and filesystem access"],
     ["callTool('reader.read')", "ReferenceError", "Use connecta.call"],
-    ["mixpanel.query()", "ReferenceError", "Use connecta.call"],
+    ["posthog.query()", "ReferenceError", "Use connecta.call"],
     ["skills()", "ReferenceError", "Use connecta.call"],
     ["await connecta.guide('usage')", "TypeError", "Use connecta.call"],
     ["await connecta.skills('usage')", "TypeError", "Use connecta.call"],

@@ -145,7 +145,7 @@ type GuardedResponseMapper<T> = (response: GuardedResponse, ctx: ConnectorContex
 export interface GuardedFetchOptions {
   /**
    * Provider name as it appears in normalized failure prose — "Cloudflare",
-   * "Notion". Used for messages only; it is never parsed.
+   * "the vendor". Used for messages only; it is never parsed.
    */
   provider: string;
   /** Provider-declared auth/metadata work that cannot perform the logical write. */

@@ -212,7 +212,7 @@ const absent = {
 //    whose label is credential-named, environment-variable containers, and
 //    URLs with userinfo or credential query parameters.
 //
-// Residual risk, as with Infisical: a secret a person typed into a free-text
+// Residual risk, as with a secret store: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 
 // Embedded URL verdict (#812): reviewed paths + global signing parameters.

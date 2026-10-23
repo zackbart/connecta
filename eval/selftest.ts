@@ -516,7 +516,7 @@ async function play(
         ...(typeof use.input.code === "string"
           ? {
               code: use.input.code.replace(
-                /tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|github/gi,
+                /tracker|ci|assets|oauth|supabase|revenuecat|github/gi,
                 "wrong_destination",
               ),
             }
@@ -779,7 +779,7 @@ if (failures) {
       }
     }
     for (const result of [
-      await session.call("skills", { name: "connector:mixpanel" }),
+      await session.call("skills", { name: "connector:revenuecat" }),
       await session.call("execute_code", { code: 'async () => await connecta.call("ci.no_such_tool", {})' }),
       await session.call("execute_code", {
         code: 'async () => await connecta.call("ci.get_run", { runId: "invalid" })',
@@ -788,7 +788,7 @@ if (failures) {
       if (hidden.test(result.text)) throw new Error("Code skill/error leaked a hidden route");
       const textValue = result.isError
         ? JSON.parse(result.text)
-        : { name: "connector:mixpanel", format: "text", text: result.text };
+        : { name: "connector:revenuecat", format: "text", text: result.text };
       if (JSON.stringify(textValue) !== JSON.stringify(result.structured))
         throw new Error("Connector skill/error text and structured guidance differ");
     }

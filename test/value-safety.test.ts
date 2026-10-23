@@ -227,8 +227,8 @@ describe("value-safety engine", () => {
 
 describe("pre-signed links in free text", () => {
   const HOSTS = {
-    domains: ["file.notion.so", "secure.notion-static.com", "notionusercontent.com"],
-    buckets: ["prod-files-secure", "secure.notion-static.com"],
+    domains: ["file.notes.example", "secure.notes.example", "notescontent.example"],
+    buckets: ["prod-files-secure", "secure.notes.example"],
   };
   const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
   const S3 = `https://${HOST}`;
@@ -257,13 +257,13 @@ describe("pre-signed links in free text", () => {
   it.each([
     [
       "a subdomain of a file host",
-      "https://x.file.notion.so/a.png?sig=1",
-      `https://x.file.notion.so/a.png?${REDACTED}`,
+      "https://x.file.notes.example/a.png?sig=1",
+      `https://x.file.notes.example/a.png?${REDACTED}`,
     ],
     [
       "a dual-stack path-style bucket",
-      "https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?v=1",
-      `https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?${REDACTED}`,
+      "https://s3.dualstack.us-west-2.amazonaws.com/secure.notes.example/a.png?v=1",
+      `https://s3.dualstack.us-west-2.amazonaws.com/secure.notes.example/a.png?${REDACTED}`,
     ],
     [
       "a dual-stack virtual-hosted bucket with an encoded query",
@@ -289,22 +289,22 @@ describe("pre-signed links in free text", () => {
 
   // Review round 3, finding 3: the exact placeholder, decoded, and never the word.
   it.each([
-    "https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
-    "https://file.notion.so/f/f/a.png?&amp;#91;redacted&amp;#93;",
-    "![a](https://file.notion.so/f/f/a\\).png?[redacted])",
+    "https://file.notes.example/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
+    "https://file.notes.example/f/f/a.png?&amp;#91;redacted&amp;#93;",
+    "![a](https://file.notes.example/f/f/a\\).png?[redacted])",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
     expect(carriesWithheldLink({ text }, HOSTS)).toBe(true);
   });
 
   const PROXIES = [
-    "https://example.com/image?url=https://file.notion.so/f/a.png?table=block&id=42&width=400",
-    "https://example.com/image?url=//file.notion.so/f/a.png?table=block&id=42",
-    "https://example.com/proxy/https://file.notion.so/f/a.png?id=42",
-    "/proxy/https://file.notion.so/f/a.png?id=42",
-    "image?url=//file.notion.so/f/a.png?id=42",
-    "https://example.com/image?url=https%3A%2F%2Ffile.notion.so%2Fa.png%3Fid%3D42",
-    "/proxy/https:&#47;&#47;file.notion.so/f/a.png?id=42",
-    "/proxy/https:\\/\\/file.notion.so/f/a.png?id=42",
+    "https://example.com/image?url=https://file.notes.example/f/a.png?table=block&id=42&width=400",
+    "https://example.com/image?url=//file.notes.example/f/a.png?table=block&id=42",
+    "https://example.com/proxy/https://file.notes.example/f/a.png?id=42",
+    "/proxy/https://file.notes.example/f/a.png?id=42",
+    "image?url=//file.notes.example/f/a.png?id=42",
+    "https://example.com/image?url=https%3A%2F%2Ffile.notes.example%2Fa.png%3Fid%3D42",
+    "/proxy/https:&#47;&#47;file.notes.example/f/a.png?id=42",
+    "/proxy/https:\\/\\/file.notes.example/f/a.png?id=42",
     `https://example.com/image?url=https://${HOST}/a.png?id=42`,
     "https://example.com/image?url=https://s3.amazonaws.com/prod-files-secure/a.png?id=42",
   ];
@@ -327,9 +327,9 @@ describe("pre-signed links in free text", () => {
   });
 
   it.each([
-    ["host names in one unbroken link", `https://${"file.notion.so/".repeat(200_000)}`],
-    ["one Markdown destination of open parentheses", `[a](https://file.notion.so/${"(".repeat(2_000_000)}`],
-    ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notion.so/a?b)[redacted]`],
+    ["host names in one unbroken link", `https://${"file.notes.example/".repeat(200_000)}`],
+    ["one Markdown destination of open parentheses", `[a](https://file.notes.example/${"(".repeat(2_000_000)}`],
+    ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notes.example/a?b)[redacted]`],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {
@@ -471,9 +471,9 @@ describe("reviewed text policy and global admission (#846)", () => {
   });
 
   it("INV-5: inspects object keys and array values with the same host policy as strings", () => {
-    const input = "https://file.notion.so/a?%5Bredacted%5D";
+    const input = "https://file.notes.example/a?%5Bredacted%5D";
     const external = "https://external.example/a?%5Bredacted%5D";
-    const hosts = { domains: ["file.notion.so"], buckets: [] };
+    const hosts = { domains: ["file.notes.example"], buckets: [] };
     for (const value of [{ [input]: "link" }, { nested: ["safe", { [input]: "link" }] }, [[input]]]) {
       expect(carriesWithheldLink(value)).toBe(true);
       expect(carriesWithheldLink(value, hosts)).toBe(true);

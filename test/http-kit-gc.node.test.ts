@@ -3,7 +3,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import { tithely } from "../src/providers/tithely/index.js";
-import { infisical } from "../src/providers/infisical/index.js";
+import { machineLogin as machineConnector } from "./fixtures/machine-login.js";
 import { openRequest } from "../src/runtime/call.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -34,7 +34,7 @@ async function oneRequest(connector: Connector, machineLogin: boolean): Promise<
   const request = openRequest(ctx.requestScope);
   try {
     await connector.callTool(
-      machineLogin ? "list_projects" : "get_charge",
+      machineLogin ? "list_items" : "get_charge",
       machineLogin ? {} : { chargeId: "ch_1" },
       ctx,
     );
@@ -61,7 +61,7 @@ it.each([false, true])(
     );
     // A deployment keeps its connector for its whole lifetime; its first call builds the typed client.
     const connector = machineLogin
-      ? infisical("giving", { purpose: "Deployment secrets" })
+      ? machineConnector("giving")
       : tithely("giving", { purpose: "Weekly giving reports", environment: "live" });
     const refs = await oneRequest(connector, machineLogin);
     const held = () => Object.keys(refs).filter((name) => refs[name]!.deref() !== undefined);

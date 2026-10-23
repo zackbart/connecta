@@ -10,12 +10,12 @@
 //     "options": { "depth": 2, "descriptions": 160, "maxEnum": 50 } }
 //
 // `"vendored": true` pins a document the vendor publishes only in another
-// format (Mixpanel's YAML): `digest` is still of the vendor's bytes, which
+// format (the vendor's YAML): `digest` is still of the vendor's bytes, which
 // `providers:check` compares, and the index is compiled offline from the
 // reviewed JSON conversion in `evidence/openapi.document.json`. A vendored
 // pin moves by review, never by `--record`.
 //
-// `options.versionHeader` names a header parameter (Notion's `Notion-Version`)
+// `options.versionHeader` names a header parameter (the vendor's `the vendor-Version`)
 // whose single value is the API version, for documents whose `info.version`
 // is not the version a request sends. `options.valueSafety` (`true`, or the
 // detector's options) also writes the candidates file
@@ -312,8 +312,8 @@ function tagOf(operation, path) {
 
 /**
  * The API version a vendor sends in a request header rather than in
- * `info.version`: Notion's document says `1.0.0` and declares the real version
- * as the single enum value of a required `Notion-Version` header parameter.
+ * `info.version`: the vendor's document says `1.0.0` and declares the real version
+ * as the single enum value of a required `the vendor-Version` header parameter.
  * Read from `components.parameters` and every operation, it must name exactly
  * one value, so a document offering two versions fails generation instead of
  * pinning one silently.

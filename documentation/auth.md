@@ -751,7 +751,7 @@ and reports.
 ## Pools
 
 A pool is a named slice of the deployment served to its members: people at
-`/mcp/<pool>` and agents at `/agent/<pool>`. A support team sees three Notion
+`/mcp/<pool>` and agents at `/agent/<pool>`. A support team sees two notes
 tools and Linear, a calendar bot sees one tool, both over the same credentials. Private remote catalog
 cache entries remain partitioned by the admitted pool.
 
@@ -765,12 +765,12 @@ createConnecta({
   agents: ["calendar-bot"],
   pools: {
     support: {
-      tools: ["linear", "notion.search_pages", "notion.fetch_page"],
+      tools: ["linear", "notes.search_pages", "notes.fetch_page"],
       members: supportTeam,
-      description: "Support tools: Linear and three Notion reads. Ask a maintainer for anything else.",
+      description: "Support tools: Linear and two notes reads. Ask a maintainer for anything else.",
     },
     calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
-    reporting: { tools: ["linear", "notion"], readOnly: true, members: analysts },
+    reporting: { tools: ["linear", "notes"], readOnly: true, members: analysts },
   },
   connectors, executor,
 });
@@ -1379,15 +1379,12 @@ before sending unless active calls for that tool prove it is a read. A
 write or an unproven call fails non-retryable with `writeOutcome: "unknown"`:
 tracking loss cannot establish whether an earlier message already sent it.
 
-Google Workspace and Infisical also use the invocation's served classification
+Google Workspace also uses the invocation's served classification
 before considering the HTTP method. A write-classified GET is never replayed
 after a 401; a read-classified POST may replay once. Without a served verdict,
-these transports use GET as read and other methods as write. Google drops the
+this transport uses GET as read and other methods as write. Google drops the
 rejected token for the next deliberate call and retains `auth_required` with
-`writeOutcome: "unknown"` and the operator handoff. Infisical renews the login
-for a later call: the write then fails as a non-retryable
-`connector_call_failed` with an unknown outcome, and a login that fails keeps
-`auth_required` with the operator handoff and the unknown outcome. So does a
+`writeOutcome: "unknown"` and the operator handoff. A renewed credential does not establish the write outcome. So does a
 recovery that hands back the token the write sent, such as one already spent
 on an earlier 401 in the same request: it renewed nothing.
 
@@ -1819,7 +1816,7 @@ createConnecta({
   // Administers shared credentials, agent tokens, and activity.
   maintainers: ["owner-id"],
   // Each member connects their own account on personal_linear.
-  pools: { team: { tools: ["shared_docs", "personal_linear", "notion.search_pages"], members: team } },
+  pools: { team: { tools: ["shared_docs", "personal_linear", "notes.search_pages"], members: team } },
   connectors, executor,
   readOnly: false, // required: true refuses every write call
 });
@@ -2449,8 +2446,7 @@ The output boundary's guarantee is K = 8 units, and these are its exact limits:
   wherever it appears, raw, under JSON escapes, or in a decoded base64 view.
 - Pieces shorter than eight units are matched only where they are adjacent:
   the projection joins neighbouring leaves (array items, text blocks), and
-  provider lanes join one source's runs (one Slides shape's text runs, one
-  Notion rich-text array, one Docs document's text). Pieces shorter than eight
+  provider lanes join one source's runs (one Slides shape's text runs, one Docs document's text). Pieces shorter than eight
   units that are not adjacent, such as the two seven-unit halves of a fourteen-
   unit value in two Slides shapes with other leaves between them, survive: they
   are indistinguishable from ordinary text without redacting ordinary words.

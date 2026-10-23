@@ -5,7 +5,7 @@ For Stripe, Vercel, Cloudflare, Notion, Mixpanel, and GitHub hosted connections,
 use the [current hosted MCP migration guide](./hosted-mcp-migration.md).
 The API migrations below remain applicable.
 
-Use this upgrade guide when moving a Stripe, Notion, Vercel, or Cloudflare
+Use this upgrade guide when moving a Stripe, Vercel, or Cloudflare
 deployment from 0.30 to 0.31, where `auth` selects each provider's
 implementation.
 [Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
@@ -104,125 +104,6 @@ documentation search, the implementation planner, reports, and feedback exist
 only on the hosted OAuth connection. Programs calling those tools on a key
 connector need an OAuth connector beside it. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
 
-## Notion
-
-Every `notion()` call must now name `auth`. 0.30 defaulted to hosted MCP and
-selected the REST interface with `surface: "api"`; `surface` is gone:
-
-```ts
-connectors: [
-  notion("notion", { purpose: "Workspace content as the signed-in user", auth: { type: "oauth" } }),
-  notion("notion_bot", { purpose: "Internal integration content", auth: { type: "token" } }),
-]
-```
-
-| 0.30 configuration                                                                                                                        | Now                                                                                                                  |
-| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| No `surface`, or `surface: "mcp"`                                                                                                         | `auth: { type: "oauth" }`. Same endpoint, reviewed catalog, grant, and optional `callAdmission`.                     |
-| `surface: "api"`                                                                                                                          | `auth: { type: "token" }`. The integration token stored for the same connector id carries over; run its Test action. |
-| `credentialLabel` or `defaultPageSize`                                                                                                    | Token only, as before. Under OAuth they are refused by name at construction.                                         |
-| `integration_search`, `_get_page`, `_get_page_content`, `_get_data_source_schema`, `_query_data_source`, `_create_page`, `_append_blocks` | Unchanged names and contracts. `integration_append_blocks` also takes `checklist`.                                   |
-| `integration_get_database`                                                                                                                | `notion_api_read` `GET /v1/databases/{database_id}`.                                                                 |
-| `integration_get_page_property`                                                                                                           | `notion_api_read` `GET /v1/pages/{page_id}/properties/{property_id}`; `truncated_properties` names it.               |
-| `integration_list_users`, `integration_get_self`                                                                                          | `notion_api_read` `GET /v1/users` or `GET /v1/users/me`.                                                             |
-| `integration_list_comments`, `integration_add_comment`                                                                                    | `notion_api_read` `GET /v1/comments`; `notion_api_write` `POST /v1/comments`.                                        |
-| `integration_update_page_properties`, `integration_trash_page`                                                                            | `notion_api_write` `PATCH /v1/pages/{page_id}` with `properties`, or `in_trash` to trash or restore.                 |
-
-Both auth variants accept optional `callAdmission`. On a token connector it
-replaces the whole default policy of 180 calls per minute and 3 concurrent
-per runtime. Malformed policies throw at construction. Notion's
-[request limits](https://developers.notion.com/reference/request-limits) allow
-600 requests per minute per connection on Business and Enterprise and 180 on
-other plans, with a separate workspace-wide limit shared by all connections.
-Account for other runtimes and tools that make multiple HTTP requests when
-choosing an override.
-
-The token connector gains Connecta's generic REST tools over Notion's pinned
-API index (`notion_api_search`, `notion_api_details`, `notion_api_read`,
-`notion_api_write`), so every public operation is reachable with the bot's
-token: views, page moves and Markdown, meeting notes, custom agents and
-sessions, file uploads by `external_url`, and data source changes. Every call
-is checked against the index before it is sent, and results arrive as
-`{ status, data, page? }`. The read-only POST queries (search, data source,
-meeting notes, agents, sessions, and session events) use `notion_api_read`;
-`page.in: "body"` says their cursor goes back in the body. Notion's OAuth token
-endpoints and multipart file sends are refused. The 0.29 reconciliation table
-and the `surface: "api"` complement rules no longer apply to Notion.
-
-Lost per mode. A token connector acts as the integration bot, never as a
-person, and has none of the hosted MCP's search across connected apps, page
-duplication, team and skill search, attachment downloads, or page-to-skill
-conversion. An OAuth connector acts as the user, and has none of the generic
-REST tools or the `integration_*` projections and authoring helpers. Configure
-both ids when a deployment needs both; a failed call is never retried on the
-other. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
-
-## Vercel
-
-Every `vercel()` call must now name `auth`. `surface` is gone, and so are the
-0.29 ownership rules that made the REST complement refuse whatever the hosted
-server also covered: each implementation is complete on its own.
-
-```ts
-connectors: [
-  vercel("vercel", { purpose: "Deployment diagnosis", auth: { type: "oauth" } }),
-  vercel("vercel_rest", { purpose: "Production apps", auth: { type: "token" }, teamId: "team_…" }),
-]
-```
-
-| 0.30 configuration                                                    | Now                                                                                                                                                           |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `surface`, or `surface: "mcp"`                                     | `auth: { type: "oauth" }`. Same endpoint, reviewed catalog, and grant.                                                                                        |
-| `surface: "api"` with `teamId` or `baseUrl`                           | `auth: { type: "token" }` with the same options. A token stored for the same connector id carries over; run its Test action.                                  |
-| `defaultPageSize`                                                     | Removed (it already had no effect). Pass `limit` in `query`, and follow `page.next` as `page.param`.                                                          |
-| `teamId` or `baseUrl` with OAuth                                      | Refused by name at construction.                                                                                                                              |
-| `vercel_api_get`, `vercel_api_mutate`                                 | `vercel_api_read` and `vercel_api_write`: `query` is a JSON object, not name/value pairs, and `teamId: null` replaces `personalAccount: true`.                |
-| `verify_project_domain`, `remove_project_domain`, `delete_deployment` | `vercel_api_write` with the operation from `vercel_api_search`, such as `DELETE /v13/deployments/{id}`.                                                       |
-| `vercel_api_upload` with any path and headers                         | `vercel_api_upload` on octet-stream operations in the index (`POST /v2/files`, project avatars, Remote Cache artifacts); Connecta computes `x-vercel-digest`. |
-
-The token connector serves `vercel_api_search`, `vercel_api_details`,
-`vercel_api_read`, and `vercel_api_write` over Vercel's OpenAPI document,
-pinned by content hash because Vercel does not version it. Every call is
-checked against the pinned index before it is sent, and results arrive as
-`{ status, data, page? }`. It adds `list_teams`, the value-safe environment
-variable tools (`list_project_env_vars`, `upsert_project_env_var`,
-`update_project_env_var`, `delete_project_env_var`),
-`get_deployment_build_logs` (build events, never following), `get_runtime_logs`
-(the runtime stream, stopped after `waitMs` or `maxRows`), and
-`vercel_api_upload`.
-
-Value safety follows a reviewed table bundled with the connector.
-Every operation whose response schema in the pinned spec may carry a credential
-or a stored secret has a verdict: refused (credential minting, Connect
-authorization, decrypted environment values, Global Config items and tokens,
-domain transfer codes, KMS signing), redacted at reviewed field paths
-(environment values, protection-bypass secrets, deploy hook URLs, drain and
-webhook headers and destination URLs beyond their origin, external route and
-redirect destinations beyond their origin, the args and values of every header,
-cookie, and query rule (route transforms and conditions, firewall conditions), team invite codes, synced Global Config items, URL credentials, and signing
-secrets, including the one a new webhook or drain returns at creation), or
-safe with a reason. Detection reads field names, field descriptions, and
-operation descriptions, so a project transfer request (whose code lets another
-team claim the project) is refused too. A test fails when
-a newly flagged operation has no verdict. A key-name heuristic covers every
-other body as defense in depth. Secret-family failures carry fixed messages
-instead of Vercel's text, and every other reviewed operation also withholds that
-text ([value safety](#value-safety-on-every-key-connector)). Read or rotate withheld secrets in the Vercel
-dashboard. A domain move-out is refused because its answer is a transfer token.
-
-Lost on the token path: documentation search, runtime error clusters, toolbar
-threads, agent runs, web analytics summaries, purchase quotes and guided
-purchases, `deploy_to_vercel`, and access grants for protected URLs exist only
-on the hosted OAuth connection. Programs calling those tools need an OAuth
-connector beside the token connector.
-
-The hosted connection now lists `filter_project_envs`, `get_project_env`,
-`create_project_env`, and `edit_project_env`, which 0.29 hid. The two reads can
-return decrypted values, so they are reviewed as writes, and a `readOnly`
-endpoint refuses them. Vercel admits only reviewed and approved MCP clients to its
-hosted server; if authorization is refused for that reason, the deployment
-needs Vercel's approval or a token connector. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
-
 ## Cloudflare
 
 Every `cloudflare()` call must now name `auth`. 0.30 defaulted to hosted MCP
@@ -320,16 +201,7 @@ one; read or rotate withheld secrets in the vendor's dashboard.
   Failures of credential-bearing operations keep Stripe's type, code, and
   param but not its message. Create client-side sessions and links from your
   own server code.
-- **Notion** REST results and error text withhold the whole query and
-  fragment of canonical Notion file links, including links embedded in
-  Markdown and async task results. External proxy URLs keep their bytes;
-  AWS and Google signing-parameter values are withheld at any host. Writes
-  carrying the plain or encoded `[redacted]` placeholder in a Notion file
-  link's own query or fragment are refused before dispatch. See the
-  connector runtime guide through `connecta.skill("connector:<id>")` in `execute_code` for recognized hosts and scanning limits. Credential-named fields,
-  including database properties named like credentials, read as
-  `"[redacted]"`. Failures of the OAuth, file upload, bot user, and agent
-  operations keep Notion's code but not its message.
+
 - **Vercel** replaces environment values with `"[redacted]"` instead of
   dropping the field, and withholds Vercel's error text for every reviewed
   operation and every operation whose request takes a credential-named

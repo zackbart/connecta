@@ -25,7 +25,7 @@ import { write } from "../src/http/tools.js";
 import { connect, get, vendor } from "../src/http/vendor.js";
 import { InvocationService } from "../src/invocation.js";
 import { renewedAfterUnauthorized, tracksEveryRequest } from "../src/provider-call.js";
-import { infisical } from "../src/providers/infisical/index.js";
+import { machineLogin } from "./fixtures/machine-login.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
@@ -235,11 +235,11 @@ describe("Q8 over nested api() calls, custom wrappers and programs", () => {
           vi.fn(async (input: unknown) => {
             if (String(input).endsWith("/login"))
               return Response.json({ accessToken: `token-${++logins}`, expiresIn: 3600 });
-            requests.push("Infisical POST");
+            requests.push("Machine POST");
             return new Response(null, { status: 401 });
           }),
         );
-        const secrets = infisical("secrets", { purpose: "Review" });
+        const secrets = machineLogin("secrets");
         const send = guardedFetch({
           provider: "Other",
           baseUrl: "https://other.example",
@@ -265,13 +265,8 @@ describe("Q8 over nested api() calls, custom wrappers and programs", () => {
                 handler: async (_args, ctx) => {
                   await secrets
                     .callTool(
-                      "create_secret",
-                      {
-                        projectId: "11111111-1111-4111-8111-111111111111",
-                        environment: "dev",
-                        secretName: "X",
-                        secretValue: "value",
-                      },
+                      "create_item",
+                      {},
                       ctx,
                     )
                     .catch(() => undefined);
@@ -305,7 +300,7 @@ describe("Q8 over nested api() calls, custom wrappers and programs", () => {
         expect(error).not.toHaveProperty("retryAfterMs");
         expect(error).not.toHaveProperty("nextAction");
         expect(error.message).not.toContain("Retry both writes");
-        expect(requests).toEqual(["Infisical POST", "Other POST"]);
+        expect(requests).toEqual(["Machine POST", "Other POST"]);
         expect(logins).toBe(2);
       }
     },

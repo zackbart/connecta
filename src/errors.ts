@@ -27,7 +27,7 @@ export type ConnectorCallErrorCode =
    * re-authorizing, or repairing arguments, and a program looping over ids can
    * continue past it where `connector_call_failed` would abort. Map a status
    * here only where the provider distinguishes absence from a permission gap —
-   * where it does not (Notion's `object_not_found` covers both), the honest
+   * where it does not (the vendor's `object_not_found` covers both), the honest
    * code stays `connector_call_failed` or `auth_required` with a message that
    * states the ambiguity (H11).
    */

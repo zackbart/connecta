@@ -24,22 +24,6 @@ export const REST_SCENARIOS = [
     "prompt": "Refund $12.50 of charge ch_3Prefund000 on stripe_sandbox, and confirm the refund id and its status.",
   },
   {
-    "id": "801-notion-append-checklist",
-    "title": "Find a Notion page by title and append a checklist",
-    "measures":
-      "Whether the agent resolves the page with a title search, appends once at the end with to-do blocks over the token connector, and does not create a duplicate on retry.",
-    "prompt":
-      "In the notion_bot workspace, find the page about the Q3 offsite and append a checklist with: Book venue, Send invites, Order catering. Tell me the page id and confirm the three items were added.",
-  },
-  {
-    "id": "801-notion-rows-past-first-page",
-    "title": "Count filtered Notion rows across pages from a database URL",
-    "measures":
-      "Whether the agent turns a database id into its data source, filters by the schema's exact option name, and follows the body-borne cursor through every filtered page.",
-    "prompt":
-      "How many tasks in our Roadmap database (https://www.notion.so/acme/0f1e2d3c4b5a69788796a5b4c3d2e1f0) are marked Blocked? List their titles.",
-  },
-  {
     "id": "801-cloudflare-dns-ttl",
     "title": "Fix one DNS record's TTL on Cloudflare",
     "measures":
