@@ -407,6 +407,7 @@
           {
             "organizationId": "org_1",
             "name": "Grace Church",
+            "widgetId": "999",
             "ownerAccountId": "user_owner",
             "website": "https://grace.example",
             "phoneNumber": "5551231234",

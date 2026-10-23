@@ -494,6 +494,9 @@ export const errors: VendorErrors = {
   facts: () => ({}),
   detail: ({ body, status }) => detailFor(body, status),
   unreadable: "Tithe.ly returned a successful response that is not JSON.",
+  // Reviewed meanings for the generated Errors convention: an unknown id answers 404 or an in-band
+  // fail, neither of which tells absence from reach, and Tithe.ly documents no conflict.
+  meanings: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
   statuses: {
     401: () => ({
       code: "auth_required",

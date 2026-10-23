@@ -180,6 +180,8 @@ export const tithely = defineApiProvider<TithelyOptions>({
   maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
   headers: { Accept: "application/json" },
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
+  // No Tithe.ly write takes an idempotency key; construction checks this against the write tools.
+  idempotencyKey: false,
   credential: KEY_PAIR_CREDENTIAL,
   authenticate,
   errors,

@@ -48,6 +48,7 @@ const Address = Schema.Struct({ streetAddress: Text, city: Text, state: Text, po
 const Organization = Schema.Struct({
   organizationId: Text,
   name: Text,
+  widgetId: Text,
   ownerAccountId: Text,
   website: Text,
   phoneNumber: Text,
@@ -435,6 +436,8 @@ function projectOrganization(value: unknown): typeof Organization.Type {
   return compact({
     organizationId: text(organization["organization_id"]),
     name: text(organization["name"]),
+    // The giving widget id embeds Tithe.ly's giving form; the step-2 eval showed agents need it (decision 0014).
+    widgetId: text(organization["widget_id"]),
     ownerAccountId: text(organization["account_id"]),
     website: text(organization["website"]),
     phoneNumber: text(organization["phone_number"]),
