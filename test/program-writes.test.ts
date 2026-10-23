@@ -12,6 +12,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -160,6 +161,7 @@ describe("a writable endpoint's program Stripe refund whose reply is lost", () =
     );
     const sent: Headers[] = [];
     const realFetch = globalThis.fetch;
+    const previousTransport = configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(new Headers(init?.headers));
       return new Response(
@@ -199,6 +201,7 @@ describe("a writable endpoint's program Stripe refund whose reply is lost", () =
         uncertainCall: { address: "billing.stripe_api_write", recovery: { idempotencyKey: key } },
       });
     } finally {
+      configureGuardedTransport(previousTransport);
       globalThis.fetch = realFetch;
     }
   });

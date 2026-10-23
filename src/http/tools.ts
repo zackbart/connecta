@@ -268,6 +268,16 @@ function build<I extends Input, O extends Schema.Top>(
             }),
           ),
           Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
+          Effect.catchDefect((defect) => {
+            try {
+              if (!dispatches.some(({ operation }) => operation && map.withholds(operation))) return Effect.die(defect);
+            } catch {
+              // A broken visibility hook cannot authorize exposing a defect's text.
+            }
+            // Cover the program and every hook, including those in error mapping.
+            // api() preserves ConnectorCallError messages, so shed that identity.
+            return Effect.die(new Error("A provider hook withholding vendor text failed."));
+          }),
           Effect.provideContext(lease.services),
           // The call's finalizer: every capability kept from it refuses after this.
           Effect.ensuring(Effect.sync(lease.close)),

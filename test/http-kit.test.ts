@@ -1412,66 +1412,142 @@ describe("value-safety boundary (decision 0010, B.4)", NODE, () => {
       "RequestRefused",
       "ResponseTooLarge",
       "ConnectorCallErrorDefect",
+      "RedactDefect",
+      "FactsDefect",
+      "DetailDefect",
+      "ClassifyDefect",
+      "StatusRuleDefect",
+      "WordsDefect",
+      "PlainThrowDefect",
+      "EffectDieDefect",
+      "ProgramDefect",
+      "VisibilityDefect",
     ] as const) {
-      const connection = connect(ACME_API, guardedClient(OPTIONS), {
-        errors: {
-          ...VENDOR,
-          detail: (input) => {
-            expect(input).not.toHaveProperty("body");
-            return "Vendor text withheld.";
+      for (const withheld of tagged.endsWith("Defect") && tagged !== "VisibilityDefect" ? [true, false] : [true]) {
+        const defect = () => new ConnectorCallError("invalid_args", "stored-secret-never-sent");
+        const mappingDefect = [
+          "FactsDefect",
+          "DetailDefect",
+          "ClassifyDefect",
+          "StatusRuleDefect",
+          "WordsDefect",
+        ].includes(tagged);
+        answers = [() => Response.json({ message: "stored-secret-never-sent" }, { status: mappingDefect ? 400 : 200 })];
+        const connection = connect(ACME_API, guardedClient(OPTIONS), {
+          errors: {
+            ...VENDOR,
+            facts: (tokens) => {
+              if (tagged === "FactsDefect") throw new ConnectorCallError("invalid_args", JSON.stringify(tokens));
+              return {};
+            },
+            classify: [
+              () => {
+                if (tagged === "ClassifyDefect") throw defect();
+                return undefined;
+              },
+            ],
+            statuses: {
+              ...VENDOR.statuses,
+              400: () => {
+                if (tagged === "StatusRuleDefect") throw defect();
+                return {
+                  code: "invalid_args",
+                  ...(tagged === "WordsDefect"
+                    ? {
+                        words: () => {
+                          throw defect();
+                        },
+                      }
+                    : {}),
+                };
+              },
+            },
+            detail: (input) => {
+              if (withheld) expect(input).not.toHaveProperty("body");
+              if (tagged === "DetailDefect") throw defect();
+              return "Vendor text withheld.";
+            },
           },
-        },
-        safety: resultSafety({
-          reviewed: { redact: (data) => data, withholdsErrors: (op) => op.template === "/keys" },
-          sensitiveFields: { names: [], choice: "drop" },
-        }),
-        result: (_body, answer) => {
-          switch (tagged) {
-            case "StatusFailure":
-            case "SpoofedStatusFailure":
-              return Effect.fail(
-                new StatusFailure({
-                  status: 400,
-                  headers: answer.headers,
-                  operation: tagged === "StatusFailure" ? answer.operation : { method: "GET", template: "/public" },
-                  body: { message: "stored-secret-never-sent" },
-                }),
-              );
-            case "UnreadableBody":
-              return Effect.fail(new UnreadableBody());
-            case "Refusal":
-              return Effect.fail(
-                new Refusal({ error: new ConnectorCallError("invalid_args", "stored-secret-never-sent") }),
-              );
-            case "RequestRefused":
-              return Effect.fail(new RequestRefused({ message: "stored-secret-never-sent" }));
-            case "ResponseTooLarge":
-              return Effect.fail(new ResponseTooLarge({ detail: "stored-secret-never-sent" }));
-            case "ConnectorCallErrorDefect":
-              return Effect.sync(() => {
-                throw new ConnectorCallError("invalid_args", "stored-secret-never-sent");
-              });
-          }
-        },
-      });
-      const tool = read(connection, {
-        name: "withheld",
-        description: "A withheld envelope.",
-        input: Schema.Struct({}),
-        output: Schema.Unknown,
-        run: () => connection.send(keys, {}).pipe(Effect.map(({ data }) => data)),
-      });
-      const result = await through(tool, {});
-      expect(result).toHaveProperty("error");
-      expect(String(result.error)).not.toContain("stored-secret-never-sent");
-      if (tagged === "StatusFailure" || tagged === "SpoofedStatusFailure")
-        expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
-      else if (tagged === "UnreadableBody")
-        expect(result.error).toMatchObject({ code: "connector_call_failed", message: VENDOR.unreadable });
-      else
-        expect(result.error).toMatchObject({
-          message: expect.stringContaining("text is withheld"),
+          safety: resultSafety({
+            reviewed: {
+              redact: (data) => {
+                if (tagged === "RedactDefect") throw new ConnectorCallError("invalid_args", JSON.stringify(data));
+                return data;
+              },
+              withholdsErrors: (op) => {
+                if (tagged === "VisibilityDefect") throw defect();
+                return withheld && op.template === "/keys";
+              },
+            },
+            sensitiveFields: { names: [], choice: "drop" },
+          }),
+          result: (_body, answer) => {
+            switch (tagged) {
+              case "StatusFailure":
+              case "SpoofedStatusFailure":
+                return Effect.fail(
+                  new StatusFailure({
+                    status: 400,
+                    headers: answer.headers,
+                    operation: tagged === "StatusFailure" ? answer.operation : { method: "GET", template: "/public" },
+                    body: { message: "stored-secret-never-sent" },
+                  }),
+                );
+              case "UnreadableBody":
+                return Effect.fail(new UnreadableBody());
+              case "Refusal":
+                return Effect.fail(
+                  new Refusal({ error: new ConnectorCallError("invalid_args", "stored-secret-never-sent") }),
+                );
+              case "RequestRefused":
+                return Effect.fail(new RequestRefused({ message: "stored-secret-never-sent" }));
+              case "ResponseTooLarge":
+                return Effect.fail(new ResponseTooLarge({ detail: "stored-secret-never-sent" }));
+              case "ConnectorCallErrorDefect":
+                return Effect.sync(() => {
+                  throw defect();
+                });
+              case "PlainThrowDefect":
+                throw defect();
+              case "EffectDieDefect":
+                return Effect.die(defect());
+              default:
+                return Effect.succeed(_body);
+            }
+          },
         });
+        const tool = read(connection, {
+          name: "withheld",
+          description: "A withheld envelope.",
+          input: Schema.Struct({}),
+          output: Schema.Unknown,
+          run: () =>
+            connection.send(keys, {}).pipe(
+              Effect.map(({ data }) => {
+                if (tagged === "ProgramDefect") throw defect();
+                return data;
+              }),
+            ),
+        });
+        const result = await through(tool, {});
+        expect(result).toHaveProperty("error");
+        if (!withheld) {
+          expect(result.error, tagged).toMatchObject({
+            code: "invalid_args",
+            message: expect.stringContaining("stored-secret-never-sent"),
+          });
+          continue;
+        }
+        expect(JSON.stringify(result.error), tagged).not.toContain("stored-secret-never-sent");
+        if (tagged === "StatusFailure" || tagged === "SpoofedStatusFailure")
+          expect(result.error).toMatchObject({ code: "invalid_args", message: "Vendor text withheld." });
+        else if (tagged === "UnreadableBody")
+          expect(result.error).toMatchObject({ code: "connector_call_failed", message: VENDOR.unreadable });
+        else
+          expect(result.error).toMatchObject({
+            message: expect.stringContaining("text is withheld"),
+          });
+      }
     }
   });
 
@@ -1900,6 +1976,68 @@ async function through(tool: ApiTool, args: Record<string, unknown>): Promise<{ 
       (error: unknown) => ({ error }),
     );
 }
+
+it("INV-1 INV-9: a 421 advises retry only for a positive read, with one dispatch", WORKERS, async () => {
+  for (const test of [
+    { name: "read", method: "GET", served: "read", override: false, code: "unavailable", retryable: true },
+    {
+      name: "write",
+      method: "POST",
+      served: "write",
+      override: false,
+      code: "connector_call_failed",
+      retryable: false,
+    },
+    {
+      name: "GET served as write",
+      method: "GET",
+      served: "write",
+      override: false,
+      code: "connector_call_failed",
+      retryable: false,
+    },
+    {
+      name: "GET overriding its method",
+      method: "GET",
+      served: "read",
+      override: true,
+      code: "connector_call_failed",
+      retryable: false,
+    },
+  ] as const) {
+    sent = [];
+    answers = [() => Response.json({}, { status: 421 })];
+    const connection = acme();
+    const tool = read(connection, {
+      name: "misdirected",
+      description: "A request answered 421.",
+      review: "Fixture POST reads; physical writes still cannot be retried.",
+      input: Schema.Struct({}),
+      output: Schema.Unknown,
+      run: () =>
+        connection
+          .sendPath({
+            method: test.method,
+            path: "/keys",
+            template: "/keys",
+            ...(test.override ? { headers: { "X-HTTP-Method-Override": "POST" } } : {}),
+          })
+          .pipe(Effect.map(({ data }) => data)),
+    });
+    const ctx = context();
+    attachCallClassification(ctx, test.served);
+    const error = await tracksEveryRequest(apiConnector("acme", { tools: [tool] }))
+      .callTool(tool.name, {}, ctx)
+      .catch((failure: unknown) => failure);
+    expect(error, test.name).toMatchObject({
+      code: test.code,
+      retryable: test.retryable,
+      message: "Acme returned HTTP 421.",
+    });
+    expect(sent, test.name).toHaveLength(1);
+    expect(sent[0]?.method, test.name).toBe(test.method);
+  }
+});
 
 /** A write tool whose program is `run`, called as the deployment serves it. */
 async function invoke(

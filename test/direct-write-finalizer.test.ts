@@ -8,7 +8,7 @@
 // a mapper or parser throws after a 2xx, or after a 408, is no evidence.
 // Round 12: nor is a refusing status the provider itself reads as
 // `unavailable` (Stripe's 424), inside a call ledger or outside one.
-import { afterEach, describe, expect, inject, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
@@ -18,6 +18,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
+import { configureGuardedTransport } from "../src/guarded-transport.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -31,7 +32,12 @@ const BASE = "https://connecta.example";
 /** Long enough for loopback to deliver the request before it fires. */
 const DEADLINE_MS = 200;
 
+beforeEach(() => {
+  configureGuardedTransport({ send: async (url, init) => globalThis.fetch(url, init) });
+});
+
 afterEach(() => {
+  configureGuardedTransport(undefined);
   vi.unstubAllGlobals();
 });
 
