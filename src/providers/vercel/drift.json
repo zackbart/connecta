@@ -1290,7 +1290,7 @@
         },
         {
           "operation": "DELETE /v1/integrations/log-drains/{id}",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/deletes-the-integration-log-drain-with-the-provided-id-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
         },
@@ -1386,25 +1386,25 @@
         },
         {
           "operation": "GET /v1/log-drains",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/retrieves-a-list-of-all-the-log-drains-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:0709134d4b0498b791590be4a242f1b637b546f59f59178726c1ee716b06b711"
         },
         {
           "operation": "POST /v1/log-drains",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/creates-a-configurable-log-drain-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:2e7a0b8ee88b815c7b2e9909b9077237001f61197e47da017151ce05762ea435"
         },
         {
           "operation": "GET /v1/log-drains/{id}",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/retrieves-a-configurable-log-drain-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:9f56e6377a2548d52740baec4ccc530591c07d279a8f45bd0637c0ffd704cc24"
         },
         {
           "operation": "DELETE /v1/log-drains/{id}",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/deletes-a-configurable-log-drain-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:f3de1049456cd28832b6c1df4439141eb93f6406a4d1f23a29b8e60ab2298ec4"
         },
@@ -2562,13 +2562,13 @@
         },
         {
           "operation": "GET /v2/integrations/log-drains",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/retrieves-a-list-of-integration-log-drains-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:38b00887519bdff3238d34f928cefeefc10900930ee2a61a23ce30317b382bf5"
         },
         {
           "operation": "POST /v2/integrations/log-drains",
-          "page": "https://openapi.vercel.sh/",
+          "page": "https://vercel.com/docs/rest-api/logdrains/creates-a-new-integration-log-drain-deprecated",
           "specRevision": "0.0.1",
           "contract": "sha256:7aaf0cfbee1b388d2dc5130f417025c5d082393bea4afb63de351f2b59c33713"
         },

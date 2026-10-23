@@ -10,9 +10,12 @@ supersedes: none
 
 Stripe, Vercel, Cloudflare, Notion and Mixpanel retain their pinned, compact
 operation indexes during C.6. Adapt dispatch, errors, value safety and tool
-construction to the Effect provider kit. Named tools and probes declare typed
-operations; generic hatches retain `OperationIndex.resolve/check` and send
-through `Connection.sendPath`. Derive manifest operations from the same index,
+construction to the Effect provider kit. Typed operations serve probes and
+named dispatch where the adapter uses the typed client. Stripe's probe uses
+`getAccount`; its named account and balance tools use `sendStripe` and
+`Connection.sendPath`, as its generic hatches do. Its `getBalance` declaration
+does not imply typed dispatch. Generic hatches retain
+`OperationIndex.resolve/check`. Derive manifest operations from the same index,
 with canonical vendor parameter names and no second operation list.
 
 Do not adopt `@effect/openapi-generator` as the family's contract compiler.

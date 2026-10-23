@@ -94,8 +94,8 @@ export const docs = defineApiProvider<DocsOptions>({
   title: "Google Docs",
   readme: "Google Docs",
   bundle: {
-    baselineGzip: 334788,
-    note: "./providers/docs remeasures at 334,788 B gzip in C.7 (decision 0010), on a local Node 26 measure: the provider now runs on the Effect provider kit through the shared Google Workspace layer, from 27,149 B for the api() provider. A deployment pays the kit once, for its first kit provider. Reported against this baseline, not capped (#899).",
+    baselineGzip: 335623,
+    note: "./providers/docs measures 335,623 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
