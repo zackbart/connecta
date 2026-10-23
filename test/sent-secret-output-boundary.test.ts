@@ -145,12 +145,18 @@ describe("the output boundary's projection", () => {
     },
   );
 
-  it("INV-5: object keys holding a K-unit run are renamed; framing keys and keys only partly a short value are kept", () => {
+  it("INV-5: object keys holding a K-unit run are renamed; framing keys, keys only partly a short value and a vendor body's own keys are kept", () => {
     const secrets = set(TOKEN);
     const out = redactAgentOutput(secrets, { [`x${TOKEN.slice(4, 4 + K)}`]: 1, content: [], type: "text" });
     expect(Object.keys(out)).toEqual([`x${MARK}`, "content", "type"]);
     const short = set("pin");
     expect(short.redact({ pin: 1, pinCode: 2 })).toEqual({ [MARK]: 1, pinCode: 2 });
+    // Value safety matches a vendor body's fields by name; JSON inside a string is a value.
+    expect(short.redact({ pin: "pin", list: [{ pin: 1 }] }, "values")).toEqual({ pin: MARK, list: [{ pin: 1 }] });
+    expect(secrets.redact({ [TOKEN]: TOKEN, nested: JSON.stringify({ [TOKEN]: 1 }) }, "values")).toEqual({
+      [TOKEN]: MARK,
+      nested: JSON.stringify({ [MARK]: 1 }),
+    });
   });
 
   it("INV-5: a normalized number holding a K-unit run is withheld; a tiny private value matches only a whole number", () => {
@@ -361,6 +367,30 @@ describe("provider sites the boundary cannot cover", () => {
       const notes = result.properties["Notes"]!.rich_text as Array<{ plain_text: string }>;
       expect(notes.every((run) => run.plain_text === MARK)).toBe(true);
     }
+    // The projection reads `rich_text` by the name Notion gave it, whatever private value it holds (#703).
+    const paragraph = "Public paragraph text";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        object: "list",
+        has_more: false,
+        next_cursor: null,
+        results: [
+          {
+            object: "block",
+            id: "b1",
+            type: "paragraph",
+            has_children: false,
+            paragraph: { rich_text: [{ type: "text", plain_text: paragraph, text: { content: paragraph } }] },
+          },
+        ],
+      }),
+    );
+    const blocks = (await connector.callTool(
+      "integration_get_page_content",
+      { block_id: "p1" },
+      { ...context("ich_te"), credential: keyed(TOKEN).credential! },
+    )) as { results: Array<Record<string, unknown>> };
+    expect(blocks.results).toEqual([{ id: "b1", type: "paragraph", depth: 0, text: paragraph, has_children: false }]);
   });
 
   it("INV-5: Slides raw text runs split below K with style between them leave no piece", async () => {
@@ -393,7 +423,7 @@ describe("provider sites the boundary cannot cover", () => {
   });
 
   it.each(["planning-center", "tithely"])(
-    "INV-5: %s redacts a short private value padded with spaces before trimming its error text",
+    "INV-5: %s redacts a short private value padded with spaces before trimming its error text, and drops a sensitive field beside a private value inside its name",
     async (name) => {
       const value = " Q8!w "; // Below K, so the boundary's fragment matching cannot stand in for the site.
       vi.stubGlobal("fetch", async () =>
@@ -424,6 +454,35 @@ describe("provider sites the boundary cannot cover", () => {
         .catch((caught: unknown) => caught)) as Error;
       expect(error.message).toContain(MARK);
       expect(error.message).not.toContain("Q8!w");
+      // Value safety drops the field by the name the vendor gave it (#703).
+      const pco = name === "planning-center";
+      vi.stubGlobal("fetch", async () =>
+        Response.json(
+          pco
+            ? {
+                data: [
+                  {
+                    type: "WebhookSubscription",
+                    id: "1",
+                    attributes: { name: "people.v2.events.person.created", authenticity_secret: "VENDOR-HELD-0001" },
+                  },
+                ],
+                meta: {},
+              }
+            : { name: "Public church", bank: { account_number: "VENDOR-HELD-0002" } },
+        ),
+      );
+      const held = { ...ctx, requestScope: {} };
+      requestSentSecrets(held).arguments({ value: pco ? "ecre" : "bank" }, schema);
+      const out = shown(
+        await connector.callTool(
+          pco ? "pco_api_get" : "tithely_api_get",
+          { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organization" },
+          held,
+        ),
+      );
+      expect(out).toContain(pco ? "people.v2.events.person.created" : "Public church");
+      expect(out).not.toContain("VENDOR-HELD");
     },
   );
 

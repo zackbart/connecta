@@ -2055,10 +2055,26 @@ arguments permissively; step 2 replaces those schemas with Effect declarations.
 The bridge also forwards optional fixed write steps, which the kit snapshots
 at construction. Docs declares a create and its optional initial-text edit as
 separate steps, each sent at most once.
+Drive's two-request reads also declare fixed steps: `get_file_content` uses
+`metadata` and `content`, and non-root `list_folder_items` uses `folder` and
+`files`. These reads still send both GETs when deployment classification
+serves them as writes; each step can leave only once.
 The layer's request adapter keeps the legacy wording of a served write whose
 answer proves nothing (no answer, a 5xx, a redirect, or an unreadable 2xx) and
 reports how far a failed request got. The core still decides every write's
 outcome.
+Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
+kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
+and create/append recovery advice. Its projections and the Google failure
+classifier read fields by the names Google gave them, which the kit's parse pass
+keeps. Its catalog and guide stay unchanged in step 1.
+
+Google's request adapter also offers a reviewed binary send. It marks the
+operation `googleBytes` for the product's `binaryBodies` selector and forwards
+an optional `maxBytes` to the success-only prefix reader. It returns the
+connection's safe answer: bytes pass the existing sent-secret encoding before
+any result hook, then value safety before the product reads them. Products
+keep charset decoding and special error-status interpretation local.
 
 An optional `tagConnector(connector, options)` records construction facts
 about the built connector, once, before the registry can serve it. Its return
@@ -2143,6 +2159,9 @@ still pass sent-secret redaction, the result hook and value safety before any
 projection. The callback runs with an empty Effect context, receives a copy of
 the chunk, and cannot transform the answer. Its defects receive the same
 withheld-text rewrap as result hooks. Invocation cancellation remains authoritative.
+Reviewed binary prefixes retain bytes through the same sent-secret encoding
+as whole binary bodies, without a text decode. Only that binary path accepts
+a zero-byte prefix, which keeps empty bytes and the ordinary prefix facts.
 
 CCB's static OAuth bridge opts into `oauthWrite401: "grant"`. An optional
 `refreshOnce` mapper receives only renewal facts and reuses the core's
@@ -2160,13 +2179,23 @@ maps an oversized challenge using its own recorded dispatch, including a
 declared-size refusal before the response wrapper exists. It never renews
 after that refusal.
 
-A vendor may declare `fixedKeys`, mapping exact public JSON wire keys to
-one-line review reasons. Construction freezes the declaration. Parsed JSON
-keeps those keys so projections can navigate their schema; every value and
-every other key still passes sent-secret redaction. Text, binary bodies and
-JSON embedded inside text retain ordinary redaction. Docs uses this for the
-fixed fields its document rendering navigates, including `paragraph` and
-`textRun`; a private argument matching either name cannot erase the structure.
+The kit's parse pass redacts every value of a parsed JSON body and keeps its
+object keys. Value safety drops and redacts fields, and projections navigate
+them, by the names the vendor gave them, so a private argument sharing part of
+a name such as `client_secret` or `paragraph` cannot hide the field from the
+rule that withholds it or erase the structure a projection reads. A result
+hook that redacts again does so the same way. Text, binary bodies and JSON
+embedded inside a string are values and retain ordinary redaction. Response
+headers keep their names, which `Headers` must accept, and their values are
+redacted together. Keys are checked once value safety and the projections have
+run: the `api()` boundary and the invocation apply payload rules to the
+connector's result and failures, keys included, before the agent boundary's
+pass. Until then a key is the vendor's text, so a provider that serializes part
+of a body and cuts it redacts the serialized text first (`redactBeforeCut`), as
+Breeze's in-band failure text and Slides' raw chunks do. A private value of four
+to seven units that a vendor echoes only as an object key is therefore matched
+once, at the connector boundary; the agent boundary's envelope rules do not
+match values that short.
 
 Credential descriptions may derive from validated connection options, and a
 probe may reject a successful answer that identifies the wrong account.

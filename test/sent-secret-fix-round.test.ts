@@ -54,6 +54,77 @@ describe("bounded reads match original spans", () => {
     expect(result.content).toContain(MARKER);
     expect(result.content).not.toContain("private-begin");
     expect(leaks(JSON.stringify(result), privateValue)).toBe(false);
+
+    // Private values matching wire keys must leave the projection, paging
+    // and error decisions intact. The public result boundary still redacts.
+    for (const key of ["files", "nextPageToken", "incompleteSearch", "emailAddress", "trashed"]) {
+      stubGoogle(() => ({
+        files: [{ id: "f1", name: "F", owners: [{ emailAddress: "alice@example.com" }], trashed: false }],
+        nextPageToken: "next-1",
+        incompleteSearch: true,
+      }));
+      const listing: any = await connector.callTool("search_files", {}, privateContext(key));
+      expect(listing[key === "files" ? MARKER : "files"]).toEqual([
+        { id: "f1", name: "F", owners: ["alice@example.com"], [key === "trashed" ? MARKER : "trashed"]: false },
+      ]);
+      expect(listing.page.hasMore).toBe(true);
+      expect(listing.page.nextCursor).toBeTypeOf("string");
+      expect(listing[key === "incompleteSearch" ? MARKER : "incompleteSearch"]).toBe(true);
+    }
+
+    const restore = configureGuardedTransport({ send: (url, init) => globalThis.fetch(url, init) });
+    try {
+      for (const key of ["parents", "rent"]) {
+        const requests: { method: string; removeParents: string | null }[] = [];
+        stubGoogle((url, init) => {
+          requests.push({ method: init.method ?? "GET", removeParents: url.searchParams.get("removeParents") });
+          return init.method === "PATCH" ? { id: "f1", parents: ["new-1"] } : { parents: ["old-1"] };
+        });
+        const moved: any = await connector.callTool(
+          "move_file",
+          { fileId: "f1", folderId: "new-1" },
+          privateContext(key),
+        );
+        expect(requests).toEqual([
+          { method: "GET", removeParents: null },
+          { method: "PATCH", removeParents: "old-1" },
+        ]);
+        expect(moved[key === "parents" ? MARKER : "pa[redacted]s"]).toEqual(["new-1"]);
+      }
+    } finally {
+      configureGuardedTransport(restore);
+    }
+
+    for (const key of ["error", "errors", "details", "reason", "status", "message"]) {
+      // Exercise both arrays and the status fallback, all with the same prose.
+      for (const reason of [
+        { errors: [{ reason: "userRateLimitExceeded" }] },
+        { details: [{ reason: "userRateLimitExceeded" }] },
+        { status: "RATE_LIMIT_EXCEEDED" },
+      ]) {
+        stubGoogle(() => Response.json({ error: { message: "Request refused.", ...reason } }, { status: 403 }));
+        await expect(connector.callTool("get_file", { fileId: "f1" }, privateContext(key))).rejects.toMatchObject({
+          code: "rate_limited",
+          retryable: true,
+        });
+      }
+      stubGoogle((url) =>
+        url.pathname.endsWith("/export")
+          ? Response.json(
+              { error: { message: "Request refused.", errors: [{ reason: "exportSizeLimitExceeded" }] } },
+              { status: 403 },
+            )
+          : { id: "d1", mimeType: "application/vnd.google-apps.document" },
+      );
+      await expect(connector.callTool("get_file_content", { fileId: "d1" }, privateContext(key))).rejects.toMatchObject(
+        {
+          code: "connector_call_failed",
+          retryable: false,
+          message:
+            "Google Drive: Request refused. The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.",
+        },
+      );
+    }
   });
 
   it("INV-5: an aligned Basic username cannot hide an unfinished encoded credential pair", () => {
@@ -149,7 +220,7 @@ describe("every Notion representation", () => {
 });
 
 describe("redact before normalization or extraction", () => {
-  it("INV-5: Breeze redacts a private amount before decimal parsing can shorten its representation", async () => {
+  it("INV-5: Breeze redacts a private amount before decimal parsing can shorten its representation, and a private key before its failure text is cut", async () => {
     const value = "12345.6700";
     vi.stubGlobal("fetch", async () => Response.json([{ id: "1", amount: value }]));
     const connector = breeze("giving", { subdomain: "example", purpose: "Giving records" });
@@ -164,6 +235,20 @@ describe("redact before normalization or extraction", () => {
     expect(result.totalAmount).toBeNull();
     expect(result.contributions[0].amount).toBe(MARKER);
     expect(JSON.stringify(result)).not.toContain("12345.67");
+    // The kit keeps keys for value safety (#703); the 300-unit cut would leave five units of this one.
+    const key = "Q8!wZ2?vR7#k";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ success: false, errors: { [`${"x".repeat(293)}${key}`]: "no" } }),
+    );
+    const error = (await connector
+      .callTool(
+        "list_contributions",
+        { start: "2026-01-01", end: "2026-01-31" },
+        { ...privateContext(key), credential: keyed().credential! },
+      )
+      .catch((caught: unknown) => caught)) as Error;
+    expect(error.message).toContain("Breeze reported a failure");
+    expect(error.message).not.toContain(key.slice(0, 4));
   });
 
   it("INV-5: Gmail does not extract a private charset fragment into its fallback notice", async () => {
@@ -184,7 +269,7 @@ describe("redact before normalization or extraction", () => {
     expect(leaks(JSON.stringify(result), value.trim())).toBe(false);
   });
 
-  it("INV-5: Slides redacts joined shape and table sources before trimming or flattening whitespace", async () => {
+  it("INV-5: Slides redacts joined shape and table sources before trimming or flattening whitespace, and keeps the wire and error keys a private value names", async () => {
     const value = "private-slide\tcontent\nsensitive-value\n";
     const text = {
       textElements: [{ textRun: { content: value.slice(0, 10) } }, { textRun: { content: value.slice(10) } }],
@@ -227,6 +312,28 @@ describe("redact before normalization or extraction", () => {
     );
     expect(keyed.elements).toEqual([{ objectId: "elem1", kind: MARKER, text: "Public retained text" }]);
     expect(JSON.stringify(keyed)).not.toContain("shape");
+
+    // Google's error keys keep their names too, so private values naming them leave the classification.
+    stubGoogle(() =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            message: "Rate Limit Exceeded",
+            status: "PERMISSION_DENIED",
+            errors: [{ reason: "userRateLimitExceeded", domain: "usageLimits" }],
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    const named = privateContext();
+    for (const value of ["reason", "errors", "status"])
+      requestSentSecrets(named).arguments({ private: value }, privateSchema);
+    const limited = await connector
+      .callTool("get_page", { presentationId: "deck1", pageObjectId: "s1" }, named)
+      .catch((error: unknown) => error);
+    expect(limited).toMatchObject({ code: "rate_limited", retryable: true });
   });
 
   it("INV-5: a Google 400 cannot trim the beginning off a private value before its 500-character cap", async () => {
