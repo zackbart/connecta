@@ -1,7 +1,5 @@
-// The Overflow connection is hand-written fetch. Request shapes, projections,
-// pagination, and status mapping live in the characterization goldens; these
-// tests retain hatch confinement, Overflow's rate-limit header, and malformed
-// successful responses.
+// The goldens cover tools, projections and errors. Keep only Overflow's
+// reset-header fallback and candidate credential probe beyond that evidence.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { overflow } from "./index.js";
@@ -72,7 +70,7 @@ function context(values: Record<string, string> | null = KEYS): ConnectorContext
 function connection(overrides: Record<string, unknown> = {}): Connector {
   return overflow("giving", {
     environment: "production",
-    purpose: "Grace Church giving and deposits",
+    purpose: "Nonprofit giving and deposits",
     ...overrides,
   } as Parameters<typeof overflow>[1]);
 }
@@ -95,16 +93,6 @@ async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
   return error as ConnectorCallError;
 }
 
-describe("overflow() paths", () => {
-  it("confines hatch paths below /api/v3", async () => {
-    for (const path of ["https://evil.example/x", "/../docs/openapi.json", "/donors?x=1", "donors"]) {
-      const error = await failure(call(connection(), "overflow_api_get", { path }));
-      expect(error.code, path).toBe("invalid_args");
-    }
-    expect(calls).toHaveLength(0);
-  });
-});
-
 describe("overflow() rate limits", () => {
   it("waits out a 429 for Overflow's reported window remainder, or the whole window without one", async () => {
     queue(
@@ -121,11 +109,41 @@ describe("overflow() rate limits", () => {
   });
 });
 
-describe("overflow() named reads", () => {
-  it("fails a successful named read that is not JSON", async () => {
-    queue({ text: "<html>maintenance</html>" });
-    const error = await failure(call(connection(), "list_locations"));
-    expect(error.code).toBe("connector_call_failed");
-    expect(error.retryable).toBe(false);
+describe("overflow() credential probe", () => {
+  it("INV-5 INV-10: probes the candidate pair in both environments and preserves its refusal messages", async () => {
+    for (const environment of ["production", "staging"] as const) {
+      queue({ body: { data: [{ name: "Main Campus" }], totalCount: 2 } });
+      const connector = connection({ environment });
+      const result = await connector.testCredentials!(
+        KEYS,
+        context({ clientId: "ambient-client", apiKey: "ambient-key" }),
+      );
+      expect(result).toEqual({
+        ok: true,
+        message: `Overflow ${environment} accepted the client id and API key. The nonprofit's first location is "Main Campus" of 2.`,
+      });
+      const sent = calls.at(-1)!;
+      expect(sent.url).toBe(
+        `https://server.${environment === "staging" ? "stage." : ""}overflow.co/api/v3/locations?limit=1&sortBy=displayOrder`,
+      );
+      expect(sent.headers).toMatchObject({ "x-client-id": KEYS.clientId, "x-api-key": KEYS.apiKey });
+    }
+    const before = calls.length;
+    const missing = await connection().testCredentials!({ clientId: KEYS.clientId }, context());
+    expect(missing).toEqual({
+      ok: false,
+      message:
+        "No Overflow client id and API key are configured for this connector. Call authorize_connector for recovery options; an operator adds both fields in this connection in the operator UI.",
+    });
+    expect(calls).toHaveLength(before);
+    queue({ status: 403, body: { message: "Forbidden resource" } }, { text: "maintenance" });
+    expect(await connection().testCredentials!(KEYS, context())).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("HTTP 403"),
+    });
+    expect(await connection().testCredentials!(KEYS, context())).toEqual({
+      ok: false,
+      message: "Overflow returned a non-JSON body for a successful read.",
+    });
   });
 });

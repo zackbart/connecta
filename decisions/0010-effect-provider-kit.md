@@ -1359,6 +1359,7 @@ export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // the vendor con
 export function operations(vendor: Vendor): string[];          // manifest's operations as "METHOD /path", sorted: ProviderKitFacts.operations
 ```
 
+- A vendor may declare `manifestBase` to prefix only its published manifest paths; its transport operations remain relative to the confined base URL.
 - Schemas use the stable `effect` `Schema`. Query struct field order is wire
   order. Optional fields use `Schema.optionalKey`.
 - **Integers use the kit's `Integer`**: any finite whole number, rendered

@@ -75,6 +75,8 @@ type RequestOf<Op extends Operation> = Part<"params", Op["~Params"]> &
 export interface Vendor {
   // The group type is erased here: kit callers name operations, never groups.
   readonly api: HttpApi.HttpApi<string, any>;
+  /** Published specification path prefix; transport operations remain relative to the confined base. */
+  readonly manifestBase?: string;
   /** Reviewed text contracts, selected by status and canonical operation; absent means JSON only. */
   readonly textBodies?: {
     readonly review: string;
@@ -83,14 +85,28 @@ export interface Vendor {
 }
 
 /** Group a vendor's operations into one API, the source of its client and its manifest. */
-export function vendor(name: string, ...operations: readonly [Operation, ...Operation[]]): Vendor {
+export function vendor(
+  declaration: string | { readonly name: string; readonly manifestBase?: string },
+  ...operations: readonly [Operation, ...Operation[]]
+): Vendor {
+  const name = typeof declaration === "string" ? declaration : declaration.name;
+  const manifestBase = typeof declaration === "string" ? undefined : declaration.manifestBase;
+  if (
+    manifestBase !== undefined &&
+    (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(manifestBase) ||
+      manifestBase.split("/").some((segment) => segment === "." || segment === ".."))
+  )
+    throw new Error("A vendor manifestBase must be an absolute path prefix without dot segments or a trailing slash.");
   if (
     !name.trim() ||
     operations.length === 0 ||
     new Set(operations.map((op) => op.identifier)).size !== operations.length
   )
     throw new Error("A vendor needs a name and operations with unique identifiers.");
-  return { api: HttpApi.make(name).add(HttpApiGroup.make("operations", { topLevel: true }).add(...operations)) };
+  return {
+    api: HttpApi.make(name).add(HttpApiGroup.make("operations", { topLevel: true }).add(...operations)),
+    ...(manifestBase === undefined ? {} : { manifestBase }),
+  };
 }
 
 /** One answer, after every check: the only thing a provider reads. */
@@ -349,7 +365,15 @@ function parse(
 
 /** The endpoint manifest drift checks compare against the vendor's published contract. */
 export function manifest(vendor: Vendor): OpenApi.OpenAPISpec {
-  return OpenApi.fromApi(vendor.api);
+  const document = OpenApi.fromApi(vendor.api);
+  return vendor.manifestBase === undefined
+    ? document
+    : {
+        ...document,
+        paths: Object.fromEntries(
+          Object.entries(document.paths).map(([path, operation]) => [vendor.manifestBase + path, operation]),
+        ),
+      };
 }
 
 const METHODS = ["get", "head", "post", "put", "patch", "delete"] as const;

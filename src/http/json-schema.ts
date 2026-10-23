@@ -23,7 +23,8 @@
 //   construction.
 // - An array's own keywords (`maxItems`, `description`) come before `items`.
 // - `anyOf` over primitive branches with disjoint types, each constrained only
-//   by keywords that apply to its own type, becomes one `type` array. JSON
+//   by keywords that apply to its own type, becomes one `type` array. Bare
+//   object and array branches also collapse. JSON
 //   Schema applies `minLength` only to strings and `minimum` only to numbers,
 //   so the two spellings accept exactly the same values.
 //
@@ -41,6 +42,9 @@ const OWN_KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   number: NUMERIC,
   boolean: new Set(),
   null: new Set(),
+  // Bare object/array unions are exact too; constrained branches keep anyOf.
+  object: new Set(),
+  array: new Set(),
 };
 
 /**
@@ -240,7 +244,7 @@ function normalize(value: unknown): unknown {
   return out;
 }
 
-/** One `type` array for primitive branches whose constraints cannot collide, else undefined. */
+/** One `type` array for disjoint branches whose constraints cannot collide, else undefined. */
 function collapse(branches: Node[]): Node | undefined {
   const types: string[] = [];
   const merged: Node = {};
