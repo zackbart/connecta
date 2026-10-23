@@ -1,8 +1,8 @@
 // Node-only: the shared value-safety harness reads the maintainer detection script in scripts/.
-import candidates from "./value-safety.candidates.json";
-import source from "./openapi.source.json";
+import candidates from "./evidence/value-safety.json";
+import source from "./evidence/openapi.json";
 import { openapi } from "./openapi.generated.js";
-import { NOTION_VALUE_SAFETY } from "./value-safety.js";
+import { NOTION_VALUE_SAFETY } from "./safety.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { describeValueSafety } from "../../../test/fixtures/value-safety.js";

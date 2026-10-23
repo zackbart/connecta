@@ -1354,7 +1354,7 @@ export function vendor(name: string, ...operations: [Operation, ...Operation[]])
 export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: {
   readonly errors: VendorErrors;
   readonly safety: ResultSafety;                             // required: the value-safety boundary
-  readonly result?: (body, answer: { status; headers; operation; withheld }) => Effect.Effect<unknown, HttpFailure>; // unwrap or in-band refusal
+  readonly result?: (body, answer: { status; headers; operation; withheld }) => Effect.Effect<unknown, HttpFailure, RequestSecrets>; // unwrap or in-band refusal
 }): Connection<R>;                                           // { provider, errors, safety, send, sendPath }
 type Send<R> = <Op extends Operation>(operation: Op, request: RequestOf<Op>, options?: {
   readonly effect?: "read";                                  // an auxiliary lookup inside a write tool; never inferred
@@ -1366,6 +1366,8 @@ export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // the vendor con
 export function operations(vendor: Vendor): string[];          // manifest's operations as "METHOD /path", sorted: ProviderKitFacts.operations
 ```
 
+- Result hooks may require only the active call's `RequestSecrets` at settle time to protect joined text; no caller context is copied or cached (C.6 Notion).
+- Opt-in error `presence` declarations snapshot and freeze fixed paths at construction, resolve only in the sent-secret-redacted error body, and expose only `present` (nonempty string) and `nonBlank` (after trimming) booleans; withholding and token-bound commit details stay unchanged (C.6 Notion).
 - A vendor may declare `manifestBase` to prefix only its published manifest paths; its transport operations remain relative to the confined base URL.
 - Schemas use the stable `effect` `Schema`. Query struct field order is wire
   order. Optional fields use `Schema.optionalKey`.
@@ -1971,3 +1973,14 @@ The previous draft asked eight questions. The orchestrator decided them:
   That provider then stays on the old path until the kit grows the primitive.
   A kit change that needs a verdict the core does not give is a change to
   the core contract, decided there, never a kit rule.
+
+Notion's reviewed `displayFacts` limits retain the recovery ids needed for
+a bounded write while leaving the default eight-item wording bound unchanged.
+These and the presence declarations are captured at construction; values come
+only from the already redacted error body.
+
+Notion's retry-delay metadata also uses reviewed numeric paths: only finite,
+nonnegative numbers or nonblank numeric strings reach the rules. Blank values
+are absent, an accepted step-1 difference from legacy's zero-delay coercion.
+Recovery ids remain complete under the response-byte ceiling, even when a
+vendor returns more than its documented per-write child count.

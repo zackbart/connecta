@@ -1,16 +1,25 @@
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { apiConnector } from "../../connectors/api-connector.js";
-import { tracksEveryRequest } from "../../provider-call.js";
-import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
-import type { Connector, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { byAuth, removedHostedMcp } from "../_shared/rest/dispatch.js";
-import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
+import { defineApiProvider } from "../../http/provider.js";
+import { CALL_ADMISSION } from "../../provider.js";
+import type { ConnectorCallAdmissionPolicy } from "../../types.js";
+import { removedHostedMcp } from "../_shared/rest/dispatch.js";
+import {
+  authenticate,
+  DEFAULT_PAGE_SIZE,
+  errors,
+  MAX_PAGE_SIZE,
+  NOTION_MAX_RESPONSE_BYTES,
+  NotionApi,
+  probe,
+  result,
+  safety,
+  usageGuide,
+} from "./api.js";
+import { notionTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
+import { NOTION_API_BASE_URL, NOTION_API_VERSION } from "./lib/config.js";
 
-export { NOTION_API_BASE_URL, NOTION_API_VERSION } from "./rest.js";
-
-/** Lean by default: smaller than Notion's 100 so a first read stays cheap. */
-const DEFAULT_PAGE_SIZE = 25;
+export { NOTION_API_BASE_URL, NOTION_API_VERSION };
 
 /**
  * Conservative default for every Notion plan: 180 calls per minute, with
@@ -72,24 +81,6 @@ export interface NotionTokenOptions extends NotionCommonOptions {
 /** Notion's maintained REST connector uses integration-token auth. */
 export type NotionOptions = NotionTokenOptions;
 
-function instructionsSection(instructions: string | undefined): string {
-  const text = instructions?.trim();
-  return text ? `\n## ${skill.instructionsHeading}\n\n${text}\n` : "";
-}
-
-/**
- * Both guides are marked `required` for one reason: a Notion database is a
- * container, and the rows and schema live in a data source inside it. The id
- * in a database URL is a database id, and passing it to a query or a row
- * create fails — a trap no input schema can teach, so the guide has to.
- */
-function tokenUsageGuide(purpose: string, instructions: string | undefined): string {
-  const { key, shared } = skill.fragments;
-  return `# Notion usage
-
-Workspace purpose: ${purpose}${key}${shared}${instructionsSection(instructions)}`;
-}
-
 const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options notion() accepts, selected by `auth.type`; see `assertKnownOptions`. */
@@ -109,41 +100,10 @@ const NOTION_OPTIONS = variants(
   ["oauth"],
 );
 
-function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider: ProviderContext): Connector {
-  const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
-    throw new Error(`notion() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
-  }
-  const rest = notionRest(defaultPageSize);
-  return tracksEveryRequest(
-    apiConnector(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? "Notion integration",
-      description: `Notion internal integration: ${options.purpose}`,
-      credential: {
-        label: options.credentialLabel ?? "Notion integration token",
-        description:
-          "Internal integration token from notion.so/profile/integrations. Every page or database the agent should reach must also be shared with that integration, and its capabilities decide which tools succeed — comment capabilities are off by default.",
-        placeholder: "Paste the integration token",
-      },
-      testCredential: rest.testCredential,
-      callAdmission: options.callAdmission === undefined ? NOTION_ADMISSION : options.callAdmission,
-      usageGuide: {
-        content: tokenUsageGuide(options.purpose, options.instructions),
-        summary:
-          "Internal integration over REST. Flattened reads, authoring helpers, and the pinned API index for the rest.",
-        required: true,
-      },
-      tools: rest.tools,
-    }),
-  );
-}
-
-/** Maintained API connection. Hosted MCP uses a separate generic remoteMcp() entry. */
-export const notion = defineProvider<NotionOptions>({
+/** Maintained API connection. Hosted MCP uses a separate generic connection. */
+export const notion = defineApiProvider<NotionOptions>({
   name: "notion",
   title: "Notion",
-  kind: "api",
   readme: "Notion",
   bundle: {
     "baselineGzip": 211946,
@@ -152,5 +112,29 @@ export const notion = defineProvider<NotionOptions>({
   },
   skill,
   options: NOTION_OPTIONS,
-  create: byAuth<NotionOptions>({ oauth: removedHostedMcp, token: notionToken }),
+  displayTitle: () => "Notion integration",
+  description: (options) => `Notion internal integration: ${options.purpose}`,
+  vendor: NotionApi,
+  baseUrl: (options) => {
+    if (options.auth.type !== "token") return removedHostedMcp();
+    return NOTION_API_BASE_URL;
+  },
+  headers: { "Notion-Version": NOTION_API_VERSION },
+  maxResponseBytes: NOTION_MAX_RESPONSE_BYTES,
+  timeoutMs: 60_000,
+  pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
+  defaultCallAdmission: NOTION_ADMISSION,
+  credential: (options) => ({
+    label: options.credentialLabel ?? "Notion integration token",
+    description:
+      "Internal integration token from notion.so/profile/integrations. Every page or database the agent should reach must also be shared with that integration, and its capabilities decide which tools succeed — comment capabilities are off by default.",
+    placeholder: "Paste the integration token",
+  }),
+  authenticate,
+  errors,
+  safety: () => safety,
+  result,
+  probe,
+  guide: usageGuide,
+  tools: notionTools,
 });

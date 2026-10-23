@@ -266,20 +266,29 @@ const SURFACES: Surface[] = [
   },
 ];
 
-/** The options that time a surface's call out. */
-function timingOut(surface: Surface): { signal?: AbortSignal; timeoutMs?: number } {
-  if (surface.timeout === "caller signal") return { signal: AbortSignal.timeout(DEADLINE_MS) };
-  if (surface.timeout === "SDK deadline") return { timeoutMs: DEADLINE_MS };
-  return {};
+/** Arm a caller's timeout after delivery, so first-call construction cannot expire it before dispatch. */
+async function timingOut(surface: Surface): Promise<Started> {
+  if (surface.timeout !== "caller signal")
+    return surface.start("write", surface.timeout === "SDK deadline" ? { timeoutMs: DEADLINE_MS } : {});
+  const { started, controller } = await startedAfterDelivery(surface, "write");
+  const deadline = AbortSignal.timeout(DEADLINE_MS);
+  deadline.addEventListener("abort", () => controller.abort(deadline.reason), { once: true });
+  return started;
 }
 
-/** Wait until the server holds the request, then abort the caller's signal. */
-async function abortedAfterDelivery(surface: Surface, kind: Kind) {
+/** Wait until the server holds exactly one request before triggering its caller's end. */
+async function startedAfterDelivery(surface: Surface, kind: Kind) {
   const controller = new AbortController();
   const started = await surface.start(kind, { signal: controller.signal });
   for (let attempt = 0; attempt < 200 && (await started.received()) === 0; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 10));
   expect(await started.received()).toBe(1);
+  return { started, controller };
+}
+
+/** Wait until the server holds the request, then abort the caller's signal. */
+async function abortedAfterDelivery(surface: Surface, kind: Kind) {
+  const { started, controller } = await startedAfterDelivery(surface, kind);
   const reason = new Error("caller left");
   controller.abort(reason);
   return { error: await started.pending, reason };
@@ -289,7 +298,7 @@ describe("a direct write's timeout or abort, on every path out of a connector", 
   it.each(SURFACES.map((surface) => [surface.name, surface] as const))(
     "INV-9: through %s, a timeout after delivery is unknown and never retryable",
     async (_name, surface) => {
-      const started = await surface.start("write", timingOut(surface));
+      const started = await timingOut(surface);
       const error = await started.pending;
       expect(await started.received()).toBe(1);
       expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
