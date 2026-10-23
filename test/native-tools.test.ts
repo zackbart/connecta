@@ -346,6 +346,67 @@ describe("native tool surface", () => {
     }
   });
 
+  it("preserves object constraints, local references and compositions, and refuses non-object schemas", async () => {
+    const object = {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      additionalProperties: false,
+    };
+    for (const schema of [
+      object,
+      { properties: object.properties, required: object.required },
+      { $ref: "#/$defs/Args", $defs: { Args: object } },
+      { allOf: [object, { minProperties: 1 }] },
+      { anyOf: [object, { type: "object", properties: { count: { type: "number" } } }] },
+      { type: "string" },
+      { type: "array", items: { type: "string" } },
+      { $ref: "#/missing" },
+    ]) {
+      const storage = memoryStorage();
+      const sent: string[] = [];
+      const connector = {
+        id: "crm",
+        kind: "mcp" as const,
+        listTools: async () => [{ name: "get", inputSchema: schema, annotations: { readOnlyHint: true } }],
+        callTool: async () => {
+          sent.push("get");
+          return {};
+        },
+      };
+      const app = createTestConnecta({
+        connectors: [connector],
+        agents: ["assistant"],
+        pools: {
+          native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" },
+        },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listing = await rpc(app, token, "native", "tools/list", {});
+        if (schema.type === "string" || schema.type === "array" || schema.$ref === "#/missing") {
+          expect(listing.error.message).toContain("cannot be represented");
+        } else {
+          const advertised = listing.result.tools.find(
+            (tool: { name: string }) => tool.name === "crm__get",
+          ).inputSchema;
+          expect(advertised).toEqual({ ...schema, type: "object" });
+          if (schema === object) expect(JSON.stringify(advertised)).toBe(JSON.stringify(object));
+          if (schema !== object && !schema.anyOf) {
+            const invalid = await rpc(app, token, "native", "tools/call", { name: "crm__get", arguments: {} });
+            expect(envelope(invalid.result).error.code).toBe("invalid_args");
+          }
+        }
+        expect(sent).toEqual([]);
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
   it("INV-11: refuses executeCode without the native surface, and an unknown surface", () => {
     const storage = memoryStorage();
     const make = (pool: Record<string, unknown>) => () =>

@@ -87,16 +87,55 @@ function annotationsFor(tool: ToolDef) {
     : { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 }
 
+/** Object arguments retain every applicable constraint, including local refs. */
+function nativeInputSchema(schema: JsonSchema): Record<string, unknown> {
+  function supportsObject(value: unknown, seen = new Set<unknown>()): boolean {
+    if (value === true) return true;
+    if (!value || typeof value !== "object" || Array.isArray(value) || seen.has(value)) return false;
+    const node = value as JsonSchema;
+    const next = new Set(seen).add(value);
+    if (
+      node.type !== undefined &&
+      node.type !== "object" &&
+      !(Array.isArray(node.type) && node.type.includes("object"))
+    )
+      return false;
+    if (node.$ref !== undefined) {
+      if (typeof node.$ref !== "string" || !node.$ref.startsWith("#/")) return false;
+      let target: unknown = schema;
+      for (const part of node.$ref.slice(2).split("/")) {
+        if (!target || typeof target !== "object") return false;
+        target = (target as JsonSchema)[part.replace(/~1/g, "/").replace(/~0/g, "~")];
+      }
+      if (!supportsObject(target, next)) return false;
+    }
+    for (const key of ["anyOf", "oneOf", "allOf"]) {
+      const branches = node[key];
+      if (
+        Array.isArray(branches) &&
+        !(key === "allOf"
+          ? branches.every((branch) => supportsObject(branch, next))
+          : branches.some((branch) => supportsObject(branch, next)))
+      )
+        return false;
+    }
+    return true;
+  }
+  if (!supportsObject(schema))
+    throw new ProtocolError(
+      -32603,
+      "A native tool input schema cannot be represented as object arguments. Use the meta surface or ask the operator to fix the schema.",
+    );
+  return schema.type === "object" ? schema : { ...schema, type: "object" };
+}
+
 /**
  * The downstream input schema, advertised verbatim. Validation accepts
  * anything: invocation validates against the same catalog definition and
  * returns its structured `invalid_args` with repair, as call_tool does.
  */
 function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJSON {
-  const json: Record<string, unknown> =
-    schema && typeof schema === "object" && schema.type === "object"
-      ? (schema as Record<string, unknown>)
-      : { type: "object" };
+  const json = schema === undefined ? { type: "object" } : nativeInputSchema(schema);
   return {
     "~standard": {
       version: 1,
@@ -322,7 +361,14 @@ export class NativeSurface {
       });
       return;
     }
-    for (const entry of tools) this.registerTool(server, entry.name, entry);
+    try {
+      for (const entry of tools) this.registerTool(server, entry.name, entry);
+    } catch (error) {
+      if (!(error instanceof ProtocolError)) throw error;
+      server.server.setRequestHandler("tools/list", () => {
+        throw error;
+      });
+    }
   }
 }
 
