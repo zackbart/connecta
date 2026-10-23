@@ -8,6 +8,7 @@ import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js"
 import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { nativeRecovery } from "../src/native-recovery.js";
 import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
 import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
 import type { JsonSchema } from "../src/types.js";
@@ -298,9 +299,26 @@ describe("native tool surface", () => {
       expect(JSON.stringify(invalid.result)).not.toMatch(
         /search_tools|call_tool|call_destructive_tool|authorize_connector/,
       );
-      expect(envelope(invalid.result).error.nextAction).toMatchObject({ host: "search" });
+      expect(envelope(invalid.result).error.nextAction).toMatchObject({
+        host: "search",
+        arguments: { query: "get_person" },
+      });
+      expect(Object.keys(envelope(invalid.result).error.nextAction.arguments)).toEqual(["query"]);
+      expect(envelope(invalid.result).error.retry).toBe("Correct the listed arguments and retry crm__get_person.");
     }
     expect(sent).toEqual([]);
+    // A downstream tool may itself be named after a meta wrapper.
+    for (const tool of ["call_tool", "execute_code"]) {
+      const recovery = nativeRecovery(
+        {
+          isError: true,
+          structuredContent: { error: { operation: `crm.${tool}`, retry: `Retry crm.${tool}.` } },
+        },
+        false,
+        `crm__${tool}`,
+      ) as { content: Array<{ text: string }> };
+      expect(envelope(recovery).error.retry).toBe(`Retry crm__${tool}.`);
+    }
   });
 
   it("without execute_code, lists read_result and pages a truncated result through it", async () => {
@@ -467,7 +485,7 @@ describe("native tool surface", () => {
     }
   });
 
-  it("preserves object constraints, local references and compositions, and refuses non-object schemas", async () => {
+  it("INV-8: preserves object schemas and omits only the connector with an unrepresentable schema", async () => {
     const object: JsonSchema = {
       type: "object",
       properties: { id: { type: "string" } },
@@ -486,30 +504,51 @@ describe("native tool surface", () => {
     ]) {
       const storage = memoryStorage();
       const sent: string[] = [];
+      const warnings: unknown[][] = [];
       const connector = {
         id: "crm",
         kind: "mcp" as const,
-        listTools: async () => [{ name: "get", inputSchema: schema, annotations: { readOnlyHint: true } }],
+        listTools: async () => [
+          { name: "other", inputSchema: object, annotations: { readOnlyHint: true } },
+          { name: "get", inputSchema: schema, annotations: { readOnlyHint: true } },
+        ],
         callTool: async () => {
           sent.push("get");
           return {};
         },
       };
       const app = createTestConnecta({
-        connectors: [connector],
+        connectors: [
+          connector,
+          {
+            ...connector,
+            id: "notes",
+            listTools: async () => [{ name: "get", inputSchema: object, annotations: { readOnlyHint: true } }],
+          },
+        ],
         agents: ["assistant"],
         pools: {
-          native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" },
+          native: { tools: ["crm", "notes"], members: ["agent:assistant"], surface: "native" },
         },
         storage,
         accessTokens: accessTokens(storage),
-        logger: silentLogger,
+        logger: { ...silentLogger, warn: (...args: unknown[]) => warnings.push(args) },
       });
       try {
         const token = await issueAgentToken(storage, "assistant");
         const listing = await rpc(app, token, "native", "tools/list", {});
+        const names = listing.result.tools.map((tool: { name: string }) => tool.name);
+        expect(names).toContain("notes__get");
         if (schema.type === "string" || schema.type === "array" || schema.$ref === "#/missing") {
-          expect(listing.error.message).toContain("cannot be represented");
+          expect(names).not.toContain("crm__get");
+          expect(names).not.toContain("crm__other");
+          expect(warnings).toContainEqual([
+            expect.stringContaining("native catalog unavailable"),
+            expect.objectContaining({ connector: "crm", tool: "get" }),
+          ]);
+          const skills = listing.result.tools.find((tool: { name: string }) => tool.name === "skills");
+          expect(skills._meta["dev.connecta/surface"].catalogErrors).toEqual(["crm"]);
+          expect(JSON.stringify(warnings)).not.toContain("cannot be represented");
         } else {
           const advertised = listing.result.tools.find(
             (tool: { name: string }) => tool.name === "crm__get",

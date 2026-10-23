@@ -1762,7 +1762,7 @@ const executeDescription = (
   maxWrites: number,
   readOnly: boolean,
   native = false,
-) => `${native ? `Call one operation directly; use execute_code for combined work, with the program addresses in tool descriptions. ${readOnly ? "Read-only endpoint: write tools are absent, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+) => `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:

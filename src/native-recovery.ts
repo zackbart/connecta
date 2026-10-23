@@ -12,7 +12,7 @@ export function nativeRecovery(result: unknown, executeCode: boolean, wireName?:
   if (action?.tool === "search_tools" || (!action && error.code === "unknown_tool")) {
     error.nextAction = {
       host: "search",
-      arguments: action?.arguments ?? { query: wireName },
+      arguments: { query: action?.arguments?.query ?? wireName },
       purpose: action?.purpose,
     };
   } else if (action?.tool === "authorize_connector") {
@@ -30,15 +30,20 @@ export function nativeRecovery(result: unknown, executeCode: boolean, wireName?:
       : { host: "search", purpose: action.purpose };
   }
   // These are Connecta-authored recovery fields, never arbitrary downstream data.
-  for (const key of ["message", "instructions", "retry"]) {
-    if (typeof error[key] === "string")
-      error[key] = error[key]
-        .replaceAll("authorize_connector", "the returned authorization handoff")
-        .replaceAll("search_tools", "your host's tool search")
-        .replaceAll("call_destructive_tool", "the original native tool")
-        .replaceAll("call_tool", "the original native tool")
-        .replaceAll("execute_code", executeCode ? "execute_code" : "your host's tool search");
-  }
+  const rewrite = (text: string) =>
+    text.replace(/authorize_connector|search_tools|call_(?:destructive_)?tool|execute_code/g, (tool) =>
+      tool === "authorize_connector"
+        ? "the returned authorization handoff"
+        : tool.startsWith("call_")
+          ? "the original native tool"
+          : tool === "execute_code" && executeCode
+            ? tool
+            : "your host's tool search",
+    );
+  for (const key of ["message", "instructions", "retry"])
+    if (typeof error[key] === "string") error[key] = rewrite(error[key]);
+  if (wireName && typeof error.operation === "string" && typeof error.retry === "string")
+    error.retry = error.retry.replaceAll(rewrite(error.operation), wireName);
   if (!executeCode && typeof error.instructions === "string") {
     error.instructions = error.instructions.replace(
       /; connecta\.search[\s\S]*$/,

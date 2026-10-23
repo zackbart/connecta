@@ -109,6 +109,10 @@ instead of "0 tools".
 
 ### Endpoints
 
+Pool endpoint rows show the effective surface (`meta` or `native`) and whether
+code is on. These are read-only facts from deployment configuration; change
+`surface` and `executeCode` in deployment code.
+
 One row each for `/mcp` and every pool: the path, a read-only pill on a
 read-only endpoint, a copyable URL, who can use it, its connectors as colored
 monograms (four, then "+N"), its tool count over a read and write bar, and a
@@ -395,7 +399,8 @@ The maintainer view carries:
   code or credential material.
 - `root`: plain `/mcp`, its `readOnly`, and its `maintainers`, people only.
 - `pools`: every declared pool with `humanPath` (`/mcp/<name>`), `agentPath`
-  (`/agent/<name>`), `readOnly`, `owner` (the Workspace address its agents act
+  (`/agent/<name>`), `readOnly`, effective `surface` (`meta` or `native`),
+  `executeCode` (whether code is enabled), `owner` (the Workspace address its agents act
   as), its declared `tools` (never intersected; no `requireReadOnly` is ever
   true), and its `members`, agents as `{ kind: "agent", name }`. Every listed
   person carries a `label` from the same directory lookup activity actor
@@ -626,7 +631,3 @@ serve the authenticated shell and data. The browser lives in
 and [browser flows](https://github.com/zackbart/connecta/blob/main/test/browser/operator-ui.spec.ts)
 defend filtering and behavior. Use [Operator UI tests](./operator-tests.md)
 for the browser state matrix and Linux snapshot procedure.
-
-Pool endpoint rows show the effective surface (`meta` or `native`) and whether
-code is on. These are read-only facts from deployment configuration; change
-`surface` and `executeCode` in deployment code.

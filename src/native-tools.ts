@@ -89,7 +89,7 @@ function annotationsFor(tool: ToolDef) {
 }
 
 /** Object arguments retain every applicable constraint, including local refs. */
-function nativeInputSchema(schema: JsonSchema): Record<string, unknown> {
+function nativeInputSchema(schema: JsonSchema): Record<string, unknown> | undefined {
   function supportsObject(value: unknown, seen = new Set<unknown>()): boolean {
     if (value === true) return true;
     if (!value || typeof value !== "object" || Array.isArray(value) || seen.has(value)) return false;
@@ -122,11 +122,7 @@ function nativeInputSchema(schema: JsonSchema): Record<string, unknown> {
     }
     return true;
   }
-  if (!supportsObject(schema))
-    throw new ProtocolError(
-      -32603,
-      "Native input schema cannot be represented as object arguments. Use meta or fix the schema.",
-    );
+  if (!supportsObject(schema)) return undefined;
   return schema.type === "object" ? schema : { ...schema, type: "object" };
 }
 
@@ -136,7 +132,8 @@ function nativeInputSchema(schema: JsonSchema): Record<string, unknown> {
  * returns its structured `invalid_args` with repair, as call_tool does.
  */
 function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJSON {
-  const json = schema === undefined ? { type: "object" } : nativeInputSchema(schema);
+  // Listing has already excluded connectors with unrepresentable schemas.
+  const json = schema === undefined ? { type: "object" } : nativeInputSchema(schema)!;
   return {
     "~standard": {
       version: 1,
@@ -224,17 +221,26 @@ export class NativeSurface {
   private async list(): Promise<NativeTool[]> {
     const { loaded, byName } = await this.claims();
     for (const entry of loaded) {
-      if (!("error" in entry)) continue;
+      // Validate the whole connector before registering any of its tools.
+      const tool =
+        "tools" in entry
+          ? entry.tools.find((tool) => tool.inputSchema !== undefined && !nativeInputSchema(tool.inputSchema))
+          : undefined;
+      if (!("error" in entry) && !tool) continue;
       this.options.catalogErrors.push(entry.connector.id);
       logFailure(
         this.options.logger,
         "native catalog unavailable",
-        failureRecord({ connector: entry.connector.id }, entry.error),
+        failureRecord(
+          { connector: entry.connector.id, ...(tool ? { tool } : {}) },
+          "error" in entry ? entry.error : undefined,
+        ),
       );
     }
     return [...byName.values()].filter(
       (entry): entry is NativeTool =>
         entry !== null &&
+        !this.options.catalogErrors.includes(entry.connector.id) &&
         (!(this.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read"),
     );
   }
@@ -354,14 +360,7 @@ export class NativeSurface {
       });
       return;
     }
-    try {
-      for (const entry of tools) this.registerTool(server, entry.name, entry);
-    } catch (error) {
-      if (!(error instanceof ProtocolError)) throw error;
-      server.server.setRequestHandler("tools/list", () => {
-        throw error;
-      });
-    }
+    for (const entry of tools) this.registerTool(server, entry.name, entry);
   }
 }
 

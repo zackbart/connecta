@@ -35,7 +35,7 @@ export function endpointInstructions(description?: string, native?: { executeCod
 
 /** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean): string {
-  return `Each tool here is one operation; annotations classify reads and writes. Call known operations directly. ${executeCode ? "Use execute_code for combined work: connecta.call takes the program address in each tool description." : "Use your host's tool search to find operations."} Read-only endpoints omit and refuse writes. Never repeat a write to recover output. Give auth handoffs to the user or operator. Page results with ${executeCode ? "connecta.result inside execute_code" : "read_result"}, following nextAction. skills lists on-demand guidance.`;
+  return `Each tool here is one operation; annotations classify reads/writes. Call known tools directly; ${executeCode ? "combine work in execute_code using the program addresses in tool descriptions." : "find tools with your host's search."} Read-only endpoints omit and refuse writes. Never repeat a write for output. Give auth handoffs to the user/operator. Follow nextAction to page with ${executeCode ? "connecta.result in execute_code" : "read_result"}. skills lists guidance.`;
 }
 
 export { USAGE_SKILL } from "./usage-guide.js";

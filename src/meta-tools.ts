@@ -1351,7 +1351,7 @@ const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
 );
 
 const READ_RESULT_DESC =
-  "Page a truncated result by the resultId in its notice; follow the notice's nextAction. Pages are UTF-8 byte ranges: continue from nextOffset while hasMore. Never repeat a write to see its output.";
+  "Page by resultId and nextAction from the truncation notice. UTF-8 byte ranges: continue from nextOffset while hasMore. Never repeat a write for output.";
 
 const READ_RESULT_INPUT = advertisedSchema(
   z.strictObject({

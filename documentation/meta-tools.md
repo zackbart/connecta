@@ -1215,7 +1215,8 @@ never repeat a write; page a truncated result as its notice says. A pool
 `description` is appended as on meta endpoints.
 
 **Recovery.** Repair and validation fields retain the exact constraint details.
-Discovery `nextAction` points to the host's tool search (`host: "search"`). Retry actions name the native tool,
+Discovery `nextAction` points to the host's tool search (`host: "search"`), with
+only a `query` argument. Retry actions and retry text name the native tool,
 never a meta wrapper. Auth actions carry `authorizationUrl` or `operatorUrl`;
 give the returned URL and instructions to the user or operator. Capable modern
 clients may resume native auth and downstream form/URL input with the same
@@ -1226,14 +1227,18 @@ write to recover output.
 **Schemas.** Ordinary `type: "object"` schemas are byte-identical. Object
 constraints without a top-level type, composed object schemas and local
 `$defs`/`$ref` keep their constraints with `type: "object"` at the root. A schema
-that cannot be represented as object arguments fails listing explicitly;
-use the meta surface or correct the connector schema.
+that cannot be represented as object arguments omits its connector whole from
+that listing, with an operator warning naming the connector and tool. Other
+connectors remain listed. Correct the schema or use the meta surface.
 
 **Diagnostics.** `connecta doctor --pool assistant` recognizes the configured
 surface and code setting from the local `skills` tool's
 `_meta["dev.connecta/surface"]`. It checks the required local tools, reports
 unavailable connector catalogs and listing-cap errors, and runs only a constant
 program when code is enabled. It never dispatches a downstream tool. The
+metadata's `catalogErrors` exposes this request's failing connector ids,
+including connectors with unrepresentable schemas, to every client of the pool.
+Connector ids already appear in native tool names. The
 operator UI and `describeConfig()` show every pool's effective `surface` and
 `executeCode` as facts from deployment code. Change these settings in code.
 
@@ -1242,7 +1247,7 @@ large production catalogs near the cap have not been evaluated.
 
 ### Eve agents
 
-The Eve helper is published separately as `@zackbart/connecta-eve`.
+Starting with 0.35.0, the Eve helper ships separately as `@zackbart/connecta-eve`.
 Connecta core supplies the native pool surface and has no Eve dependency.
 Consult that package's documentation for its compatibility and setup.
 
