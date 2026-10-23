@@ -473,6 +473,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
   ) =>
     Effect.gen(function* () {
       const active = yield* Effect.serviceOption(Operation);
+      const callWrite = (yield* Classification) === "write";
       const dispatches = yield* Dispatches;
       const signal = yield* Signal;
       // Match the legacy wording rule even for direct calls: their GET
@@ -513,6 +514,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
                 failure,
                 dispatches.find((entry) => entry.failure === failure),
                 write,
+                callWrite,
                 signal,
               ),
             ),
@@ -524,6 +526,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
     failure: HttpFailure,
     own: Dispatch | undefined,
     write: boolean,
+    callWrite: boolean,
     signal: AbortSignal | undefined,
   ): HttpFailure {
     const status = own?.status;
@@ -550,7 +553,7 @@ export function googleClient(connection: Connection, provider: string): GoogleCl
             ),
             at("server-error", code),
           );
-        if (write && code === 401) {
+        if (callWrite && own?.request?.auxiliary !== true && code === 401) {
           // Never sent again (INV-9); the next call mints a fresh token.
           const refusal = toConnectorCallError(failure, connection.errors, {
             classification: "write",
