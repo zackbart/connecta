@@ -2065,10 +2065,9 @@ reports how far a failed request got. The core still decides every write's
 outcome.
 Sheets declares its seven API methods in `src/providers/sheets/api.ts`; its
 kit tools retain the private digest-bound cell cursor, legacy A1 path encoding,
-and create/append recovery advice. Its exact public projection and Google error
-envelope keys are reviewed in `api.ts` so a private argument equal to a key cannot
-erase its data before projection or failure classification; values and unreviewed
-keys remain protected. Its catalog and guide stay unchanged in step 1.
+and create/append recovery advice. Its projections and the Google failure
+classifier read fields by the names Google gave them, which the kit's parse pass
+keeps. Its catalog and guide stay unchanged in step 1.
 
 Google's request adapter also offers a reviewed binary send. It marks the
 operation `googleBytes` for the product's `binaryBodies` selector and forwards
