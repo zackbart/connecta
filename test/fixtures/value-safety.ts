@@ -606,7 +606,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         env: ["API_KEY=VENDOR_HELD_ENV"],
         destination: "https://hooks.example/services/VENDOR_HELD_DEST",
         // A header line whose name and credential prefix a private value took.
-        echo: "Authorization: Bearer sk_live_VENDOR_HELD_BEARER",
+        echo: "Authorization: Bearer sk_live_VENDOR_HELD_BEARER\nRetry after checking permissions.",
         // The Content-Type itself (`on/js`) would hand this body over as bytes or one string.
         ...(table.resources
           ? {
