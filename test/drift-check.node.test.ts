@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -865,6 +865,38 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
         expect.objectContaining({ kind: "evidence-invalid" }),
       );
     }
+    // Supplemental pins hash exact bytes, like generated.evidence, even when
+    // decoding JSON replaces an invalid UTF-8 byte in an otherwise valid string.
+    const rawSupplement = Buffer.from(supplemental.replace('"version":"1"', '"version":"1","description":"raw-byte"'));
+    rawSupplement[rawSupplement.indexOf("raw-byte")] = 0xff;
+    await writeFile(join(evidencePath, "query.document.json"), rawSupplement);
+    await writeFile(
+      join(evidencePath, "query.json"),
+      JSON.stringify({ ...pin, digest: `sha256:${createHash("sha256").update(rawSupplement).digest("hex")}` }),
+    );
+    expect(JSON.parse(reportFor(supplementalRoot, ["--specs"]).output).specs).toEqual([
+      expect.objectContaining({ findings: [] }),
+    ]);
+    await writeFile(join(evidencePath, "query.document.json"), supplemental);
+    await writeFile(join(evidencePath, "query.json"), JSON.stringify(pin));
+    // A simple filename may still escape via a symlink. Check both the pin
+    // and its document against the provider's real evidence directory.
+    for (const name of ["query.json", "query.document.json"]) {
+      const path = join(evidencePath, name);
+      const original = await readFile(path);
+      const outside = join(supplementalRoot, name);
+      await writeFile(outside, original);
+      await rm(path);
+      await symlink(outside, path);
+      expect(evidenceInvalid(JSON.parse(reportFor(supplementalRoot, ["--specs"]).output))).toContainEqual(
+        expect.objectContaining({
+          kind: "evidence-invalid",
+          detail: expect.stringContaining("Supplemental evidence must stay in its provider's evidence directory"),
+        }),
+      );
+      await rm(path);
+      await writeFile(path, original);
+    }
     const pages = await mkdtemp(join(tmpdir(), "connecta-drift-pages-"));
     temporary.push(pages);
     const page = (method: string, path: string, marker = path) =>
@@ -994,7 +1026,7 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
   });
 });
 
-it("INV-11: ref-graph-v1 changes exactly with inline contracts on small-provider mutation pairs", () => {
+it("INV-11: ref-graph-v1 matches acyclic inline sensitivity and also tracks cycle member names and back-edge siblings", () => {
   const base: any = {
     "openapi": "3.1.0",
     "info": {
@@ -1160,5 +1192,46 @@ it("INV-11: ref-graph-v1 changes exactly with inline contracts on small-provider
           contractDigest(changed, changed.paths[path!][method!], "ref-graph-v1"),
       ).toBe(oldChanged);
     }
+  }
+  const cycleOperation = (document: any) => document.paths["/cycle"].post;
+  const cyclePairs: Array<{ label: string; before: any; after: any }> = [];
+  const recursiveSibling = structuredClone(base);
+  recursiveSibling.components.schemas.Cycle.properties.next.nullable = true;
+  cyclePairs.push({
+    label: "self-reference with a structural sibling stays bounded",
+    before: base,
+    after: recursiveSibling,
+  });
+  const mutatedSibling = structuredClone(recursiveSibling);
+  mutatedSibling.components.schemas.Cycle.properties.next.nullable = false;
+  cyclePairs.push({ label: "back-edge sibling mutation", before: recursiveSibling, after: mutatedSibling });
+  const siblingEntry = structuredClone(recursiveSibling);
+  siblingEntry.paths["/cycle"].post.requestBody.content["application/json"].schema.nullable = true;
+  const siblingEntryMutation = structuredClone(siblingEntry);
+  siblingEntryMutation.components.schemas.Cycle.properties.next.nullable = false;
+  cyclePairs.push({
+    label: "back-edge mutation behind a sibling-bearing cycle entry stays bounded",
+    before: siblingEntry,
+    after: siblingEntryMutation,
+  });
+  const twoMemberCycle = structuredClone(base);
+  twoMemberCycle.components.schemas.Cycle.properties.next.$ref = "#/components/schemas/Edge";
+  twoMemberCycle.components.schemas.Edge = {
+    type: "object",
+    properties: { next: { $ref: "#/components/schemas/Cycle" } },
+  };
+  const renamedCycleMember = structuredClone(twoMemberCycle);
+  renamedCycleMember.components.schemas.Edge2 = renamedCycleMember.components.schemas.Edge;
+  delete renamedCycleMember.components.schemas.Edge;
+  renamedCycleMember.components.schemas.Cycle.properties.next.$ref = "#/components/schemas/Edge2";
+  cyclePairs.push({ label: "non-entry cycle member rename", before: twoMemberCycle, after: renamedCycleMember });
+  // Graph sensitivity agrees for the acyclic mutations above. In cycles it
+  // also retains all member identities and structural back-edge siblings;
+  // inline drops the siblings and only retains the entry reference's name.
+  for (const { label, before, after } of cyclePairs) {
+    expect(contractDigest(before, cycleOperation(before)), label).toBe(contractDigest(after, cycleOperation(after)));
+    expect(contractDigest(before, cycleOperation(before), "ref-graph-v1"), label).not.toBe(
+      contractDigest(after, cycleOperation(after), "ref-graph-v1"),
+    );
   }
 });

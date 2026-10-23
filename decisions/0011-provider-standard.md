@@ -274,12 +274,22 @@ Since 0012, a record describes only the vendored API contracts Connecta wraps.
 For heavily shared recursive contracts, an endpoint specification may opt into
 `contractAlgorithm: "ref-graph-v1"`. This hashes canonical structural nodes once,
 replacing local references with component hashes and treating a strongly connected
-reference component as one deterministic unit. It preserves full reachable request
-and success contracts, excludes the same prose/extensions/errors, and stays bounded
-without expanding shared graphs exponentially. The default inline algorithm and
-all existing digests remain unchanged. Stripe's first v2 endpoint baseline uses
-this versioned opt-in; small-contract mutation pairs must agree with the inline
-algorithm on whether a change matters.
+reference component as one deterministic unit. An intra-component reference hashes
+as a cycle reference plus its structural siblings, without expanding the target
+again. A sibling-bearing entry into a cyclic component likewise hashes the
+component reference and its siblings without inline expansion. It preserves
+reachable request and success structure, excludes the same
+prose/extensions/errors, and stays bounded without expanding shared graphs
+exponentially. The default inline algorithm and all existing provider digests
+remain unchanged. Stripe's first v2 endpoint baseline uses this versioned opt-in.
+Small-contract mutation pairs must never be less sensitive than inline;
+acyclic pairs agree with inline sensitivity. Recursive pairs may
+be more sensitive: the graph retains every cycle member's reference name and
+structural back-edge siblings; inline retains the reference name where expansion
+stops and drops that back-edge's siblings. Renaming a non-entry cycle member or
+changing such a sibling therefore changes the graph digest even when inline's
+digest stays the same. The drift test checks these distinctions and the
+sibling-bearing self-reference recursion case explicitly.
 
 ### Generated, not hand-kept
 

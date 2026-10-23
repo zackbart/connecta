@@ -308,10 +308,9 @@ async function loadSpecification(provider, manifest, options) {
       throw new EvidenceError(
         "Supplemental pin requires https url/documentation, vendored: true and a document digest",
       );
-    const text = await readFile(resolvePath(directory, document), "utf8");
-    if (sha256(new TextEncoder().encode(text)) !== pin.digest)
-      throw new EvidenceError("Supplemental document digest does not match its pin");
-    return { source: pin.documentation, document: validateOpenApi(provider, JSON.parse(text)) };
+    const bytes = await readFile(resolvePath(directory, document));
+    if (sha256(bytes) !== pin.digest) throw new EvidenceError("Supplemental document digest does not match its pin");
+    return { source: pin.documentation, document: validateOpenApi(provider, JSON.parse(bytes.toString("utf8"))) };
   }
   const source = options.specSources.get(provider) ?? manifest.specification.url;
   // A provider documented page by page reads a page base, URL or directory; a
