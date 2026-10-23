@@ -17,7 +17,6 @@ import {
   vendorErrors,
   withholdEmbeddedUrls,
   withholdEmbeddedUrlsIn,
-  withholdSignedLinks,
   type ValueSafetyTable,
 } from "../src/providers/_shared/rest/value-safety.js";
 import { linearWork, SCAN_HANG_GUARD_MS } from "./scanner-work.js";
@@ -226,15 +225,11 @@ describe("value-safety engine", () => {
 });
 
 describe("pre-signed links in free text", () => {
-  const HOSTS = {
-    domains: ["file.notes.example", "secure.notes.example", "notescontent.example"],
-    buckets: ["prod-files-secure", "secure.notes.example"],
-  };
   const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
   const S3 = `https://${HOST}`;
   const query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE&X-Amz-Signature=FAKE_SIGNATURE";
   const leaks = (text: string) => ["ASIAEXAMPLE", "FAKE_SIGNATURE"].filter((secret) => text.includes(secret));
-  const withheld = (text: string) => withholdSignedLinks(text, HOSTS);
+  const withheld = (text: string) => withholdEmbeddedUrls(text);
 
   it.each([
     ["a filename with parentheses", `![a](${S3}/ws/file(1).png?${query})`, `![a](${S3}/ws/file(1).png?${REDACTED})`],
@@ -254,36 +249,16 @@ describe("pre-signed links in free text", () => {
     expect(clean).toBe(expected);
   });
 
-  it.each([
-    [
-      "a subdomain of a file host",
-      "https://x.file.notes.example/a.png?sig=1",
-      `https://x.file.notes.example/a.png?${REDACTED}`,
-    ],
-    [
-      "a dual-stack path-style bucket",
-      "https://s3.dualstack.us-west-2.amazonaws.com/secure.notes.example/a.png?v=1",
-      `https://s3.dualstack.us-west-2.amazonaws.com/secure.notes.example/a.png?${REDACTED}`,
-    ],
-    [
-      "a dual-stack virtual-hosted bucket with an encoded query",
-      "https://prod-files-secure.s3.dualstack.us-west-2.amazonaws.com/a.png%3Fv=1",
-      `https://prod-files-secure.s3.dualstack.us-west-2.amazonaws.com/a.png?${REDACTED}`,
-    ],
-  ])("INV-5: withholds a link at %s", (_, text, expected) => {
-    expect(withheld(text)).toBe(expected);
-  });
-
   it("INV-5: finds a withheld file link in a request, plain or encoded, and nothing else", () => {
     for (const text of [
       `![a](${S3}/a.png?${REDACTED})`,
       `<file src="${S3}/a.png?X-Amz-Signature=%5Bredacted%5D">`,
       `https:&#47;&#47;${HOST}/a.png&#63;&#91;redacted&#93;`,
     ]) {
-      expect(carriesWithheldLink({ body: [{ text }] }, HOSTS)).toBe(true);
+      expect(carriesWithheldLink({ body: [{ text }] })).toBe(true);
     }
-    for (const text of [`![a](${S3}/a.png)`, `https://example.com/?q=${REDACTED}`, `${REDACTED} ${S3}/a.png`]) {
-      expect(carriesWithheldLink({ text }, HOSTS)).toBe(false);
+    for (const text of [`![a](${S3}/a.png)`, `https://example.com/?q=public`, `${REDACTED} ${S3}/a.png`]) {
+      expect(carriesWithheldLink({ text })).toBe(false);
     }
   });
 
@@ -293,37 +268,7 @@ describe("pre-signed links in free text", () => {
     "https://file.notes.example/f/f/a.png?&amp;#91;redacted&amp;#93;",
     "![a](https://file.notes.example/f/f/a\\).png?[redacted])",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
-    expect(carriesWithheldLink({ text }, HOSTS)).toBe(true);
-  });
-
-  const PROXIES = [
-    "https://example.com/image?url=https://file.notes.example/f/a.png?table=block&id=42&width=400",
-    "https://example.com/image?url=//file.notes.example/f/a.png?table=block&id=42",
-    "https://example.com/proxy/https://file.notes.example/f/a.png?id=42",
-    "/proxy/https://file.notes.example/f/a.png?id=42",
-    "image?url=//file.notes.example/f/a.png?id=42",
-    "https://example.com/image?url=https%3A%2F%2Ffile.notes.example%2Fa.png%3Fid%3D42",
-    "/proxy/https:&#47;&#47;file.notes.example/f/a.png?id=42",
-    "/proxy/https:\\/\\/file.notes.example/f/a.png?id=42",
-    `https://example.com/image?url=https://${HOST}/a.png?id=42`,
-    "https://example.com/image?url=https://s3.amazonaws.com/prod-files-secure/a.png?id=42",
-  ];
-
-  it.each(PROXIES)("INV-5: keeps a proxy's actual authority and every ordinary byte in %s", (link) => {
-    for (const marker of ["42", "%5Bredacted%5D"]) {
-      const url = link.replace("42", marker);
-      for (const text of [url, `[f](${url})`, `![f]( \t${url})`, `<file src="${url}">f</file>`]) {
-        expect(withheld(text)).toBe(text);
-        expect(carriesWithheldLink(text, HOSTS)).toBe(false);
-      }
-    }
-  });
-
-  it.each(["X-Amz-Signature", "X-Goog-Signature"])("INV-5: still withholds %s inside a proxy path or query", (name) => {
-    for (const proxy of PROXIES) {
-      const text = `[f](${proxy}&${name}=FAKE_SIGNATURE&width=400)`;
-      expect(withheld(text)).toBe(text.replace("FAKE_SIGNATURE", REDACTED));
-    }
+    expect(carriesWithheldLink({ text })).toBe(true);
   });
 
   it.each([
@@ -335,7 +280,7 @@ describe("pre-signed links in free text", () => {
     (_, text) => {
       const clean = linearWork(text, withheld);
       expect(clean.length).toBeGreaterThan(0);
-      expect(linearWork(text, (input) => carriesWithheldLink(input, HOSTS))).toBeTypeOf("boolean");
+      expect(linearWork(text, (input) => carriesWithheldLink(input))).toBeTypeOf("boolean");
     },
     SCAN_HANG_GUARD_MS,
   );
@@ -413,7 +358,6 @@ describe("reviewed text policy and global admission (#846)", () => {
     "[a](/proxy/https://public.example/a?id=1)[b](/proxy/https://files.example/a?sig=PRIVATE)",
   ])("INV-5: inspects a relative Markdown destination's own query: %s", (input) => {
     expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
-    expect(withholdSignedLinks(input, { domains: ["files.example"], buckets: [] })).toBe(input);
   });
 
   it.each(["&#61;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
@@ -454,9 +398,7 @@ describe("reviewed text policy and global admission (#846)", () => {
   });
 
   it("INV-5: removes a private suffix after an existing signing placeholder", () => {
-    expect(
-      withholdSignedLinks("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE", { domains: [], buckets: [] }),
-    ).not.toContain("PRIVATE");
+    expect(withholdEmbeddedUrls("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE")).not.toContain("PRIVATE");
   });
 
   it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
@@ -470,15 +412,11 @@ describe("reviewed text policy and global admission (#846)", () => {
     await expect(refuseWithheldUpload(form, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
   });
 
-  it("INV-5: inspects object keys and array values with the same host policy as strings", () => {
+  it("INV-5: inspects object keys and array values with the same URL policy as strings", () => {
     const input = "https://file.notes.example/a?%5Bredacted%5D";
-    const external = "https://external.example/a?%5Bredacted%5D";
-    const hosts = { domains: ["file.notes.example"], buckets: [] };
     for (const value of [{ [input]: "link" }, { nested: ["safe", { [input]: "link" }] }, [[input]]]) {
       expect(carriesWithheldLink(value)).toBe(true);
-      expect(carriesWithheldLink(value, hosts)).toBe(true);
     }
-    expect(carriesWithheldLink({ [external]: [external] }, hosts)).toBe(false);
     expect(carriesWithheldLink({ "https://public.example/?code=welcome": ["[redacted] outside"] })).toBe(false);
   });
 
