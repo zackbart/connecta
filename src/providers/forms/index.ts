@@ -89,8 +89,8 @@ export const forms = defineApiProvider<FormsOptions>({
   title: "Google Forms",
   readme: "Google Forms",
   bundle: {
-    baselineGzip: 372171,
-    note: "./providers/forms step-2 round-2 snapshot measures 372,120 B gzip standalone before refreshing these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main f9bf5afb snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 372,171 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
+    baselineGzip: 372442,
+    note: "./providers/forms step-2 round-2 snapshot measures 372,120 B gzip standalone before refreshing these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main f9bf5afb snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 372,171 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703). Combined Google merge snapshot over main db979604 measures 372,442 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

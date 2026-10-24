@@ -252,6 +252,70 @@ export default defineGoldenSpec({
       args: { fileId: "f1", permissionId: "anyoneWithLink" },
       replies: [{ status: 204 }],
     },
+    { tool: "drive_api_search", args: { query: "file revisions" } },
+    { tool: "drive_api_details", args: { method: "GET", path: "/files/{fileId}/revisions" } },
+    {
+      tool: "drive_api_read",
+      args: { path: "/files/f1/revisions", fields: ["revisions.id", "revisions.modifiedTime"] },
+      replies: [
+        {
+          body: {
+            revisions: [
+              {
+                id: "v1",
+                modifiedTime: "2026-09-30T12:00:00Z",
+                exportLinks: { "text/plain": "https://example.com/private" },
+              },
+            ],
+            nextPageToken: "revisions-next",
+          },
+        },
+      ],
+    },
+    {
+      tool: "drive_api_write",
+      args: { method: "PATCH", path: "/files/f1", body: { name: "Review.pdf" }, fields: ["id", "name"] },
+      replies: [{ body: { ...FILE, name: "Review.pdf" } }],
+    },
+    {
+      label: "hatch grants stay named",
+      tool: "drive_api_write",
+      args: { method: "POST", path: "/files/f1/permissions", body: { type: "anyone", role: "reader" } },
+    },
+    { label: "hatch permanent delete refused", tool: "drive_api_write", args: { method: "DELETE", path: "/files/f1" } },
+    { label: "named token collision refused", tool: "get_file", args: { fileId: "generateCseToken" } },
+    {
+      label: "move failed auxiliary lookup",
+      tool: "move_file",
+      args: { fileId: "f1", folderId: "root" },
+      replies: [
+        {
+          status: 500,
+          body: { error: { code: 500, message: "Lookup failed.", errors: [{ reason: "backendError" }] } },
+        },
+      ],
+    },
+    {
+      label: "move failed actual patch",
+      tool: "move_file",
+      args: { fileId: "f1", folderId: "root" },
+      replies: [
+        { body: { parents: ["old-1"] } },
+        { status: 500, body: { error: { code: 500, message: "Move failed.", errors: [{ reason: "backendError" }] } } },
+      ],
+    },
+    {
+      label: "move withheld parents",
+      tool: "move_file",
+      args: { fileId: "f1", folderId: "root" },
+      replies: [{ body: { parents: ["[redacted]"] } }],
+    },
+    {
+      label: "content withheld MIME",
+      tool: "get_file_content",
+      args: { fileId: "f1" },
+      replies: [{ body: { mimeType: "text/[redacted]" } }],
+    },
   ],
   unsent: ["privateKey"],
   // Google redacts a vendor message whole before cutting it to 500 characters.
