@@ -522,9 +522,12 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     const first = await call(c, "get_page", { presentationId: "deck1", pageObjectId: "p" });
     expect(first.page.hasMore).toBe(true);
     const cursor = first.page.nextCursor;
+    const signed = JSON.parse(atob(cursor.replaceAll("-", "+").replaceAll("_", "/")));
+    expect(signed.v).toBe(2);
     calls.length = 0;
     for (const [other, token] of [
       [c, cursor.slice(0, -1) + (cursor.endsWith("A") ? "B" : "A")],
+      [c, signed.c], // The legacy unsigned payload must also be refused.
       [
         slides("other", {
           purpose: "Other",

@@ -2410,7 +2410,7 @@ function normalizeResult(value: unknown, tool: string): JsonRecord {
   return result;
 }
 
-/** Cross-tool content cursors share one signed codec, bound to connection and owner. */
+/** Cross-tool content cursors share one signed codec, bound to connection, owner and delegated caller. */
 function signContinuations(value: unknown, ctx: ConnectorContext): Effect.Effect<any, HttpFailure, CallServices> {
   return Effect.gen(function* () {
     if (Array.isArray(value)) {
