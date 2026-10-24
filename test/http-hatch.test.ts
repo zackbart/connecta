@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
 import { tagCallerIdentity, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
@@ -36,8 +37,14 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
+import { cloudflareIndex } from "../src/providers/cloudflare/api.js";
+import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
+import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
+import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 import { providerFixtures } from "./providers.generated.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
+
+const NATIVE = { ...WORKERS, timeout: 30_000 };
 
 const DATA: OpenApiData = {
   source: "https://api.example/openapi.json",
@@ -975,7 +982,7 @@ it(
   },
 );
 
-it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once", WORKERS, async () => {
+it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendPath once", NATIVE, async () => {
   const withheld = "https://files.example/file?signature=%5Bredacted%5D";
   const cases: Array<{
     kind: string;
@@ -1126,6 +1133,340 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       expect(sent).toHaveLength(1);
       expect(sent[0]?.url).toBe(`https://api.example/v1${entry.url ?? entry.args["path"]}`);
       expect(sent[0]?.body).toBe(entry.body);
+    }
+  }
+  // Typed path contracts are checked before authentication on both runtimes.
+  for (const schema of [
+    { t: "integer" },
+    { t: "integer", l: 0, u: 42 },
+    { t: "integer", l: 1, u: 42 },
+    { t: "integer", e: [1, 42] },
+    { t: "number" },
+  ]) {
+    const details = JSON.parse(DATA.details);
+    details.o[1] = [[["item", "path", 1, schema]], 0];
+    details.o[6] = [[["item", "path", 1, schema]], 0];
+    const data = { ...DATA, details: JSON.stringify(details) };
+    for (const segment of [
+      "0",
+      "1",
+      "42",
+      "-1",
+      "43",
+      "9007199254740991",
+      "-9007199254740991",
+      "01",
+      "-0",
+      "+1",
+      " 42",
+      "42 ",
+      "1.0",
+      "1.50",
+      "42.0",
+      "0.0",
+      "-0.0",
+      "0.5",
+      "-0.5",
+      "42.5",
+      "0x10",
+      "1e3",
+      " +5",
+      "1e2",
+      "0x2a",
+      "４２",
+      "．．",
+      ":id",
+      "<id>",
+      "%34%32",
+      "%2b1",
+      "%20%34%32",
+      "9007199254740992",
+      "-9007199254740992",
+      "%2e%2e",
+      "..",
+      "a%2Fb",
+    ]) {
+      const syntax = schema.t === "integer" ? /^(?:0|-?[1-9][0-9]*)$/ : /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+      const decoded = decodeURIComponent(segment);
+      const canonical = syntax.test(decoded) && !Object.is(Number(decoded), -0);
+      const number = Number(decodeURIComponent(segment));
+      const valid =
+        canonical &&
+        (schema.t === "integer"
+          ? Number.isSafeInteger(number)
+          : Number.isFinite(number) && Math.abs(number) <= Number.MAX_SAFE_INTEGER) &&
+        (!("l" in schema) || number >= schema.l!) &&
+        (!("u" in schema) || number <= schema.u!) &&
+        (!("e" in schema) || schema.e!.includes(number));
+      for (const kind of ["read", "write"] as const) {
+        sent = [];
+        const { call, authenticate, sendPath } = setup({
+          data,
+          verdicts: { ...VERDICTS, "GET /items/{item}": "read" },
+        });
+        const args = { path: `/items/${segment}`, ...(kind === "write" ? { method: "DELETE" } : {}) };
+        if (valid) {
+          await call(kind, args);
+          expect(sent, JSON.stringify({ schema, segment, kind })).toHaveLength(1);
+        } else {
+          await expect(call(kind, args), JSON.stringify({ schema, segment, kind })).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          expect(authenticate).not.toHaveBeenCalled();
+          expect(sendPath).not.toHaveBeenCalled();
+          expect(sent).toEqual([]);
+        }
+      }
+    }
+  }
+  const enumFailure = (() => {
+    try {
+      return cloudflareIndex.resolve("GET", "/accounts/a/one/applications/app1/setup-flows");
+    } catch (error) {
+      return error;
+    }
+  })();
+  expect(enumFailure).toMatchObject({ code: "invalid_args" });
+  expect((enumFailure as Error).message).not.toContain("Integer ids");
+  let exclusive = 0;
+  for (const op of cloudflareIndex.ops) {
+    if (
+      !/\/cloudforce-one\/v2\/brand-protection\/(?:queries|takedown-notices)\/|\/cloudforce-one\/v2\/credential-monitor\/domains\//.test(
+        op.path,
+      )
+    )
+      continue;
+    for (const param of cloudflareIndex
+      .contract(op)
+      .parameters.filter((param) => param.in === "path" && param.schema["type"] === "integer")) {
+      exclusive++;
+      expect(param.schema["minimum"]).toBe(1);
+      const path = (value: string) =>
+        op.path.replace(/\{([^}]+)\}/g, (_part, name) => (name === param.name ? value : "1"));
+      expect(() => cloudflareIndex.resolve(op.method, path("0"))).toThrow("at least 1");
+      expect(() => cloudflareIndex.resolve(op.method, path("1"))).not.toThrow();
+    }
+  }
+  expect(exclusive).toBe(16);
+  // Native fetch framing must never turn an HTML page into a JSON write acknowledgement.
+  for (const [fixture, credential, writes, readPath] of [
+    [
+      stripeFixture,
+      "sk_test_media_fixture",
+      [["stripe_api_write", { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_1" } }]],
+      "/v1/customers/cus_1",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      [
+        [
+          "cloudflare_api_write",
+          { method: "PATCH", path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1", body: { ttl: 300 } },
+        ],
+      ],
+      "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
+    ],
+    [
+      vercelFixture,
+      "vercel-media-token",
+      [
+        ["vercel_api_write", { method: "PATCH", path: "/v9/projects/web/env/env_1", body: { value: "replacement" } }],
+        ["update_project_env_var", { projectId: "web", envVarId: "env_1", value: "replacement" }],
+      ],
+      "/v2/user",
+    ],
+  ] as const) {
+    const connector = fixture.create("media");
+    const ctx = () => ({
+      ...connectorContext(),
+      credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
+    });
+    for (const type of ["text/html", "text/plain", "application/octet-stream"]) {
+      response = () => new Response("<html>ok</html>", { headers: { "content-type": type } });
+      for (const [tool, args] of writes) {
+        sent = [];
+        const writeContext = ctx();
+        attachCallClassification(writeContext, "write");
+        await expect(
+          connector.callTool(tool, args, writeContext),
+          `${fixture.name}.${tool} ${type}`,
+        ).rejects.toMatchObject({
+          code: "connector_call_failed",
+          retryable: false,
+          writeOutcome: "unknown",
+          message: expect.stringContaining("check the target before repeating"),
+        });
+        expect(sent).toHaveLength(1);
+      }
+      sent = [];
+      await expect(connector.callTool(`${fixture.name}_api_read`, { path: readPath }, ctx())).rejects.toMatchObject({
+        code: "connector_call_failed",
+      });
+      expect(sent).toHaveLength(1);
+    }
+  }
+  for (const [fixture, credential, args, type, body] of [
+    ...[
+      "/accounts/0123456789abcdef0123456789abcdef/workers/scripts/script_1/content/v2",
+      "/accounts/0123456789abcdef0123456789abcdef/workers/dispatch/namespaces/ns_1/scripts/script_1/content",
+      "/accounts/0123456789abcdef0123456789abcdef/workers/services/service_1/environments/production/content",
+    ].flatMap((path) =>
+      [
+        "application/javascript",
+        "application/javascript+module",
+        "text/javascript",
+        "text/x-python",
+        "multipart/form-data",
+        "application/octet-stream",
+        "text/plain",
+        "text/html",
+      ].map(
+        (type) =>
+          [
+            cloudflareFixture,
+            "cf-media-token",
+            { path },
+            type,
+            "export default { fetch() { return new Response('hello'); } }",
+          ] as const,
+      ),
+    ),
+    ...[
+      "/accounts/0123456789abcdef0123456789abcdef/r2/buckets/bucket_1/objects/key_1",
+      "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1",
+    ].flatMap((path) =>
+      ["text/plain", "image/png", "application/x-object-data"].map(
+        (type) => [cloudflareFixture, "cf-media-token", { path }, type, "stored object bytes"] as const,
+      ),
+    ),
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/magic/connectors/c1/telemetry/events/1700000000.5" },
+      "application/json",
+      '{"id":"event_1"}',
+    ],
+    [stripeFixture, "sk_test_media_fixture", { path: "/v1/quotes/qt_1/pdf" }, "application/pdf", "%PDF"],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/export" },
+      "text/plain",
+      "a. 1 IN A 192.0.2.1",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/intel/indicator-feeds/1/data" },
+      "text/csv",
+      "id,name\n1,Alice",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/cloudforce-one/v2/threat-signals/feeds/feed_1/raw" },
+      "application/xml",
+      "<feed/>",
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      {
+        method: "POST",
+        path: "/accounts/0123456789abcdef0123456789abcdef/analytics_engine/sql",
+        body: "SELECT count() FROM events",
+      },
+      "application/x-ndjson; charset=utf-8",
+      '{"count":3}\n',
+    ],
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1" },
+      "application/octet-stream",
+      "bounded bytes",
+    ],
+    [
+      vercelFixture,
+      "vercel-media-token",
+      { path: "/v1/billing/charges", query: { from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z" } },
+      "application/jsonl",
+      '{"id":"charge_1"}\n',
+    ],
+  ] as const) {
+    sent = [];
+    response = () => new Response(body, { headers: { "content-type": type } });
+    const ctx = {
+      ...connectorContext(),
+      credential: { get: async () => credential, getAll: async () => ({ value: credential }) },
+    };
+    const answer = await fixture.create("media").callTool(`${fixture.name}_api_read`, args, ctx);
+    expect(answer).toMatchObject({ status: 200 });
+    if (args.path.includes("script_1") || args.path.includes("key_1")) {
+      const data = (answer as any).data;
+      expect(typeof data === "string" ? data : atob(data.base64)).toBe(body);
+    }
+    expect(sent).toHaveLength(1);
+  }
+  const refund = overflowFixture.create("media");
+  for (const [type, body, status, accepted] of [
+    ["application/json", '"Refund initiated"', 202, true],
+    ["text/plain; charset=utf-8", "Refund initiated", 202, true],
+    ["text/html", "Refund initiated", 202, false],
+    ["application/octet-stream", "Refund initiated", 202, false],
+    ["application/pdf", "Refund initiated", 202, false],
+    ["application/json", '{"ok":true}', 202, false],
+    ["text/plain", '{"ok":true}', 202, false],
+    ["text/html", '{"ok":true}', 202, false],
+    ["application/problem+json", '"Refund initiated"', 202, false],
+    ["application/json", "", 202, true],
+    ["application/json", null, 204, true],
+    ["text/html", "", 200, true],
+  ] as const) {
+    sent = [];
+    response = () => new Response(body, { status, headers: { "content-type": type } });
+    const values = { clientId: "media-client", apiKey: "overflow-media-key" };
+    const ctx = { ...connectorContext(), credential: { get: async () => values.apiKey, getAll: async () => values } };
+    attachCallClassification(ctx, "write");
+    const promise = refund.callTool(
+      "overflow_api_write",
+      { method: "POST", path: "/contributions/a143db98-198a-42ab-a2b0-5fcb2a18bfbb/initiate-refund" },
+      ctx,
+    );
+    if (accepted) await expect(promise).resolves.toEqual({ status, data: body ? "Refund initiated" : null });
+    else {
+      await expect(promise).rejects.toMatchObject({
+        code: "connector_call_failed",
+        writeOutcome: "unknown",
+        retryable: false,
+        message: expect.stringContaining("check the target before repeating"),
+      });
+      if (body?.startsWith("{"))
+        await expect(promise).rejects.toMatchObject({ message: expect.not.stringContaining("unexpected text/HTML") });
+    }
+    expect(sent).toHaveLength(1);
+  }
+  for (const path of [
+    "/accounts/0123456789abcdef0123456789abcdef/r2/buckets/bucket_1/objects/key_1",
+    "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1",
+  ]) {
+    for (const type of ["application/json", "application/problem+json", "text/plain"]) {
+      sent = [];
+      response = () =>
+        new Response('{"password":"stored-password","apiKey":"stored-key","token":"cf-media-token"}', {
+          headers: { "content-type": type },
+        });
+      const ctx = {
+        ...connectorContext(),
+        credential: { get: async () => "cf-media-token", getAll: async () => ({ value: "cf-media-token" }) },
+      };
+      const answer = (await cloudflareFixture.create("media").callTool("cloudflare_api_read", { path }, ctx)) as any;
+      expect(JSON.stringify(answer)).not.toContain(btoa("cf-media-token"));
+      if (type !== "text/plain")
+        expect(answer.data).toEqual({ password: "[redacted]", apiKey: "[redacted]", token: "[redacted]" });
+      else expect(atob(answer.data.base64)).not.toContain("cf-media-token");
+      expect(sent).toHaveLength(1);
     }
   }
   // Fold the opt-in page adapters into the existing native request matrix.

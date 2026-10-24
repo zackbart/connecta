@@ -117,6 +117,7 @@ export function schema(node: JsonSchema): Schema.Codec<unknown> {
     out = number;
   } else out = types === "boolean" ? Schema.Boolean : types === "null" ? Schema.Null : Schema.Unknown;
   if (n["nullable"] === true) out = Schema.Union([out, Schema.Null]);
+  if (n["writeOnly"] === true) out = out.annotate({ writeOnly: true });
   return typeof n["description"] === "string" ? out.annotate({ description: n["description"] }) : out;
 }
 

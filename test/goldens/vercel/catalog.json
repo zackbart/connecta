@@ -250,7 +250,8 @@
           "value": {
             "type": "string",
             "maxLength": 65536,
-            "description": "New value; write input only. Vercel caps a project's environment at 64 KB."
+            "description": "New value; write input only. Vercel caps a project's environment at 64 KB.",
+            "writeOnly": true
           },
           "type": {
             "type": "string",
@@ -401,7 +402,8 @@
           "value": {
             "type": "string",
             "maxLength": 65536,
-            "description": "Replacement value; write input only."
+            "description": "Replacement value; write input only.",
+            "writeOnly": true
           },
           "type": {
             "type": "string",

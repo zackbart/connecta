@@ -9,7 +9,6 @@ import {
   READ_CAP_MS,
   MODE_COPY,
   probe,
-  result,
   safety,
   stripeErrors,
   StripeApi,
@@ -159,7 +158,6 @@ export const stripe = defineApiProvider<StripeOptions>({
   authenticate,
   safety,
   errors: stripeErrors,
-  result,
   probe,
   guide: usageGuide,
   hatch: {

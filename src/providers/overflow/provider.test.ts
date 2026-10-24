@@ -365,7 +365,7 @@ describe("overflow() standard surface", () => {
         ctx,
       ),
     ).toEqual({ status: 202, data: "Refund initiated" });
-    queue({ status: 202, text: "Refund initiated", headers: { "content-type": "text/html; charset=utf-8" } });
+    queue({ status: 202, text: "Refund initiated", headers: { "content-type": "text/plain; charset=utf-8" } });
     const beforeRefund = calls.length;
     expect(
       await call(
@@ -379,6 +379,27 @@ describe("overflow() standard surface", () => {
       ),
     ).toEqual({ status: 202, data: "Refund initiated" });
     expect(calls).toHaveLength(beforeRefund + 1);
+    for (const type of [
+      "text/html",
+      "application/octet-stream",
+      "application/pdf",
+      "application/xml",
+      "application/json",
+    ]) {
+      queue({
+        status: 200,
+        text: type === "application/json" ? '{"ok":true}' : "Unexpected acknowledgement",
+        headers: { "content-type": type },
+      });
+      const before = calls.length;
+      const error = await failure(
+        call(connector, "overflow_api_write", { method: "POST", path: `/contributions/${id}/initiate-refund` }, ctx),
+      );
+      expect(error).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
+      expect(error.message).toContain("check the target before repeating");
+      if (type === "text/html") expect(error.message).toContain("unexpected text/HTML");
+      expect(calls).toHaveLength(before + 1);
+    }
     queue({ status: 204 });
     expect(
       await call(
@@ -409,11 +430,13 @@ describe("overflow() standard surface", () => {
           ctx,
         ),
       );
-      expect(error.message).toContain(`non-JSON body for a successful ${classification}.`);
+      expect(error.message).toContain("unexpected text/HTML");
       expect(error.retryable).toBe(false);
       if (classification === "write") {
         expect(error.writeOutcome).toBe("unknown");
-        expect(error.message).toContain("Whether it took effect is unknown; check the target before repeating it.");
+        expect(error.message).toContain(
+          "Whether the write took effect is unknown; check the target before repeating it.",
+        );
       } else expect(error.writeOutcome).toBeUndefined();
       expect(calls).toHaveLength(count + 1);
     }

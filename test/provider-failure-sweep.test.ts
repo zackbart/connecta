@@ -32,6 +32,18 @@ const BASE = "https://connecta.example";
 const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
+  "stripe.stripe_api_write": { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_fixture" } },
+  "cloudflare.cloudflare_api_write": {
+    method: "PATCH",
+    path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+    body: { ttl: 300 },
+  },
+  "vercel.vercel_api_write": {
+    method: "PATCH",
+    path: "/v9/projects/web/env/env_fixture",
+    body: { value: "new-value" },
+  },
+  "vercel.update_project_env_var": { projectId: "web", envVarId: "env_fixture", value: "new-value" },
   "breeze.breeze_api_write": { method: "GET", path: "/people/add", query: { first: "Alice", last: "Example" } },
   "ccb.ccb_api_write": { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
   "planning-center.pco_api_write": {
@@ -355,29 +367,45 @@ describe("API provider failure sweep", () => {
                 providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
               ).toHaveLength(requests.length);
             }
-            const unreadableArgs = UNREADABLE_WRITES[address];
+            const unreadableArgs = UNREADABLE_WRITES[address] ?? (tool.name.endsWith("_api_write") ? args : undefined);
             if (failure === "503" && unreadableArgs) {
+              let vendorMessage: string | undefined;
               for (const [body, type] of [
-                ["<html>ok</html>", "text/html"],
                 ["{broken", "application/json"],
-              ]) {
+                ["<html>ok</html>", "application/json"],
+                ["{broken", "application/problem+json"],
+                ["{broken", undefined],
+                ["{broken", "text/plain"],
+                ["[broken", "text/plain"],
+                ["not JSON", "text/plain"],
+                ["{broken", "text/html"],
+                ["<html>ok</html>", "text/html"],
+              ] as const) {
                 const sent: string[] = [];
                 const unreadable = await sweepCall(provider, tool.name, address, unreadableArgs, "write", (request) => {
                   sent.push(request.method);
-                  return new Response(body, { status: 200, headers: { "content-type": type! } });
+                  return new Response(new TextEncoder().encode(body), {
+                    status: 200,
+                    ...(type ? { headers: { "content-type": type } } : {}),
+                  });
                 });
-                expect(sent).toEqual([unreadableArgs["method"]]);
+                expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
                 expect(unreadable.structuredContent).toMatchObject({
                   ok: false,
                   error: {
                     code: "connector_call_failed",
                     retryable: false,
                     writeOutcome: "unknown",
-                    message: expect.stringContaining(
-                      "Whether the write took effect is unknown; check the target before repeating it.",
-                    ),
                   },
                 });
+                const { message } = (unreadable.structuredContent as { error: CallErrorDetails }).error;
+                // Each Stripe call gets a fresh recovery key; compare the wording around it.
+                const wording = message.replace(/(Idempotency-Key: )[0-9a-f-]{36}/, "$1<generated>");
+                vendorMessage ??= wording;
+                if (type === "text/html" && body.startsWith("<")) expect(wording).toContain("unexpected text/HTML");
+                else expect(wording).toBe(vendorMessage);
+                expect(message).toMatch(/unknown[\s\S]*check[\s\S]*before repeating/);
+                expect(message).not.toContain("..");
               }
             }
             if (failure === "503" && address === "gmail.update_draft") {
@@ -401,7 +429,7 @@ describe("API provider failure sweep", () => {
                 error: {
                   code: "connector_call_failed",
                   retryable: false,
-                  message: "Gmail returned a successful response that is not JSON.",
+                  message: "Gmail returned unexpected text/HTML for a JSON response.",
                 },
               });
               expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(

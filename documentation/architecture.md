@@ -1304,7 +1304,14 @@ conversion in `evidence/openapi.document.json` instead of fetching, and the
 generated header records that document's digest beside the pin's, so the
 offline freshness check sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
-transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
+transport. Resolved path parameters are validated before authentication or dispatch,
+including pinned enums and numeric bounds. Number path values must decode to canonical finite ASCII decimals without
+exponents, hexadecimal, a leading plus or whitespace. Integer path values must decode to
+canonical ASCII decimal safe integers: `0`, positive decimals without leading
+zeros, or negative decimals without leading zeros. `-0`, leading `+`, whitespace,
+exponents, decimal points and non-ASCII digits are refused. Negative integers
+remain valid when the pin has no minimum excluding them. String-valued ids keep
+their declared string contract; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a
 transport, failure mapper, scope, framing, cursor extraction, a reviewed
 value-safety table (required; see below), argument-dependent refusals, and an

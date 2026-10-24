@@ -497,7 +497,18 @@ export function connect<R>(
             ),
           );
         }
-        if (!parsed) return yield* Effect.fail(new UnreadableBody(reply.readFailed ? { readFailed: true } : {}));
+        if (!parsed)
+          return yield* Effect.fail(
+            new UnreadableBody(
+              reply.readFailed
+                ? { readFailed: true }
+                : formatType(headers.get("content-type") ?? "")
+                      .split(";", 1)[0]!
+                      .trim() === "text/html" && !/^[\t\r\n ]*[[{]/.test(reply.text ?? "")
+                  ? { unexpectedText: true }
+                  : {},
+            ),
+          );
         const withheld = options.safety.withholdsErrors(operation);
         const kept = options.result
           ? yield* Effect.suspend(() =>

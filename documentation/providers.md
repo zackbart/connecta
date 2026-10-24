@@ -41,6 +41,33 @@ then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch
 operation details separately and keep the same query when continuing.
 
+Maintained REST hatches validate path parameters against their pinned contracts
+before dispatch. Integer ids use canonical ASCII decimal notation within the
+safe-integer range and obey the operation's declared bounds; for example,
+`/individuals/42` is valid for an unbounded integer id while `/individuals/01`
+is refused.
+
+Stripe, Cloudflare and Vercel accept non-JSON success bodies only for reviewed
+operation/media pairs from their pins. Cloudflare also preserves three raw Worker
+content downloads with any non-JSON media. R2/KV object downloads use the full
+JSON value-safety boundary for application/json and +json replies; other stored
+media return bounded bytes with sent-secret checks. An unexpected HTML or text answer to a
+JSON write reports an unknown outcome after one send; check the target before
+repeating the write. Documented PDFs, text exports and streaming formats retain
+their reviewed handling.
+
+Vercel project-environment partial replies withhold failure prose before `fields`
+selection. Named upsert partial-write reports identify the sent key and reviewed
+failure codes, with reconciliation guidance; safe created and failed entries are retained, and submitted env values are private
+write-only inputs on both named tools and raw env writes. Shared-env POST, PATCH
+and DELETE failure prose is withheld too.
+
+Overflow refund initiation accepts an `application/json` string or a bounded
+`text/plain` acknowledgement, a narrow NestJS compatibility exception. Empty 2xx
+refund acknowledgements also succeed. Nonempty HTML, binary, other media and
+JSON-object replies fail with an unknown outcome after one dispatch;
+check whether the refund took effect before repeating it.
+
 ## Planning Center
 
 `planningCenter()` connects one organization's reviewed product APIs.

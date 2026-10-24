@@ -227,6 +227,9 @@ export default defineGoldenSpec({
         : search([{ id: 201, full_name: "other/one", description: text }]),
   },
   failures: {
+    additional: [
+      { label: "noncanonical integer path", tool: "github_api_read", args: { path: `/repos/acme/one/issues/01` } },
+    ],
     read: { tool: "search_scoped", args: { terms: "widget", kind: "repositories", scopes: [{ repo: "other/one" }] } },
     write: {
       tool: "github_api_write",

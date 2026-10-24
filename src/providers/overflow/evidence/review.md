@@ -41,8 +41,12 @@ argument names stay unchanged.
 The health operation is explicitly text; errors may be JSON or bounded text.
 Refund initiation documents a JSON string and several writes document empty
 acknowledgements. That one refund operation also accepts a bounded plain-text
-acknowledgement, since a NestJS string handler may return text/html; this is
-explicit compatibility behavior, not a claim that a live reply was observed. `bodyFormat` distinguishes those from an unexpected non-JSON
+acknowledgement with text/plain only, under the #1026 fix-round ruling. This is
+narrow NestJS compatibility behavior, not a claim that a live reply was observed.
+Empty 2xx refund acknowledgements, including 202/204, remain successes. Nonempty
+text/html, binary and every other media fail as UnreadableBody, as do non-string
+JSON refund responses. Dispatched failures have unknown outcomes, check-before-repeat
+guidance and one physical send. `bodyFormat` distinguishes those from an unexpected non-JSON
 success; no argument can select a raw transport. Existing unreadable-body
 wording is retained under H5's deferral to shared cause/phase plumbing.
 

@@ -829,5 +829,65 @@
         }
       }
     }
-  }
+  },
+  "additional": [
+    {
+      "label": "JSON write answered HTML",
+      "tool": "stripe_api_write",
+      "args": {
+        "method": "POST",
+        "path": "/v1/refunds",
+        "body": {
+          "payment_intent": "pi_1"
+        }
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "POST",
+            "url": "https://api.stripe.com/v1/refunds",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/x-www-form-urlencoded",
+              "idempotency-key": "00000000-0000-4000-8000-000000000001",
+              "stripe-version": "2026-09-30.endive"
+            },
+            "body": {
+              "form": [
+                [
+                  "payment_intent",
+                  "pi_1"
+                ]
+              ]
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Stripe returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it. Idempotency-Key: 00000000-0000-4000-8000-000000000001.",
+          "retryable": false,
+          "writeOutcome": "unknown",
+          "uncertainCall": {
+            "address": "billing.stripe_api_write",
+            "args": {
+              "method": "POST",
+              "path": "/v1/refunds",
+              "body": {
+                "payment_intent": "pi_1"
+              }
+            },
+            "recovery": {
+              "idempotencyKey": "00000000-0000-4000-8000-000000000001"
+            }
+          },
+          "retry": "Do not retry automatically. Check whether the write took effect first. A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
+        }
+      }
+    }
+  ]
 }

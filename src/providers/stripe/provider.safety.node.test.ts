@@ -18,6 +18,7 @@ describeValueSafety("Stripe", {
   counts: { refuse: 13, redact: 106, safe: 228 },
   connector: () => stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, mode: "sandbox" }),
   ctx: () => ({ ...connectorContext(), credential: { get: async () => KEY, getAll: async () => ({ value: KEY }) } }),
+  streamFormat: "json",
   echo: {
     tool: "stripe_api_read",
     args: { path: "/v1/webhook_endpoints/we_1" },

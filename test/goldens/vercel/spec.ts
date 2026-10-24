@@ -179,6 +179,40 @@ export default defineGoldenSpec({
     replies: (text) => [{ body: { deployments: [{ uid: "dpl_1", state: "ERROR", errorMessage: text }] } }],
   },
   failures: {
+    additional: [
+      {
+        label: "JSON write answered HTML",
+        tool: "vercel_api_write",
+        args: { method: "PATCH", path: "/v9/projects/web/env/env_1", body: { value: "replacement" } },
+        replies: [{ text: "<html>ok</html>", headers: { "content-type": "text/html" } }],
+      },
+      {
+        label: "named JSON update answered HTML",
+        tool: "update_project_env_var",
+        args: { projectId: "web", envVarId: "env_1", value: "replacement" },
+        replies: [{ text: "<html>ok</html>", headers: { "content-type": "text/html" } }],
+      },
+      {
+        label: "partial env write with echoed identifiers",
+        tool: "upsert_project_env_var",
+        args: {
+          projectId: "web",
+          key: "TOKEN",
+          value: "submitted-env-secret",
+          type: "sensitive",
+          targets: ["preview"],
+        },
+        replies: [
+          {
+            status: 201,
+            body: {
+              created: [{ id: "submitted-env-secret", key: "TOKEN", type: "sensitive" }],
+              failed: [{ key: "submitted-env-secret", error: { code: "ENV_CONFLICT", message: "stored-env-secret" } }],
+            },
+          },
+        ],
+      },
+    ],
     read: { tool: "vercel_api_read", args: { path: "/v7/deployments", query: { projectId: "web" } } },
     write: {
       tool: "vercel_api_write",

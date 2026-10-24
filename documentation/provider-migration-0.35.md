@@ -5,6 +5,37 @@ This guide collects provider upgrade actions for the pending consolidated
 
 For hosted MCP removals, follow [Migrate hosted MCP presets](./hosted-mcp-migration.md).
 
+## Provider response media and path hardening
+
+JSON-only Stripe and Cloudflare operations now refuse unexpected text, HTML and
+binary success replies. A dispatched unreadable write reports an unknown outcome
+and is sent once; check the target before repeating it. Reviewed PDFs, exports
+and streams remain supported. Cloudflare's three Worker-content operations accept
+any non-JSON media despite the pin's malformed `string` media label, including
+Python modules and multipart bundles. R2 object and KV value reads labelled
+application/json or +json retain parsing and every JSON value-safety layer; other
+stored types return bounded bytes with sent-secret checks.
+
+Pinned integer and number path parameters require canonical ASCII decimal
+notation: no hexadecimal, exponents, leading plus, whitespace or leading zeros.
+Integers must be safe integers; negative values remain valid where the pin allows
+them. Number parameters also accept decimal fractions with trailing zeros. Cloudflare's 16 integer parameters with minimum 0 and exclusiveMinimum true
+require at least 1. String ids retain their pinned contracts. Compound telemetry
+segments remain callable when the index cannot extract their individual values.
+
+Vercel environment `value` inputs are writeOnly on the named upsert/update tools;
+the raw project/shared-env writes register the same private values before sending.
+Echoes in ids, keys, codes and successful metadata are withheld. Project-env POST
+and shared-env POST, PATCH and DELETE withhold failed[].error.message before
+fields selection. Named partial-write reports retain safe created ids/keys and
+failed keys/codes with check-before-repeat guidance.
+
+Overflow refunds accept an application/json string, a text/plain acknowledgement,
+or an empty 2xx acknowledgement (including 202/204). Plain text is a narrow NestJS
+compatibility exception. Nonempty text/html, binary, other media and JSON-object
+replies report an unknown write outcome, check-before-repeat guidance and one
+dispatch. Other empty write acknowledgements and health text retain their behavior.
+
 ## Remove Infisical, Notion, and Mixpanel
 
 The `@zackbart/connecta/providers/infisical`, `/providers/notion`, and
@@ -400,8 +431,10 @@ though the vendor answers them in one bounded response. A missing vendor count
 may require an empty terminal page; it never creates an estimated `page.total`.
 
 `GET /health` still returns its text. Refund initiation accepts its documented
-JSON string or a plain-text acknowledgement; empty write acknowledgements
-remain valid. Other unexpected non-JSON successes are refused. Webhook keys
+JSON string, a text/plain acknowledgement, or an empty 2xx acknowledgement,
+including 202/204. Nonempty text/html, binary, other media and JSON-object replies
+fail with an unknown outcome and check-before-repeat guidance. Empty write
+acknowledgements remain valid. Other unexpected non-JSON successes are refused. Webhook keys
 matching `secret|signing|hmac` case-insensitively are permanently removed from
 every webhook reply shape, including nested delivery payloads. Removing `raw` introduces no configurable PII policy:
 the existing lean/full-contact choices remain and the sensitive set is empty.

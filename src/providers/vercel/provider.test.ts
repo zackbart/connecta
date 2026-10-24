@@ -4,6 +4,10 @@ import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { classifyCallError, ConnectorCallError } from "../../errors.js";
 
+import { CredentialVault } from "../../credentials.js";
+import { createMetaTools } from "../../meta-tools.js";
+import { memoryStorage } from "../../storage/memory.js";
+import { makeRegistry } from "../../../test/helpers.js";
 import { vercel } from "./index.js";
 
 import { REDACTED } from "../_shared/rest/value-safety.js";
@@ -293,6 +297,12 @@ describe("vercel() over an access token", () => {
 
   it("INV-5 INV-9: names upsert conflicts, preserves partial commits and reports missing acknowledgements without replay", async () => {
     const connector = vercel("hosting", TOKEN);
+    const catalog = await connector.listTools(keyed());
+    for (const name of ["upsert_project_env_var", "update_project_env_var"])
+      expect(
+        (catalog.find((tool) => tool.name === name)!.inputSchema as { properties: { value: { writeOnly?: boolean } } })
+          .properties.value.writeOnly,
+      ).toBe(true);
     const body = { key: "TOKEN", value: "s3cret", type: "sensitive", target: ["preview"] };
     const named = { projectId: "web", key: body.key, value: body.value, type: body.type, targets: body.target };
     for (const code of ["ENV_ALREADY_EXISTS", "ENV_CONFLICT"])
@@ -334,9 +344,103 @@ describe("vercel() over an access token", () => {
     sent = [];
     const namedPartial = await refusal(call(connector, "upsert_project_env_var", named));
     expect(namedPartial).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
-    expect(namedPartial.message).toMatch(/env_a.*SECOND.*ENV_CONFLICT/);
+    expect(namedPartial.message).toMatch(
+      /sent key "TOKEN".*Created entries.*env_a.*Failed entries.*SECOND.*ENV_CONFLICT/,
+    );
     expect(namedPartial.message).not.toMatch(/stored-first-secret|stored-second-secret|HTTP 400/);
     expect(sent).toHaveLength(1);
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.setAll("hosting", { value: "vercel-token" }, "fixture");
+    const meta = createMetaTools(
+      makeRegistry([connector], { storage, credentialVault: vault }),
+      "https://connecta.example",
+    );
+    for (const array of [false, true]) {
+      const created = { id: body.value, key: "FIRST", type: "sensitive", value: "stored-first-secret" };
+      respond = () =>
+        Response.json(
+          {
+            created: array ? [created] : created,
+            failed: [
+              {
+                key: body.value,
+                error: {
+                  code: "ENV_CONFLICT",
+                  message: `Stored value ${body.value} / stored-second-secret was refused`,
+                  value: "stored-second-secret",
+                },
+              },
+            ],
+          },
+          { status: 201 },
+        );
+      for (const fields of [undefined, ["created", "failed.error.message", "failed.error.code"]]) {
+        sent = [];
+        const raw = await meta.callDestructiveTool({
+          address: "hosting.vercel_api_write",
+          args: { method: "POST", path: "/v10/projects/web/env", body, ...(fields ? { fields } : {}) },
+        });
+        expect(raw.isError).not.toBe(true);
+        expect(JSON.stringify(raw)).not.toMatch(/s3cret|Stored value|stored-second-secret|stored-first-secret/);
+        expect(JSON.stringify(raw)).toContain("ENV_CONFLICT");
+        expect(sent).toHaveLength(1);
+      }
+      sent = [];
+      const namedEcho = await meta.callDestructiveTool({ address: "hosting.upsert_project_env_var", args: named });
+      expect(namedEcho.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "connector_call_failed", writeOutcome: "unknown", retryable: false },
+      });
+      expect(JSON.stringify(namedEcho)).toContain("sent key");
+      expect(JSON.stringify(namedEcho)).toContain("TOKEN");
+      expect(JSON.stringify(namedEcho)).not.toMatch(/s3cret|stored-second-secret|stored-first-secret/);
+      expect(sent).toHaveLength(1);
+    }
+    // A successful single-variable acknowledgement and raw batches register the same private value.
+    for (const [tool, args] of [
+      ["upsert_project_env_var", named],
+      ["update_project_env_var", { projectId: "web", envVarId: "env_1", value: body.value }],
+      ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body: [body] }],
+    ] as const) {
+      sent = [];
+      const variable = { id: body.value, key: body.value, type: "sensitive" };
+      respond = () =>
+        Response.json(tool === "update_project_env_var" ? variable : { created: [variable] }, { status: 201 });
+      const echoed = await meta.callDestructiveTool({ address: `hosting.${tool}`, args });
+      expect(echoed.isError).not.toBe(true);
+      expect(JSON.stringify(echoed)).not.toContain(body.value);
+      expect(JSON.stringify(echoed)).toContain("[redacted]");
+      expect(sent).toHaveLength(1);
+    }
+    for (const method of ["POST", "PATCH", "DELETE"]) {
+      for (const fields of [undefined, ["failed.error.message", "failed.error.code"]]) {
+        sent = [];
+        respond = () =>
+          Response.json({
+            created: [{ id: "env_safe", key: "TOKEN" }],
+            failed: [{ error: { code: "ENV_CONFLICT", message: "stored-shared-env-secret" } }],
+          });
+        const shared = await meta.callDestructiveTool({
+          address: "hosting.vercel_api_write",
+          args: {
+            method,
+            path: "/v1/env",
+            body:
+              method === "POST"
+                ? { evs: [{ key: "TOKEN", value: body.value }], type: "encrypted", target: ["preview"] }
+                : method === "PATCH"
+                  ? { updates: { env_1: { key: "TOKEN", value: body.value } } }
+                  : { ids: ["env_1"] },
+            ...(fields ? { fields } : {}),
+          },
+        });
+        expect(shared.isError).not.toBe(true);
+        expect(JSON.stringify(shared)).not.toContain("stored-shared-env-secret");
+        expect(JSON.stringify(shared)).toContain("ENV_CONFLICT");
+        expect(sent).toHaveLength(1);
+      }
+    }
     for (const [tool, args] of [
       ["upsert_project_env_var", named],
       ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],

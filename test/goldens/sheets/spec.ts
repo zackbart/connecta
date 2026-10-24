@@ -291,6 +291,13 @@ export default defineGoldenSpec({
     replies: (text) => [{ body: { ...SPREADSHEET, properties: { ...SPREADSHEET.properties, title: text } } }],
   },
   failures: {
+    additional: [
+      {
+        label: "noncanonical integer path",
+        tool: "sheets_api_read",
+        args: { path: `/spreadsheets/sheet_1/developerMetadata/:id` },
+      },
+    ],
     read: { tool: "get_spreadsheet", args: { spreadsheetId: ID } },
     write: {
       tool: "update_values",

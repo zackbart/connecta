@@ -397,7 +397,7 @@ export default defineGoldenSpec({
       label: "overflow_api_write refund text acknowledgement",
       tool: "overflow_api_write",
       args: { method: "POST", path: `/contributions/${CONTRIBUTION_ID}/initiate-refund` },
-      replies: [{ status: 202, text: "Refund initiated", headers: { "content-type": "text/html; charset=utf-8" } }],
+      replies: [{ status: 202, text: "Refund initiated", headers: { "content-type": "text/plain; charset=utf-8" } }],
     },
   ],
   echo: {
@@ -406,6 +406,12 @@ export default defineGoldenSpec({
     replies: (text) => [{ body: { data: { ...REFUND, reason: text } } }],
   },
   failures: {
+    additional: ["text/html", "application/octet-stream", "application/pdf"].map((type) => ({
+      label: `refund unexpected ${type}`,
+      tool: "overflow_api_write",
+      args: { method: "POST", path: `/contributions/${CONTRIBUTION_ID}/initiate-refund` },
+      replies: [{ status: 202, text: "Refund initiated", headers: { "content-type": type } }],
+    })),
     read: { tool: "get_contribution", args: { contributionId: CONTRIBUTION_ID } },
     write: {
       tool: "overflow_api_write",

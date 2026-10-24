@@ -192,3 +192,25 @@ then copied back by operation key. The four earlier reviewed additions keep thei
 recorded rows; every other endpoint row is unchanged. The complete advisory run
 now matches all 466 indexed endpoints and the approved index pin, with no findings.
 No further unexplained drift was accepted.
+
+## Partial environment response hardening (#1012)
+
+POST /v10/projects/{idOrName}/env now structurally withholds
+failed[].error.message beside failed[].error.value, before fields selection,
+for both object and array created acknowledgements. This free text may quote
+sent or stored environment values. Created metadata and reviewed failure codes
+remain available for reconciliation. The named single-variable upsert partial
+report identifies the caller's sent key and retains created ids/keys and failed
+keys/codes only after sent-value redaction. Both named value inputs are writeOnly,
+and raw env writes register their values through the same boundary. It retains
+the unknown-outcome verdict, check-before-repeat guidance and one physical
+write. Regression cases use createMetaTools with a real CredentialVault.
+The existing seven-operation response-media allowlist remains unchanged.
+
+The #1026 fix round also withholds failed[].error.message on POST/PATCH/DELETE
+/v1/env. Both named env value input schemas declare writeOnly; project and shared
+raw writes register the same values via RequestSecrets before dispatch, including
+array payloads, shared evs lists and updates maps. Safe created and failed metadata
+remain in partial reports after whole-body sent-value redaction. Echo cases cover
+raw POST, successful upsert/update metadata, created.id and failed[].key through
+createMetaTools and a real CredentialVault.

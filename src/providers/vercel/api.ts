@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, StatusFailure, UnreadableBody, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
-import { Credentials } from "../../http/services.js";
+import { Credentials, RequestSecrets } from "../../http/services.js";
 import { get, post, patch, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
@@ -397,6 +397,26 @@ export function admit(call: RestCall) {
     },
     catch: (error) => error,
   }).pipe(
+    Effect.tap(() =>
+      Effect.gen(function* () {
+        if (
+          call.method !== "GET" &&
+          call.method !== "HEAD" &&
+          (call.op.path === "/v1/env" || /^\/v(?:9|10)\/projects\/\{idOrName\}\/env(?:\/\{id\})?$/.test(call.op.path))
+        ) {
+          const value = { properties: { value: { writeOnly: true } } };
+          const body =
+            call.op.path === "/v1/env"
+              ? call.method === "POST"
+                ? record(call.body)["evs"]
+                : call.method === "PATCH"
+                  ? Object.values(record(record(call.body)["updates"]))
+                  : []
+              : call.body;
+          (yield* RequestSecrets).arguments(body, { ...value, items: value });
+        }
+      }),
+    ),
     Effect.catch((error) =>
       error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
     ),

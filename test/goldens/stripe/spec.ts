@@ -131,6 +131,14 @@ export default defineGoldenSpec({
     replies: (text) => [{ body: { id: "cus_1", object: "customer", description: text } }],
   },
   failures: {
+    additional: [
+      {
+        label: "JSON write answered HTML",
+        tool: "stripe_api_write",
+        args: { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_1" } },
+        replies: [{ text: "<html>ok</html>", headers: { "content-type": "text/html" } }],
+      },
+    ],
     read: { tool: "stripe_api_read", args: { path: "/v1/customers/cus_1" } },
     write: {
       tool: "stripe_api_write",

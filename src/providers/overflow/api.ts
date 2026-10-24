@@ -1173,13 +1173,13 @@ export const OverflowApi: Vendor = {
   ),
   textBodies: {
     review:
-      "Overflow errors can be JSON or text; GET /health declares text and refund initiation accepts a JSON or plain-text string acknowledgement. Empty acknowledgements remain distinct.",
-    forResponse: (status, operation) =>
+      "Overflow errors can be JSON or text; GET /health declares text and refund initiation accepts a JSON or plain-text string acknowledgement, or an empty 2xx acknowledgement.",
+    forResponse: (status, operation, contentType = "") =>
       status < 200 || status > 299
         ? "json-or-text"
         : operation.method === "GET" && operation.template === "/health"
           ? "text"
-          : isRefund(operation)
+          : isRefund(operation) && contentType.split(";", 1)[0]!.trim().toLowerCase() === "text/plain"
             ? "json-or-text"
             : undefined,
   },
@@ -1452,13 +1452,32 @@ function isRefund(operation: { method: string; template: string }): boolean {
 /** Health text, JSON/plain-text refund acknowledgements and empty write acknowledgements are reviewed. */
 export const result = (
   body: unknown,
-  answer: { bodyFormat: "json" | "text" | "empty"; operation: { method: string; template: string } },
-): Effect.Effect<unknown, HttpFailure> =>
-  answer.bodyFormat === "text" &&
-  !(answer.operation.method === "GET" && answer.operation.template === "/health") &&
-  !isRefund(answer.operation)
+  answer: { bodyFormat: "json" | "text" | "empty"; headers: Headers; operation: { method: string; template: string } },
+): Effect.Effect<unknown, HttpFailure> => {
+  if (isRefund(answer.operation)) {
+    if (answer.bodyFormat === "empty") return Effect.succeed(body);
+    const type = (answer.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
+    if (
+      typeof body !== "string" ||
+      !(
+        (type === "application/json" && answer.bodyFormat === "json") ||
+        (type === "text/plain" && (answer.bodyFormat === "text" || answer.bodyFormat === "json"))
+      )
+    )
+      return Effect.fail(
+        new UnreadableBody(
+          type === "text/html" && !(answer.bodyFormat === "json" && body !== null && typeof body === "object")
+            ? { unexpectedText: true }
+            : {},
+        ),
+      );
+  }
+  return answer.bodyFormat === "text" &&
+    !(answer.operation.method === "GET" && answer.operation.template === "/health") &&
+    !isRefund(answer.operation)
     ? Effect.fail(new UnreadableBody())
     : Effect.succeed(body);
+};
 
 /** Remove webhook signing secrets from bare, wrapped and list replies, never just a named projection. */
 const WEBHOOK_SECRETS = /secret|signing|hmac/i;
