@@ -1,0 +1,80 @@
+[
+  {
+    "provider": "gmail",
+    "version": "v1",
+    "url": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20261019",
+    "digest": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
+    "rawBytes": 217716,
+    "gzip9": 25594,
+    "leanGzip9": 5496,
+    "methods": 79,
+    "requestKinds": 0,
+    "schemas": 56
+  },
+  {
+    "provider": "drive",
+    "version": "v3",
+    "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+    "revision": "20261020",
+    "digest": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+    "rawBytes": 269525,
+    "gzip9": 35404,
+    "leanGzip9": 7380,
+    "methods": 64,
+    "requestKinds": 0,
+    "schemas": 54
+  },
+  {
+    "provider": "docs",
+    "version": "v1",
+    "url": "https://docs.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20261019",
+    "digest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+    "rawBytes": 276657,
+    "gzip9": 43545,
+    "leanGzip9": 8099,
+    "methods": 3,
+    "requestKinds": 53,
+    "schemas": 202
+  },
+  {
+    "provider": "sheets",
+    "version": "v4",
+    "url": "https://sheets.googleapis.com/$discovery/rest?version=v4",
+    "revision": "20261019",
+    "digest": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+    "rawBytes": 394571,
+    "gzip9": 72162,
+    "leanGzip9": 12926,
+    "methods": 17,
+    "requestKinds": 74,
+    "schemas": 273
+  },
+  {
+    "provider": "slides",
+    "version": "v1",
+    "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20261019",
+    "digest": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+    "rawBytes": 250487,
+    "gzip9": 45030,
+    "leanGzip9": 7729,
+    "methods": 5,
+    "requestKinds": 49,
+    "schemas": 155
+  },
+  {
+    "provider": "forms",
+    "version": "v1",
+    "url": "https://forms.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20261022",
+    "digest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+    "rawBytes": 69010,
+    "gzip9": 13788,
+    "leanGzip9": 3210,
+    "methods": 10,
+    "requestKinds": 6,
+    "schemas": 64
+  }
+]

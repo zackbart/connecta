@@ -110,6 +110,23 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+Google Discovery conversions declare `discovery: { pin: "discovery.json",
+format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
+vendored OpenAPI pin. Retain exact official bytes in
+`evidence/discovery.document.json`, with their supplemental `discovery.json`
+pin. The primary pin repeats that source URL, revision and digest. Generate
+`openapi.document.json` with `normalizeDiscovery` from
+`scripts/google-discovery.mjs`, serialized with two-space indentation and a
+terminal newline. Generation and offline freshness reproduce that conversion
+and refuse a changed source, mismatched primary pin or edited conversion.
+The generated module separately records the conversion's digest. No live URL
+is an immutable revision; the archived bytes and SHA-256 establish the pin.
+Use `options.formats: true` to retain parameter formats,
+`options.numericBounds: true` for numeric bounds, and `options.requestGraph: true` to retain a complete referenced request
+schema for details, independently of the bounded compact admission checker.
+Execution still requires reviewed literal operation verdicts and independent
+batch-kind guards. Compiler availability does not migrate a product.
+
 For a vendor with several public OpenAPI documents, `evidence/openapi.json`
 may instead declare `{ revision, documents: [{ pin, prefix }], options? }`.
 Each `pin` names one supplemental sibling pin/document; each literal `prefix`

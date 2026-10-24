@@ -1,3 +1,4 @@
+import { discoveryRefs, discoveryMethods } from "./google-discovery.mjs";
 import { contractDigest } from "./drift-contract.mjs";
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
@@ -332,20 +333,6 @@ async function loadSpecification(provider, manifest, options) {
   };
 }
 
-/** Discovery's bare `$ref: "Draft"` as a pointer into the document's schemas. */
-function discoveryRefs(value) {
-  if (Array.isArray(value)) return value.map(discoveryRefs);
-  if (value === null || typeof value !== "object") return value;
-  const out = {};
-  for (const [key, item] of Object.entries(value)) {
-    // Prose like `description`, which `inline` already drops wherever it sits.
-    if (key === "enumDescriptions") continue;
-    out[key] =
-      key === "$ref" && typeof item === "string" && !item.startsWith("#") ? `#/schemas/${item}` : discoveryRefs(item);
-  }
-  return out;
-}
-
 /**
  * A Google Discovery document in the shape the comparison reads: `paths`
  * keyed by `/<servicePath><flatPath>` and lower-case method, each operation's
@@ -368,27 +355,23 @@ function discoveryDocument(provider, discovery) {
   const json = (ref) => ({
     content: { "application/json": { schema: discoveryRefs({ $ref: ref }) } },
   });
-  const visit = (resource) => {
-    for (const method of Object.values(resource.methods ?? {})) {
-      const path = `/${servicePath}${method.flatPath ?? method.path}`.replace(/\/{2,}/g, "/");
-      const verb = String(method.httpMethod).toLowerCase();
-      paths[path] ??= {};
-      if (paths[path][verb]) {
-        throw new ParserError(`${provider}'s Discovery document defines ${verb.toUpperCase()} ${path} twice`);
-      }
-      paths[path][verb] = {
-        ...(method.deprecated === true ? { deprecated: true } : {}),
-        "x-scopes": Array.isArray(method.scopes) ? method.scopes : [],
-        parameters: Object.entries(method.parameters ?? {})
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([name, parameter]) => ({ name, ...discoveryRefs(parameter) })),
-        ...(method.request?.$ref ? { requestBody: json(method.request.$ref) } : {}),
-        responses: { 200: method.response?.$ref ? json(method.response.$ref) : {} },
-      };
+  for (const method of discoveryMethods(discovery)) {
+    const path = `/${servicePath}${method.flatPath ?? method.path}`.replace(/\/{2,}/g, "/");
+    const verb = String(method.httpMethod).toLowerCase();
+    paths[path] ??= {};
+    if (paths[path][verb]) {
+      throw new ParserError(`${provider}'s Discovery document defines ${verb.toUpperCase()} ${path} twice`);
     }
-    for (const child of Object.values(resource.resources ?? {})) visit(child);
-  };
-  visit(discovery);
+    paths[path][verb] = {
+      ...(method.deprecated === true ? { deprecated: true } : {}),
+      "x-scopes": Array.isArray(method.scopes) ? method.scopes : [],
+      parameters: Object.entries(method.parameters ?? {})
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([name, parameter]) => ({ name, ...discoveryRefs(parameter) })),
+      ...(method.request?.$ref ? { requestBody: json(method.request.$ref) } : {}),
+      responses: { 200: method.response?.$ref ? json(method.response.$ref) : {} },
+    };
+  }
   return {
     openapi: "3.1.0",
     info: { version: String(discovery.revision ?? "unknown") },
