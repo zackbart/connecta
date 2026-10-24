@@ -40,7 +40,7 @@ export const Cursor = Schema.String.check(Schema.isMinLength(1)).annotate({
 
 export interface Page<Row> {
   readonly rows: ReadonlyArray<Row>;
-  readonly page: typeof PageInfo.Type;
+  readonly page: typeof PageInfo.Type & { readonly total?: number };
 }
 
 /**
