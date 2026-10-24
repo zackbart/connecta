@@ -2215,9 +2215,13 @@ and resolved paths pass withheld-value admission. Closed request-header enums
 are opt-in; selected headers join the paging cursor's call identity. Text body
 inputs are opt-in too. A provider with bounded call-owned scope lookups declares
 its fixed write steps, preserving the resource call's single-attempt slot.
+A page adapter may declare `cursorInputMessage` to give provider-specific repair
+guidance when an unsigned raw value is supplied; absent keeps the standard refusal.
 An optional `fieldsRoot` supplies vendor-envelope selection guidance and the
 corresponding generated convention; it never changes the declared response roots.
-Selections accept `result.id` or the equivalent `result[].id` array notation.
+Field selection on every provider, including named reads, accepts optional `[]`
+array notation (`result.id` and `result[].id` are equivalent); this normalization
+is shared behavior, independent of `fieldsRoot`.
 Bindings retain the hatch's other-server and JSON/form body-type guards by
 default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
 replace those guards with the binding's reviewed routing or encoding checks.

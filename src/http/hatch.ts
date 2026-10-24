@@ -1043,6 +1043,8 @@ export function hatch(
       if (supplied[0]) adapter = supplied[0];
       const value = separateCursor ? args.cursor : adapter && at(adapter);
       if (adapter && value !== undefined) {
+        if (adapter.cursorInputMessage && !signedCursorShape(value))
+          yield* checked(() => invalid(adapter!.cursorInputMessage!));
         if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
         const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
         const restored = yield* checked(() => {

@@ -1402,9 +1402,22 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   response = () => Response.json({ result_info: { cursor: "opaque" } });
   const cursorStyle = setup({
     data: pageData("page"),
-    pages: { "GET /items": cloudflarePage },
+    pages: {
+      "GET /items": {
+        ...cloudflarePage,
+        cursorInputMessage: "Omit page on the first call; pass page.nextCursor as cursor in query.page.",
+      },
+    },
     pageCursor: "parameter",
   });
+  for (const page of [1, "1", "vendor-next"]) {
+    await expect(cursorStyle.call("read", { path: "/items", query: { page } })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("Omit page on the first call"),
+    });
+  }
+  expect(cursorStyle.sendPath).not.toHaveBeenCalled();
+  expect(cursorStyle.authenticate).not.toHaveBeenCalled();
   expect(await cursorStyle.call("read", { path: "/items" })).not.toHaveProperty("page");
   expect(() =>
     githubPage("https://api.example").next([], {
