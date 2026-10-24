@@ -100,6 +100,10 @@ export interface ValueSafetyReview {
 }
 
 export interface ValueSafetyHarness extends ValueSafetyReview {
+  /** JSON-only vendors exercise chunked JSON instead of an unsupported NDJSON response. */
+  readonly streamFormat?: "json";
+  /** Establish a fake-only OAuth grant in each fresh program registry, before the observed call. */
+  prepare?(connector: Connector, ctx: ConnectorContext): Promise<void>;
   /** `{ refuse, redact, safe }`: a moved count is a reviewed change. */
   readonly counts: { refuse: number; redact: number; safe: number };
   /** A connector over this table, for the refusal sweep. */
@@ -714,6 +718,22 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       const realFetch = globalThis.fetch;
       globalThis.fetch = (async () => {
         const data = full ? body : references;
+        if (streaming && harness.streamFormat === "json") {
+          const text = JSON.stringify(full ? [
+            { client_secret: "VENDOR_HELD_STREAM", note: "streamed" },
+            { src: "/", headers: [{ key: "X-Custom", value: "VENDOR_HELD_ROUTE" }] },
+            data,
+          ] : data);
+          const encoded = new TextEncoder().encode(text);
+          return new Response(new ReadableStream({
+            start(controller) {
+              const middle = Math.floor(encoded.length / 2);
+              controller.enqueue(encoded.slice(0, middle));
+              controller.enqueue(encoded.slice(middle));
+              controller.close();
+            },
+          }), { headers: { "content-type": "application/json" } });
+        }
         return streaming
           ? new Response(full ? stream : JSON.stringify(references) + "\n", {
               headers: { "content-type": "application/x-ndjson" },
@@ -782,6 +802,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
             },
           };
           const registry = makeRegistry([writer, connector], { storage, credentialVault });
+          await harness.prepare?.(connector, registry.contextFor(connector.id, "https://connecta.test"));
           const run = createExecuteTool(registry, "https://connecta.test", executor, silentLogger, undefined, {
             readOnly,
           });

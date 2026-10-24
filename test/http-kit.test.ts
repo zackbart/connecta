@@ -1,3 +1,4 @@
+import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 // The Effect provider kit (decision 0010, src/http/): the guarded
@@ -1462,6 +1463,43 @@ describe("kit construction (decision 0010, B.4)", () => {
         limit: { default: 2, max: 5, description: "Rows" },
         page: () => Effect.succeed({ rows: [record], page: { hasMore: false, nextCursor: null } }),
       });
+      const enumerated = list(connection, {
+        name: "list_sizes",
+        description: "Enumerated pages",
+        filters: {},
+        row: Row,
+        limit: { default: 2, max: 5, description: "Allowed sizes are 2 and 5.", values: [2, 5] },
+        page: () => Effect.succeed({ rows: [record], page: { hasMore: false, nextCursor: null } }),
+      });
+      for (const values of [[], [2, 2], [3, 5], [2, 6]])
+        expect(() =>
+          list(connection, {
+            name: "list_invalid",
+            description: "Invalid sizes",
+            filters: {},
+            row: Row,
+            limit: { default: 2, max: 5, description: "Sizes", values },
+            page: () => Effect.succeed({ rows: [], page: { hasMore: false, nextCursor: null } }),
+          }),
+        ).toThrow(/limit values/);
+      const sizeSchema = (enumerated.inputSchema as { properties: Record<string, unknown> }).properties["limit"];
+      expect(sizeSchema).toMatchObject({ type: "integer", enum: [2, 5], default: 2, maximum: 5 });
+      expect(kitInputDisagreements(enumerated, { limit: 3 })).toEqual([]);
+      await expect(
+        apiConnector("acme", { tools: [enumerated] }).callTool("list_sizes", { limit: 3 }, context()),
+      ).rejects.toMatchObject({ code: "invalid_args", message: "The limit must be one of 2, 5." });
+      const mixedError = validateToolInput(
+        {
+          ...enumerated.inputSchema,
+          required: ["other"],
+          properties: { ...(enumerated.inputSchema as any).properties, other: { type: "string" } },
+        },
+        { limit: 3 },
+        { address: "acme.list_sizes", failClosed: true },
+      );
+      expect(mixedError?.message).toContain("other");
+      expect(mixedError?.message).toContain("limit");
+      expect(mixedError?.message).not.toContain("/limit:");
       expect(selected.outputSchema).toEqual(sparse);
       expect((rows.outputSchema as { properties: { items: { items: unknown } } }).properties.items.items).toEqual(
         sparse,

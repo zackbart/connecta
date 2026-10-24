@@ -33,6 +33,7 @@ const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = 
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
   "breeze.breeze_api_write": { method: "GET", path: "/people/add", query: { first: "Alice", last: "Example" } },
+  "ccb.ccb_api_write": { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
   "planning-center.pco_api_write": {
     method: "POST",
     path: "/people/v2/people",
@@ -46,7 +47,7 @@ const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
   "planning-center.pco_api_details",
-  ...["breeze", "cloudflare", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "ccb", "cloudflare", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),

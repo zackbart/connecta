@@ -38,6 +38,7 @@
     "**/npm-shrinkwrap.json",
     "**/yarn.lock",
     "**/pnpm-lock.yaml",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "src/providers/*/evidence/*.document.json"
   ]
 }

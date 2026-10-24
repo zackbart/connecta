@@ -15,10 +15,14 @@ import {
   errors,
   oauth,
   resolveScopes,
-  result,
+  CCB_INDEX,
+  CCB_VERDICTS,
+  CCB_PAGES,
+  CCB_NAMED,
+  ccbBinding,
 } from "./api.js";
 import { ccbTools } from "./tools.js";
-import { routingLine, usageGuide } from "./lib/guide.js";
+import { routingLine } from "./lib/guide.js";
 export {
   CCB_ENVIRONMENTS,
   CCB_MEDIA_TYPE,
@@ -69,15 +73,15 @@ export interface CcbOptions {
   clientSecret: string;
   /**
    * `"read"` (default) requests {@link CCB_READ_SCOPES} and ships no write
-   * tool; `"read-write"` adds {@link CCB_WRITE_SCOPES} and the approval-gated
-   * `ccb_api_mutate`. Exclusive with `scopes`.
+   * tool; `"read-write"` adds {@link CCB_WRITE_SCOPES} and `ccb_api_write`.
+   * The host may ask the user to confirm a write. Exclusive with `scopes`.
    */
   access?: "read" | "read-write";
   /**
    * The exact scope list to request, replacing `access`: narrower (drop
    * `read:individual_notes`) or wider (add `read:background_checks` for the
    * hatch). Must be a subset of what Pushpay granted the client. Any `write:`
-   * or `delete:` scope ships `ccb_api_mutate`.
+   * or `delete:` scope ships `ccb_api_write`.
    */
   scopes?: readonly string[];
   /**
@@ -101,9 +105,8 @@ export interface CcbOptions {
    * giving numbers and dates, envelope ids, statement dates, attendance
    * prayer requests and meeting notes, and form payment details. `"drop"`
    * (default) removes them wherever they appear in every result: the named
-   * tools, `raw: true`, `ccb_api_get`, `ccb_api_search`, and `ccb_api_mutate`
-   * replies. `"return"` lets `raw: true` and the hatches return CCB's rows
-   * untouched. Only deployment code decides; no tool argument can.
+   * tools, the named reads, `search_records`, `ccb_api_read`, and `ccb_api_write`
+   * replies. `"return"` lets the hatches return those allowed fields; named projections stay narrow. Credentials and private file destinations are always withheld. Only deployment code decides; no tool argument can.
    */
   sensitiveFields?: "drop" | "return";
 }
@@ -163,8 +166,8 @@ export const ccb = defineApiProvider<CcbOptions>({
   title: "Church Community Builder",
   readme: "Church Community Builder",
   bundle: {
-    baselineGzip: 328952,
-    note: "./providers/ccb measures 328,952 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 389649,
+    note: "./providers/ccb step-2 standalone gzip snapshot at ffd64b04, CI run 40080865116 static job, Node 22.23.3, against main ce0c7492 (345,272 B). Includes the reviewed 385-operation request/response index. Shared Effect is paid once per deployment; provider entries are reported, uncapped and non-additive (#703) (#899).",
   },
   skill,
   options: CCB_OPTIONS,
@@ -182,21 +185,42 @@ export const ccb = defineApiProvider<CcbOptions>({
   oauthWrite401: "grant",
   errors,
   safety: ccbSafety,
-  result,
   probe: { operation: getMe, request: {}, describe: () => "Connected to CCB." },
   guide: (options) => ({
-    content: usageGuide(
-      options.purpose,
-      options.environment,
-      options.mode,
-      resolveScopes(options),
-      writable(options),
-      options.sensitiveFields ?? "drop",
-      options.instructions,
-      skill,
-    ),
+    context: [
+      `${routingLine(options.environment, options.mode, writable(options))}: ${options.purpose}`,
+      "The OAuth client is configured for this environment; use the connection's existing grant. Resolve a person's identity with get_me when needed.",
+      `Sensitive fields: ${options.sensitiveFields ?? "drop"}. Named projections stay narrow; credentials and private file destinations are always withheld.`,
+      `Configured scopes: ${resolveScopes(options).join(" ")}.`,
+      ...(!writable(options)
+        ? ["Configured scopes permit only reads: ccb_api_write is omitted and writes are refused."]
+        : []),
+      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...(options.defaultPerPage !== undefined
+        ? [`Named lists default to ${options.defaultPerPage} rows on this connection.`]
+        : []),
+    ],
     summary: `${options.environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${options.mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
     required: true,
   }),
+  pageSize: { default: 25, max: 100 },
+  idempotencyKey: false,
+  hatch: {
+    name: "ccb",
+    title: "CCB",
+    index: CCB_INDEX,
+    verdicts: CCB_VERDICTS,
+    named: CCB_NAMED,
+    pages: CCB_PAGES,
+    pageCursor: "argument",
+    binding: ccbBinding,
+    writeEnabled: writable,
+    pathExample: "/individuals/42",
+    notes: () => ({
+      read: "Read people and individual profiles, households and families, groups and memberships, events and attendance, campuses, forms and responses, processes and queues, schedules and assignments, notes, pledges, donations, contributions and giving metrics. Discover the exact operation with ccb_api_search, then inspect ccb_api_details.",
+      write:
+        "Update, edit or change a person's email or phone; create people and new individual profiles, pastoral notes, group memberships and events; add person to group, change group role, record attendance and change phone number. Discover the exact operation with ccb_api_search, then inspect ccb_api_details. Use ccb_api_write for the requested change; the host may ask the user to confirm. Writes require authorized configured scopes.",
+    }),
+  },
   tools: ccbTools,
 });

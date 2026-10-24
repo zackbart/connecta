@@ -24,7 +24,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "CCB HTTP 400: Golden 400 failure",
+            "message": "CCB HTTP 400: Golden 400 failure.",
             "retryable": false
           }
         }
@@ -119,7 +119,7 @@
           "dispatched": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "CCB HTTP 403: Golden 403 failure The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Ask the CCB administrator to grant this endpoint's scope or the signed-in person's permission. Re-authorizing alone will not fix it.",
+            "message": "CCB HTTP 403: Golden 403 failure. The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Ask the CCB administrator to grant this endpoint's scope or the signed-in person's permission. Re-authorizing alone will not fix it.",
             "retryable": false,
             "connector": "church",
             "operation": "church.get_group",
@@ -146,7 +146,7 @@
           "dispatched": true,
           "error": {
             "code": "not_found",
-            "message": "CCB HTTP 404: Golden 404 failure Re-read the id from its list tool; CCB reports a permission gap as 403, so this record does not exist.",
+            "message": "CCB HTTP 404: Golden 404 failure. Re-read the id from its list tool; CCB reports a permission gap as 403, so this record does not exist.",
             "retryable": false
           }
         }
@@ -169,8 +169,8 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "conflict",
-            "message": "CCB HTTP 409: Golden 409 failure",
+            "code": "connector_call_failed",
+            "message": "CCB HTTP 409: Golden 409 failure.",
             "retryable": false
           }
         }
@@ -194,7 +194,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "CCB HTTP 422: Golden 422 failure",
+            "message": "CCB HTTP 422: Golden 422 failure.",
             "retryable": false
           }
         }
@@ -218,7 +218,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "CCB HTTP 429: Golden 429 failure CCB limits each endpoint per API client; wait before calling this endpoint again.",
+            "message": "CCB HTTP 429: Golden 429 failure. CCB limits each endpoint per API client; wait before calling this endpoint again.",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -243,7 +243,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "CCB HTTP 500: Golden 500 failure CCB is failing upstream.",
+            "message": "CCB HTTP 500: Golden 500 failure.",
             "retryable": true
           }
         }
@@ -381,7 +381,7 @@
     }
   },
   "write": {
-    "tool": "ccb_api_mutate",
+    "tool": "ccb_api_write",
     "args": {
       "method": "POST",
       "path": "/individuals/42/notes",
@@ -416,7 +416,7 @@
           "answered": true,
           "error": {
             "code": "invalid_args",
-            "message": "CCB HTTP 400: Golden 400 failure",
+            "message": "CCB HTTP 400: Golden 400 failure.",
             "retryable": false
           }
         }
@@ -475,7 +475,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "church",
-            "operation": "church.ccb_api_mutate",
+            "operation": "church.ccb_api_write",
             "recovery": "oauth",
             "reconciliationRequired": true,
             "nextAction": {
@@ -515,10 +515,10 @@
           "answered": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "CCB HTTP 403: Golden 403 failure The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Ask the CCB administrator to grant this endpoint's scope or the signed-in person's permission. Re-authorizing alone will not fix it.",
+            "message": "CCB HTTP 403: Golden 403 failure. The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Ask the CCB administrator to grant this endpoint's scope or the signed-in person's permission. Re-authorizing alone will not fix it.",
             "retryable": false,
             "connector": "church",
-            "operation": "church.ccb_api_mutate",
+            "operation": "church.ccb_api_write",
             "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
           }
         }
@@ -549,7 +549,7 @@
           "answered": true,
           "error": {
             "code": "not_found",
-            "message": "CCB HTTP 404: Golden 404 failure Re-read the id from its list tool; CCB reports a permission gap as 403, so this record does not exist.",
+            "message": "CCB HTTP 404: Golden 404 failure. Re-read the id from its list tool; CCB reports a permission gap as 403, so this record does not exist.",
             "retryable": false
           }
         }
@@ -579,8 +579,8 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "conflict",
-            "message": "CCB HTTP 409: Golden 409 failure",
+            "code": "connector_call_failed",
+            "message": "CCB HTTP 409: Golden 409 failure.",
             "retryable": false
           }
         }
@@ -611,7 +611,7 @@
           "answered": true,
           "error": {
             "code": "invalid_args",
-            "message": "CCB HTTP 422: Golden 422 failure",
+            "message": "CCB HTTP 422: Golden 422 failure.",
             "retryable": false
           }
         }
@@ -642,7 +642,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "CCB HTTP 429: Golden 429 failure CCB limits each endpoint per API client; wait before calling this endpoint again.",
+            "message": "CCB HTTP 429: Golden 429 failure. CCB limits each endpoint per API client; wait before calling this endpoint again.",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -673,7 +673,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "CCB HTTP 500: Golden 500 failure CCB is failing upstream. Whether the write took effect at CCB is unknown; check the target before repeating it.",
+            "message": "CCB HTTP 500: Golden 500 failure. Whether the write took effect at CCB is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -733,7 +733,7 @@
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "church",
-            "operation": "church.ccb_api_mutate",
+            "operation": "church.ccb_api_write",
             "recovery": "oauth",
             "reconciliationRequired": true,
             "nextAction": {
@@ -803,20 +803,20 @@
           "dispatched": true,
           "error": {
             "code": "write_outcome_unknown",
-            "message": "Operation \"church.ccb_api_mutate\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "message": "Operation \"church.ccb_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
             "details": {
               "host": "https://api.ccbchurch.com",
               "code": "timeout",
-              "operation": "church.ccb_api_mutate",
+              "operation": "church.ccb_api_write",
               "stage": "downstream",
               "elapsedMs": 0
             },
             "writeOutcome": "unknown",
             "connector": "church",
-            "operation": "church.ccb_api_mutate",
+            "operation": "church.ccb_api_write",
             "uncertainCall": {
-              "address": "church.ccb_api_mutate",
+              "address": "church.ccb_api_write",
               "args": {
                 "method": "POST",
                 "path": "/individuals/42/notes",

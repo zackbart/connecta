@@ -8,10 +8,20 @@ import {
 // Pushpay ChMS v2 JSON contracts, OAuth, status meanings, admission and privacy.
 // The legacy per-church XML API is outside this provider's scope.
 import { Effect, Schema } from "effect";
+import { ConnectorCallError } from "../../errors.js";
+import { OperationIndex } from "../_shared/rest/operation-index.js";
+import { checked, indexedVendor } from "../_shared/rest/kit.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { restSafety } from "../../http/safety.js";
+import type { HatchDeclaration } from "../../http/hatch.js";
+import type { HatchPageAdapter } from "../../http/hatch-paging.js";
+import { openapi } from "./openapi.generated.js";
+import { CCB_VALUE_SAFETY } from "./safety.js";
+import { CCB_VERDICTS } from "./lib/verdicts.js";
+export { CCB_VERDICTS };
 import type { ApiOAuthConfig } from "../../connectors/api-connector.js";
-import { Integer } from "../../http/json-schema.js";
 import { bearer } from "../../http/oauth.js";
-import { get, post, vendor, type Connection } from "../../http/vendor.js";
+import { get, type Connection } from "../../http/vendor.js";
 import type { VendorErrors } from "../../http/errors.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
@@ -91,19 +101,10 @@ const NAMED_ENDPOINTS: Readonly<Record<string, string | ((args: JsonRecord) => s
   get_event: "GET /events/{id}",
   get_event_attendance: "GET /events/{id}/attendance/{occurrence}",
   list_event_attendees: "GET /events/{id}/attendance/{occurrence}/attendees",
-  list_forms: "GET /forms",
-  list_form_responses: "GET /forms/{id}/responses",
-  list_processes: "GET /processes",
-  list_queues: "GET /queues",
-  list_queue_individuals: "GET /queues_individuals",
-  list_scheduling_categories: "GET /scheduling/categories",
-  list_schedules: "GET /scheduling/categories/{id}/schedules",
-  list_individual_assignments: "GET /individuals/{id}/assignments",
   list_individual_notes: "GET /individuals/{id}/notes",
   get_giving_metrics: (args) =>
     args["familyId"] !== undefined ? "GET /families/{id}/metrics/giving" : "GET /individuals/{id}/metrics/giving",
-  list_individual_pledges: "GET /individuals/{id}/pledges",
-  ccb_api_search: (args) => `POST /search/${typeof args["domain"] === "string" ? args["domain"] : "?"}/results`,
+  search_records: (args) => `POST /search/${typeof args["domain"] === "string" ? args["domain"] : "?"}/results`,
 };
 
 /** `/individuals/123/notes` → `/individuals/{id}/notes`; the key never holds an id. */
@@ -129,7 +130,14 @@ function endpointPartition(toolName: string, raw: unknown): string {
   if (typeof named === "string") key = named;
   else if (named) key = named(args);
   else {
-    const method = toolName === "ccb_api_get" ? "GET" : typeof args["method"] === "string" ? args["method"] : "?";
+    const method =
+      toolName === "ccb_api_read"
+        ? typeof args["method"] === "string"
+          ? args["method"]
+          : "GET"
+        : typeof args["method"] === "string"
+          ? args["method"]
+          : "?";
     const path = typeof args["path"] === "string" ? args["path"] : "";
     key = `${method} ${pathTemplate(path)}`;
   }
@@ -184,194 +192,271 @@ export const SEARCH_DOMAINS = [
   "volunteers",
 ] as const;
 
-const ErrorEnvelope = Schema.Struct({
-  message: Schema.optionalKey(Schema.String),
-  errors: Schema.optionalKey(Schema.Array(Schema.Unknown)),
-});
-export const getMe = get("getMe", "/me", { success: Schema.Unknown, error: ErrorEnvelope });
-export const CcbApi = vendor(
-  "CCB",
-  post("getAccessToken", "/oauth/token", { success: Schema.Unknown, error: ErrorEnvelope }),
-  getMe,
-  get("getIndividuals", "/individuals", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getIndividual", "/individuals/:id", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getFamilies", "/families", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getFamily", "/families/:id", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getGroups", "/groups", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getGroup", "/groups/:id", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getGroupMembers", "/groups/:id/members", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getIndividualsGroups", "/individuals/:id/groups", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getEvents", "/events", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getEvent", "/events/:id", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getEventSummary", "/events/:id/attendance/:occurrence", {
-    params: Schema.Struct({ "id": Integer, "occurrence": Schema.String }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getEventAttendees", "/events/:id/attendance/:occurrence/attendees", {
-    params: Schema.Struct({ "id": Integer, "occurrence": Schema.String }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getForms", "/forms", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getFormResponses", "/forms/:id/responses", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getProcesses", "/processes", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("listQueues", "/queues", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getStepIndividuals", "/queues_individuals", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getScheduleCategories", "/scheduling/categories", { success: Schema.Unknown, error: ErrorEnvelope }),
-  get("getSchedules", "/scheduling/categories/:id/schedules", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getIndividualAssignments", "/individuals/:id/assignments", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getIndividualNotes", "/individuals/:id/notes", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getIndividualMetricsGiving", "/individuals/:id/metrics/giving", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getFamilyMetricsGiving", "/families/:id/metrics/giving", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  get("getIndividualPledges", "/individuals/:id/pledges", {
-    params: Schema.Struct({ "id": Integer }),
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSchedulingAssignmentAdvancedSearchResults", "/search/assignments/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSchedulingCategoriesAdvancedSearchResults", "/search/categories/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getDepartmentDetailAdvancedSearchResults", "/search/department_detail/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getGroupAdvancedSearchResults", "/search/groups/results", { success: Schema.Unknown, error: ErrorEnvelope }),
-  post("getEventAttendanceAdvancedSearchResults", "/search/individual_event_attendance/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getIndividualGroupAdvancedSearchResults", "/search/individual_groups/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getIndividualAdvancedSearchResults", "/search/individuals/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSchedulingOrganizerAdvancedSearchResults", "/search/organizers/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSchedulingPositionAdvancedSearchResults", "/search/positions/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getScheduleAdvancedSearchResults", "/search/schedules/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getScheduleTotalAdvancedSearchResults", "/search/schedules_totals/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getScheduleFileAdvancedSearchResults", "/search/scheduling_files/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSchedulingIndividualAdvancedSearchResults", "/search/scheduling_individuals/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
-  post("getSongAdvancedSearchResults", "/search/songs/results", { success: Schema.Unknown, error: ErrorEnvelope }),
-  post("getSchedulingVolunteerAdvancedSearchResults", "/search/volunteers/results", {
-    success: Schema.Unknown,
-    error: ErrorEnvelope,
-  }),
+const summaries: Readonly<Record<string, string>> = {
+  "GET /individuals": "List people (person profiles, individuals), search names, email and phone",
+  "GET /individuals/{id}": "Get a person profile (individual) for identity or update reconciliation",
+  "PUT /individuals/{id}": "Update or change a person's email, edit an individual profile, name or change phone number",
+  "POST /individuals": "Create or add a person profile, new individual",
+  "POST /individuals/{id}/notes": "Add or create a pastoral note for a person (individual)",
+  "GET /families": "List households and families",
+  "GET /groups/{id}/members": "List church group members and leaders, roster",
+  "POST /groups/{id}/members": "Add person to group, create group membership",
+  "PUT /groups/{group_id}/members/roles": "Change group role, update member or leader roles",
+  "POST /events/{id}/attendance/{occurrence}": "Record attendance, take attendance for an event occurrence",
+  "GET /individuals/{id}/metrics/giving": "Get individual giving metrics, donations and contributions counts",
+  "GET /families/{id}/metrics/giving": "Get family giving metrics, donations and contributions counts",
+  "POST /search/individuals/results": "Search people and individual profiles with advanced configuration and filters",
+  "GET /campuses": "List church campuses, timezone and public gift message",
+};
+const details = JSON.parse(openapi.details) as {
+  d: unknown[];
+  o: Array<0 | [Array<[string, string, number, unknown, string?]>, 0 | [string, unknown, number?]]>;
+};
+// These thirteen wildcard-labelled schemas describe twelve JSON objects and
+// one JSON array. Their byte-pinned contracts were reviewed for JSON dispatch.
+const jsonBodies = new Set([
+  "POST /forms/{id}/responses",
+  "PUT /individuals/{id}/groups/{group_id}",
+  "PUT /individuals/{id}/privacy_settings",
+  "POST /church/privacy_defaults",
+  "PUT /messages/{id}",
+  "POST /messages/{id}/comments",
+  "PUT /messages/{id}/comments/{comment_id}",
+  "POST /scheduling/categories/{id}/notifications",
+  "PUT /individuals/{id}/assignments",
+  "PUT /scheduling/families/{id}/assignments",
+  "PUT /individuals/{id}/groups/bulk",
+  "POST /search/save",
+  "PUT /search/save/{id}",
+]);
+for (const [i, row] of details.o.entries()) {
+  const op = openapi.ops[i]!;
+  if (jsonBodies.has(`${op[0]} ${op[1]}`)) {
+    if (!row || !row[1] || row[1][0] !== "*/*") throw new Error("CCB JSON request review is stale.");
+    row[1][0] = "application/json";
+  }
+}
+for (const row of details.o) {
+  if (row)
+    for (const parameter of row[0])
+      if (!parameter[4])
+        parameter[4] =
+          (
+            {
+              id: "Record id from a prior read; resolve the target before acting.",
+              page: "Vendor page number restored from the signed continuation.",
+              per_page: "Page size: 25, 50, 75 or 100; defaults to 25.",
+              name: "Partial name search.",
+            } as Record<string, string>
+          )[parameter[0]] ?? `${parameter[0].replaceAll("_", " ")} ${parameter[1]} parameter from the vendor contract.`;
+}
+export const CCB_INDEX = new OperationIndex(
+  {
+    ...openapi,
+    details: JSON.stringify(details),
+    // The public campus directory is church setup; retain both resource
+    // words so conversational searches distinguish it from campus subresources.
+    tags: [...openapi.tags, "church campuses"],
+    ops: openapi.ops.map((row) => {
+      const summary = summaries[`${row[0]} ${row[1]}`];
+      const label = summary ? `${summary}; ${row[3]}` : row[3];
+      const tag = row[0] === "GET" && row[1] === "/campuses" ? openapi.tags.length : row[4];
+      return row[5] === undefined
+        ? ([row[0], row[1], row[2], label, tag] as const)
+        : ([row[0], row[1], row[2], label, tag, row[5]] as const);
+    }),
+  },
+  { vendor: "ccb", title: "CCB" },
 );
+export const getMe = get("getMe", "/me", { success: Schema.Unknown });
+export const CcbApi = indexedVendor("CCB", CCB_INDEX, [getMe]);
+const safety = valueSafety(CCB_VALUE_SAFETY, () => CCB_INDEX);
+export const CCB_PAGE_HEADERS = ["x-page", "x-next-page", "x-total-pages", "x-total"] as const;
+export function ccbPageInfo(
+  headers: Readonly<Record<string, string>>,
+  page: number,
+  size: number,
+  rows: number,
+): number | null {
+  const number = (name: string) => {
+    const raw = headers[name];
+    if (raw === undefined || raw === "") return undefined;
+    if (!/^(0|[1-9]\d*)$/.test(raw) || !Number.isSafeInteger(Number(raw)))
+      throw new ConnectorCallError("connector_call_failed", "CCB returned invalid paging metadata.", {
+        retryable: false,
+      });
+    return Number(raw);
+  };
+  const current = number("x-page") ?? page;
+  if (current !== page)
+    throw new ConnectorCallError("connector_call_failed", "CCB returned a different page than requested.", {
+      retryable: false,
+    });
+  let next: number | null;
+  if (Object.hasOwn(headers, "x-next-page")) next = number("x-next-page") ?? null;
+  else {
+    const pages = number("x-total-pages");
+    next = pages === undefined ? (rows >= size ? page + 1 : null) : page < pages ? page + 1 : null;
+  }
+  if (next !== null && (!rows || next <= page))
+    throw new ConnectorCallError("connector_call_failed", "CCB returned a nonadvancing or empty continuing page.", {
+      retryable: false,
+    });
+  return next;
+}
+const pageAdapter: HatchPageAdapter = {
+  param: "page",
+  in: "query",
+  headers: CCB_PAGE_HEADERS,
+  decode: (cursor) => {
+    const value = Number(cursor);
+    if (!/^[1-9]\d*$/.test(String(cursor)) || !Number.isSafeInteger(value))
+      throw new ConnectorCallError("invalid_args", "This CCB cursor contains no valid page number.");
+    return value;
+  },
+  next: (data, call) => {
+    const rows = Array.isArray(data)
+      ? data
+      : Array.isArray(asRecord(data)["items"])
+        ? asRecord(data)["items"]
+        : undefined;
+    if (!rows && !Object.hasOwn(call.headers, "x-next-page") && !Object.hasOwn(call.headers, "x-total-pages"))
+      return undefined;
+    return ccbPageInfo(
+      call.headers,
+      Number(call.query["page"] ?? 1),
+      Number(call.query["per_page"] ?? 25),
+      rows?.length ?? 1,
+    );
+  },
+};
+export const CCB_PAGES: NonNullable<HatchDeclaration["pages"]> = Object.fromEntries(
+  CCB_INDEX.ops
+    .filter(
+      (op) =>
+        CCB_VERDICTS[`${op.method} ${op.path}` as keyof typeof CCB_VERDICTS] === "read" &&
+        op.path !== "/search/schedules_totals/results" &&
+        CCB_INDEX.contract(op).parameters.some((p) => p.in === "query" && p.name === "page"),
+    )
+    .map((op) => [`${op.method} ${op.path}`, pageAdapter]),
+);
+export const CCB_NAMED: NonNullable<HatchDeclaration["named"]> = {
+  "GET /me": "get_me",
+  "GET /individuals": "list_individuals",
+  "GET /individuals/{id}": "get_individual",
+  "GET /families": "list_families",
+  "GET /families/{id}": "get_family",
+  "GET /groups": "list_groups",
+  "GET /groups/{id}": "get_group",
+  "GET /groups/{id}/members": "list_group_members",
+  "GET /individuals/{id}/groups": "list_individual_groups",
+  "GET /events": "list_events",
+  "GET /events/{id}": "get_event",
+  "GET /events/{id}/attendance/{occurrence}": "get_event_attendance",
+  "GET /events/{id}/attendance/{occurrence}/attendees": "list_event_attendees",
+  "GET /individuals/{id}/notes": "list_individual_notes",
+  "GET /individuals/{id}/metrics/giving": "get_giving_metrics",
+  "GET /families/{id}/metrics/giving": "get_giving_metrics",
+  ...Object.fromEntries(SEARCH_DOMAINS.map((domain) => [`POST /search/${domain}/results`, "search_records"])),
+};
+function pathProblem(path: string): string | undefined {
+  return !path.startsWith("/") ||
+    path.startsWith("//") ||
+    /[%;\\?#]/.test(path) ||
+    path.split("/").some((p) => p === "." || p === "..") ||
+    /^\/oauth(?:\/|$)/i.test(path)
+    ? "CCB paths must be canonical indexed API paths; OAuth and encoded or traversal paths are refused."
+    : undefined;
+}
+export const ccbBinding = ({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: Readonly<CcbOptions>;
+}): NonNullable<HatchDeclaration["binding"]> => ({
+  review:
+    "CCB v2 uses JSON bodies, repeated form-array query parameters and deep-object bracket keys on its fixed environment origin. The index, safety and OAuth grant own admission and dispatch.",
+  refuse: (call) => {
+    const denied = safety.refusal(call.method, call.op.path);
+    if (denied) return denied;
+    const path = pathProblem(call.path);
+    if (path) return path;
+    if (
+      CCB_VERDICTS[`${call.method} ${call.op.path}` as keyof typeof CCB_VERDICTS] !== "read" &&
+      !resolveScopes(options).some((scope) => !scope.startsWith("read:"))
+    )
+      return "This CCB connection has only read scopes; writes are refused.";
+    const size = call.query["per_page"];
+    if (size !== undefined && !/^(25|50|75|100)$/.test(String(size)))
+      return "CCB per_page must be one of 25, 50, 75, 100.";
+    const page = call.query["page"];
+    if (page !== undefined && (!/^[1-9]\d*$/.test(String(page)) || !Number.isSafeInteger(Number(page))))
+      return "CCB page must be a positive whole number.";
+    const content = CCB_INDEX.bodyType(call.op);
+    return content && !/^application\/(?:[^/]+\+)?json$/.test(content)
+      ? `CCB's JSON hatch cannot send ${content} request bodies; use the vendor application for this operation.`
+      : undefined;
+  },
+  send: (call, settings) =>
+    connection.sendPath(
+      {
+        method: call.method,
+        path: call.path,
+        template: call.op.path,
+        query: queryPairs(call.query),
+        ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
+      },
+      settings,
+    ),
+});
+function queryPairs(query: Readonly<Record<string, unknown>>): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const add = (name: string, value: unknown) => {
+    if (Array.isArray(value)) for (const item of value) add(name, item);
+    else if (value !== null && typeof value === "object")
+      for (const [key, item] of Object.entries(value)) add(`${name}[${key}]`, item);
+    else if (value !== undefined) out.push([name, String(value ?? "")]);
+  };
+  for (const [name, value] of Object.entries(query)) add(name, value);
+  return out;
+}
 /** Uniform v2 privacy review, including the legacy hatches' unindexed paths. */
 export function ccbSafety(options: Readonly<CcbOptions>): SafetyOptions {
   return {
-    review:
-      "CCB v2 returns church records rather than stored API credentials. Its documented private fields are removed at every depth, before any projection, raw result, hatch or pagination reads them; only deployment configuration permits their return.",
+    reviewed: restSafety(safety, CCB_INDEX),
     sensitiveFields: { names: CCB_SENSITIVE_FIELDS, choice: options.sensitiveFields ?? "drop" },
   };
 }
-export type Query = Readonly<Record<string, string | number | boolean | undefined>>;
+export type Query = Readonly<Record<string, string | number | boolean | readonly (string | number)[] | undefined>>;
 export interface CcbRequest {
   readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   readonly query?: Query;
   readonly body?: unknown;
 }
-/** Keep only the already-redacted paging headers beside the JSON body through value safety. */
-export const result = (body: unknown, answer: { headers: Headers }) =>
-  Effect.succeed({
-    body,
-    pageHeaders: [...answer.headers].filter(([name]) =>
-      ["x-page", "x-next-page", "x-total-pages", "x-total"].includes(name),
-    ),
-  });
 export function callCcb(connection: Connection, request: CcbRequest) {
-  return connection
-    .sendPath({
-      method: request.method,
-      path: request.path,
-      template: request.path,
-      query: Object.entries(request.query ?? {})
-        .filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined)
-        .map(([name, value]) => [name, String(value)] as [string, string]),
-      ...(request.body !== undefined ? { json: JSON.stringify(request.body) } : {}),
-    })
-    .pipe(
-      Effect.map(({ data }) => {
-        const envelope = asRecord(data);
-        return { body: envelope["body"], headers: new Headers(envelope["pageHeaders"]) };
-      }),
+  return Effect.gen(function* () {
+    const query = Object.fromEntries(Object.entries(request.query ?? {}).filter(([, value]) => value !== undefined));
+    const op = yield* checked(() => {
+      const problem = pathProblem(request.path);
+      if (problem) throw new ConnectorCallError("invalid_args", problem);
+      const { op } = CCB_INDEX.resolve(request.method, request.path);
+      CCB_INDEX.check(op, query, request.body);
+      return op;
+    });
+    const answer = yield* connection.sendPath(
+      {
+        method: request.method,
+        path: request.path,
+        template: op.path,
+        query: queryPairs(query),
+        ...(request.body === undefined ? {} : { json: JSON.stringify(request.body) }),
+      },
+      { responseHeaders: CCB_PAGE_HEADERS },
     );
+    return { body: answer.data, headers: new Headers(answer.headers) };
+  });
 }
 export function oauth(options: Readonly<CcbOptions>): ApiOAuthConfig {
   const endpoints = CCB_ENVIRONMENTS[options.environment];
@@ -407,10 +492,17 @@ function errorDetail(payload: unknown, status: number): string {
     }
   }
   const detail = parts.join("; ").slice(0, 500);
-  return detail ? `CCB HTTP ${status}: ${detail}` : `CCB returned HTTP ${status}.`;
+  return detail ? `CCB HTTP ${status}: ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : `CCB returned HTTP ${status}.`;
 }
 
 export const errors: VendorErrors = {
+  meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
+  bodyFailures: {
+    statusOnly: [],
+    review:
+      "An incomplete response body does not establish malformed JSON. Preserve CCB OAuth and write settlement semantics.",
+    readFailed: "CCB's response body could not be read completely.",
+  },
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -450,7 +542,6 @@ export const errors: VendorErrors = {
       words: (detail) =>
         `${detail} Re-read the id from its list tool; CCB reports a permission gap as 403, so this record does not exist.`,
     }),
-    409: () => ({ code: "conflict" }),
     412: () => ({ code: "invalid_args" }),
     429: ({ retryAfterMs, numbers }) => {
       const wait = retryAfterMs ?? numbers["resetAfterMs"] ?? numbers["bodyRetryAfterMs"];
@@ -461,10 +552,5 @@ export const errors: VendorErrors = {
         advice: "; wait before calling this endpoint again",
       };
     },
-    serverError: ({ retryAfterMs }) => ({
-      code: "unavailable",
-      retryAfterMs,
-      words: (detail) => `${detail} CCB is failing upstream.`,
-    }),
   },
 };

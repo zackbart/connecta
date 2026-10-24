@@ -2149,6 +2149,20 @@ only breaks collection ties, rather than leading every multi-word noun phrase.
 Broader phrase ranking remains planned in [#1001](https://github.com/zackbart/connecta/issues/1001).
 `_api_read` omits
 `method` only when GET is its one reviewed read method.
+A standard list can declare `limit.values` for a vendor's discrete page sizes.
+The values must be unique positive integers within `max` and contain the default.
+The catalog declares the enum and decoding refuses other sizes before dispatch.
+A reviewed read-only POST list supplies `review`, like other reviewed POST reads.
+A reviewed OpenAPI pin may opt into `additionalResponseMediaTypes` to declare
+response fields from a vendor's nonstandard media labels. This changes field
+metadata only; the runtime still enforces its declared response format.
+
+A provider may opt into `hatch.writeEnabled(options)` to omit its write hatch
+from a connection whose deployment configuration permits only reads. Discovery
+omits write-tool routing on that connection; reviewed reads do not gain write
+verdicts. The default remains enabled, and endpoint read-only policy still
+enforces every invocation.
+
 The hatch's optional `pages` table declares an adapter for each indexed read
 that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
 (`has_more`, last `data` id → `starting_after`), Cloudflare

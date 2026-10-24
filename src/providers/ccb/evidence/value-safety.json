@@ -1,0 +1,97 @@
+{
+  "format": 5,
+  "digest": "sha256:2f532bfdcd2c4d40add8373218d3ea371c215ad7d754cfa72fb241fc7c45348d",
+  "options": {},
+  "candidates": {
+    "PUT /events/{event_id}/attendance_grouping": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /events/{id}/invitation_settings": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /events/{id}/shared_campuses/{campus_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /individuals/background_checks": {
+      "fields": [],
+      "named": true
+    },
+    "GET /individuals/{id}/background_checks": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /needs/{id}/coordinator": {
+      "fields": [],
+      "named": true
+    },
+    "POST /oauth/token": {
+      "fields": ["access_token", "refresh_token"],
+      "named": true
+    },
+    "POST /reset_password": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /scheduling/songs/{song_id}": {
+      "fields": ["time_signature"],
+      "named": false
+    },
+    "POST /search/songs/results": {
+      "fields": ["[].song_keys", "[].time_signature"],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "PUT /scheduling/events/{event_id}/serving_rotations/{serving_rotation_id}": ["event_files[].url"],
+      "GET /scheduling/songs/{song_id}": ["time_signature"],
+      "POST /search/songs/results": ["[].song_keys", "[].time_signature"],
+      "POST /files": ["url"],
+      "GET /files/{id}": ["url"],
+      "GET /individuals/{id}/files": ["[].file.url"],
+      "POST /individuals/{id}/files": ["[].file.url"],
+      "POST /individuals/{id}/files/{file_id}": ["[].file.url"],
+      "GET /forms/{id}": ["files[].url"],
+      "GET /groups/{id}/messages": ["[].files.url", "[].recent_comments.files.url"],
+      "GET /messages/{id}": ["files.url", "recent_comments.files.url"],
+      "PUT /messages/{id}": ["files.url", "recent_comments.files.url"],
+      "GET /messages/{id}/comments": ["[].files.url"],
+      "POST /messages/{id}/comments": ["files.url"],
+      "PUT /messages/{id}/comments/{comment_id}": ["files.url"],
+      "GET /scheduling/categories/{id}/schedules": ["[].events[].event_files[].url"],
+      "POST /scheduling/categories/{id}/schedules": ["[].events[].event_files[].url"],
+      "POST /scheduling/categories/{id}/files": ["url"],
+      "GET /scheduling/categories/{id}/events": ["[].event_files[].url"],
+      "GET /scheduling/schedules/{id}": ["events[].event_files[].url"],
+      "PUT /scheduling/schedules/{id}": ["events[].event_files[].url"],
+      "PUT /scheduling/events/{event_id}/event_position_associated_times": ["event_files[].url"],
+      "GET /scheduling/events/{id}": ["event_files[].url"],
+      "PUT /scheduling/events/{id}": ["event_files[].url"],
+      "PUT /scheduling/events/{id}/copy_assignments": ["[].event_files[].url"],
+      "PUT /scheduling/events/{id}/copy_assignments/{copyFromEventId}": ["event_files[].url"],
+      "POST /scheduling/events/{id}/files": ["[].url"],
+      "GET /scheduling/categories/{id}/service_plans": ["[].items[].files[].url"],
+      "POST /scheduling/categories/{id}/service_plans": ["items[].files[].url"],
+      "PUT /scheduling/service_plans/{id}": ["[].items[].files[].url"],
+      "PUT /scheduling/service_plans/{id}/items": ["items[].files[].url"],
+      "POST /scheduling/service_plans/{id}/items": ["items[].files[].url"],
+      "PUT /scheduling/service_plan_items/{id}": ["files[].url"],
+      "GET /scheduling/individuals/{id}/open_event_positions/{event_position_id}": [
+        "schedule.events[].event_files[].url"
+      ],
+      "POST /search/assignments/results": ["[].schedule.events[].event_files[].url"],
+      "POST /search/organizers/results": ["[].schedule.events[].event_files[].url"],
+      "POST /search/schedules/results": ["[].events[].event_files[].url"],
+      "POST /search/scheduling_files/results": ["[].url"]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}
