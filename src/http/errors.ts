@@ -8,8 +8,10 @@
 // headers carry, rules that cut across statuses, and its wording.
 //
 // Classification and wording are two steps. A vendor's `facts` reads a copy
-// of the error body that keeps only tokens, finite numbers, and booleans, and
-// its rules read those facts and the reviewed `headers` allowlist, nothing
+// of the error body that keeps only tokens, finite numbers, and booleans.
+// Declared public fact values are captured before sent-secret redaction;
+// wording reads a separate extraction from the redacted body. The vendor's
+// rules read those facts and the reviewed `headers` allowlist, nothing
 // else, and return a `Verdict`: a code and retry advice. Only after that does
 // the kit build the vendor's detail line, and the verdict's `words` render
 // the message from it. A rule's input has no prose to read, and when a rule
@@ -126,7 +128,7 @@ type PresenceReview = Readonly<
  */
 export interface Classified<F extends Facts = Facts> {
   readonly status: number;
-  /** The vendor's `facts`, over the whole error body: tokens, finite numbers, booleans, and complete lists of them. */
+  /** Bounded redacted facts, with declared public values preserved before redaction; lists stay complete. */
   readonly facts: F;
   readonly presence: Presence;
   readonly numbers: Readonly<Record<string, number | undefined>>;
@@ -163,7 +165,7 @@ export interface Verdict {
 /** What `detail` may read. `body` is absent when the operation withholds vendor text. */
 interface DetailInput<F extends Facts = Facts> {
   readonly status: number;
-  /** The same facts, with each list cut to its first eight entries for display. */
+  /** Facts from the redacted body, with each list cut to its first eight entries for display. */
   readonly facts: F;
   readonly presence: Presence;
   readonly numbers: Readonly<Record<string, number | undefined>>;
@@ -197,6 +199,12 @@ export interface VendorErrors<F extends Facts = Facts> {
    * not there to read. Runs on every failure, withheld or not.
    */
   readonly facts: (tokens: unknown) => F;
+  /**
+   * Closed public values that classification may preserve before sent-secret
+   * redaction, by fact name. Undeclared values are absent from that fact.
+   * Wording always reads facts from the redacted body instead.
+   */
+  readonly factVocabulary?: Readonly<Record<string, readonly Fact[]>>;
   /** Structural text facts only: never exposes the string, including on withheld operations. */
   readonly presence?: PresenceReview;
   /** Reviewed finite, nonnegative numeric metadata; blank strings are absent and raw text never reaches rules. */
@@ -274,6 +282,7 @@ const errorReviews = new WeakMap<
     presence: PresenceReview;
     display: Readonly<Record<string, number>>;
     numbers: Readonly<Record<string, readonly string[]>>;
+    vocabulary: Readonly<Record<string, ReadonlySet<Fact>>>;
   }
 >();
 /** Metadata snapshots contain no request data, promises or services. */
@@ -316,6 +325,17 @@ function captureErrorReviews(vendor: VendorErrors<any>) {
     presence: Object.freeze(presence),
     display: Object.freeze(display),
     numbers: Object.freeze(numbers),
+    vocabulary: Object.freeze(
+      Object.fromEntries(
+        Object.entries(vendor.factVocabulary ?? {}).map(([name, values]) => {
+          if (!TOKEN.test(name) || !Array.isArray(values) || values.some((value) => boundedFact(value) === undefined))
+            throw new Error(
+              "Error fact vocabularies need token names and finite public token, number or boolean values.",
+            );
+          return [name, new Set(values)];
+        }),
+      ),
+    ),
   };
   errorReviews.set(vendor, captured);
   return captured;
@@ -355,6 +375,45 @@ function bounded<F extends Facts>(facts: F): F {
           : boundedFact(value),
       ]),
   ) as F;
+}
+
+interface CapturedClassifierFacts {
+  readonly vendor: VendorErrors<any>;
+  readonly facts: Facts;
+}
+
+const classifierFacts = new WeakMap<StatusFailure, CapturedClassifierFacts>();
+
+function vocabularyFacts(facts: Facts, vendor: VendorErrors<any>): Facts {
+  return Object.fromEntries(
+    Object.entries(captureErrorReviews(vendor).vocabulary).map(([name, values]) => {
+      const value = facts[name];
+      return [
+        name,
+        Array.isArray(value)
+          ? Object.freeze(value.filter((entry) => values.has(entry)))
+          : value !== undefined && values.has(value as Fact)
+            ? value
+            : undefined,
+      ];
+    }),
+  );
+}
+
+/** Read only declared public facts before redaction; never retain the original body or an unreviewed value. */
+export function captureClassifierFacts(body: unknown, vendor: VendorErrors<any>): CapturedClassifierFacts | undefined {
+  if (!Object.keys(captureErrorReviews(vendor).vocabulary).length) return undefined;
+  const facts = bounded(vendor.facts(tokensOf(body)));
+  return { vendor, facts: vocabularyFacts(facts, vendor) };
+}
+
+/** Keep classification facts off the failure's enumerable data and its redacted detail body. */
+export function withClassifierFacts(
+  failure: StatusFailure,
+  captured: CapturedClassifierFacts | undefined,
+): StatusFailure {
+  if (captured) classifierFacts.set(failure, captured);
+  return failure;
 }
 
 /** The detail line gets eight list entries by default; reviewed recovery fields retain their fixed bound. */
@@ -571,7 +630,7 @@ function statusVerdict(
   read: boolean,
 ): ConnectorCallError {
   const input = classificationInput(failure, vendor, withheld);
-  const { facts, headers, presence, numbers } = input;
+  const { headers, presence, numbers } = input;
   // Classification first, over facts and headers only.
   const decided = classified(input, vendor);
   // The transport already applied the core's positive-read method/header rule.
@@ -588,7 +647,7 @@ function statusVerdict(
   // value-safety review lets its vendor text through.
   const detail = vendor.detail({
     status: failure.status,
-    facts: displayed(facts, vendor),
+    facts: displayed(bounded(vendor.facts(tokensOf(failure.body))), vendor),
     presence,
     numbers,
     headers,
@@ -630,9 +689,11 @@ function structuralPresence(body: unknown, reviews: PresenceReview | undefined):
 }
 
 function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): Classified {
+  const redacted = bounded(vendor.facts(tokensOf(failure.body)));
+  const captured = classifierFacts.get(failure);
   return {
     status: failure.status,
-    facts: bounded(vendor.facts(tokensOf(failure.body))),
+    facts: { ...redacted, ...(captured?.vendor === vendor ? captured.facts : vocabularyFacts(redacted, vendor)) },
     presence: structuralPresence(failure.body, captureErrorReviews(vendor).presence),
     numbers: Object.fromEntries(
       Object.entries(captureErrorReviews(vendor).numbers).map(([name, path]) => {

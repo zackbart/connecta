@@ -7,6 +7,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import type { ConnectorContext } from "../../types.js";
 
 import { manifest } from "../../http/vendor.js";
@@ -348,6 +349,18 @@ describe("cloudflare() over a key", () => {
       const failure = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
       expect(failure.code, `${status}`).toBe(code);
       expect(failure.message).toContain(message);
+    }
+    for (const status of [200, 400]) {
+      const ctx = { ...token(), requestScope: {} };
+      requestSentSecrets(ctx).arguments(
+        { private: "6003" },
+        { type: "object", properties: { private: { type: "string", writeOnly: true } } },
+      );
+      respond = () =>
+        Response.json({ success: false, errors: [{ code: 6003, message: "Private echo: 6003" }] }, { status });
+      const failure = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, ctx));
+      expect(failure.code, `${status}`).toBe("auth_required");
+      expect(failure.message).not.toContain("6003");
     }
     respond = () =>
       Response.json(
