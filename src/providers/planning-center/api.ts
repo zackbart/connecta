@@ -11,6 +11,7 @@ import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { valueSafety } from "../_shared/rest/value-safety.js";
 import { restSafety } from "../../http/safety.js";
 import type { HatchPageAdapter } from "../../http/hatch-paging.js";
+import type { HatchBinding } from "../../http/hatch.js";
 import { openapi } from "./openapi.generated.js";
 import { TABLE } from "./safety.js";
 import type { ConnectorCredentialConfig } from "../../types.js";
@@ -318,7 +319,13 @@ export const errors: VendorErrors = {
   provider: "Planning Center",
   facts: () => ({}),
   detail: ({ body, status }) => errorDetail(body, status),
-  unreadable: "Planning Center returned a successful response that is not JSON.",
+  unreadable: "Planning Center returned malformed JSON.",
+  bodyFailures: {
+    review:
+      "The pinned Planning Center product APIs return JSON. An incomplete bounded body read does not establish malformed JSON; preserve the read phase without exposing the exception or changing status/ceiling classifications.",
+    statusOnly: [],
+    readFailed: "Planning Center's response body could not be read completely.",
+  },
   statuses: {
     401: () => ({
       code: "auth_required",
@@ -510,3 +517,65 @@ export const probe = {
     return `Authenticated as ${String(name)} (person ${me.id})${where ? ` in ${String(where)}` : ""}.`;
   },
 };
+
+/** Product-version framing over the shared hatch's admission and projection seam. */
+export function pcoBinding({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: Readonly<PlanningCenterOptions>;
+}): HatchBinding {
+  const excluded = excludedApps(options.excludeApps);
+  const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
+  return {
+    review:
+      "The ten reviewed JSON:API product pins each require their own X-PCO-API-Version header. Preserve scalar query values/repeated pairs, exact-URL exclusions and Connection.sendPath safety on every dispatch.",
+    refuse: (call) => {
+      if (call.op.server)
+        return "This Planning Center operation uses a different server, which this connection does not reach.";
+      const type = PCO_INDEX.bodyType(call.op)?.split(";", 1)[0]!.trim().toLowerCase();
+      return type && !/^application\/(?:[^/]+\+)?json$/.test(type)
+        ? "This Planning Center operation takes a non-JSON body, which this connection does not send."
+        : undefined;
+    },
+    send: (call, sendOptions) =>
+      Effect.gen(function* () {
+        const request = yield* Effect.try({
+          try: () => {
+            const query = Object.entries(call.query).flatMap(([name, value]): [string, string][] =>
+              value === undefined
+                ? []
+                : (Array.isArray(value) ? value : [value]).map((item) => {
+                    if (
+                      typeof item !== "string" &&
+                      typeof item !== "boolean" &&
+                      !(typeof item === "number" && Number.isFinite(item))
+                    )
+                      throw new ConnectorCallError(
+                        "invalid_args",
+                        `Planning Center parameter ${name} takes scalar values.`,
+                      );
+                    return [name, String(item)];
+                  }),
+            );
+            if (excluded.size > 0) refuseExcluded(literalSegments(call.path), query, call, excluded);
+            const app = appForPath(call.path, apps);
+            return {
+              method: call.method,
+              path: call.path,
+              template: call.op.path,
+              query,
+              headers: { "X-PCO-API-Version": PLANNING_CENTER_API_VERSIONS[app] },
+              ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
+            };
+          },
+          catch: (error) => {
+            if (error instanceof ConnectorCallError) return new Refusal({ error });
+            throw error;
+          },
+        });
+        return yield* connection.sendPath(request, sendOptions);
+      }),
+  };
+}

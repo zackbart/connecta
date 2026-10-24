@@ -3,7 +3,7 @@ import goldenSpec from "../../../test/goldens/planning-center/spec.js";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { validateToolInput } from "../../validate.js";
-import { errors, safety, PCO_INDEX, PCO_VERDICTS } from "./api.js";
+import { errors, safety, PCO_INDEX, PCO_VERDICTS, PLANNING_CENTER_API_VERSIONS } from "./api.js";
 import { planningCenterTools } from "./tools.js";
 // The Planning Center connection uses the provider kit over JSON:API. Request
 // shapes, projections, and typed failures live in the characterization
@@ -18,6 +18,7 @@ import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
+  streamError?: true;
   status?: number;
   body?: unknown;
   text?: string;
@@ -53,6 +54,15 @@ beforeEach(() => {
       body: typeof init.body === "string" && init.body ? JSON.parse(init.body) : undefined,
     });
     const status = next.status ?? 200;
+    if (next.streamError)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("unseen-stream-cause"));
+          },
+        }),
+        { status },
+      );
     return new Response(
       [204, 205, 304].includes(status) ? null : (next.text ?? JSON.stringify(next.body ?? { data: [] })),
       { status, ...(next.headers ? { headers: next.headers } : {}) },
@@ -219,6 +229,34 @@ describe("Planning Center credentials", () => {
       (error) => error,
     );
     expect(protectedFailure.message).not.toContain("unseen-error-signing-key");
+
+    queue({ streamError: true }, { text: "{broken" });
+    await expect(invoke("get_person", { personId: "1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      message: "Planning Center's response body could not be read completely.",
+    });
+    await expect(invoke("get_person", { personId: "1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      message: "Planning Center returned malformed JSON.",
+    });
+    for (const [app, resource] of Object.entries({
+      people: "people",
+      services: "service_types",
+      groups: "groups",
+      "check-ins": "events",
+      calendar: "event_instances",
+      registrations: "signups",
+      giving: "funds",
+      publishing: "episodes",
+      webhooks: "webhook_subscriptions",
+      api: "personal_access_tokens",
+    })) {
+      queue({ body: { data: [], meta: { total_count: 0 } } });
+      await invoke("pco_api_read", { path: `/${app}/v2/${resource}` });
+      expect(calls.at(-1)!.headers["x-pco-api-version"]).toBe(
+        PLANNING_CENTER_API_VERSIONS[app as keyof typeof PLANNING_CENTER_API_VERSIONS],
+      );
+    }
 
     // Discovery must remain useful with all 1,753 operations, within 0014's budgets.
     const beforeDiscovery = calls.length;

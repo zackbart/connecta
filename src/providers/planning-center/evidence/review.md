@@ -127,11 +127,25 @@ every retired wrapper/argument. Named lists use standard signed offset cursors,
 limits and `items/page`; `get_plan` is one bounded three-read join with plan
 properties flattened and `truncated` paths for partial items/team members.
 Acknowledgement-only workflow actions return `{ok:true}`. Generic list totals
-and header binding/H5 follow the orchestrator-approved Overflow/Stripe shared
-extensions; no competing implementation is introduced. H9 measures import,
+follow the orchestrator-approved Overflow extension; total is omitted until it
+lands. The orchestrator approved stacking on Stripe #990 at
+49b21b02551134afd6a9f83b276ee9e71d4b8667. `pcoBinding` uses its unchanged shared
+binding seam for exact product-version headers and JSON framing. H5 opts into
+its unchanged `bodyFailures` extension with no status-only overrides: incomplete
+reads and malformed JSON have distinct fixed wording, and exception text never
+surfaces. No competing shared implementation is introduced. H9 measures import,
 construction and discovery without changing deadlines.
 
 The public drift check on 2026-10-24 found no contract or byte drift across the
 1,753 indexed operations. It reported a newer People publication, 2026-10-05,
 against the retained 2026-06-04 pin. This advisory is recorded, not accepted as
 a version update; reviewing that version is separate work.
+
+The orchestrator amended H9's scope after the full index exposed quadratic
+shared hatch membership scans and a golden-update timeout. The isolated
+main-based fix is `fb717c715db6cd9f9f3d396b67e5144b44890de3`: cache a first-match
+operation map per index, preserving errors and order. It was merged with
+Stripe's unchanged binding/page-adapter changes. Three fresh Node 22 processes
+on the same PCO index measured median construction 665.7 ms before the lookup
+fix and 316.5 ms after (shared-host characterization, not a benchmark guarantee).
+No test or request time budget changes.

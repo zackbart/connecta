@@ -195,9 +195,11 @@ async function reference(i: number, ctx: ReferenceContext) {
     await call(ctx, "list_plans", { serviceTypeId: SERVICE });
     await call(ctx, "get_plan", { serviceTypeId: SERVICE, planId: PLAN });
   } else if (i === 3) {
-    const first = await call(ctx, "search_people", paging);
+    const pageArgs = standard() ? { ...paging, fields: ["id"] } : paging;
+    const first = await call(ctx, "search_people", pageArgs);
     const cursor = /"nextCursor"\s*:\s*"([^"]+)"/.exec(first.text)?.[1];
-    await call(ctx, "search_people", standard() ? { ...paging, cursor } : { ...paging, offset: 100 });
+    if (standard() && !cursor) throw new Error("Planning Center's projected reference page lost its next cursor.");
+    await call(ctx, "search_people", standard() ? { ...pageArgs, cursor } : { ...pageArgs, offset: 100 });
   } else if (i === 4) {
     if (standard()) {
       await call(ctx, "pco_api_search", { query: "person mergers" });

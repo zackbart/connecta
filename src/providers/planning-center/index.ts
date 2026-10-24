@@ -24,6 +24,7 @@ import {
   PCO_VERDICTS,
   PCO_NAMED,
   PCO_PAGES,
+  pcoBinding,
 } from "./api.js";
 import type { PlanningCenterExcludableApp } from "./lib/constants.js";
 import { planningCenterTools } from "./tools.js";
@@ -93,8 +94,8 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   title: "Planning Center",
   readme: "Planning Center",
   bundle: {
-    baselineGzip: 336325,
-    note: "./providers/planning-center measures 336,325 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 635569,
+    note: "./providers/planning-center measures 635,569 B gzip standalone in step 2, versus 349,553 B on main 8e92eed9 (+286,016 B), Node 22.23.3 with system zlib. This accepts the full 1,753-operation ten-product index, reviewed safety and standard discovery. The shared Effect kit is paid once per deployment; provider entries are reported, not capped, and sizes are not additive (#899).",
   },
   skill,
   options: PLANNING_CENTER_OPTIONS,
@@ -147,6 +148,7 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
     verdicts: PCO_VERDICTS,
     named: PCO_NAMED,
     pages: PCO_PAGES,
+    binding: pcoBinding,
     pathExample: "/people/v2/people/123",
     notes: () => ({
       read: "JSON:API records retain data, included and meta; named reads resolve common joins.",

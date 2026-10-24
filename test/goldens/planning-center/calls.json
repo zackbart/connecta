@@ -186,80 +186,51 @@
     "args": {
       "path": "/publishing/v2/episodes",
       "query": {
-        "where[title]": "Easter",
+        "where[search]": "Easter",
         "per_page": 5
       }
     },
-    "steps": [],
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/publishing/v2/episodes?where%5Bsearch%5D=Easter&per_page=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2024-03-25"
+          }
+        }
+      ]
+    ],
     "result": {
-      "ok": false,
-      "dispatched": true,
-      "error": {
-        "code": "invalid_args",
-        "message": "Not sent: the arguments do not match GET /publishing/v2/episodes in the pinned API index: /query/where[title] (additionalProperties: one of filter, where[search], where[series_id], where[speaker_id], where[speaker_type], where[services_plan_remote_identifier], where[services_service_type_remote_identifier], where[channel][search], where[series][id], where[series][search], where[channel][current_episode][search], where[channel][current_episode][series_id], … (30 in all)). Read pco_api_details for the contract.",
-        "retryable": false,
-        "validation": {
-          "issues": [
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "data": [
             {
-              "path": "/query/where[title]",
-              "code": "additionalProperties",
-              "expected": "one of filter, where[search], where[series_id], where[speaker_id], where[speaker_type], where[services_plan_remote_identifier],…"
+              "type": "Episode",
+              "id": "71",
+              "attributes": {
+                "title": "Easter Sunday",
+                "published_to_library_at": null
+              }
             }
           ],
-          "truncated": true
+          "meta": {
+            "total_count": 1,
+            "count": 1
+          }
         },
-        "repair": {
-          "issues": [
-            {
-              "path": "/query/where[title]",
-              "receivedType": "string",
-              "acceptedKeys": [
-                "filter",
-                "where[search]",
-                "where[series_id]",
-                "where[speaker_id]",
-                "where[speaker_type]",
-                "where[services_plan_remote_identifier]",
-                "where[services_service_type_remote_identifier]",
-                "where[channel][search]",
-                "where[series][id]",
-                "where[series][search]",
-                "where[channel][current_episode][search]",
-                "where[channel][current_episode][series_id]",
-                "where[channel][current_episode][speaker_id]",
-                "where[channel][current_episode][speaker_type]",
-                "where[channel][current_episode][services_plan_remote_identifier]",
-                "where[channel][current_episode][services_service_type_remote_identifier]",
-                "where[series][channel][search]",
-                "order",
-                "include",
-                "fields[Episode]",
-                "fields[Channel]",
-                "fields[EpisodeResource]",
-                "fields[EpisodeTime]",
-                "fields[Series]",
-                "fields[Speakership]",
-                "fields[ChannelDefaultEpisodeResource]",
-                "fields[ChannelDefaultTime]",
-                "fields[Speaker]",
-                "per_page",
-                "offset"
-              ]
-            }
-          ]
-        },
-        "connector": "church",
-        "operation": "church.pco_api_read",
-        "nextAction": {
-          "tool": "search_tools",
-          "arguments": {
-            "query": "pco_api_read",
-            "connector": "church",
-            "includeSchemas": "compact"
-          },
-          "purpose": "Inspect the current input shape if the validation findings are not sufficient."
-        },
-        "retry": "Correct the listed arguments and retry church.pco_api_read."
+        "page": {
+          "hasMore": false,
+          "param": "offset",
+          "in": "query"
+        }
       }
     }
   },
@@ -278,7 +249,8 @@
           "headers": {
             "accept": "application/json",
             "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)"
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
           }
         }
       ]
@@ -336,7 +308,8 @@
             "accept": "application/json",
             "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
             "content-type": "application/json",
-            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)"
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
           },
           "body": {
             "json": {
@@ -385,7 +358,8 @@
           "headers": {
             "accept": "application/json",
             "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)"
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
           }
         }
       ]
@@ -1680,7 +1654,8 @@
           "headers": {
             "accept": "application/json",
             "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)"
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2024-03-25"
           }
         }
       ]
