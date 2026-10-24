@@ -1,0 +1,7 @@
+{
+  "url": "https://docs.googleapis.com/$discovery/rest?version=v1",
+  "revision": "20261019",
+  "digest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+  "documentation": "https://developers.google.com/workspace/docs/api/reference/rest",
+  "vendored": true
+}
