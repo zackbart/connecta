@@ -3,7 +3,10 @@
 // with, and the value-safety resolver over those operations.
 import { Schema } from "effect";
 import { get, post, vendor } from "../../http/vendor.js";
-import { googleErrors, googleSafety, type GoogleProduct } from "../_shared/google/kit.js";
+import { googleErrors, type GoogleProduct } from "../_shared/google/kit.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { formsIndex } from "./lib/hatch.js";
+import { FORMS_VALUE_SAFETY } from "./safety.js";
 import { FORMS_SCOPES } from "./lib/constants.js";
 
 export const FORMS: GoogleProduct = {
@@ -49,9 +52,21 @@ const OPERATIONS = [
 /** The five Forms methods the tools call, published under `/v1` as Google's Discovery document spells them. */
 export const FormsApi = vendor({ name: "Google Forms", manifestBase: "/v1" }, ...OPERATIONS);
 
-export const errors = googleErrors(FORMS);
+export const errors = googleErrors(FORMS, { standard: true, revisionConflicts: true });
 
-export const safety = googleSafety(FORMS.provider, OPERATIONS);
+const values = valueSafety(FORMS_VALUE_SAFETY, () => formsIndex);
+export const safety = {
+  reviewed: {
+    resolve: (method: string, path: string) => {
+      const op = formsIndex.resolve(method, path).op;
+      return { method: op.method, template: op.path };
+    },
+    redact: (data: unknown, op: { method: string; template: string }) => values.redact(data, op.method, op.template),
+    withholdsErrors: (op: { method: string; template: string }) =>
+      values.withholdsErrors(formsIndex.ops.find((entry) => entry.method === op.method && entry.path === op.template)!),
+  },
+  sensitiveFields: { names: [], choice: "drop" },
+} as const;
 
 /**
  * Delegation has no operator credential to test: the key is a deployment

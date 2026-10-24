@@ -27,12 +27,12 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
+import { FORMS_HATCH, formsBinding } from "./lib/hatch.js";
 import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, FORMS, FormsApi, probe, safety } from "./api.js";
 import { FORMS_API_BASE_URL, FORMS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
-import { formsTools, LIST_ANSWER_CHARS } from "./tools.js";
+import { formsTools } from "./tools.js";
 
 export { FORMS_API_BASE_URL, FORMS_SCOPES } from "./lib/constants.js";
 export type {
@@ -44,13 +44,6 @@ export type {
 
 /** Options for {@link forms}: the shared Workspace delegation options. */
 export type FormsOptions = GoogleWorkspaceOptions;
-
-// --- Guide ------------------------------------------------------------------------
-
-function usageGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${RESULT_BUDGET_BYTES / 1024}${skill.fragments.guide_2}${LIST_ANSWER_CHARS}${skill.fragments.guide_3}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
-}
 
 // --- Construction -----------------------------------------------------------------
 
@@ -96,8 +89,8 @@ export const forms = defineApiProvider<FormsOptions>({
   title: "Google Forms",
   readme: "Google Forms",
   bundle: {
-    baselineGzip: 334835,
-    note: "./providers/forms measures 334,835 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 372171,
+    note: "./providers/forms step-2 round-2 snapshot measures 372,120 B gzip standalone before refreshing these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main f9bf5afb snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 372,171 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -115,12 +108,28 @@ export const forms = defineApiProvider<FormsOptions>({
   safety: () => safety,
   probe,
   guide: (options) => ({
-    content: usageGuide(options.purpose, options.instructions),
+    context: [
+      `Purpose: ${options.purpose}`,
+      "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; no argument chooses a subject. Responses, respondent email and quiz answers are user data; no configurable sensitive-field set is declared.",
+      ...(options.readOnly ? ["This connection is read-only."] : []),
+    ],
+    instructions: options.instructions,
     summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
     // Required: whose forms they are, that Drive lists them, and the
     // revision-checked edit sequence are conventions no schema can carry.
     required: true,
   }),
+  idempotencyKey: false,
+  pageSize: { default: 25, max: 100 },
+  hatch: {
+    ...FORMS_HATCH,
+    binding: ({ connection }) => formsBinding(connection),
+    notes: () => ({
+      read: "Paths are relative to /v1. Full vendor JSON follows the same privacy and permanent value-safety boundary as named reads. Responses page with top-level cursor from page.nextCursor; never pass a raw pageToken. query.pageSize accepts integers from 1 to 5000; omit it for the default. fields selects response data; query.fields is Google's wire mask.",
+      write:
+        "Only create and batchUpdate are admitted. Batch bodies require 1–100 requests, one reviewed kind each, and writeControl.requiredRevisionId from a current read. Publish settings and all watches are refused. No idempotency key or automatic replay.",
+    }),
+  },
   tools: formsTools,
   tagConnector: tagWorkspace("forms"),
 });
