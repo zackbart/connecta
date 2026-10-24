@@ -28,8 +28,8 @@ import { InvocationService } from "../src/invocation.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
 import { github } from "../src/providers/github/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
-import { stripeConnection } from "../src/providers/stripe/api.js";
-import { stripeTools } from "../src/providers/stripe/tools.js";
+import { hatch } from "../src/http/hatch.js";
+import { STRIPE_VERDICTS, stripeBinding, stripeConnection, stripeIndex } from "../src/providers/stripe/api.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
@@ -1140,9 +1140,18 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
   async function lookupThenCreate(before: (ctx: ConnectorContext & { fetch: typeof fetch }) => Promise<unknown>) {
     const setup = await billing((sent) => (sent.method === "GET" ? Response.json({ data: [] }) : lost()));
     const options = { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" } as const;
-    const write = stripeTools({ connection: stripeConnection(options), options }).find(
-      (tool) => tool.name === "stripe_api_write",
-    )!;
+    const connection = stripeConnection(options);
+    // Use the shipped hatch/binding's raw handler inside this one api()
+    // boundary; nesting another connector call would change the provenance.
+    const write = hatch({
+      name: "stripe",
+      index: stripeIndex,
+      verdicts: STRIPE_VERDICTS,
+      connection,
+      binding: stripeBinding({ connection, options }),
+      idempotency: { header: "Idempotency-Key", methods: ["POST"] },
+    }).find((tool) => tool.name === "stripe_api_write");
+    if (!write) throw new Error("The Stripe hatch fixture must contain its write tool.");
     const tracked = tracksEveryRequest(
       api("billing", {
         credential: setup.connector.credential!,
@@ -1198,6 +1207,23 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
     let answer: () => Response = lost;
     const { state, connector, storage, vault } = await billing(() => answer());
     const registry = makeRegistry([connector], { storage, credentialVault: vault });
+    // The socket-only suite also covers these inputs on Node. Keep the same
+    // pre-dispatch and recovery guarantees under workerd's native Headers.
+    for (const idempotencyKey of [" ", "a\nb"]) {
+      const args = { ...create("invalid"), idempotencyKey };
+      const direct = classifyCallError(
+        await failure(connector.callTool("stripe_api_write", args, registry.contextFor("billing", BASE))),
+      );
+      expect(direct).toMatchObject({ code: "invalid_args", retryable: false });
+      expect(direct.message).toContain(
+        "The idempotency key is blank or holds a character an HTTP header cannot carry.",
+      );
+      const served = await invoke(registry, "billing.stripe_api_write", args);
+      if (served.ok) throw new Error("expected the invalid key to be refused");
+      expect(served.error).toMatchObject({ code: "invalid_args", retryable: false });
+      expect(served.error).not.toHaveProperty("uncertainCall");
+    }
+    expect(state.sent).toEqual([]);
     // Served, outcome unknown: the retry names the recovery key.
     const unknown = await invoke(registry, "billing.stripe_api_write", create("a"));
     if (unknown.ok) throw new Error("expected the write to fail");
