@@ -124,13 +124,13 @@ this updated head and remain below the product's +60 KB threshold.
 The batchUpdate summary uses the reviewer's exact action-first sentence.
 A product-local discovery category, `spreadsheets ranges headers`, supplies
 the nouns needed for “sort range” and “freeze header row”; the compiler's
-120-character summary remains intact. It changes no method, path, schema,
+115-character summary stays within the 120-character cap. It changes no method, path, schema,
 execution verdict or archived Discovery bytes. Six more natural queries and
 all ten blocked kinds' actual refusal reasons on both batch routes are
 asserted inside existing cases. No case is added.
 
-The guide and spreadsheet-id parameter explicitly accept a supplied id such
-as `sheets1`. The guide names `get_spreadsheet` and the INSERT_ROWS-pinned
+The guide and spreadsheet-id parameter explicitly accept a supplied id as is.
+The guide names `get_spreadsheet` and the INSERT_ROWS-pinned
 `append_values`. Migration notes disclose the shared builder's omission of
 the previous create/add/append `destructiveHint:false` (#1017); host approval
 routing is unchanged. Unrelated Drive/Gmail fixture escaping is reverted.
@@ -139,6 +139,7 @@ The paid snapshot predates these fixes. The independent review identifies
 nine exact-range failures as a frozen-grader defect. Its range-neutral
 17/28 → 21/28 recount is diagnostic analysis only in the eval notes and JSON;
 the scored 12/28 → 17/28 table, trial grades and frozen grader are unchanged.
+The shared follow-up is [#1024](https://github.com/zackbart/connecta/issues/1024).
 
 The 42-query surface probe loses no previously top-two batchUpdate match;
 all five requested queries rank it first. The 541 selected pre-Forms Node

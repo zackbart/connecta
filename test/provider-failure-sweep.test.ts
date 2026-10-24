@@ -51,9 +51,19 @@ const LOCAL = new Set([
   "docs.docs_api_search",
   "docs.docs_api_details",
   "planning-center.pco_api_details",
-  ...["breeze", "ccb", "cloudflare", "forms", "github", "overflow", "stripe", "tithely", "vercel", "slides"].flatMap(
-    (name) => [`${name}.${name}_api_search`, `${name}.${name}_api_details`],
-  ),
+  ...[
+    "breeze",
+    "ccb",
+    "cloudflare",
+    "drive",
+    "forms",
+    "github",
+    "overflow",
+    "stripe",
+    "tithely",
+    "vercel",
+    "slides",
+  ].flatMap((name) => [`${name}.${name}_api_search`, `${name}.${name}_api_details`]),
 ]);
 
 function create(fixture: ContractFixture): Connector {
@@ -216,6 +226,38 @@ describe("API provider failure sweep", () => {
           );
           expect(result.isError).toBeFalsy();
         }
+      if (provider.name === "drive") {
+        for (const name of ["drive_api_search", "drive_api_details"]) {
+          const result = await sweepCall(provider, name, `drive.${name}`, argumentsTable.drive![name], "read", () => {
+            throw new Error("Offline Drive discovery dispatched.");
+          });
+          expect(result.isError).toBeFalsy();
+        }
+        for (const [name, classification] of [
+          ["drive_api_read", "read"],
+          ["drive_api_write", "write"],
+        ] as const) {
+          for (const status of [401, 503]) {
+            const sent: string[] = [];
+            const result = await sweepCall(
+              provider,
+              name,
+              `drive.${name}`,
+              argumentsTable.drive![name],
+              classification,
+              (request) => {
+                sent.push(request.method);
+                return Response.json({ error: { code: status } }, { status });
+              },
+            );
+            expect(result.isError).toBe(true);
+            expect(sent.length).toBe(classification === "read" && status === 401 ? 2 : 1);
+            const error = (result.structuredContent as { error: CallErrorDetails }).error;
+            if (classification === "write") expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+            else expect(error).not.toHaveProperty("writeOutcome");
+          }
+        }
+      }
     }
     expect(typeof outcomes.providerCallFailure).toBe("function");
   });
@@ -229,7 +271,10 @@ describe("API provider failure sweep", () => {
               ["github", "slides"].includes(provider.name) &&
               [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
             ) &&
-            !(["docs", "forms", "sheets"].includes(provider.name) && tool.name.startsWith(`${provider.name}_api_`)),
+            !(
+              ["docs", "drive", "forms", "sheets"].includes(provider.name) &&
+              tool.name.startsWith(`${provider.name}_api_`)
+            ),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
@@ -446,7 +491,7 @@ describe("API provider failure sweep", () => {
               expect(outcomes.classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error })).toBe(
                 "unknown",
               );
-            if (address === "gmail.update_draft") {
+            if (["gmail.update_draft", "drive.move_file"].includes(address)) {
               const sent: string[] = [];
               const lookup = await sweepCall(
                 provider,
@@ -601,6 +646,8 @@ async function sweepCall(
             expires_in: 7200,
             scope: "read:individuals",
           });
+        if (provider.name === "drive" && tool === "move_file" && !options.failAuxiliary && request.method === "GET")
+          return Response.json({ parents: ["old-1"] });
         if (provider.name === "gmail" && tool === "update_draft" && !options.failAuxiliary) {
           // Let the auxiliary lookup succeed so the sweep refuses the draft
           // replacement itself, rather than a write that was never sent.

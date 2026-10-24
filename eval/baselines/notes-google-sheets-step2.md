@@ -79,9 +79,11 @@ The one per-task regression is Luna S6, **1/2 → 0/2**. Both AFTER attempts sea
 Drive for `sheets1` or the tab name instead of invoking Sheets with the supplied
 spreadsheet id. Neither reaches append or reconciliation. One explicitly reports
 no append, and the physical ledger confirms no Sheets write. This is a real task
-completion loss and remains in the score. Similar supplied-id deferrals occur in
-BEFORE S1/S4 and AFTER S1/S4/S5/S7. The independent round-1 review counts the
-same **7/14 supplied-id deferrals in each arm**; only the affected tasks shifted.
+completion loss and remains in the score. The supplied-id deferrals are BEFORE
+S1 repeats 1/2, S4 repeats 1/2, S6 repeat 2 and S7 repeats 1/2; AFTER S1 repeats
+1/2, S4 repeat 2, S5 repeat 1, S6 repeats 1/2 and S7 repeat 1. The independent
+review counts the same **7/14 supplied-id deferrals in each arm**; only the
+affected tasks shifted.
 Neither arm's guide explicitly said a supplied id works as is. The review identifies
 this as weak guidance shared by both arms, without attributing an AFTER miss to
 a surface execution defect. The review-requested guide correction is described
@@ -115,6 +117,9 @@ The reviewer's **range-neutral diagnostic recount is 17/28 BEFORE → 21/28 AFTE
 grade, trial status or scored table is changed. The primary scores remain
 **12/28 → 17/28**. The grader defect does not explain Luna's S6 regression,
 whose AFTER trials never dispatched the requested append.
+
+The shared follow-up is [#1024](https://github.com/zackbart/connecta/issues/1024),
+covering the range-strict Sheets grader and supplied ids treated as names.
 
 ## Calls, discovery, tokens and latency
 
@@ -245,13 +250,13 @@ Docs source and all 65 non-Sheets golden files match this main byte for byte.
 
 The batch summary uses the reviewer's exact first sentence. A Sheets-local
 `spreadsheets ranges headers` discovery category supplies the nouns missing from
-the 120-character summary, without changing method/path/schema/verdict admission
+the 115-character summary, without changing method/path/schema/verdict admission
 or the shared ranker. Sort range, merge cells, delete rows, rename sheet and freeze
 header row now rank batchUpdate first. A 42-query surface probe loses no prior
 top-two batch match. These rows, sort rows, and assertions for all ten actual
 refusal reasons on named and hatch batches are folded into existing test cases.
-The guide and id parameter accept a supplied `sheets1` as is, name
-`get_spreadsheet` and `append_values`, and reserve Drive searches for names.
+The round-1 guide and id parameter accepted a supplied `sheets1` as is, named
+`get_spreadsheet` and `append_values`, and reserved Drive searches for names.
 Migration notes disclose the shared builder's omission of create/add/append
 `destructiveHint:false` (#1017); approval routing is unchanged. Unrelated fixture
 Unicode escaping is restored. No paid trials are rerun for these fixes; the scored
@@ -293,3 +298,23 @@ both surfaces and both grading modes (**168 combinations**, plus transport and
 Drive D4 retains its expected BEFORE capability gap and failed task outcome.
 No trial result is reclassified by this validation. The final byte audit confirms
 all **65** non-Sheets golden files remain identical to main 84fb4eee.
+
+## Approved round-2 follow-ups
+
+The approved `v4-suggested.patch` gives values.get and values.batchGet the
+Sheets-local `spreadsheets.values rows headers` discovery category. A tool search
+for "read header row" now leads with GET values:batchGet; "update range" retains
+the reviewed structural batch match. Both queries are rows in the existing tool
+search test, and the index-bound discovery cursor is refreshed. Both batch
+entrypoints check refused-kind membership with `Object.hasOwn`; prototype-named
+unknown kinds retain an ordinary unknown-kind refusal without sending or minting.
+These assertions add no test cases.
+
+The S-task scores above were produced with the original, frozen pre-round-1
+wording. The supplied-id clarification and its `sheets1` example were introduced
+after those paid runs. The example is now removed from the shipped guide and
+spreadsheetId description; supplied ids still work as is. Neither guide revision
+was evaluated in a new paid trial. All 56 saved trial grades, the scored table,
+and the original **12/28 → 17/28** comparison are unchanged. The range-neutral
+recount remains analysis only; [#1024](https://github.com/zackbart/connecta/issues/1024)
+owns the grader and supplied-id follow-ups.

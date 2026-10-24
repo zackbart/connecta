@@ -384,6 +384,23 @@
     "delete_permission": {
       "fileId": "f1",
       "permissionId": "anyoneWithLink"
+    },
+    "drive_api_search": {
+      "query": "file revisions"
+    },
+    "drive_api_details": {
+      "method": "GET",
+      "path": "/files/{fileId}/revisions"
+    },
+    "drive_api_read": {
+      "path": "/files/f1/revisions"
+    },
+    "drive_api_write": {
+      "method": "PATCH",
+      "path": "/files/f1",
+      "body": {
+        "name": "Reviewed.pdf"
+      }
     }
   },
   "forms": {

@@ -6,14 +6,16 @@ import type { RestCall } from "../../_shared/rest/tools.js";
 import { openapi } from "../openapi.generated.js";
 import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./requests.js";
 
-// Keep range/header nouns searchable alongside the reviewed 120-character action summary.
+// Keep range/header nouns searchable alongside the reviewed 115-character action summary.
 // This discovery-only category changes no method, path, schema or execution verdict.
 const sheetsDiscovery = {
   ...openapi,
-  tags: [...openapi.tags, "spreadsheets ranges headers"],
+  tags: [...openapi.tags, "spreadsheets ranges headers", "spreadsheets.values rows headers"],
   ops: openapi.ops.map((row) => {
-    if (row[2] !== "sheets.spreadsheets.batchUpdate") return row;
     const [method, path, operationId, summary, , ...server] = row;
+    if (row[2] === "sheets.spreadsheets.values.get" || row[2] === "sheets.spreadsheets.values.batchGet")
+      return [method, path, operationId, summary, openapi.tags.length + 1, ...server] as const;
+    if (row[2] !== "sheets.spreadsheets.batchUpdate") return row;
     return [method, path, operationId, summary, openapi.tags.length, ...server] as const;
   }),
 };
@@ -49,7 +51,7 @@ export function sheetsRequestProblem(
     if (Array.isArray(requests))
       for (const request of requests) {
         for (const kind of Object.keys(record(request)))
-          if (SHEETS_REFUSED_KINDS[kind]) return SHEETS_REFUSED_KINDS[kind];
+          if (Object.hasOwn(SHEETS_REFUSED_KINDS, kind)) return SHEETS_REFUSED_KINDS[kind];
       }
     const problem = googleBatchGuard(body, { kinds: SHEETS_ADMITTED_KINDS, revision: false });
     if (problem) return problem;

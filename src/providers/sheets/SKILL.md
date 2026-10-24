@@ -7,8 +7,8 @@
 
 ## Find the workbook and resolve ranges
 
-Sheets starts from a spreadsheet id. A spreadsheet id the person gives, such
-as `sheets1`, works as is; search Drive only for a name. The Drive file id is
+Sheets starts from a spreadsheet id. A spreadsheet id the person gives works
+as is; search Drive only for a name. The Drive file id is
 the spreadsheet id. Moving, sharing and trashing the file also belong to Drive.
 Read `get_spreadsheet` first to resolve sheet titles, numeric sheet ids and named
 ranges before writing. Sheet id zero is valid; a tab's position is not its id.

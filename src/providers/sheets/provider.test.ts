@@ -183,6 +183,8 @@ describe("reading values (H9, H10)", () => {
       ["delete rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
       ["rename sheet", "/spreadsheets/{spreadsheetId}:batchUpdate"],
       ["freeze header row", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["read header row", "/spreadsheets/{spreadsheetId}/values:batchGet"],
+      ["update range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
       ["append literal rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
       ["create spreadsheet", "/spreadsheets"],
       ["find developer metadata", "/spreadsheets/{spreadsheetId}/developerMetadata:search"],
@@ -192,6 +194,7 @@ describe("reading values (H9, H10)", () => {
         result.operations.slice(0, 2).map((op: any) => op.path),
         query,
       ).toContain(expected);
+      if (query === "read header row") expect(result.operations[0]).toMatchObject({ method: "GET", path: expected });
     }
 
     expect(Object.values(SHEETS_HATCH.verdicts).filter((value) => value === "read")).toHaveLength(7);
@@ -455,6 +458,23 @@ describe("the raw batchUpdate hatch", () => {
         await expect(call(connector, tool, args)).rejects.toMatchObject({
           code: "invalid_args",
           message: expect.stringContaining(SHEETS_REFUSED_KINDS[kind]!),
+        });
+    }
+    for (const kind of ["constructor", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf", "__proto__"]) {
+      for (const [tool, args] of [
+        ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ [kind]: {} }] }],
+        [
+          "sheets_api_write",
+          { method: "POST", path: `/spreadsheets/${ID}:batchUpdate`, body: { requests: [{ [kind]: {} }] } },
+        ],
+      ] as const)
+        await expect(call(connector, tool, args)).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringContaining(
+            tool === "batch_update_spreadsheet"
+              ? "exactly one Sheets Request kind"
+              : "exactly one reviewed request kind",
+          ),
         });
     }
     for (const body of [

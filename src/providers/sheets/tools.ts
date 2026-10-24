@@ -250,7 +250,8 @@ function projectUpdate(value: unknown): JsonRecord {
 function checkRequestKinds(requests: readonly unknown[]): void {
   for (const request of requests)
     for (const kind of Object.keys(asRecord(request)))
-      if (SHEETS_REFUSED_KINDS[kind]) throw new ConnectorCallError("invalid_args", SHEETS_REFUSED_KINDS[kind]);
+      if (Object.hasOwn(SHEETS_REFUSED_KINDS, kind))
+        throw new ConnectorCallError("invalid_args", SHEETS_REFUSED_KINDS[kind]!);
   const problem = sheetsExternalDataProblem(requests);
   if (problem) throw new ConnectorCallError("invalid_args", problem);
   requests.forEach((request, index) => {

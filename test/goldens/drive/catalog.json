@@ -4,8 +4,8 @@
   "title": "Google Drive",
   "description": "Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — Staff documents for alice",
   "guide": {
-    "summary": "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
-    "content": "# Google Drive usage\n\nActs as the signed-in person's own Google Drive through Workspace delegation: what they can open, and nothing they cannot.\n\nConnection purpose: Staff documents for alice\n\n## Whose Drive\n\nEvery call acts as the Workspace address deployment config maps the caller\nto, and reaches exactly the files that person can open, shared drives\nincluded; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No\nargument names an account. A call with none mapped fails `auth_required`; only an operator can change\nthat. A missing file\nand one this person cannot see fail alike — Google does not distinguish them.\n\n## Finding files\n\n- `search_files` takes Drive query syntax: `name contains 'x'`,\n  `fullText contains 'x'`, `mimeType = '…'`, `'<folderId>' in parents`,\n  `modifiedTime > '2026-01-01T00:00:00'`. Quote values with single quotes.\n  Trashed files are left out unless `includeTrashed`. `incompleteSearch:\n  true` means Drive gave up before searching everything; narrow the query or\n  the corpus. Shared drives: `list_shared_drives`, then `corpora: \"drive\"`\n  with its `driveId`.\n- Page with `page.nextCursor` and the same arguments; a cursor from another\n  tool or other arguments is refused. A page can stop short of `limit` to\n  stay under `maxBytes`; the cursor resumes at the first row left out, and\n  fails `conflict` if that page changed meanwhile — start over then.\n- Ids come from these reads or a Drive URL (`/d/<id>/`, `/folders/<id>`);\n  never guess one.\n\n## Reading content\n\n- `get_file_content` exports Docs as Markdown, Sheets as CSV of the\n  **first sheet only**, and Slides as plain text; reads text files as text;\n  and returns other files as base64 when the encoded file fits the result. Anything else — a\n  larger binary, a drawing, a form, a folder, a shortcut — comes back as\n  `format: \"unavailable\"` with a `note`, never as an empty success.\n- Text is capped by `maxChars`; a cut ends with a truncation marker and\n  `contentTruncated: true`. Drive exports at most 10 MB.\n- Every read stays under `maxBytes` of JSON. The default is what one result\n  can carry into `execute_code`, so a program always receives it. A larger\n  `maxBytes` (up to 4 MiB — a binary of up to 1 MiB) reaches only a direct\n  `call_tool`, which pages it with `connecta.result`.\n\n## Writing\n\n- `create_folder` and `restore_file` add without losing or exposing\n  anything.\n- A new file takes its folder's sharing, not its source's: `create_file`\n  and `copy_file` into a shared folder disclose that content to everyone\n  the folder is shared with, so both are approved like any destructive write.\n  Check the destination with `list_permissions` first. `convertTo`\n  imports content as a Google Doc, Sheet, or Slides file.\n- `update_file_content` replaces the whole content; send all of it.\n  `update_file` renames; `move_file` changes the folder and with it who\n  inherits access.\n- `trash_file` is recoverable for 30 days with `restore_file`. There is no\n  permanent delete and no ownership transfer.\n- `share_file` emails no one unless `sendNotificationEmail: true`. Check\n  `list_permissions` before and after changing access, and confirm with the\n  person before sharing with `anyone` or a whole domain.\n"
+    "summary": "Each caller's Drive files, bounded content, recoverable trash and quiet sharing.",
+    "content": "# Google Drive usage\n\nConnection purpose: Staff documents for alice\n\nActs as the Workspace user deployment config maps from the admitted caller or pool owner. No caller argument selects an account. An unmapped or ownerless caller has no access unless the deployment fixes a shared account.\n\n## Finding files and joining Workspace products\n\nDrive searches file data; operation discovery searches API capabilities.\nUse file ids from reads, Drive URLs or the person: an id they give, such as\n`pdf1`, works as is. The same id identifies a Google Doc,\nSheet, Slides deck or Form in its product connector. Shared-drive ids identify\nmembership and the root folder; folder parents determine inherited access.\nA missing file and a file the delegated user cannot see fail alike.\n\nDrive query values use single quotes: `name contains 'budget'`,\n`mimeType = 'application/pdf'`, `'folder_123' in parents`, or\n`modifiedTime > '2026-01-01T00:00:00'`. Trashed files are excluded by default.\n`incompleteSearch: true` means Google did not search every corpus; narrow the\nquery or choose a single shared drive. It is never an exact count.\n\n`maxBytes` is the byte budget and `limit` is rows per page; keep a high limit\nfor large folders and continue with the same listing arguments. Named `fields`\nmay narrow and `maxBytes` may change between pages. Hatch paths omit `/drive/v3`.\n\n## Content and file decisions\n\nThe content workflow exports Docs as Markdown, Sheets as CSV of the first\nsheet only, and Slides as text. Other text files retain their declared charset.\nSmall binary files can be returned as base64. A drawing, unsupported native\nfile, folder, shortcut or oversized binary returns an unavailable explanation.\nFor a shortcut, read its target id instead. Drive exports at most 10 MB.\n\nContent containing sent credentials is withheld as a whole binary value; there\nis no partial-content recovery around that boundary. Withheld MIME, shortcut,\nfolder or parent metadata cannot decide a subsequent read or move. Re-read\nthrough a safe source before trying the workflow again.\n\n## Access and recovery\n\nA file or copy inherits its destination folder's access. Read permission holders\nbefore moving, copying or creating in a shared folder, and read them again after\nchanging access. Inherited permissions name the parent folder or shared drive\nthat must be changed instead. An owner cannot be removed or replaced here.\n\nAll new grants use `share_file`, which sends no notification email by default.\nConfirm intent before granting `anyone` or domain access. Permission creation\nthrough the hatch is refused, including public-link grants; the named workflow\nowns grantee validation and notification behavior.\n\nContent updates replace the complete content. A create with an uncertain outcome\nneeds a search for the intended file before another create. Recoverable trash\ncan be restored for 30 days. Permanent deletion, ownership transfer, watch\nregistration, credential minting and generic media transport are outside the\nhatch. Use the named content and upload workflows for bounded bytes.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `drive_api_search` finds this API's operations and reads no account data, `drive_api_details` shows one operation's contract, and `drive_api_read` calls a reviewed read. `drive_api_write` calls a reviewed write; the host may ask the user to confirm it. An operation without a reviewed verdict is refused; these are refused by design: `DELETE /drives/{driveId}`, `DELETE /files/trash`, `DELETE /files/{fileId}/comments/{commentId}/replies/{replyId}`, `DELETE /files/{fileId}/comments/{commentId}`, `DELETE /files/{fileId}/revisions/{revisionId}`, `DELETE /files/{fileId}`, `DELETE /teamdrives/{teamDriveId}`, `GET /apps/{appId}`, `GET /apps`, `GET /changes/startPageToken`, `GET /changes`, `GET /drives/{driveId}`, `GET /files/generateCseToken`, `GET /files/generateIds`, `GET /files/{fileId}/accessproposals/{proposalId}`, `GET /files/{fileId}/accessproposals`, `GET /files/{fileId}/approvals/{approvalId}`, `GET /files/{fileId}/approvals`, `GET /files/{fileId}/comments/{commentId}/replies/{replyId}`, `GET /files/{fileId}/comments/{commentId}/replies`, `GET /files/{fileId}/comments/{commentId}`, `GET /files/{fileId}/comments`, `GET /files/{fileId}/export`, `GET /files/{fileId}/listLabels`, `GET /operations/{name}`, `GET /teamdrives/{teamDriveId}`, `GET /teamdrives`, `PATCH /drives/{driveId}`, `PATCH /files/{fileId}/comments/{commentId}/replies/{replyId}`, `PATCH /files/{fileId}/comments/{commentId}`, `PATCH /files/{fileId}/revisions/{revisionId}`, `PATCH /teamdrives/{teamDriveId}`, `POST /changes/watch`, `POST /channels/stop`, `POST /drives/{driveId}/hide`, `POST /drives/{driveId}/unhide`, `POST /drives`, `POST /files/{fileId}/accessproposals/{proposalId}:resolve`, `POST /files/{fileId}/approvals/{approvalId}:approve`, `POST /files/{fileId}/approvals/{approvalId}:cancel`, `POST /files/{fileId}/approvals/{approvalId}:comment`, `POST /files/{fileId}/approvals/{approvalId}:decline`, `POST /files/{fileId}/approvals/{approvalId}:reassign`, `POST /files/{fileId}/approvals:start`, `POST /files/{fileId}/comments/{commentId}/replies`, `POST /files/{fileId}/comments`, `POST /files/{fileId}/download`, `POST /files/{fileId}/modifyLabels`, `POST /files/{fileId}/permissions`, `POST /files/{fileId}/watch`, `POST /teamdrives`.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. An unknown id, or one these credentials cannot reach, fails as `connector_call_failed`; this API does not tell the two apart. `conflict` means: A Drive source page changed before its local cursor resumed.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
@@ -56,12 +56,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000.",
+            "default": 25
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384,
+            "maxLength": 32768,
             "pattern": "^[A-Za-z0-9_-]+$",
             "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
           },
@@ -70,6 +71,16 @@
             "minimum": 65536,
             "maximum": 4194304,
             "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -78,7 +89,13 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "files": {
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -125,12 +142,12 @@
                 "shortcutTargetMimeType": {
                   "type": "string"
                 },
-                "truncatedFields": {
+                "truncated": {
                   "type": "array",
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
                   "items": {
                     "type": "string"
-                  },
-                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                  }
                 }
               }
             }
@@ -145,20 +162,16 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
           }
         },
         "required": [
-          "files",
+          "items",
           "page"
         ]
       },
@@ -199,12 +212,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000.",
+            "default": 25
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384,
+            "maxLength": 32768,
             "pattern": "^[A-Za-z0-9_-]+$",
             "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
           },
@@ -213,6 +227,16 @@
             "minimum": 65536,
             "maximum": 4194304,
             "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -223,7 +247,13 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "files": {
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -270,12 +300,12 @@
                 "shortcutTargetMimeType": {
                   "type": "string"
                 },
-                "truncatedFields": {
+                "truncated": {
                   "type": "array",
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
                   "items": {
                     "type": "string"
-                  },
-                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                  }
                 }
               }
             }
@@ -290,20 +320,16 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
           }
         },
         "required": [
-          "files",
+          "items",
           "page"
         ]
       },
@@ -323,6 +349,16 @@
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
             "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -375,12 +411,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           },
           "description": {
             "type": "string"
@@ -453,6 +489,16 @@
             "minimum": 65536,
             "maximum": 4194304,
             "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -475,12 +521,11 @@
           "size": {
             "type": "integer"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           },
           "webViewLink": {
             "type": "string"
@@ -501,18 +546,10 @@
           "content": {
             "type": "string"
           },
-          "contentTruncated": {
-            "type": "boolean"
-          },
           "note": {
             "type": "string"
           }
-        },
-        "required": [
-          "id",
-          "format",
-          "contentTruncated"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -535,12 +572,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000.",
+            "default": 25
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384,
+            "maxLength": 32768,
             "pattern": "^[A-Za-z0-9_-]+$",
             "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
           },
@@ -549,6 +587,16 @@
             "minimum": 65536,
             "maximum": 4194304,
             "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -559,7 +607,13 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "permissions": {
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -603,12 +657,12 @@
                 "deleted": {
                   "type": "boolean"
                 },
-                "truncatedFields": {
+                "truncated": {
                   "type": "array",
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
                   "items": {
                     "type": "string"
-                  },
-                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                  }
                 }
               }
             }
@@ -620,20 +674,16 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
           }
         },
         "required": [
-          "permissions",
+          "items",
           "page"
         ]
       },
@@ -656,12 +706,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000.",
+            "default": 25
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384,
+            "maxLength": 32768,
             "pattern": "^[A-Za-z0-9_-]+$",
             "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
           },
@@ -670,6 +721,16 @@
             "minimum": 65536,
             "maximum": 4194304,
             "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item; only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -678,7 +739,13 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "drives": {
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -692,12 +759,12 @@
                 "hidden": {
                   "type": "boolean"
                 },
-                "truncatedFields": {
+                "truncated": {
                   "type": "array",
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
                   "items": {
                     "type": "string"
-                  },
-                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                  }
                 }
               }
             }
@@ -709,20 +776,16 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
           }
         },
         "required": [
-          "drives",
+          "items",
           "page"
         ]
       },
@@ -806,18 +869,17 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -854,7 +916,7 @@
           "mimeType": {
             "type": "string",
             "maxLength": 255,
-            "pattern": "^[A-Za-z0-9][\\w.+-]*/[A-Za-z0-9][\\w.+-]*$",
+            "pattern": "^[A-Za-z0-9][\\w.+-]*\\/[A-Za-z0-9][\\w.+-]*$",
             "description": "Media type of the content: text/plain, text/markdown, text/csv, application/pdf. Never a Google type. Defaults to text/plain or application/octet-stream."
           },
           "convertTo": {
@@ -922,12 +984,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -963,7 +1025,7 @@
           "mimeType": {
             "type": "string",
             "maxLength": 255,
-            "pattern": "^[A-Za-z0-9][\\w.+-]*/[A-Za-z0-9][\\w.+-]*$",
+            "pattern": "^[A-Za-z0-9][\\w.+-]*\\/[A-Za-z0-9][\\w.+-]*$",
             "description": "Media type of the new content: usually the file's own, text/markdown for a Google Doc, text/csv for a Sheet (replacing every tab)."
           }
         },
@@ -1018,12 +1080,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1108,12 +1170,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1194,12 +1256,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1286,12 +1348,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1364,12 +1426,12 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1442,18 +1504,17 @@
           "shortcutTargetMimeType": {
             "type": "string"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -1567,12 +1628,12 @@
           "deleted": {
             "type": "boolean"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1662,12 +1723,12 @@
           "deleted": {
             "type": "boolean"
           },
-          "truncatedFields": {
+          "truncated": {
             "type": "array",
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
             "items": {
               "type": "string"
-            },
-            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+            }
           }
         }
       },
@@ -1714,13 +1775,441 @@
           },
           "deleted": {
             "type": "boolean",
-            "const": true
+            "enum": [
+              true
+            ]
           }
         },
         "required": [
           "fileId",
           "permissionId",
           "deleted"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "drive_api_search",
+      "description": "Find Google Drive API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; drive_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "drive_api_details",
+      "description": "Read one Google Drive API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "drive_api_read",
+      "description": "Call a reviewed Google Drive API read. The operation index checks arguments before anything is sent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /files/file_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque page.nextCursor from this same read; omit raw query anchors when continuing."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Vendor parameter restored from cursor; pass nextCursor as the top-level cursor."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "drive_api_write",
+      "description": "Call a reviewed Google Drive API write; method and path are stated for approval, and the operation index checks arguments first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /files/file_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ]
       },
       "annotations": {

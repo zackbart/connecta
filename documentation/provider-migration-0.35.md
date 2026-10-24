@@ -812,3 +812,47 @@ retain explicit auth, permission and structured revision-conflict meanings;
 incomplete responses now say the response could not be read completely.
 
 See [Google Slides setup](./providers.md#google-slides).
+
+## Google Drive
+
+All 17 named tools retain their names and approval routing. The `create_folder`
+and `restore_file` catalog entries omit their previous explicit
+`destructiveHint:false` through the shared builder (#1017). Add
+`drive_api_search`, `drive_api_details`, `drive_api_read` and destructive
+`drive_api_write`; these discover 64 pinned operations and execute 13 reviewed
+JSON metadata methods. Permission creation `POST /files/{fileId}/permissions`
+is refused by the hatch: use `share_file` for every new grant. Permanent delete,
+ownership transfer, watches, credential minting and hatch media remain refused.
+
+- Read `items` instead of `files` from `search_files`/`list_folder_items`,
+  `permissions` from `list_permissions`, or `drives` from `list_shared_drives`.
+  Keep named `limit`/`cursor`; terminal `page.nextCursor` is omitted instead of
+  null. Old cursors must be discarded; new cursors bind the connection, owner,
+  delegated caller and listing arguments, including the source-page checks.
+  Named-list `maxBytes` may change or be omitted and `fields` may narrow between
+  pages; neither participates in the cursor argument binding.
+- Read `truncated` dot paths instead of `truncatedFields`. A true
+  `contentTruncated` becomes `truncated: ["content"]`; false is omitted.
+  Every named read accepts `fields`; for lists these paths address each item.
+  `incompleteSearch` remains its own completeness fact.
+- For rare metadata, call `drive_api_read` with e.g.
+  `{ path: "/files/file_123/revisions", query: { pageSize: 20 } }`.
+  Hatch results are `{ status, data, page? }`. Pass `page.nextCursor` as
+  top-level `cursor`, never a raw `query.pageToken`. Google's `query.fields`
+  mask and Connecta's output `fields` are separate.
+- For a hatch rename use `drive_api_write` with
+  `{ method: "PATCH", path: "/files/file_123", body: { name: "Review.pdf" } }`.
+  Use named `create_file`/`update_file_content` for multipart/media transport
+  and `get_file_content` for content. No existing tool or argument was renamed
+  or removed, and no `raw` argument existed on Drive.
+- A dispatched write timeout now reports `write_outcome_unknown` instead of
+  `connector_call_failed`, with `uncertainCall` evidence. Re-read the affected
+  item before another write.
+- Standard error facts and outcome wording replace legacy Google settlement.
+  Failed auxiliary parents lookups no longer claim a move's unknown outcome.
+  The actual PATCH stays call-owned. Withheld or altered MIME, shortcut or
+  parents decision inputs fail before the next request. Whole binary
+  withholding remains conservative; private resource keys and download
+  destinations cannot be restored through `fields`.
+
+See [Google Drive setup](./providers.md#google-drive) for delegation and limits.

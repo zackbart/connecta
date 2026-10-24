@@ -3,19 +3,78 @@
   "provider": "drive",
   "generated": {
     "operations": [
+      "DELETE /drive/v3/drives/{driveId}",
+      "DELETE /drive/v3/files/trash",
+      "DELETE /drive/v3/files/{fileId}",
+      "DELETE /drive/v3/files/{fileId}/comments/{commentId}",
+      "DELETE /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
       "DELETE /drive/v3/files/{fileId}/permissions/{permissionId}",
+      "DELETE /drive/v3/files/{fileId}/revisions/{revisionId}",
+      "DELETE /drive/v3/teamdrives/{teamDriveId}",
+      "GET /drive/v3/about",
+      "GET /drive/v3/apps",
+      "GET /drive/v3/apps/{appId}",
+      "GET /drive/v3/changes",
+      "GET /drive/v3/changes/startPageToken",
       "GET /drive/v3/drives",
+      "GET /drive/v3/drives/{driveId}",
       "GET /drive/v3/files",
+      "GET /drive/v3/files/generateCseToken",
+      "GET /drive/v3/files/generateIds",
       "GET /drive/v3/files/{fileId}",
+      "GET /drive/v3/files/{fileId}/accessproposals",
+      "GET /drive/v3/files/{fileId}/accessproposals/{proposalId}",
+      "GET /drive/v3/files/{fileId}/approvals",
+      "GET /drive/v3/files/{fileId}/approvals/{approvalId}",
+      "GET /drive/v3/files/{fileId}/comments",
+      "GET /drive/v3/files/{fileId}/comments/{commentId}",
+      "GET /drive/v3/files/{fileId}/comments/{commentId}/replies",
+      "GET /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
       "GET /drive/v3/files/{fileId}/export",
+      "GET /drive/v3/files/{fileId}/listLabels",
       "GET /drive/v3/files/{fileId}/permissions",
+      "GET /drive/v3/files/{fileId}/permissions/{permissionId}",
+      "GET /drive/v3/files/{fileId}/revisions",
+      "GET /drive/v3/files/{fileId}/revisions/{revisionId}",
+      "GET /drive/v3/operations/{name}",
+      "GET /drive/v3/teamdrives",
+      "GET /drive/v3/teamdrives/{teamDriveId}",
+      "PATCH /drive/v3/drives/{driveId}",
       "PATCH /drive/v3/files/{fileId}",
+      "PATCH /drive/v3/files/{fileId}/comments/{commentId}",
+      "PATCH /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
       "PATCH /drive/v3/files/{fileId}/permissions/{permissionId}",
+      "PATCH /drive/v3/files/{fileId}/revisions/{revisionId}",
+      "PATCH /drive/v3/teamdrives/{teamDriveId}",
+      "POST /drive/v3/changes/watch",
+      "POST /drive/v3/channels/stop",
+      "POST /drive/v3/drives",
+      "POST /drive/v3/drives/{driveId}/hide",
+      "POST /drive/v3/drives/{driveId}/unhide",
       "POST /drive/v3/files",
+      "POST /drive/v3/files/{fileId}/accessproposals/{proposalId}:resolve",
+      "POST /drive/v3/files/{fileId}/approvals/{approvalId}:approve",
+      "POST /drive/v3/files/{fileId}/approvals/{approvalId}:cancel",
+      "POST /drive/v3/files/{fileId}/approvals/{approvalId}:comment",
+      "POST /drive/v3/files/{fileId}/approvals/{approvalId}:decline",
+      "POST /drive/v3/files/{fileId}/approvals/{approvalId}:reassign",
+      "POST /drive/v3/files/{fileId}/approvals:start",
+      "POST /drive/v3/files/{fileId}/comments",
+      "POST /drive/v3/files/{fileId}/comments/{commentId}/replies",
       "POST /drive/v3/files/{fileId}/copy",
-      "POST /drive/v3/files/{fileId}/permissions"
+      "POST /drive/v3/files/{fileId}/download",
+      "POST /drive/v3/files/{fileId}/modifyLabels",
+      "POST /drive/v3/files/{fileId}/permissions",
+      "POST /drive/v3/files/{fileId}/watch",
+      "POST /drive/v3/teamdrives"
     ],
-    "evidence": {}
+    "evidence": {
+      "discovery.document.json": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+      "discovery.json": "sha256:6a277a27337f883ce1d946684ad53bc1e33aa4573ca13a15ab473411bcbe0901",
+      "openapi.document.json": "sha256:c0dbb4761613f6a5500d03b80e855b665c1ed0393483cc491bf7cb54662d3529",
+      "openapi.json": "sha256:b2cec63ca18f6728028f6138a42305fe780ccb00c58613624c91baebc0a62799",
+      "value-safety.json": "sha256:3594a72389dd7bd38dc9ce8c209c1c12d8772ce8da850ed0a5cb233512bddb2b"
+    }
   },
   "checks": [
     {
@@ -29,61 +88,330 @@
       ],
       "endpoints": [
         {
-          "specRevision": "20261003",
-          "contract": "sha256:05bc880957d069cd17ea543fedd5819501498eab1cd7f25052c684ec4db5ec61",
-          "operation": "GET /drive/v3/files"
+          "operation": "DELETE /drive/v3/drives/{driveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:86a77c0de9faea1f2028011edb0262d250589fb51cbae1fb7e8e0fce319fec5d"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:1fcd4857b3682850dba107f20376ff1803872dcf044c916b467df10b67e42344",
-          "operation": "POST /drive/v3/files"
+          "operation": "DELETE /drive/v3/files/trash",
+          "specRevision": "20261020",
+          "contract": "sha256:1033cd01daf7218bb769b488ae42e1d0714e85c7187e8927acddcfd118bfb65c"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:a1f2d7709240d7ae4303a7b68588f172b45328e57fdd9f4a49130a16db75bbb8",
-          "operation": "GET /drive/v3/files/{fileId}"
+          "operation": "DELETE /drive/v3/files/{fileId}",
+          "specRevision": "20261020",
+          "contract": "sha256:3ee8eb73693dc855f77263aa1af004932e8a8af871aa8b6e78df930502bbec03"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:613b9be208132083b92a5297ca9dfc4042bf0fff4e94a0c22b8f9bc7b76cfe47",
-          "operation": "PATCH /drive/v3/files/{fileId}"
+          "operation": "DELETE /drive/v3/files/{fileId}/comments/{commentId}",
+          "specRevision": "20261020",
+          "contract": "sha256:e7cb638b67af7767b65af1f35a3ab5864d755785b1fcb1fae8a43ee0496ba9c6"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:3a766ac7aede16a019d66a91a15b6aa8ccdbee583718a75eb5e4d7ef88c1110b",
-          "operation": "POST /drive/v3/files/{fileId}/copy"
+          "operation": "DELETE /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
+          "specRevision": "20261020",
+          "contract": "sha256:0ec6de01cdf9b9fbbedf757b8be188d8fa0016f6feb6f126410ca224211163d1"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:209c15e394de323210fd1ed9f6da6fc5962b0f8beb7c6dca3adc48cae2bf9383",
-          "operation": "GET /drive/v3/files/{fileId}/export"
+          "operation": "DELETE /drive/v3/files/{fileId}/permissions/{permissionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:d888956d56090b61643a0ecf38947923cf449c9b7eeb4c60504ed877a9b3e5d6"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:adacf2992b76e75f683c390d81468176555e41bee2e85440ec9d7798566cc173",
-          "operation": "GET /drive/v3/files/{fileId}/permissions"
+          "operation": "DELETE /drive/v3/files/{fileId}/revisions/{revisionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:24a3caf0d5d61e117e6a4fc9905c4f2419366545619908f6d1d061b382ddba86"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:36db968c889ddad9dca7ca061ab6260e24463d7201fe5b8b1116c80c7d6e966e",
-          "operation": "POST /drive/v3/files/{fileId}/permissions"
+          "operation": "DELETE /drive/v3/teamdrives/{teamDriveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:efed4e43f796c36484f4352839978db25402b36c175bffdc1c1dd436a3432444"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:878ffdca8a190c3397ac608dfa487709002a5edd0fd534670bae9e3649405e56",
-          "operation": "PATCH /drive/v3/files/{fileId}/permissions/{permissionId}"
+          "operation": "GET /drive/v3/about",
+          "specRevision": "20261020",
+          "contract": "sha256:e8c8471cf1b2e7d06a7296b15d8528da0fec4b47fda72b998e7f1e74a6d38160"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:d888956d56090b61643a0ecf38947923cf449c9b7eeb4c60504ed877a9b3e5d6",
-          "operation": "DELETE /drive/v3/files/{fileId}/permissions/{permissionId}"
+          "operation": "GET /drive/v3/apps",
+          "specRevision": "20261020",
+          "contract": "sha256:06413da15010c1505196c3df6dd082e2c65ce20e3d25b4e5330f5f291db556ea"
         },
         {
-          "specRevision": "20261003",
-          "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442",
-          "operation": "GET /drive/v3/drives"
+          "operation": "GET /drive/v3/apps/{appId}",
+          "specRevision": "20261020",
+          "contract": "sha256:a7b867ac8cb22a72049864df43aae34f04d8779b3b2db47f27a2f436ad9dea42"
+        },
+        {
+          "operation": "GET /drive/v3/changes",
+          "specRevision": "20261020",
+          "contract": "sha256:696479eb9748d73f8e0fe9eb3caff02e128894a26e7110c9c2794aeb5ca37c8f"
+        },
+        {
+          "operation": "GET /drive/v3/changes/startPageToken",
+          "specRevision": "20261020",
+          "contract": "sha256:f7fc5f38ed6334d0b04922ab89fc06cfda5e9400a4c464167a9b1e05c7671911"
+        },
+        {
+          "operation": "GET /drive/v3/drives",
+          "specRevision": "20261020",
+          "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442"
+        },
+        {
+          "operation": "GET /drive/v3/drives/{driveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:a76786476ee06b71eeed6442f933a3bd931a3d14aa2be906fb7f8757dbceeda8"
+        },
+        {
+          "operation": "GET /drive/v3/files",
+          "specRevision": "20261020",
+          "contract": "sha256:05bc880957d069cd17ea543fedd5819501498eab1cd7f25052c684ec4db5ec61"
+        },
+        {
+          "operation": "GET /drive/v3/files/generateCseToken",
+          "specRevision": "20261020",
+          "contract": "sha256:de2e946ea1dc12fa5e6f1246aa40dbc0a29702b0fb9112ee0f960e9b357bd5ba"
+        },
+        {
+          "operation": "GET /drive/v3/files/generateIds",
+          "specRevision": "20261020",
+          "contract": "sha256:92787e167b145e0db657adfd09122a796ee3b8529ee26f6615da966dc255f5c9"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}",
+          "specRevision": "20261020",
+          "contract": "sha256:a1f2d7709240d7ae4303a7b68588f172b45328e57fdd9f4a49130a16db75bbb8"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/accessproposals",
+          "specRevision": "20261020",
+          "contract": "sha256:699a455375f925cc2e3fe811a67b7ec5086bc7ff233d0f5669f01f415909c324"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/accessproposals/{proposalId}",
+          "specRevision": "20261020",
+          "contract": "sha256:abcaa1b10059050b2956f3cc160e0d9a1657417fd077ff268eb8b12da38945eb"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/approvals",
+          "specRevision": "20261020",
+          "contract": "sha256:57ebf7a482f823c79922311ee9b47fb132c51c75513fb076f3daf69acf1b9022"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/approvals/{approvalId}",
+          "specRevision": "20261020",
+          "contract": "sha256:063fbcf4cf1c4524142cc8fb4be37043ceed9d610f99608ee6f4cd319d032c7e"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/comments",
+          "specRevision": "20261020",
+          "contract": "sha256:35ba769692a021e9cb3112c458c17f517d3ee16996783a8a76d7558d55fb1015"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/comments/{commentId}",
+          "specRevision": "20261020",
+          "contract": "sha256:3995955c55759d8b31f1f452a940ceeef6842a4ad178fc416edac85f4ea2b074"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/comments/{commentId}/replies",
+          "specRevision": "20261020",
+          "contract": "sha256:02a0e3f966b1e49d6469486e4a46cd76e080be2233ab3ee3cf3cfc5f66962d69"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
+          "specRevision": "20261020",
+          "contract": "sha256:67638be095f90bda8e6efd8e2eca1d4ba818449ee34567d1ffb72f8e4181d1e2"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/export",
+          "specRevision": "20261020",
+          "contract": "sha256:209c15e394de323210fd1ed9f6da6fc5962b0f8beb7c6dca3adc48cae2bf9383"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/listLabels",
+          "specRevision": "20261020",
+          "contract": "sha256:a0d45869621edc55c0b674a201216934a06ef2fd2fdc2cd8add74cb931bfd9ad"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/permissions",
+          "specRevision": "20261020",
+          "contract": "sha256:adacf2992b76e75f683c390d81468176555e41bee2e85440ec9d7798566cc173"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/permissions/{permissionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:003cc654d2ce8233ae3b334c8c3621793e54f7d79f0b52c196b34681d5bc3972"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/revisions",
+          "specRevision": "20261020",
+          "contract": "sha256:eae7b0f024d1a79b897cdf74acba1e40dfff4588807a96e438b89ac240c8ff6b"
+        },
+        {
+          "operation": "GET /drive/v3/files/{fileId}/revisions/{revisionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:3cf89203603701b88d83cca102bf3b8b110b308c55c5fc80635309c558f8a535"
+        },
+        {
+          "operation": "GET /drive/v3/operations/{name}",
+          "specRevision": "20261020",
+          "contract": "sha256:1c77073f5419ab5a78a8e12cdb0107c2baabb19fd14c6cc127d63c88bde844e5"
+        },
+        {
+          "operation": "GET /drive/v3/teamdrives",
+          "specRevision": "20261020",
+          "contract": "sha256:5e3ee5ab1c7f1f8d8f024528a8abc71127af304bab305dc0c6590568d268d8c8"
+        },
+        {
+          "operation": "GET /drive/v3/teamdrives/{teamDriveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:0cde232bf3ae521c2c0e61d2c563126e65dde5ed0901a0445546f09e07518549"
+        },
+        {
+          "operation": "PATCH /drive/v3/drives/{driveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:007c64087b99a6f707a933096bc3e7161948e76df4209828e048131a196f4cd0"
+        },
+        {
+          "operation": "PATCH /drive/v3/files/{fileId}",
+          "specRevision": "20261020",
+          "contract": "sha256:613b9be208132083b92a5297ca9dfc4042bf0fff4e94a0c22b8f9bc7b76cfe47"
+        },
+        {
+          "operation": "PATCH /drive/v3/files/{fileId}/comments/{commentId}",
+          "specRevision": "20261020",
+          "contract": "sha256:2798188f76974f158a67337c1ee04e7a15a669acd073484af2d4c3bdf342a254"
+        },
+        {
+          "operation": "PATCH /drive/v3/files/{fileId}/comments/{commentId}/replies/{replyId}",
+          "specRevision": "20261020",
+          "contract": "sha256:0d65d599aed0b680ee04826e4a51788e883f5d4cd0886941305dbd79afc99903"
+        },
+        {
+          "operation": "PATCH /drive/v3/files/{fileId}/permissions/{permissionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:878ffdca8a190c3397ac608dfa487709002a5edd0fd534670bae9e3649405e56"
+        },
+        {
+          "operation": "PATCH /drive/v3/files/{fileId}/revisions/{revisionId}",
+          "specRevision": "20261020",
+          "contract": "sha256:2ad062d601ad77f70f6b533852552a8902ebe971def23a9c8d87e50e9f2e1ed8"
+        },
+        {
+          "operation": "PATCH /drive/v3/teamdrives/{teamDriveId}",
+          "specRevision": "20261020",
+          "contract": "sha256:a446cc5051f72c54dff3c68ff2e26773461646a449ebe6d37cedc3f3cf4159f2"
+        },
+        {
+          "operation": "POST /drive/v3/changes/watch",
+          "specRevision": "20261020",
+          "contract": "sha256:f606a3e53b60fcb67c5031413c537e63762eb0688bc39fb22ca9d1d21edf26f3"
+        },
+        {
+          "operation": "POST /drive/v3/channels/stop",
+          "specRevision": "20261020",
+          "contract": "sha256:a47459cb6ee69714435b440143b4179e80dad918899fe7a11725fcea06cb920c"
+        },
+        {
+          "operation": "POST /drive/v3/drives",
+          "specRevision": "20261020",
+          "contract": "sha256:ea23fb2da8397202074d9e67fc26734cd78003da512a07b8d97159157bf950d5"
+        },
+        {
+          "operation": "POST /drive/v3/drives/{driveId}/hide",
+          "specRevision": "20261020",
+          "contract": "sha256:ea1b71500366dc9ff3a2e3b8e1c0c3931e3be7ebdb1c22efc5f39590680bf4d1"
+        },
+        {
+          "operation": "POST /drive/v3/drives/{driveId}/unhide",
+          "specRevision": "20261020",
+          "contract": "sha256:ea1b71500366dc9ff3a2e3b8e1c0c3931e3be7ebdb1c22efc5f39590680bf4d1"
+        },
+        {
+          "operation": "POST /drive/v3/files",
+          "specRevision": "20261020",
+          "contract": "sha256:1fcd4857b3682850dba107f20376ff1803872dcf044c916b467df10b67e42344"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/accessproposals/{proposalId}:resolve",
+          "specRevision": "20261020",
+          "contract": "sha256:73cb7073507f13edb7bf6961b52847cc989d0cd8ac5e72058e3035d9bf2b5a9d"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals/{approvalId}:approve",
+          "specRevision": "20261020",
+          "contract": "sha256:2f907e260511478789e16dbc51d07e5addef0d595124e378f8b52ac9c7fbf8c7"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals/{approvalId}:cancel",
+          "specRevision": "20261020",
+          "contract": "sha256:80cb30c2c10f24bd917a596486222fbd667781117d92f671f5a4fc2365254528"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals/{approvalId}:comment",
+          "specRevision": "20261020",
+          "contract": "sha256:c9d7164be173bb20c36b82db79ecf98428203906e28c7bfea6a7fad7bcafe349"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals/{approvalId}:decline",
+          "specRevision": "20261020",
+          "contract": "sha256:e3e7cfe23dbc11efa57c1015346479ee084434623824a14ab40b67cb125cccc3"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals/{approvalId}:reassign",
+          "specRevision": "20261020",
+          "contract": "sha256:3d50c3812f9c67d9d1befdf307f9279dfd8494a0bcc82809a166c532b5570043"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/approvals:start",
+          "specRevision": "20261020",
+          "contract": "sha256:704d3373d5947561986fca0a53e68903513cbcc155cfd06cfd2fded9dbb27021"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/comments",
+          "specRevision": "20261020",
+          "contract": "sha256:52c3d9fc9987d98d07baf51b03090e393568293a1130ab58c9cb798fd66ac9da"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/comments/{commentId}/replies",
+          "specRevision": "20261020",
+          "contract": "sha256:2cba01ea92709696a23ac199099dff3d4398c9657eaaa07fe9b3d5fb2eefd308"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/copy",
+          "specRevision": "20261020",
+          "contract": "sha256:3a766ac7aede16a019d66a91a15b6aa8ccdbee583718a75eb5e4d7ef88c1110b"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/download",
+          "specRevision": "20261020",
+          "contract": "sha256:404f21525d259a60b3f112d08765e3e397e4137ae6389b3714b00bb9e28b732a"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/modifyLabels",
+          "specRevision": "20261020",
+          "contract": "sha256:edbf334efa1f2d37b2846b6866e0c3b97e607db33279f379211a7dc433f4bc10"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/permissions",
+          "specRevision": "20261020",
+          "contract": "sha256:36db968c889ddad9dca7ca061ab6260e24463d7201fe5b8b1116c80c7d6e966e"
+        },
+        {
+          "operation": "POST /drive/v3/files/{fileId}/watch",
+          "specRevision": "20261020",
+          "contract": "sha256:a9a98938adbbc867bc6e7a952f67f78bb5c18f8fa6807affdca3f0dad9acac77"
+        },
+        {
+          "operation": "POST /drive/v3/teamdrives",
+          "specRevision": "20261020",
+          "contract": "sha256:53b5d7153c8fda8897317aba11c815d4e73c86f498d449f8d4180f04bfa6ffb8"
         }
       ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
     }
   ]
 }
