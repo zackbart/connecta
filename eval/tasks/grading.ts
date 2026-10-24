@@ -1,3 +1,5 @@
+import { GOOGLE_EXPECTED } from "./google.js";
+import { GOOGLE_PRODUCTS } from "../fakes/google.js";
 /** Every task check is classified here. Unknown or missing entries fail closed. */
 import type { ActiveTask, Check } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -13,6 +15,35 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  ...Object.fromEntries(
+    GOOGLE_PRODUCTS.flatMap((product) =>
+      Array.from({ length: 7 }, (_, i) => {
+        const task = i + 1;
+        const readOnly =
+          task < 4 ||
+          (task === 4 && ["gmail", "drive"].includes(product)) ||
+          (task === 7 && ["gmail", "sheets"].includes(product));
+        return [
+          `google-${product}-${task}`,
+          {
+            route: [],
+            outcome: [
+              ...(readOnly ? ["reads-only"] : ["only-requested-writes", "once", "state"]),
+              ...(task === 6 ? ["reconciled"] : []),
+              ...((GOOGLE_EXPECTED[product][i] as Record<string, unknown>).ids ? ["complete-evidence"] : []),
+              ...(task === 3 ? ["full-pages"] : []),
+              ...(task === 2 && ["docs", "sheets", "slides"].includes(product) ? ["joined"] : []),
+              ...(product === "drive" && task === 4 ? ["revisions"] : []),
+              ...(product === "sheets" && task === 7 ? ["read-post"] : []),
+              ...(product === "forms" && task === 7 ? ["fresh-revision"] : []),
+              ...(product === "gmail" && task === 7 ? ["attachments-preserved"] : []),
+              "hatch-diagnostic",
+            ],
+          },
+        ];
+      }),
+    ),
+  ),
   ...Object.fromEntries(
     ["filtered-dns", "account-zone-join", "dns-paging", "kv-hatch", "analytics"].map((suffix) => [
       `cloudflare-step2-${suffix}`,

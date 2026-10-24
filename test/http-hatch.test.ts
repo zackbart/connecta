@@ -1,3 +1,5 @@
+import { googleBatchGuard, googleHatchBinding, googleNamedOperation } from "../src/providers/_shared/google/hatch.js";
+import { googleClient } from "../src/providers/_shared/google/kit.js";
 import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { Effect, Schema } from "effect";
 import { kitInputDisagreements } from "./helpers/kit-schema.js";
@@ -9,6 +11,7 @@ import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
 import {
+  googlePageToken,
   cloudflarePage,
   githubPage,
   stripePage,
@@ -164,14 +167,20 @@ function setup(
     fieldsRoot?: string;
     data?: OpenApiData;
     context?: ReturnType<typeof connectorContext>;
+    pathMatching?: "uri-template";
   } = {},
 ) {
   const index = new OperationIndex(
     { ...(options.data ?? DATA), revision: options.revision ?? (options.data ?? DATA).revision },
-    { vendor: "items", title: "Items" },
+    { vendor: "items", title: "Items", ...(options.pathMatching ? { pathMatching: options.pathMatching } : {}) },
   );
   const reviewed = valueSafety(
-    { title: "Items", operations: { "GET /items": { verdict: "safe", reason: "Only item metadata is returned." } } },
+    {
+      title: "Items",
+      operations: {
+        "GET /items": { verdict: "safe", reason: "Only item metadata is returned.", keep: ["nextPageToken"] },
+      },
+    },
     () => index,
   );
   const authenticate = vi.fn(() => ({ Authorization: "Bearer credential-123456789" }));
@@ -1071,6 +1080,116 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       ),
     };
   };
+  // Google's opt-in wire mask preserves protocol metadata independently of
+  // Connecta fields, including on an empty intermediate page.
+  const batchReview = { kinds: ["insertText"], revision: true };
+  expect(
+    googleBatchGuard(
+      { requests: [{ insertText: { text: "ok" } }], writeControl: { requiredRevisionId: "r1" } },
+      batchReview,
+    ),
+  ).toBeUndefined();
+  for (const body of [
+    { requests: [{ insertText: {} }] },
+    { requests: [{ insertText: {}, deleteContentRange: {} }], writeControl: { requiredRevisionId: "r1" } },
+    { requests: [{ previewKind: {} }], writeControl: { requiredRevisionId: "r1" } },
+  ])
+    expect(googleBatchGuard(body, batchReview)).toBeDefined();
+  const googleData = pageData("pageToken");
+  const googleDetails = JSON.parse(googleData.details);
+  googleDetails.o[0][0].push(["fields", "query", 0, { t: "string" }]);
+  const google = setup({
+    pathMatching: "uri-template",
+    data: { ...googleData, details: JSON.stringify(googleDetails) },
+    pages: { "GET /items": googlePageToken },
+    pageCursor: "argument",
+  });
+  const googleTools = hatch({
+    name: "google",
+    index: google.index,
+    verdicts: { "GET /items": "read" },
+    pages: { "GET /items": googlePageToken },
+    pageCursor: "argument",
+    binding: googleHatchBinding(google.connection, {
+      index: google.index,
+      review: "Fixture: JSON below a fixed Google root, delegated grant and connection safety.",
+    }),
+    connection: google.connection,
+  });
+  const googleConnector = apiConnector("google", { tools: googleTools });
+  const googleCall = (args: Record<string, unknown>) =>
+    googleConnector.callTool("google_api_read", args, connectorContext(storage));
+  response = () => Response.json({ data: [], nextPageToken: "next-token" });
+  const firstGoogle = (await googleCall({ path: "/items", query: { fields: "data(id)" }, fields: ["data"] })) as any;
+  expect(firstGoogle).toMatchObject({ data: { data: [] }, page: { hasMore: true, param: "pageToken", in: "query" } });
+  expect(new URL(sent.at(-1)!.url).pathname).toBe("/v1/items");
+  expect(new URL(sent.at(-1)!.url).searchParams.get("fields")).toBe("data(id),nextPageToken");
+  response = () => Response.json({ data: [] });
+  expect(
+    await googleCall({
+      path: "/items",
+      query: { fields: "data(id)" },
+      fields: ["data"],
+      cursor: firstGoogle.page.nextCursor,
+    }),
+  ).toMatchObject({ page: { hasMore: false } });
+  expect(new URL(sent.at(-1)!.url).searchParams.get("pageToken")).toBe("next-token");
+  for (const args of [
+    { path: "/items", query: { pageToken: "raw" } },
+    { path: "/items", query: { fields: "data(" } },
+    { path: "/items", query: { fields: "data(id)name" } },
+    { path: "/items", query: { userId: "bob" } },
+    { path: "/items", fields: ["missing"] },
+  ]) {
+    const before = sent.length;
+    google.authenticate.mockClear();
+    await expect(googleCall(args)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(before);
+    expect(google.authenticate).not.toHaveBeenCalled();
+  }
+  for (const token of [3, null, {}, "https://other.example/next", "[redacted]"]) {
+    response = () => Response.json({ nextPageToken: token });
+    await expect(googleCall({ path: "/items" })).rejects.toMatchObject({ code: "connector_call_failed" });
+  }
+  for (const token of [undefined, ""]) {
+    response = () => Response.json({ nextPageToken: token });
+    expect(await googleCall({ path: "/items" })).toMatchObject({ page: { hasMore: false } });
+  }
+  const collisionIndex = new OperationIndex(
+    {
+      ...DATA,
+      ops: [...DATA.ops, ["GET", "/items/search", "LiteralSearch", "Search", 0]],
+      details: JSON.stringify({ d: [], o: Array(DATA.ops.length + 1).fill(0) }),
+    },
+    { vendor: "google", title: "Google", pathMatching: "uri-template" },
+  );
+  expect(() => googleNamedOperation(collisionIndex, "GET", "/items/search", "/items/{item}")).toThrow(
+    "different operation",
+  );
+  expect(() => googleNamedOperation(collisionIndex, "GET", "/items/%73earch", "/items/{item}")).toThrow(
+    "different operation",
+  );
+  googleNamedOperation(collisionIndex, "GET", "/items/ordinary", "/items/{item}");
+  const defaults = setup();
+  expect(() => googleClient(google.connection, "Google", { index: google.index })).not.toThrow();
+  expect(() => googleClient(defaults.connection, "Google", { index: defaults.index })).toThrow("uri-template");
+  expect(() => googleHatchBinding(defaults.connection, { index: defaults.index, review: "Refuse defaults" })).toThrow(
+    "uri-template",
+  );
+  const binding = googleHatchBinding(google.connection, { index: google.index, review: "Canonical paths only" });
+  expect(() =>
+    hatch({ name: "wrong", index: defaults.index, verdicts: {}, connection: defaults.connection, binding }),
+  ).toThrow("reviewed operation index");
+  for (const path of ["/files/%67enerateCseToken", "/forms/f%3AsetPublishSettings"])
+    expect(
+      binding.refuse!({ path, method: "GET", query: {}, params: {}, body: undefined, op: google.index.ops[0]! }),
+    ).toContain("literally");
+  expect(googlePageToken.prepareQuery!({ fields: "data(id),nextPageToken" })).toEqual({
+    fields: "data(id),nextPageToken",
+  });
+  expect(googlePageToken.prepareQuery!({ fields: "data/nextPageToken" })).toEqual({
+    fields: "data/nextPageToken,nextPageToken",
+  });
   for (const row of [
     {
       adapter: stripePage,

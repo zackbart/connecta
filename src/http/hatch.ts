@@ -67,6 +67,8 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Optional construction-time identity binding for a reviewed operation index. */
+  readonly index?: OperationIndex;
   /** Resolve configured query routing before validation and cursor binding. */
   readonly query?: (call: RestCall) => Readonly<Record<string, unknown>>;
   /** Opt in to size-cut paths supplied by this reviewed binding. */
@@ -258,6 +260,8 @@ export function hatch(
   },
 ): ApiTool[] {
   const { name, index, connection } = options;
+  if (options.binding?.index !== undefined && options.binding.index !== index)
+    throw new Error("This hatch binding requires its reviewed operation index.");
   const title = options.title ?? name;
   if (options.textBodies !== undefined && options.textBodies !== true)
     throw new Error("Hatch textBodies must opt in with true.");
@@ -323,7 +327,8 @@ export function hatch(
           !adapter?.param.trim() ||
           !["query", "body"].includes(adapter.in) ||
           typeof adapter.next !== "function" ||
-          typeof adapter.decode !== "function"
+          typeof adapter.decode !== "function" ||
+          (adapter.prepareQuery !== undefined && typeof adapter.prepareQuery !== "function")
         ) {
           throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
         }
@@ -1102,9 +1107,11 @@ export function hatch(
         else body = { ...(record(body) ? body : {}), [adapter.param]: restored };
       } else if (separateCursor && supplied.length) {
         yield* checked(() => {
-          if (!adapter?.initialAnchor) invalid("This vendor continuation is accepted only as an opaque cursor.");
+          if (!adapter?.initialAnchor)
+            invalid(adapter?.cursorInputMessage ?? "This vendor continuation is accepted only as an opaque cursor.");
         });
       }
+      if (adapter?.prepareQuery) query = yield* checked(() => adapter!.prepareQuery!(query));
       const request = yield* checked((): WriteRequest | undefined => {
         refuseWithheldValues({ path, query }, name, true);
         refuseWithheldValues(body, name);

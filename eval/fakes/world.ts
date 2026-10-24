@@ -1,3 +1,4 @@
+import { FakeGoogle, type GoogleOptions } from "./google.js";
 /**
  * A world is one trial's downstream universe: six fake services sharing one
  * ledger and one clock, started fresh and thrown away afterwards.
@@ -49,6 +50,11 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
+  google?: {
+    product: import("./google.js").GoogleProduct;
+    serviceAccount: { clientEmail: string; privateKey: string };
+    subject: "mapped" | "fixed";
+  };
   rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow" | "github";
   githubApp?: { appId: string; privateKey: string };
   /** A credential the operator manages; absent means the fake is open. */
@@ -56,6 +62,7 @@ export interface ConnectorSpec {
 }
 
 export interface WorldOptions {
+  google?: GoogleOptions;
   restVendor?: RestVendor;
   github?: { fault?: "search-503" };
   breeze?: { fault?: "update-500" };
@@ -92,6 +99,10 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 };
 
 export class World {
+  private googleWorld?: FakeGoogle;
+  get google(): FakeGoogle {
+    return (this.googleWorld ??= new FakeGoogle(this.ledger, this.options.google ?? { product: "forms", task: 1 }));
+  }
   readonly rest = restState();
   readonly restServices: Array<
     FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow | FakeGitHub
@@ -174,14 +185,17 @@ export class World {
   }
 
   async start(): Promise<void> {
+    if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
   }
 
   async stop(): Promise<void> {
+    if (this.options.google) await this.google.stop();
     await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
   }
 
   connectorSpecs(): ConnectorSpec[] {
+    if (this.options.google) return this.google.specs();
     if (
       this.options.restVendor ||
       this.options.tithely ||

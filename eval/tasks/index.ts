@@ -1,3 +1,4 @@
+import { GOOGLE_TASKS } from "./google.js";
 import { BASELINE_TASKS } from "./baseline.js";
 import { PLANNED_TASKS } from "./planned.js";
 import type { ActiveTask, PlannedTask } from "./types.js";
@@ -30,6 +31,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...CLOUDFLARE_TASKS,
   ...CCB_TASKS,
   ...PLANNING_CENTER_TASKS,
+  ...GOOGLE_TASKS,
   ...GITHUB_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

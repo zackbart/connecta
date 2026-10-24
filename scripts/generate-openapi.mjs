@@ -1,3 +1,4 @@
+import { normalizeDiscovery, GOOGLE_DISCOVERY_FORMAT } from "./google-discovery.mjs";
 // Maintainer tooling, network-only: compile a provider's pinned OpenAPI
 // document into the compact operation index its REST connector ships.
 //
@@ -127,7 +128,31 @@ export async function readOpenApiSource(directory) {
   if (source.vendored === true && !(await exists(join(directory, STANDARD.document)))) {
     throw new Error(`${path} is vendored but ${STANDARD.document} is missing`);
   }
+  if (source.discovery !== undefined) await discoveryConversion(directory, source);
   return source;
+}
+
+/** Verify the original pin AND reproduce the normalized document offline. */
+export async function discoveryConversion(directory, source) {
+  const relation = source.discovery;
+  if (source.vendored !== true || relation?.format !== GOOGLE_DISCOVERY_FORMAT || relation.pin !== "discovery.json")
+    throw new Error("A Discovery conversion needs vendored: true and google-discovery-v1 discovery.json evidence.");
+  const pin = JSON.parse(await readFile(join(directory, "evidence/discovery.json"), "utf8"));
+  const bytes = await readFile(join(directory, "evidence/discovery.document.json"));
+  if (
+    !validSupplementalPin(pin) ||
+    sha256(bytes) !== pin.digest ||
+    source.digest !== pin.digest ||
+    source.url !== pin.url ||
+    source.revision !== pin.revision
+  )
+    throw new Error("Discovery source bytes or primary pin do not match discovery.json.");
+  const document = normalizeDiscovery(JSON.parse(bytes), { summaries: relation.summaries ?? {} });
+  const normalized = JSON.stringify(document, null, 2) + "\n";
+  const retained = await readFile(join(directory, STANDARD.document), "utf8");
+  if (normalized !== retained)
+    throw new Error("Discovery conversion differs from the pinned source; regenerate openapi.document.json.");
+  return { document, sourceDigest: pin.digest, documentDigest: sha256(normalized), format: GOOGLE_DISCOVERY_FORMAT };
 }
 
 /**
@@ -397,7 +422,8 @@ function compactSchema(document, schema, shape, level) {
   if (node.type !== undefined) out.t = node.type;
   const values = allowedValues(node);
   if (values && values.length <= shape.maxEnum) out.e = values;
-  if (node.format === "binary") out.f = "binary";
+  if (node.format === "binary" || (shape.formats && typeof node.format === "string")) out.f = node.format;
+  if (shape.deprecations && node.deprecated === true) out.deprecated = true;
   if (node.nullable === true) out.n = 1;
   if (shape.numericBounds && ["integer", "number"].includes(node.type)) {
     if (Number.isFinite(node.minimum)) out.l = node.minimum;
@@ -545,7 +571,7 @@ function share(rows) {
  * refs and composition are bounded; overflow drops the whole response contract
  * so fields validation never mistakes an incomplete set for a complete one.
  */
-function responseFields(document, operation, additionalMediaTypes = []) {
+function responseFields(document, operation, additionalMediaTypes = [], allSuccessResponses = false) {
   const paths = new Set();
   let remaining = 1024;
   let overflow = false;
@@ -594,8 +620,8 @@ function responseFields(document, operation, additionalMediaTypes = []) {
       if (!prefix) visit(raw.properties[name], path, level + 1, refs, true);
     }
   };
-  // The lowest explicit JSON success response, then the 2XX range. Error and
-  // default schemas do not establish a success contract.
+  // Unioning every JSON success is opt-in; existing indexes retain their
+  // first successful JSON contract until a separately reviewed regeneration.
   for (const status of Object.keys(operation.responses ?? {})
     .filter((code) => /^2(?:\d\d|XX)$/i.test(code))
     .sort()) {
@@ -607,7 +633,7 @@ function responseFields(document, operation, additionalMediaTypes = []) {
         .sort()[0] ?? additionalMediaTypes.find((type) => content[type]?.schema);
     if (!type || !content[type]?.schema) continue;
     visit(content[type].schema);
-    break;
+    if (!allSuccessResponses) break;
   }
   return overflow ? [] : [...paths].sort();
 }
@@ -630,6 +656,36 @@ function shareFields(rows) {
   return JSON.stringify({ p, d, o });
 }
 
+/** Lossless request graph for large/recursive Discovery contracts, separately
+ * from the deliberately bounded compact admission checker. No response prose. */
+function requestGraph(document, bodies, descriptionLimit) {
+  const definitions = Object.create(null);
+  const copy = (raw) => {
+    if (Array.isArray(raw)) return raw.map(copy);
+    if (!raw || typeof raw !== "object") return raw;
+    if (typeof raw.$ref === "string") {
+      const name = raw.$ref.split("/").at(-1);
+      if (!Object.hasOwn(definitions, name)) {
+        definitions[name] = {};
+        definitions[name] = copy(pointer(document, raw.$ref) ?? {});
+      }
+      const siblings = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "$ref"));
+      return { ...copy(siblings), $ref: `#/$defs/${name}` };
+    }
+    return Object.fromEntries(
+      Object.entries(raw).flatMap(([key, value]) => {
+        if (key === "description" && typeof value === "string") {
+          const text = plainText(value, descriptionLimit);
+          return text ? [[key, text]] : [];
+        }
+        return [[key, copy(value)]];
+      }),
+    );
+  };
+  const roots = bodies.map((body) => (body ? copy(body) : null));
+  return JSON.stringify({ definitions, roots });
+}
+
 /**
  * Compile an OpenAPI 3 document into the shipped index. Deprecated operations
  * are dropped: the index is the contract an agent may call, and Connecta does
@@ -644,6 +700,8 @@ export function buildOperationIndex(document, source) {
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
     numericBounds: source.options?.numericBounds === true,
+    formats: source.options?.formats === true,
+    deprecations: source.options?.deprecations === true,
     emptyObjectsOpen: source.options?.emptyObjectsOpen === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
@@ -660,6 +718,7 @@ export function buildOperationIndex(document, source) {
   const ops = [];
   const details = [];
   const fields = [];
+  const requestBodies = [];
   for (const path of Object.keys(document.paths).sort()) {
     const item = resolveRef(document, document.paths[path]);
     for (const verb of VERBS) {
@@ -681,7 +740,16 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
-      fields.push(responseFields(document, operation, source.options?.additionalResponseMediaTypes));
+      fields.push(
+        responseFields(
+          document,
+          operation,
+          source.options?.additionalResponseMediaTypes,
+          source.options?.allSuccessResponses === true,
+        ),
+      );
+      const body = resolveRef(document, operation.requestBody);
+      requestBodies.push(Object.values(body.content ?? {})[0]?.schema);
     }
   }
   return {
@@ -697,6 +765,9 @@ export function buildOperationIndex(document, source) {
     tags,
     ops,
     details: JSON.stringify(share(details)),
+    ...(source.options?.requestGraph === true
+      ? { requestSchemas: requestGraph(document, requestBodies, shape.describe) }
+      : {}),
     ...(fields.some((paths) => paths.length) ? { fields: shareFields(fields) } : {}),
   };
 }
@@ -791,7 +862,7 @@ export const openapi: OpenApiData = {
   ops: [
 ${rows}
   ],
-  details: ${JSON.stringify(data.details)},${data.fields === undefined ? "" : `\n  fields: ${JSON.stringify(data.fields)},`}
+  details: ${JSON.stringify(data.details)},${data.fields === undefined ? "" : `\n  fields: ${JSON.stringify(data.fields)},`}${data.requestSchemas === undefined ? "" : `\n  requestSchemas: ${JSON.stringify(data.requestSchemas)},`}
 };
 `;
 }

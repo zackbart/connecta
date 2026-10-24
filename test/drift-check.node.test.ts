@@ -1046,6 +1046,73 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
     expect(run()).toEqual([
       expect.objectContaining({ kind: "spec-drift", detail: expect.stringContaining("evidence/openapi.json") }),
     ]);
+    // Review #1009: Forms revision 20261022 was served with raw digests
+    // afb96ccb…, 4e3e4e03…, 528344719…; canonical digest stayed d25147cc….
+    // Canned order variants of that archived document require no network.
+    const { normalizeDiscovery, canonicalDiscovery } = await import(
+      new URL("../scripts/google-discovery.mjs", import.meta.url).href
+    );
+    const bytes = await readFile(new URL("./fixtures/google-discovery/forms.json", import.meta.url));
+    const discovery = JSON.parse(bytes.toString());
+    // The reviewer used Python's spaced JSON separators; drift uses compact
+    // JSON. Both serialize the same sorted-key document reproducibly.
+    const spaced = (value: any): string =>
+      Array.isArray(value)
+        ? `[${value.map(spaced).join(", ")}]`
+        : value && typeof value === "object"
+          ? `{${Object.entries(value)
+              .map(([key, child]) => `${JSON.stringify(key)}: ${spaced(child)}`)
+              .join(", ")}}`
+          : JSON.stringify(value);
+    expect(
+      createHash("sha256")
+        .update(spaced(canonicalDiscovery(discovery)))
+        .digest("hex"),
+    ).toBe("d25147ccaeeb46588e48be2911a00c73dc5f79428b750d54980dd6de9b620aaf");
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(canonicalDiscovery(discovery)))
+        .digest("hex"),
+    ).toBe("a0265b77f2e3674e9a8d7d156be616168c60024429e364a07b2f3ce5fc360705");
+    const source = {
+      url: "https://forms.googleapis.com/$discovery/rest?version=v1",
+      documentation: "https://developers.google.com/workspace/forms/api/reference/rest",
+      revision: discovery.revision,
+      vendored: true,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    };
+    const evidence = join(directory, "vendor", "evidence");
+    await writeFile(join(evidence, "discovery.document.json"), bytes);
+    await writeFile(join(evidence, "discovery.json"), JSON.stringify(source));
+    await writeFile(
+      join(evidence, "openapi.document.json"),
+      JSON.stringify(normalizeDiscovery(discovery), null, 2) + "\n",
+    );
+    await writeFile(
+      join(evidence, "openapi.json"),
+      JSON.stringify({ ...source, discovery: { pin: "discovery.json", format: "google-discovery-v1" } }),
+    );
+    const reorder = (value: any): any =>
+      Array.isArray(value)
+        ? value.map(reorder)
+        : value && typeof value === "object"
+          ? Object.fromEntries(
+              Object.entries(value)
+                .reverse()
+                .map(([key, child]) => [key, reorder(child)]),
+            )
+          : value;
+    for (const value of [discovery, reorder(discovery), canonicalDiscovery(discovery)]) {
+      await writeFile(live, JSON.stringify(value));
+      expect(run()).toEqual([]);
+    }
+    for (const value of [
+      { ...discovery, revision: "changed" },
+      { ...discovery, title: "Changed contract" },
+    ]) {
+      await writeFile(live, JSON.stringify(value));
+      expect(run()).toEqual([expect.objectContaining({ kind: "spec-drift" })]);
+    }
   });
 });
 
