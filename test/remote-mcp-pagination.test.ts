@@ -1,13 +1,18 @@
 import { InMemoryTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { CallToolResult, JSONRPCMessage, Tool, Transport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { required, makeRegistry, silentLogger } from "./helpers.js";
 import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 

@@ -1,7 +1,12 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { connectorContext } from "./fixtures/misc.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const URL = "https://down.test/mcp";
 afterEach(() => {

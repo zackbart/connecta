@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
@@ -11,6 +12,10 @@ import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 const API = "https://api.service.test";

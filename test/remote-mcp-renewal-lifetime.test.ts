@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { providerCallContext, providerRequests } from "../src/provider-call.js";
@@ -10,6 +11,10 @@ import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
 import { makeRegistry } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const ISSUER = "https://auth.example";
 const TOKEN = `${ISSUER}/token`;

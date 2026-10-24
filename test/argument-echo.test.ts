@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
@@ -6,6 +7,10 @@ import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
 import { activityHistory } from "../src/activity.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

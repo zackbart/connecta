@@ -1,5 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { z } from "zod";
 import { attachCallClassification } from "../src/call-classification.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -17,6 +18,10 @@ import { guestErrorText, guestFailureFacts, scriptedExecutor } from "./fixtures/
 import { seedGrant } from "./fixtures/oauth.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 // Remote MCP writes through the real SDK client and transport against a real
 // MCP server: a write leaves once whatever answers it (INV-9), and a read may

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { inputRequired } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -17,6 +18,10 @@ import { readNegotiation } from "../src/connectors/negotiation-cache.js";
 import { bindDownstreamContinuation, clearDownstreamContinuation } from "../src/downstream-input-context.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
 import type { JsonSchema } from "../src/types.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";

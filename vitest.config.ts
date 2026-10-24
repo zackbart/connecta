@@ -230,6 +230,7 @@ export default defineConfig({
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
+            "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
           include: ["test/**/*.test.ts", "src/providers/**/*.test.ts"],
@@ -296,6 +297,7 @@ export default defineConfig({
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
+            "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
           include: WORKERS_SUITES,

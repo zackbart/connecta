@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.js";
 import type { ConnectorContext, ConnectorSkill } from "../src/types.js";
 import { connectorContext, deferred } from "./fixtures/misc.js";
@@ -6,6 +7,10 @@ import { silentLogger } from "./helpers.js";
 import { attachCatalogCache } from "../src/catalog-cache.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { memoryStorage } from "../src/storage/memory.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const EXTENSION = "io.modelcontextprotocol/skills";
 const MAX_BYTES = 16 * 1024 * 1024;

@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -10,6 +11,10 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { JsonSchema } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 const SECRET = 'private/+"value-782';
