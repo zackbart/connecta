@@ -762,6 +762,48 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
         cursor,
       );
     }
+    // Product row: real Forms named-list and hatch continuations retain the
+    // caller-identity tag applied by the delegated provider constructor.
+    for (const tool of ["list_responses", "forms_api_read"]) {
+      const connector = forms("forms", {
+        purpose: "Forms responses",
+        serviceAccount: account(),
+        subject: (who) => DIRECTORY[who.principal?.id ?? ""],
+      });
+      const registry = makeRegistry([connector]);
+      const read = (person: "alice" | "bob", cursor?: string) => {
+        const ctx = registry
+          .scoped({ connectorIds: "all", caller: { identity: identity(person), authenticated: true } })
+          .contextFor("forms", "https://connecta.example");
+        return connector.callTool(
+          tool,
+          {
+            ...(tool === "list_responses" ? { formId: "f" } : { path: "/forms/f/responses" }),
+            ...(cursor ? { cursor } : {}),
+          },
+          ctx,
+        ) as Promise<any>;
+      };
+      const form = () => Response.json({ formId: "f", revisionId: "r1", items: [] });
+      if (tool === "list_responses") apiReplies.push(form);
+      apiReplies.push(() =>
+        Response.json({ responses: [{ responseId: "r1", answers: {} }], nextPageToken: "next-page" }),
+      );
+      const first = await read("alice");
+      expect(first.page.hasMore).toBe(true);
+      const cursor = first.page.nextCursor as string;
+      expect(decodeSegment(cursor)).toMatchObject({ v: 2, m: expect.any(String) });
+      const before = { tokens: tokenCalls.length, requests: apiCalls.length };
+      await expect(read("bob", cursor)).rejects.toMatchObject({ code: "invalid_args" });
+      expect(tokenCalls).toHaveLength(before.tokens);
+      expect(apiCalls).toHaveLength(before.requests);
+      if (tool === "list_responses") apiReplies.push(form);
+      apiReplies.push(() => Response.json({ responses: [{ responseId: "r2", answers: {} }] }));
+      const next = await read("alice", cursor);
+      expect(next.page.hasMore).toBe(false);
+      expect(JSON.stringify(next)).toContain("r2");
+      expect(new URL(apiCalls.at(-1)!.url).searchParams.get("pageToken")).toBe("next-page");
+    }
     await connecta.close();
   });
 
