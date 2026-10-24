@@ -454,17 +454,21 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   );
 
   it("keeps the kit's uncertain-write advice after a 2xx body breaks", async () => {
-    route = () => ({ brokenBody: true });
-    const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure).toMatchObject({ writeOutcome: "unknown" });
-    expect(failure.message).toContain("check the target before repeating it");
-    expect(failure.message).not.toContain("The outcome of this edit is unknown");
-    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+    for (const reply of [{ brokenBody: true }, { oversized: true }]) {
+      calls.length = 0;
+      route = () => reply;
+      const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure).toMatchObject({ writeOutcome: "unknown" });
+      expect(failure.message).toContain("check the target before repeating it");
+      expect(failure.message.match(/is unknown/g)).toHaveLength(1);
+      expect(failure.message).not.toContain("The outcome of this edit is unknown");
+      expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+    }
   });
 
   it.each([
-    ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
+    ["no answer", { unreachable: true }, "its initial text was not confirmed", "only if it is missing"],
     [
       "an explicit 4xx refusal",
       { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } },
@@ -472,45 +476,67 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       "add the text with append_text on new-1",
     ],
   ])("after creating, advises on its initial text by outcome: %s", async (_kind, reply, says, advice) => {
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
-    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
-      (error) => error,
-    );
-    expect(failure).toMatchObject({
-      code: _kind === "an explicit 4xx refusal" ? "invalid_args" : "connector_call_failed",
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    expect(failure.message).toContain(`Created document new-1, but ${says}`);
-    expect(failure.message).toContain(advice);
-    expect(failure.message).toContain("Do not create it again");
-    const registry = makeRegistry([connection()]);
-    const sentBeforeProgram = calls.length;
-    const program = await createExecuteTool(
-      registry,
-      "https://connecta.example",
-      {
-        async execute(_code, providers) {
-          try {
-            await providers.find((provider) => provider.name === "connecta")!.fns["call"]!("docs.create_document", {
-              title: "Minutes",
-              text: "x",
-            });
-          } catch {
-            /* A caught partial create must retain its reconciliation fact. */
-          }
-          return { result: "caught" };
+    const variants: Array<Exclude<ReturnType<Route>, undefined>> =
+      _kind === "an explicit 4xx refusal"
+        ? [reply]
+        : [
+            reply,
+            { brokenBody: true },
+            { oversized: true },
+            { raw: "not JSON" },
+            { status: 500, body: { error: { message: "Internal error" } } },
+            { status: 401, body: { error: { message: "Invalid credential" } } },
+          ];
+    for (const current of variants) {
+      route = (request) =>
+        request.url.pathname.endsWith(":batchUpdate") ? current : { body: { documentId: "new-1", title: "Minutes" } };
+      const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
+        (error) => error,
+      );
+      expect(failure).toMatchObject({
+        code:
+          _kind === "an explicit 4xx refusal"
+            ? "invalid_args"
+            : current.status === 401
+              ? "auth_required"
+              : "connector_call_failed",
+        retryable: false,
+        writeOutcome: "unknown",
+      });
+      expect(failure.message).toContain(`Created document new-1, but ${says}`);
+      expect(failure.message).toContain(advice);
+      expect(failure.message.match(/is unknown/g) ?? []).toHaveLength(_kind === "an explicit 4xx refusal" ? 0 : 1);
+      expect(failure.message).toContain("Do not create it again");
+      const registry = makeRegistry([connection()]);
+      const sentBeforeProgram = calls.length;
+      const program = await createExecuteTool(
+        registry,
+        "https://connecta.example",
+        {
+          async execute(_code, providers) {
+            try {
+              await providers.find((provider) => provider.name === "connecta")!.fns["call"]!("docs.create_document", {
+                title: "Minutes",
+                text: "x",
+              });
+            } catch {
+              /* A caught partial create must retain its reconciliation fact. */
+            }
+            return { result: "caught" };
+          },
         },
-      },
-      silentLogger,
-      undefined,
-      { readOnly: false },
-    )({ code: "async () => null" });
-    expect(program.structuredContent).toMatchObject({
-      error: { code: "write_outcome_unknown", uncertainCall: { recovery: { documentId: "new-1" } } },
-    });
-    expect(calls).toHaveLength(sentBeforeProgram + 2);
+        silentLogger,
+        undefined,
+        { readOnly: false },
+      )({ code: "async () => null" });
+      expect(program.structuredContent).toMatchObject({
+        error: {
+          code: current.status === 401 ? "auth_required" : "write_outcome_unknown",
+          uncertainCall: { recovery: { documentId: "new-1" } },
+        },
+      });
+      expect(calls).toHaveLength(sentBeforeProgram + 2);
+    }
   });
 
   it.each([

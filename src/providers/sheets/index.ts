@@ -20,8 +20,8 @@ import { skill } from "./skill.generated.js";
  * It never moves, shares, or trashes a file, which are Drive's too.
  *
  * The safety classes. Reads are read-only. All writes use the host's
- * destructive route. Named create/add/append catalog entries omit the previous
- * explicit destructiveHint:false through the shared builder (#1017); approval
+ * destructive route. Named create/add/append catalog entries retain their
+ * explicit destructiveHint:false through the shared builder; approval
  * routing is unchanged. Named append is pinned to `INSERT_ROWS`; hatch append
  * may choose Google's `OVERWRITE`, which can replace cells below the table.
  * Structural batches can delete sheets, rows and protections.

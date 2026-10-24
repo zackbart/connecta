@@ -741,8 +741,20 @@ function verdict(
         );
         return providerFailureMessage(mapped, failure.detail);
       }
+      const uncertainWrite =
+        options.classification === "write" &&
+        dispatch?.request?.auxiliary !== true &&
+        dispatch?.status !== undefined &&
+        Number.isInteger(dispatch.status) &&
+        ok(dispatch.status);
       return attachFailureFacts(
-        new ConnectorCallError("connector_call_failed", failure.detail, { retryable: false }),
+        new ConnectorCallError(
+          "connector_call_failed",
+          uncertainWrite
+            ? `${failure.detail} Whether the write took effect is unknown; check the target before repeating it.`
+            : failure.detail,
+          { retryable: false },
+        ),
         dispatch?.status === undefined ? {} : { httpStatus: dispatch.status },
       );
     }

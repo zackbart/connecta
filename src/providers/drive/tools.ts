@@ -1471,7 +1471,7 @@ interface DriveTool {
   readonly writeSteps?: Readonly<Record<string, "once">>;
   readonly run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
 }
-function buildTool(connection: Connection, tool: DriveTool): ApiTool {
+export function buildTool(connection: Connection, tool: DriveTool): ApiTool {
   const isRead = tool.annotations.readOnlyHint;
   const isList = ["search_files", "list_folder_items", "list_permissions", "list_shared_drives"].includes(tool.name);
   const output = asRecord(catalogSchema(tool.contract.output, "output"));
@@ -1535,7 +1535,7 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
   };
   return isRead
     ? read(connection, spec)
-    : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+    : write(connection, { ...spec, destructive: tool.annotations.destructiveHint !== false });
 }
 
 /** Field selection narrows data, while size provenance remains result metadata. */

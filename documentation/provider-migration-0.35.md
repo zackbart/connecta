@@ -718,8 +718,8 @@ with `replies.length`. `notRendered` and `dropped` remain semantic facts.
 A 404 now reports `connector_call_failed` because absence and sharing denial
 are ambiguous. Standard read 5xx failures report `unavailable`; revision facts
 retain `conflict`. Write outcomes remain conservative and non-retryable after
-dispatch. Create/append/insert catalog entries omit the previous explicit
-`destructiveHint:false` through the shared builder; approval routing is unchanged.
+dispatch. Additive create/append/insert catalog entries retain the explicit
+`destructiveHint:false` annotation and remain writes.
 Every new hatch
 write requires the host's destructive-write route. No new privacy switch or
 scope is introduced.
@@ -757,10 +757,9 @@ Repeated ranges remain arrays in vendor `query.ranges`. Vendor masks under
 The read hatch admits seven explicit methods, including three read-only POSTs;
 the destructive write hatch admits ten methods with the same value limits and
 batch-kind guards. Every hatch write uses the host's destructive route.
-Create/add/append catalog entries omit the previous explicit
-`destructiveHint:false` through the shared builder (#1017); approval routing is
-unchanged. Generic append can explicitly select `OVERWRITE`; named append stays
-pinned to `INSERT_ROWS`.
+Additive create/add/append catalog entries retain the explicit
+`destructiveHint:false` annotation and remain writes. Generic append can
+explicitly select `OVERWRITE`; named append stays pinned to `INSERT_ROWS`.
 No scope expansion, revision guarantee, idempotency key or write replay is added.
 Standard kit errors now distinguish incomplete reads from malformed complete
 responses and use its shared status fallbacks. An inaccessible or unknown id
@@ -782,8 +781,8 @@ Keep all six named tools. Four tools are added: `forms_api_search`,
 The ten-method frozen inventory is discoverable; only the five existing
 Forms methods execute. Publish settings and all watch methods stay refused.
 Scopes and named-write approval classifications are unchanged.
-The additive `create_form` catalog follows the kit convention of omitting
-`destructiveHint: false`; its write classification is unchanged.
+The additive `create_form` catalog retains `destructiveHint:false` and remains
+a write.
 
 - Replace `get_form({ formId, raw: true })` with
   `forms_api_read({ path: "/forms/<formId>" })`. The vendor Form is in
@@ -845,10 +844,9 @@ All 15 named tools remain. Four indexed tools are added:
 `slides_api_search`, `slides_api_details`, `slides_api_read`, and
 `slides_api_write`. The write hatch is always destructive; the four existing
 additive named tools (`create_presentation`, `create_slide`, `create_comment`
-and `create_comment_reply`) lose the explicit `destructiveHint:false` catalog
-annotation through the shared builder (issue #1017). Approval routing is
-unchanged. Every write is sent once; a revision precondition does not make a
-replay safe.
+and `create_comment_reply`) retain the explicit `destructiveHint:false` catalog
+annotation and remain writes. Every write is sent once; a revision precondition
+does not make a replay safe.
 
 | Previous program                                                                                                 | Replacement                                                                                                                                             |
 | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -900,8 +898,8 @@ See [Google Slides setup](./providers.md#google-slides).
 ## Google Drive
 
 All 17 named tools retain their names and approval routing. The `create_folder`
-and `restore_file` catalog entries omit their previous explicit
-`destructiveHint:false` through the shared builder (#1017). Add
+and `restore_file` catalog entries retain their explicit
+`destructiveHint:false` annotation and remain writes. Add
 `drive_api_search`, `drive_api_details`, `drive_api_read` and destructive
 `drive_api_write`; these discover 64 pinned operations and execute 13 reviewed
 JSON metadata methods. Permission creation `POST /files/{fileId}/permissions`

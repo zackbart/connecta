@@ -2509,6 +2509,13 @@ append at the end. Capacity selectors, idempotency and the tool program all
 receive that reordered decoded value. The default preserves the decoder's
 existing order; the option retains no original values and skips no validation.
 
+The kit write builder emits `readOnlyHint:false` and its explicit `destructive`
+verdict as `destructiveHint`; `destructive:false` describes an additive write.
+A reviewed `idempotent` declaration emits `idempotentHint` independently of a
+transport idempotency key. These hints describe behavior; write routing and
+endpoint restrictions still apply. For example, a tool that only creates a new
+note can declare `destructive:false` without promising idempotency.
+
 `restKitTools` may declare a `writeSteps` map whose values are `"once"`.
 Construction freezes the map; every named step sends at most once and an
 undeclared step is refused before dispatch. Omitting it retains the single
@@ -3029,17 +3036,25 @@ compiling and configuring the real thing.
   still classifies auxiliary POSTs and method-overridden GETs as writes for
   reservation and replay; the effect label does not change those rules.
   Their dispatches block auxiliary-only inference even beside a genuine
-  auxiliary read. Guarded authentication token POSTs supply no read proof,
+  auxiliary read, and count as call-owned requests for write-failure settlement,
+  including a 503 or a mapped `unavailable` verdict. Guarded authentication
+  token POSTs supply no read proof,
   but do not invalidate a later auxiliary resource read. A conservative
   timeout withdraws `answered`; a conservative auth failure does so only with
   an empty resource ledger, also withdrawing that ledger's private known-failure
   mark before advice is composed. A refused call-owned write keeps its
-  `answered` evidence and resource-refusal provenance. Token-only auth failures
-  therefore keep conservative program accounting as well as reconciliation
-  wording.
+  `answered` evidence and resource-refusal provenance only with a complete
+  ledger proving the refusal covers the whole call; its auth recovery advice
+  uses the same known outcome as program accounting. Partial or unknown ledgers
+  remain conservative, as do token-mint and auxiliary auth failures without
+  positive resource-read proof. Auth failures with no
+  call-owned dispatch, including credential refusals and static-OAuth refresh
+  failures, keep conservative program accounting and reconciliation wording.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
-  validation, `remoteMcp()`'s allowlist, connect, and any failure before its
-  `tools/call` is sent, and GitHub's REST target check and token mint.
+  validation, `remoteMcp()`'s allowlist and non-auth failures before its
+  `tools/call` is sent, and GitHub's REST target check and token mint. Auth
+  failures after entering a write with an empty resource ledger remain unknown,
+  including a `remoteMcp()` connect or initialize 401 before `tools/call`.
   `remoteMcp()` applies the rule to direct and served writes alike: once
   `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
   or a failed output validation is unknown; only an HTTP 4xx (not 408) on the

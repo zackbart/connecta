@@ -36,11 +36,59 @@ export interface CompileValidatorOptions {
 }
 
 // Lazy validator cache keyed by the schema object itself; null marks a schema
-// the validator rejected (warned once, then passed through rather than
-// breaking a working tool). A WeakMap so schemas belonging to a discarded
+// the validator could not compile (warned once, then passed through rather
+// than breaking a working tool). A WeakMap so schemas belonging to a discarded
 // connector are collectable, the same pattern compactSchema uses.
 const validators = new WeakMap<JsonSchema, Validator | null>();
+const evaluationWarnings = new WeakSet<JsonSchema>();
 const REQUIRED_PROPERTY_RE = /^Instance does not have required property "([^"]+)"\.$/;
+
+function plainContainer(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return true;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Optional in-process properties have the same absence semantics as JSON input. Never mutate the caller. */
+export function normalizeToolInput<A>(value: A): A {
+  // Keep unchanged inputs and their pass-through subtrees by identity. JSON
+  // callers have nothing to omit, so they never need a copy.
+  const seen = new WeakSet<object>();
+  const remaining: unknown[] = [value];
+  let needed = false;
+  while (remaining.length > 0) {
+    const item = remaining.pop();
+    if (!plainContainer(item) || seen.has(item)) continue;
+    seen.add(item);
+    for (const child of Object.values(item)) {
+      if (child === undefined && !Array.isArray(item)) needed = true;
+      else if (child !== null && typeof child === "object") remaining.push(child);
+    }
+  }
+  if (!needed) return value;
+  const copies = new WeakMap<object, object>();
+  const pending: Array<[object, object]> = [];
+  const copy = (item: unknown): unknown => {
+    if (!plainContainer(item)) return item;
+    const existing = copies.get(item);
+    if (existing) return existing;
+    const target = Array.isArray(item) ? [] : Object.create(Object.getPrototypeOf(item));
+    if (Array.isArray(item)) (target as unknown[]).length = item.length;
+    copies.set(item, target);
+    pending.push([item, target]);
+    return target;
+  };
+  const root = copy(value);
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    const [source, target] = next;
+    for (const [key, item] of Object.entries(source)) {
+      if (item === undefined && !Array.isArray(source)) continue;
+      Object.defineProperty(target, key, { value: copy(item), enumerable: true, configurable: true, writable: true });
+    }
+  }
+  return root as A;
+}
 
 interface ValidationUnit {
   keyword: string;
@@ -537,8 +585,8 @@ function disableValidation(schema: JsonSchema, subject: FailureSubject, logger: 
  * convention arguments (a `confirm` flag on writes, say) that individual tool
  * schemas do not declare before deciding the call is really invalid.
  *
- * A schema the validator cannot compile (or that only fails on first use, e.g.
- * an unresolvable `$ref`) is warned about once and then passed through — a
+ * A schema the validator cannot compile (or evaluate, e.g. an unresolvable
+ * `$ref`) is warned about once and the failing call is passed through — a
  * broken schema should not break an otherwise working tool. Pass
  * `failClosed: true` to instead reject such calls with `invalid_args`, for
  * callers that would rather refuse a call than forward unvalidated arguments.
@@ -582,17 +630,23 @@ export function validateCatalogToolInput(
       validator = null;
     }
   }
-  // A schema the validator could not compile (or that a prior call disabled):
+  // A schema the validator could not compile:
   // pass through by default, refuse when the caller opted into fail-closed.
   if (validator === null) {
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   let result;
   try {
+    args = normalizeToolInput(args);
     result = validator.validate(args);
   } catch (err) {
-    // e.g. an unresolvable $ref — surfaces on first validate, not compile.
-    disableValidation(schema, subject, logger, err);
+    // Evaluation can fail on an instance (unsupported JS values or cycles),
+    // not just a lazy schema reference. Never disable a compiled validator
+    // because of one call's input; subsequent valid calls must still validate.
+    if (!evaluationWarnings.has(schema)) {
+      evaluationWarnings.add(schema);
+      logFailure(logger, "input schema unusable; arguments are not validated", failureRecord(subject, err));
+    }
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   if (result && !result.valid) {

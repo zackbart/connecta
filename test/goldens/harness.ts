@@ -22,6 +22,7 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
     import("../../src/credentials.js"),
     import("../fixtures/owned-transport.js"),
     import("../../src/invocation.js"),
+    import("../../src/program-writes.js"),
     import("../../src/registry.js"),
     import("../../src/skills.js"),
     import("../../src/storage/memory.js"),
@@ -33,6 +34,7 @@ async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Pr
     { CredentialVault },
     { installOwnedTransport },
     { InvocationService },
+    { writeStateOf },
     { Registry },
     { connectorGuide, connectorGuideSummary },
     { memoryStorage },
@@ -66,6 +68,7 @@ let CredentialVault: typeof import("../../src/credentials.js").CredentialVault;
 let installOwnedTransport: typeof import("../fixtures/owned-transport.js").installOwnedTransport;
 let transport: ReturnType<typeof installOwnedTransport> | undefined;
 let InvocationService: typeof import("../../src/invocation.js").InvocationService;
+let writeStateOf: typeof import("../../src/program-writes.js").writeStateOf;
 let Registry: typeof import("../../src/registry.js").Registry;
 let connectorGuide: typeof import("../../src/skills.js").connectorGuide;
 let connectorGuideSummary: typeof import("../../src/skills.js").connectorGuideSummary;
@@ -1044,6 +1047,20 @@ async function run(capture: Capture, where: string, call: GoldenCall, answer: An
         }),
       answer,
     );
+    if (write && !value.ok) {
+      const completion = writeStateOf(value);
+      const state = typeof completion === "string" ? completion : completion.state;
+      const direct =
+        value.error.writeOutcome === "unknown" ||
+        value.error.reconciliationRequired === true ||
+        value.error.code === "write_outcome_unknown"
+          ? "unknown"
+          : "failed";
+      if (state !== direct)
+        throw new Error(
+          `${spec.provider} ${where}: direct outcome ${direct} disagrees with program accounting ${state}`,
+        );
+    }
     const visible = outcome(value);
     assertNoLeak(capture, where, visible);
     return { steps: stepsRecord(steps), ...(waitedMs ? { waitedMs } : {}), result: visible };

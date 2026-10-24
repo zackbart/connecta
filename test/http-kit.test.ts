@@ -97,6 +97,7 @@ import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { googleErrors } from "../src/providers/_shared/google/kit.js";
+import { buildTool as driveTool } from "../src/providers/drive/tools.js";
 import { stripeErrors } from "../src/providers/stripe/api.js";
 import { cloudflareErrors } from "../src/providers/cloudflare/api.js";
 import { errors as githubErrors } from "../src/providers/github/api.js";
@@ -348,6 +349,13 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         expect(JSON.stringify(mapped)).toBe(JSON.stringify(plain));
         const resend = toConnectorCallError(new ResendRefused({ first: own }), VENDOR, map);
         expect(failureRecord({}, resend).httpStatus).toBe(expected);
+        const write = toConnectorCallError(large, VENDOR, {
+          classification: "write",
+          dispatches: [own],
+        });
+        expect(write.message.match(/Whether the write took effect is unknown/g) ?? []).toHaveLength(
+          expected !== undefined && expected >= 200 && expected < 300 ? 1 : 0,
+        );
         expect(resend.message).toBe(
           `${plain.message} A second attempt to send it was stopped before it left: connecta sends a write once.`,
         );
@@ -1044,6 +1052,7 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     const orderedInput = Schema.Struct({
       first: Schema.String,
       second: Schema.String,
+      cursor: Schema.optionalKey(Schema.String),
       rows: Schema.Array(Schema.Struct({ a: Schema.String, b: Schema.String })),
     });
     const capacityArgs: string[] = [];
@@ -1100,6 +1109,27 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     await expect(
       orderedConnector.callTool("ordered", { first: "one", second: 2, rows: [] }, context()),
     ).rejects.toBeDefined();
+    const throwing = {
+      get first(): string {
+        throw new Error("Input getter failed.");
+      },
+      second: "two",
+      rows: [],
+    };
+    const failure = await orderedConnector.callTool("ordered", throwing, context()).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ConnectorCallError);
+    expect(failure).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: failure as never })).toBe("failed");
+    await expect(
+      orderedConnector.callTool(
+        "ordered",
+        { first: "one", second: "two", rows: [], cursor: undefined, extra: undefined },
+        context(),
+      ),
+    ).resolves.toEqual({ first: "one", second: "two", rows: [] });
+    await expect(
+      orderedConnector.callTool("ordered", { first: "one", second: "two", rows: [] }, context()),
+    ).resolves.toEqual({ first: "one", second: "two", rows: [] });
     await expect(orderedConnector.callTool("passthrough_order", { value: deep }, context())).resolves.toBe(true);
     delete steps["write"];
     steps["extra"] = "once";
@@ -1436,8 +1466,27 @@ describe("kit construction (decision 0010, B.4)", () => {
       for (const [build, annotations] of [
         [() => read(connection, spec), { readOnlyHint: true }],
         [() => getTool(connection, spec), { readOnlyHint: true }],
-        [() => write(connection, { ...spec, destructive: false }), { readOnlyHint: false }],
+        [() => write(connection, { ...spec, destructive: false }), { readOnlyHint: false, destructiveHint: false }],
+        [
+          () => write(connection, { ...spec, destructive: false, idempotent: true }),
+          { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+        ],
+        [
+          () => write(connection, { ...spec, destructive: false, idempotent: false }),
+          { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+        ],
         [() => write(connection, { ...spec, destructive: true }), { readOnlyHint: false, destructiveHint: true }],
+        [
+          () =>
+            driveTool(connection, {
+              name: "create_folder",
+              description: spec.description,
+              annotations: { readOnlyHint: false },
+              contract: { input: spec.input, output: spec.output },
+              run: spec.run,
+            }),
+          { readOnlyHint: false, destructiveHint: true },
+        ],
         [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
       ] as const)
         expect(build().annotations).toEqual(annotations);

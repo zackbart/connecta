@@ -322,7 +322,7 @@ describe("API provider failure sweep", () => {
               if (failure === "network-after-send")
                 throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
               return Response.json(
-                { error: { code: 503 }, errors: [{ message: "Service unavailable" }] },
+                { error: { code: 503, message: "Service unavailable" }, errors: [{ message: "Service unavailable" }] },
                 { status: 503 },
               );
             };
@@ -350,6 +350,7 @@ describe("API provider failure sweep", () => {
               expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
             // One unknown-outcome advice: a provider's own is never followed by the shared one.
             const { message } = (result.structuredContent as { error: { message: string } }).error;
+            if (GOOGLE.has(provider.name) && failure === "503") expect(message).toContain("Service unavailable.");
             if (/so its outcome is unknown|may or may not have been applied/.test(message))
               expect(message).not.toContain("Whether the write took effect at");
             if (decision) {

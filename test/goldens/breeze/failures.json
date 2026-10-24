@@ -410,7 +410,6 @@
             "connector": "church",
             "operation": "church.add_person",
             "recovery": "unavailable",
-            "reconciliationRequired": true,
             "nextAction": {
               "tool": "authorize_connector",
               "arguments": {
@@ -418,7 +417,7 @@
               },
               "operatorHandoff": "Give the URL and instructions it returns to the operator."
             },
-            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+            "retry": "Fix the credentials, then retry church.add_person."
           }
         }
       },

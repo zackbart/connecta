@@ -1108,9 +1108,15 @@ a parser, or an output-schema check) or after a 408, and any JSON-RPC error a
 included: a server can run the tool and then reject its own result), keeps
 its code and message for diagnostics but is `retryable: false` with
 `writeOutcome: "unknown"`, on a direct and a served call alike, and counts in
-a program's `writes.unknown`. A `remoteMcp()` write refused at the HTTP layer
-with a 4xx other than 408, or before its `tools/call` was sent, stays a known
-failure. A custom connector can show no such provenance: a served write whose
+a program's `writes.unknown`. An HTTP refusal of the call's own write stays
+known only under the refusal rules above and a complete ledger proving the
+refusal covers the whole call; its recovery advice and program accounting both
+report failure. Partial or unknown ledgers remain conservative. An auth failure after entering a write with
+no call-owned dispatch reports an unknown outcome and requires reconciliation,
+including credential refusals, static-OAuth refresh failures, and `remoteMcp()`
+connect or initialize 401s before `tools/call`. A non-auth refusal before
+`tools/call` is sent stays known. A custom connector can show no such
+provenance: a served write whose
 `callTool` throws after it was entered is `retryable: false` with
 `writeOutcome: "unknown"` whatever its code, and gets no retry advice
 (neither "grant the permission, then retry" nor "correct the arguments and

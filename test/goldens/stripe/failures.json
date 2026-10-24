@@ -397,7 +397,6 @@
             "connector": "billing",
             "operation": "billing.stripe_api_write",
             "recovery": "unavailable",
-            "reconciliationRequired": true,
             "nextAction": {
               "tool": "authorize_connector",
               "arguments": {
@@ -405,7 +404,7 @@
               },
               "operatorHandoff": "Give the URL and instructions it returns to the operator."
             },
-            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+            "retry": "Fix the credentials, then retry billing.stripe_api_write."
           }
         }
       },
@@ -701,7 +700,6 @@
             "connector": "billing",
             "operation": "billing.stripe_api_write",
             "recovery": "unavailable",
-            "reconciliationRequired": true,
             "nextAction": {
               "tool": "authorize_connector",
               "arguments": {
@@ -709,7 +707,7 @@
               },
               "operatorHandoff": "Give the URL and instructions it returns to the operator."
             },
-            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+            "retry": "Fix the credentials, then retry billing.stripe_api_write."
           }
         }
       },
