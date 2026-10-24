@@ -851,7 +851,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
       for (const responseId of ["response1", "response2"]) await read("get_response", { formId: "forms1", responseId });
     }
     if (task === 4) {
-      const { data: form } = await read("forms_api_read", { path: "/forms/forms1" });
+      const form = await read("forms_api_read", { path: "/forms/forms1" });
       const item = structuredClone(form.items[0]) as Row;
       item.questionItem.question.choiceQuestion.options[1].value = "later";
       await write("batch_update_form", {
