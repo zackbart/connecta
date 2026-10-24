@@ -12,6 +12,7 @@ export interface SavedGradeInputs {
   world: {
     rest?: World["rest"];
     breeze?: World["breeze"];
+    overflow?: World["overflow"];
     tithely?: World["tithely"];
     ci?: World["ci"];
     tracker: TrackerState;
@@ -31,6 +32,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       rest: world.rest,
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
+      ...(world.options.overflow ? { overflow: world.overflow } : {}),
       ci: world.ci,
       tracker: world.tracker,
       chat: world.chat,
@@ -134,6 +136,23 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.tithely, structuredClone(state.tithely));
   } else if (state.calls.some((c) => c.service === "tithely"))
     throw new Error("Incomplete saved grading evidence: tithely");
+  if (state.overflow) {
+    for (const key of [
+      "donors",
+      "campaigns",
+      "locations",
+      "contributions",
+      "subscriptions",
+      "refunds",
+      "chargebacks",
+      "deposits",
+      "refunded",
+      "updated",
+    ] as const)
+      requireEvidence(Array.isArray(state.overflow[key]), `overflow.${key}`);
+    Object.assign(world.overflow, structuredClone(state.overflow));
+  } else if (state.calls.some((c) => c.service === "overflow"))
+    throw new Error("Incomplete saved grading evidence: overflow");
   if (state.breeze) {
     for (const key of ["people", "created", "updated"] as const)
       requireEvidence(Array.isArray(state.breeze[key]), `breeze.${key}`);
