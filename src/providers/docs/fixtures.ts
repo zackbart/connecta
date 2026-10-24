@@ -6,7 +6,7 @@ export const fixture = {
   options,
   cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof docs>[1]> = {}) { return docs(id, { ...options, ...overrides } as Parameters<typeof docs>[1]); },
-  conventions: {"verbs":["get","create","append","insert","replace","batch"],"nestedDescriptionExceptions":[],"auth":"delegated"},
+  conventions: {"verbs":["get","create","append","insert","replace","batch","docs"],"nestedDescriptionExceptions":[],"auth":"delegated"},
 };
 
 export const createAuthored = () => fixture.create();

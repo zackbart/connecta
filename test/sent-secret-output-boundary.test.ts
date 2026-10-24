@@ -320,7 +320,7 @@ describe("provider sites the boundary cannot cover", () => {
     expect(preview).not.toContain("alpha b");
   });
 
-  it("INV-5: Docs rich text split across runs below K leaves no piece in raw or projected copies", async () => {
+  it("INV-5: Docs rich text split across runs below K leaves no piece in hatch or projected copies", async () => {
     const value = "Q8!wZ2?";
     const publicRun = {
       textRun: { content: "Public linked heading. ", textStyle: { link: { url: "https://example.com/notes" } } },
@@ -339,14 +339,16 @@ describe("provider sites the boundary cannot cover", () => {
       },
     }));
     const connector = docs("docs", await workspaceOptions());
-    for (const raw of [false, true]) {
-      const result = await connector.callTool("get_document", { documentId: "d1", raw }, context(value));
+    for (const hatch of [false, true]) {
+      const result = hatch
+        ? await connector.callTool("docs_api_read", { path: "/documents/d1" }, context(value))
+        : await connector.callTool("get_document", { documentId: "d1" }, context(value));
       expect(shown(result)).not.toContain(value);
       expect(shown(result)).toContain(MARK);
       expect(shown(result)).toContain("Public linked heading.");
       expect(shown(result)).toContain("https://example.com/notes");
-      if (raw) {
-        const runs = (result as any).raw.body.content[0].paragraph.elements;
+      if (hatch) {
+        const runs = (result as any).data.body.content[0].paragraph.elements;
         expect(runs[0]).toEqual(publicRun);
         expect(runs.slice(1).every((run: any) => run.textRun.content === MARK)).toBe(true);
       }

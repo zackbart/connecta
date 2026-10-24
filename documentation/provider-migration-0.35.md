@@ -601,6 +601,49 @@ headers and reviewed text/SQL/NDJSON/upload framing remain supported. No tool
 argument can widen pin scope or reveal a stored secret. Operator setup is in
 [Cloudflare](./providers.md#cloudflare).
 
+## Google Docs
+
+Keep all six named tool names. `get_document.raw` is removed: replace
+`get_document({documentId:"doc_123",raw:true})` with
+`docs_api_read({path:"/documents/doc_123",query:{includeTabsContent:true}})`.
+Its full vendor document is the hatch value's `data`, rather than a named
+result's `raw`. `get_document` now accepts `fields` for projected result paths;
+hatch `fields` selects vendor-body paths.
+
+New `docs_api_search`, `docs_api_details`, `docs_api_read` and `docs_api_write`
+use paths relative to `/v1`: `/documents/doc_123`, never `/v1/documents/doc_123`.
+Operation search never lists a user's documents; continue using Drive.
+For a generic batch, call `docs_api_write` with `method:"POST"`,
+`path:"/documents/doc_123:batchUpdate"`, and
+`body:{requests:[{updateTextStyle:{range:{startIndex:1,endIndex:5},textStyle:{bold:true},fields:"bold"}}],writeControl:{requiredRevisionId:"revision_from_read"}}`.
+The revision and 1–100 supported GA request kinds are mandatory. Preview
+comments/suggestions remain refused. Generic create sends only Google's title
+payload; use `create_document` for create plus initial text and partial recovery.
+
+Unsigned `e:` index cursors no longer work; start an indexed read without a
+cursor, then pass `page.nextCursor` with the same arguments. Cursors bind the
+connection, owner, read arguments and document content/revision. Terminal
+pages omit `nextCursor` instead of returning null. There is no vendor pageToken
+protocol for Docs. Fields may narrow between named pages.
+
+`tabs[].textTruncated` becomes top-level `truncated:["tabs[0].text"]` (using
+the actual tab index); `repliesTruncated` and `replyCount` are removed, with
+batch size cuts reported as `truncated:["replies[]"]`. Count displayed replies
+with `replies.length`. `notRendered` and `dropped` remain semantic facts.
+
+A 404 now reports `connector_call_failed` because absence and sharing denial
+are ambiguous. Standard read 5xx failures report `unavailable`; revision facts
+retain `conflict`. Write outcomes remain conservative and non-retryable after
+dispatch. Create/append/insert catalog entries omit the previous explicit
+`destructiveHint:false` through the shared builder; approval routing is unchanged.
+Every new hatch
+write requires the host's destructive-write route. No new privacy switch or
+scope is introduced.
+
+Docs image `contentUri` values now read `[redacted]` because possession grants
+the requester's temporary image access. Authored image `sourceUri` and text links
+remain available; `fields` cannot widen this boundary.
+
 ## Google Forms
 
 Keep all six named tools. Four tools are added: `forms_api_search`,

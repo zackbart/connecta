@@ -30,6 +30,8 @@ import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "..
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { DOCS, DocsApi, errors, probe, safety } from "./api.js";
 import { DOCS_API_BASE_URL, DOCS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
+import { DOCS_INDEX, DOCS_VERDICTS, docsBinding } from "./lib/discovery.js";
+import { docsResult } from "./safety.js";
 import { docsTools } from "./tools.js";
 
 export { DOCS_API_BASE_URL, DOCS_SCOPES } from "./lib/constants.js";
@@ -42,13 +44,6 @@ export type {
 
 /** Options for {@link docs}: the shared Workspace delegation options. */
 export type DocsOptions = GoogleWorkspaceOptions;
-
-// --- Guide -------------------------------------------------------------------------
-
-function usageGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
-}
 
 // --- Construction ------------------------------------------------------------------
 
@@ -94,8 +89,8 @@ export const docs = defineApiProvider<DocsOptions>({
   title: "Google Docs",
   readme: "Google Docs",
   bundle: {
-    baselineGzip: 335623,
-    note: "./providers/docs measures 335,623 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 369878,
+    note: "./providers/docs evaluated snapshot 2ce02c7c measures 369,878 B gzip standalone for Docs step 2 (#703), versus 354,308 B on main ff3f7c3b (+15,570 B), using Node 22.23.3, gzip level 9 and the standard neutral esbuild settings. This includes the shared Effect kit, paid once per deployment; standalone sizes are not additive and remain report-only.",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -104,19 +99,41 @@ export const docs = defineApiProvider<DocsOptions>({
   vendor: DocsApi,
   baseUrl: (options) => options.baseUrl?.trim() || DOCS_API_BASE_URL,
   maxResponseBytes: DOCS_MAX_RESPONSE_BYTES,
+  idempotencyKey: false,
   grant: (options) => googleGrant(DOCS, workspaceOf("docs", options)),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
   authenticate: bearer,
   errors,
   safety: () => safety,
+  result: docsResult,
   probe,
   guide: (options) => ({
-    content: usageGuide(options.purpose, options.instructions),
-    summary: "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
-    // Required: whose documents they are, that ids come from elsewhere, and
-    // that indexes shift and go stale are conventions no schema can carry.
+    heading: "Google Docs usage",
+    context: [
+      `Purpose: ${options.purpose}`,
+      "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; document access follows that user's Drive sharing.",
+      ...(options.readOnly ? ["This connection is read-only."] : []),
+    ],
+    summary: "Docs by id: tabs, UTF-16 edit indexes, revisions and partial-create recovery.",
     required: true,
   }),
+  hatch: {
+    name: "docs",
+    title: "Google Docs",
+    index: DOCS_INDEX,
+    verdicts: DOCS_VERDICTS,
+    named: {
+      "GET /documents/{documentId}": "get_document",
+      "POST /documents": "create_document",
+      "POST /documents/{documentId}:batchUpdate": "batch_update_document",
+    },
+    pathExample: "/documents/doc_123",
+    notes: () => ({
+      write:
+        "Batch updates require writeControl.requiredRevisionId, 1–100 requests and exactly one supported GA kind each; preview comment and suggestion kinds are refused.",
+    }),
+    binding: ({ connection }) => docsBinding(connection),
+  },
   tools: docsTools,
   tagConnector: tagWorkspace("docs"),
 });

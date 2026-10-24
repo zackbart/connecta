@@ -57,7 +57,7 @@ var fixture4 = {
   create(id = "fixture", overrides = {}) {
     return docs(id, { ...options4, ...overrides });
   },
-  conventions: { "verbs": ["get", "create", "append", "insert", "replace", "batch"], "nestedDescriptionExceptions": [], "auth": "delegated" }
+  conventions: { "verbs": ["get", "create", "append", "insert", "replace", "batch", "docs"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/drive/fixtures.ts

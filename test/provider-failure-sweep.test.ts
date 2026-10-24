@@ -46,6 +46,8 @@ const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
 const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
+  "docs.docs_api_search",
+  "docs.docs_api_details",
   "planning-center.pco_api_details",
   ...["breeze", "ccb", "cloudflare", "forms", "github", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
@@ -160,13 +162,20 @@ describe("API provider failure sweep", () => {
                   : { code: "unavailable", retryable: true },
             });
         }
-      // Fold GitHub's two new offline hatches here: injected remote failures
+      // Fold offline hatch coverage here: injected remote failures
       // cannot affect metadata that sends no request.
-      if (provider.name === "github")
-        for (const name of ["github_api_search", "github_api_details"]) {
-          const result = await sweepCall(provider, name, `github.${name}`, argumentsTable.github![name], "read", () => {
-            throw new Error("An offline GitHub hatch dispatched a request.");
-          });
+      if (["github", "docs"].includes(provider.name))
+        for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
+          const result = await sweepCall(
+            provider,
+            name,
+            `${provider.name}.${name}`,
+            argumentsTable[provider.name]![name],
+            "read",
+            () => {
+              throw new Error("An offline indexed hatch dispatched a request.");
+            },
+          );
           expect(result.isError).toBeFalsy();
         }
     }
@@ -179,7 +188,7 @@ describe("API provider failure sweep", () => {
         .filter(
           (tool) =>
             !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)) &&
-            !(provider.name === "forms" && tool.name.startsWith("forms_api_")),
+            !(["docs", "forms"].includes(provider.name) && tool.name.startsWith(`${provider.name}_api_`)),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
@@ -311,6 +320,7 @@ describe("API provider failure sweep", () => {
                 "writeOutcome",
               );
             }
+            await docsHatchFailure(provider, tool.name, classification, failure);
           });
           // A write answered 401 is an unknown outcome unless its provider
           // declares reviewed authBeforeExecution evidence; a read keeps its
@@ -418,6 +428,7 @@ describe("API provider failure sweep", () => {
               expect(auxiliary).not.toHaveProperty("writeOutcome");
               expect(auxiliary).not.toHaveProperty("reconciliationRequired");
             }
+            await docsHatchFailure(provider, tool.name, classification, "401");
           });
         }
       }
@@ -431,6 +442,43 @@ describe("API provider failure sweep", () => {
     expect([...new Set(declaring)].sort()).toEqual([...AUTH_BEFORE_EXECUTION].sort());
   });
 });
+
+/** Fold Docs hatch 503/network/401 coverage into the matching named endpoint's
+ * existing sweep rows, without duplicating collected tests for the same route. */
+async function docsHatchFailure(
+  provider: (typeof providers)[number],
+  original: string,
+  classification: "read" | "write",
+  failure: "503" | "network-after-send" | "401",
+) {
+  if (provider.name !== "docs") return;
+  const name =
+    original === "get_document" ? "docs_api_read" : original === "batch_update_document" ? "docs_api_write" : undefined;
+  if (!name) return;
+  let sent = 0;
+  const result = await sweepCall(
+    provider,
+    name,
+    `docs.${name}`,
+    argumentsTable.docs![name],
+    classification,
+    () => {
+      sent++;
+      if (failure === "network-after-send") throw new TypeError("fetch failed");
+      return Response.json({ error: { code: Number(failure) } }, { status: Number(failure) });
+    },
+    HANDOFFS,
+  );
+  expect(sent).toBe(classification === "read" && failure === "401" ? 2 : 1);
+  expect(result.structuredContent).toMatchObject({
+    ok: false,
+    error: {
+      code: failure === "401" ? "auth_required" : classification === "read" ? "unavailable" : "connector_call_failed",
+      retryable: classification === "read" && failure !== "401",
+      ...(classification === "write" ? { writeOutcome: "unknown" } : {}),
+    },
+  });
+}
 
 /** Every maintained provider's source, to find reviewed `authBeforeExecution` declarations. */
 const providerSources = Object.fromEntries(
