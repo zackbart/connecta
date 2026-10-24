@@ -1,17 +1,17 @@
-// Named tools and projections retain their legacy catalog while the kit owns dispatch.
+// Curated, projected tools; the standard hatch covers the pinned REST API.
 import { Effect, Schema } from "effect";
-import { read, write } from "../../http/tools.js";
+import { ConnectorCallError } from "../../errors.js";
+import { list, read, write } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import { RequestSecrets } from "../../http/services.js";
 import type { JsonSchema } from "../../types.js";
-import { checked, restKitTools, schema, catalogOrder } from "../_shared/rest/kit.js";
+import { checked, schema } from "../_shared/rest/kit.js";
 import type { Operation } from "../_shared/rest/operation-index.js";
 import { inspectGraphqlQuery } from "./lib/graphql.js";
 import {
   cloudflareRuntime,
   cloudflareIndex,
   SAFETY,
-  READ_POSTS,
   WRITE_STEPS,
   UPLOADS,
   HEADERS,
@@ -24,28 +24,9 @@ import {
 } from "./api.js";
 import { settings } from "./api.js";
 import type { CloudflareOptions } from "./index.js";
+import { cloudflarePage } from "../../http/hatch-paging.js";
+import { isMinChars, isMaxChars } from "../../http/json-schema.js";
 type JsonRecord = Record<string, unknown>;
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  description: "Pass next as the param query argument for the following page.",
-  properties: {
-    hasMore: { type: "boolean", description: "Whether another page exists." },
-    next: { type: "string", description: "The next page number or cursor." },
-    param: { type: "string", description: "The query parameter that takes next." },
-  },
-  required: ["hasMore"],
-};
-
-const PAGING_INPUT: Record<string, JsonSchema> = {
-  page: { type: "integer", minimum: 1, maximum: 10_000, description: "Page number; default 1." },
-  perPage: {
-    type: "integer",
-    minimum: 5,
-    maximum: 50,
-    description: "Results per page; default 20, Cloudflare's max 50.",
-  },
-};
-
 function closed(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
@@ -98,88 +79,6 @@ export function cloudflareTools({
         required: ["auth", "status", "scope"],
       },
       run: () => runtime.verify(),
-    },
-    {
-      name: "list_accounts",
-      description:
-        "List the Cloudflare accounts this credential reaches (only pinned ones when the connector is pinned). Supplies account ids for /accounts/{account_id} paths.",
-      annotations: { readOnlyHint: true },
-      inputSchema: closed({
-        name: { type: "string", minLength: 1, maxLength: 200, description: "Exact account name." },
-        ...PAGING_INPUT,
-      }),
-      outputSchema: {
-        type: "object",
-        properties: {
-          accounts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { id: { type: "string" }, name: { type: "string" }, type: { type: "string" } },
-            },
-          },
-          page: PAGE_SCHEMA,
-        },
-        required: ["accounts"],
-      },
-      run: (args: JsonRecord) =>
-        Effect.gen(function* () {
-          const query: JsonRecord = { page: args["page"] ?? 1, per_page: args["perPage"] ?? 20 };
-          if (typeof args["name"] === "string") query["name"] = args["name"];
-          const { data, page: next } = yield* runtime.read("GET", "/accounts", { query });
-          return {
-            accounts: (Array.isArray(data) ? data : []).map((item) => {
-              const account = record(item);
-              return { id: account["id"], name: account["name"], type: account["type"] ?? null };
-            }),
-            ...(next ? { page: next } : {}),
-          };
-        }),
-    },
-    {
-      name: "list_zones",
-      description:
-        "List Cloudflare zones (domains) by name, status, or account; only pinned ones when the connector is pinned. Supplies zone ids for /zones/{zone_id} paths.",
-      annotations: { readOnlyHint: true },
-      inputSchema: closed({
-        name: { type: "string", minLength: 1, maxLength: 253, description: "Exact domain name, e.g. example.com." },
-        status: {
-          type: "string",
-          enum: ["initializing", "pending", "active", "moved"],
-          description: "Only zones in this status.",
-        },
-        accountId: { type: "string", minLength: 1, maxLength: 64, description: "Only zones in this account." },
-        ...PAGING_INPUT,
-      }),
-      outputSchema: {
-        type: "object",
-        properties: {
-          zones: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                name: { type: "string" },
-                status: { type: ["string", "null"] },
-                accountId: { type: ["string", "null"] },
-                nameServers: { type: "array" },
-              },
-            },
-          },
-          page: PAGE_SCHEMA,
-        },
-        required: ["zones"],
-      },
-      run: (args: JsonRecord) =>
-        Effect.gen(function* () {
-          const query: JsonRecord = { page: args["page"] ?? 1, per_page: args["perPage"] ?? 20 };
-          if (typeof args["name"] === "string") query["name"] = args["name"];
-          if (typeof args["status"] === "string") query["status"] = args["status"];
-          if (typeof args["accountId"] === "string") query["account.id"] = args["accountId"];
-          const { data, page: next } = yield* runtime.read("GET", "/zones", { query });
-          return { zones: (Array.isArray(data) ? data : []).map(projectZone), ...(next ? { page: next } : {}) };
-        }),
     },
     {
       name: "graphql_query",
@@ -325,7 +224,9 @@ export function cloudflareTools({
         type: "object",
         properties: {
           status: { type: "integer", description: "HTTP status." },
-          data: { description: "Cloudflare's result." },
+          data: {
+            description: "Cloudflare's response envelope after value safety: result, errors, messages, success.",
+          },
         },
         required: ["status", "data"],
       },
@@ -393,31 +294,110 @@ export function cloudflareTools({
             }
             return { ...prepared, body: upload };
           });
-          const { status, data } = yield* runtime.send(preparedUpload);
+          const { status, data } = yield* runtime.sendEnvelope(preparedUpload);
           return { status, data };
         }),
     },
   ];
 
   return [
-    ...restKitTools({
-      vendor: "cloudflare",
-      title: "Cloudflare",
-      index: operations,
-      valueSafety: SAFETY,
-      readPosts: READ_POSTS,
-      headers: HEADERS,
-      textBodies: true,
-      path: runtime.fillDefaults,
-      scope: runtime.scope,
-      refuse: runtime.refuse,
-      checkServer: runtime.checkServer,
-      pathExample: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
-      upload: "Send multipart, binary, and file bodies with cloudflare_api_upload.",
-      bodyHint: "a string for text, SQL, or script operations, a list of objects for NDJSON",
-      connection,
-      writeSteps: WRITE_STEPS,
-      send: runtime.send,
+    ...["accounts", "zones"].map((noun) => {
+      const zone = noun === "zones";
+      const filters = {
+        name: Schema.optionalKey(
+          Schema.String.check(isMinChars(1), isMaxChars(zone ? 253 : 200)).annotate({
+            description: zone ? "Exact domain name, e.g. example.com." : "Exact account name.",
+          }),
+        ),
+        ...(zone
+          ? {
+              status: Schema.optionalKey(Schema.Literals(["initializing", "pending", "active", "moved"])),
+              accountId: Schema.optionalKey(
+                Schema.String.check(isMinChars(1), isMaxChars(64)).annotate({
+                  description: "Only zones in this account.",
+                }),
+              ),
+            }
+          : {}),
+      };
+      const row = Schema.Struct(
+        zone
+          ? {
+              id: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              status: Schema.optionalKey(Schema.NullOr(Schema.String)),
+              paused: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+              type: Schema.optionalKey(Schema.NullOr(Schema.String)),
+              accountId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+              accountName: Schema.optionalKey(Schema.NullOr(Schema.String)),
+              nameServers: Schema.optionalKey(Schema.Array(Schema.String)),
+              plan: Schema.optionalKey(Schema.NullOr(Schema.String)),
+            }
+          : {
+              id: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(Schema.NullOr(Schema.String)),
+            },
+      );
+      const tool = list(connection, {
+        name: `list_${noun}`,
+        description: zone
+          ? "List Cloudflare zones (domains) by name, status or account; only pinned zones. Resolves domain names to zone/account ids for DNS, cache and analytics."
+          : "List Cloudflare accounts by name; only pinned accounts. Resolves account ids for zones, Workers, KV and R2.",
+        filters,
+        row,
+        limit: { default: 20, max: 50, description: "Results per page: 5 to 50; default 20." },
+        cursor: "bound",
+        total: true,
+        page: (args, cursor) =>
+          Effect.gen(function* () {
+            if (args.limit < 5)
+              yield* checked(() => invalid("Cloudflare account and zone lists require limit from 5 to 50."));
+            const page = cursor === undefined ? 1 : Number(cursor);
+            if (!Number.isSafeInteger(page) || page < 1)
+              yield* checked(() => invalid("This cursor contains no valid Cloudflare page."));
+            const query: JsonRecord = { page, per_page: args.limit };
+            if (args.name !== undefined) query["name"] = args.name;
+            if ("status" in args && args.status !== undefined) query["status"] = args.status;
+            if ("accountId" in args && args.accountId !== undefined) query["account.id"] = args.accountId;
+            const answer = yield* runtime.sendEnvelope(runtime.call("GET", `/${noun}`, { query }));
+            const body = record(answer.data),
+              info = record(body["result_info"]);
+            const rows = body["result"];
+            if (!Array.isArray(rows))
+              yield* checked(() => {
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  "Cloudflare returned a list without a result array.",
+                  { retryable: false },
+                );
+              });
+            const next = yield* checked(() => cloudflarePage.next(body, { path: `/${noun}`, query, headers: {} }));
+            const total = pin ? undefined : info["total_count"];
+            if (total !== undefined && (!Number.isSafeInteger(total) || (total as number) < 0))
+              yield* checked(() => {
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  "Cloudflare returned an invalid exact list total.",
+                  { retryable: false },
+                );
+              });
+            return {
+              rows: (rows as unknown[]).map((item) =>
+                zone
+                  ? projectZone(item)
+                  : { id: record(item)["id"], name: record(item)["name"], type: record(item)["type"] ?? null },
+              ),
+              page: {
+                hasMore: next !== undefined && next !== null,
+                nextCursor: typeof next === "number" ? String(next) : null,
+                ...(typeof total === "number" ? { total } : {}),
+              },
+            };
+          }),
+      });
+      (tool.inputSchema as { properties: Record<string, { minimum?: number }> }).properties["limit"]!.minimum = 5;
+      return tool;
     }),
     ...declarations.map((declaration) => {
       const spec = {
@@ -426,22 +406,19 @@ export function cloudflareTools({
         description: declaration.description,
         input:
           Object.keys(declaration.inputSchema.properties ?? {}).length === 0
-            ? Schema.Record(Schema.String, Schema.Never)
+            ? Schema.Struct({})
             : schema(declaration.inputSchema),
         output: schema(declaration.outputSchema),
         run: (args: unknown) => declaration.run(args as JsonRecord),
       };
       const tool = declaration.annotations.readOnlyHint
         ? read(connection, {
+            fields: true,
             ...spec,
             review:
               "Credential verification, GraphQL query-only inspection and account/zone lists are read-only; every pin is checked before dispatch.",
           })
         : write(connection, { ...spec, destructive: true });
-      Object.assign(tool, {
-        inputSchema: catalogOrder(tool.inputSchema, declaration.inputSchema),
-        outputSchema: catalogOrder(tool.outputSchema, declaration.outputSchema),
-      });
       return tool;
     }),
   ];

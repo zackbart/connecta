@@ -38,7 +38,11 @@ export default defineGoldenSpec({
     { tool: "cloudflare_api_details", args: { method: "GET", path: `/zones/${ZONE}/dns_records`, param: "type" } },
     {
       tool: "cloudflare_api_read",
-      args: { path: `/zones/${ZONE}/dns_records`, query: { type: "A", per_page: 2 }, select: ["id", "ttl"] },
+      args: {
+        path: `/zones/${ZONE}/dns_records`,
+        query: { type: "A", per_page: 2 },
+        fields: ["result.id", "result.ttl"],
+      },
       replies: [
         envelope(
           [
@@ -60,7 +64,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "list_accounts",
-      args: { perPage: 5 },
+      args: { limit: 5 },
       replies: [
         envelope([{ id: ACCOUNT, name: "Alice's Account", type: "standard", settings: { enforce_twofactor: true } }], {
           result_info: { page: 1, per_page: 5, count: 1, total_count: 1, total_pages: 1 },

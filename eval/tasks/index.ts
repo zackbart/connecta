@@ -10,6 +10,8 @@ import { OVERFLOW_TASKS } from "./overflow.js";
 import { BREEZE_TASKS } from "./breeze.js";
 import { TITHELY_TASKS } from "./tithely.js";
 import { VERCEL_TASKS } from "./vercel.js";
+import { GITHUB_TASKS } from "./github.js";
+import { CLOUDFLARE_TASKS } from "./cloudflare.js";
 import { STRIPE_TASKS } from "./stripe.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
@@ -25,8 +27,9 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...OVERFLOW_TASKS,
   ...STRIPE_TASKS,
   ...VERCEL_TASKS,
-
+  ...CLOUDFLARE_TASKS,
   ...CCB_TASKS,
   ...PLANNING_CENTER_TASKS,
+  ...GITHUB_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

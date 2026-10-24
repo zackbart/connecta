@@ -3,9 +3,11 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { cloudflareStep2Dns } from "./cloudflare.js";
 import { FakeCcb, ccbState } from "./ccb.js";
 import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
+import { FakeGitHub, githubState } from "./github.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
@@ -47,13 +49,15 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow";
+  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow" | "github";
+  githubApp?: { appId: string; privateKey: string };
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
 
 export interface WorldOptions {
   restVendor?: RestVendor;
+  github?: { fault?: "search-503" };
   breeze?: { fault?: "update-500" };
   ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
@@ -65,6 +69,7 @@ export interface WorldOptions {
   stripeStep2?: boolean;
   /** Isolated Vercel standard-surface workflows. */
   vercelStep2?: boolean;
+  cloudflareStep2?: { fault?: boolean };
   prerequisites?: boolean;
   assets?: boolean;
   oauth?: boolean;
@@ -89,8 +94,9 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 export class World {
   readonly rest = restState();
   readonly restServices: Array<
-    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow
+    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow | FakeGitHub
   > = [];
+  readonly github = githubState();
   readonly breeze = breezeState();
   readonly ccb = ccbState();
   readonly pco = planningCenterState();
@@ -109,6 +115,7 @@ export class World {
   programs: ProgramObservation[] = [];
 
   constructor(readonly options: WorldOptions = {}) {
+    if (options.cloudflareStep2) this.rest.dns.push(...cloudflareStep2Dns());
     if (options.restVendor) {
       const vendor = options.restVendor;
       const ids =
@@ -126,12 +133,14 @@ export class World {
             "test",
             "acct_eval",
             options.stripeStep2,
+            options.cloudflareStep2,
             options.vercelStep2,
           ),
       );
     }
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
+    if (options.github) this.restServices = [new FakeGitHub("github", this.ledger, this.github, options.github.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
     if (options.ccb) this.restServices = [new FakeCcb("ccb", this.ledger, this.ccb, options.ccb.fault)];
     if (options.planningCenter)
@@ -179,7 +188,8 @@ export class World {
       this.options.breeze ||
       this.options.ccb ||
       this.options.planningCenter ||
-      this.options.overflow
+      this.options.overflow ||
+      this.options.github
     )
       return this.restServices.map((service) => ({
         id: service.name,
@@ -190,7 +200,12 @@ export class World {
             : `Fake ${service.vendor} REST`,
         url: service.url,
         rest: service.vendor,
-        credential: { label: "Fake vendor credential", value: service.credential },
+        ...(service instanceof FakeGitHub
+          ? { githubApp: { appId: service.appId, privateKey: service.privateKey } }
+          : {}),
+        ...(service instanceof FakeGitHub
+          ? {}
+          : { credential: { label: "Fake vendor credential", value: service.credential } }),
       }));
     return [...this.services.values()].map((service) => {
       const id = service.name as ServiceId;

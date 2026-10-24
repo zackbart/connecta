@@ -15,6 +15,7 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { github } from "@zackbart/connecta/providers/github";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
@@ -93,6 +94,15 @@ export async function startNodeDeployment(
       ...(oauth ? [oauth.connector()] : []),
       ...connectors.map((spec) => {
         const options = { purpose: spec.description };
+        if (spec.rest === "github")
+          return github(spec.id, {
+            ...options,
+            app: spec.githubApp!,
+            scopes: [
+              { org: "alice", access: "read-write", workflows: "write" },
+              { repo: "bob/one", access: "read" },
+            ],
+          });
         if (spec.rest === "ccb")
           return ccb(spec.id, {
             ...options,

@@ -1,4 +1,5 @@
 /** Classify attempts from the published providers' complete static REST catalogs. */
+import { github } from "@zackbart/connecta/providers/github";
 import { ccb } from "@zackbart/connecta/providers/ccb";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
@@ -10,6 +11,14 @@ import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A } from "../fakes/rest.js";
 
 const connectors = [
+  github("github", {
+    purpose: "GitHub acceptance grading",
+    app: { appId: "12345" },
+    scopes: [
+      { org: "alice", access: "read-write", workflows: "write" },
+      { repo: "bob/one", access: "read" },
+    ],
+  }),
   ccb("ccb", {
     purpose: "Deterministic CCB acceptance grading",
     environment: "production",

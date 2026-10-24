@@ -6,7 +6,10 @@ import { recordToolActivity } from "../src/activity.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { CatalogService } from "../src/catalog-service.js";
 import type { CallAdmissionPermit } from "../src/call-admission.js";
+import { api } from "../src/connectors/api.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { InvocationService } from "../src/invocation.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import type { Registry } from "../src/registry.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
@@ -74,7 +77,7 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     });
   });
 
-  it("charges a call that timed out in an unresponsive connector with that wait", async () => {
+  it("INV-9: charges an unresponsive call's wait; a deadline or cancellation without a complete answer stays conservative", async () => {
     vi.useFakeTimers();
     let enter!: () => void;
     const entered = new Promise<void>((resolve) => {
@@ -97,6 +100,84 @@ describe("one deadline over resolve, admission, and dispatch", () => {
       active: 0,
       queued: 0,
     });
+
+    for (const dispatch of ["untracked", "auxiliary", "call-owned"] as const) {
+      for (const end of ["deadline", "cancel"] as const) {
+        const label = `${dispatch}, ${end}`;
+        const requests: string[] = [];
+        let sent!: () => void;
+        const reached = new Promise<void>((resolve) => {
+          sent = resolve;
+        });
+        const request = guardedFetch({
+          provider: "Tickets",
+          baseUrl: "https://tickets.test",
+          authenticate: () => ({}),
+          maxResponseBytes: 1024,
+          fetch: async (_input, init) => {
+            requests.push(init?.method ?? "GET");
+            return Response.json({});
+          },
+        });
+        const write = { name: "send", description: "Send", annotations: { readOnlyHint: false } };
+        const connector =
+          dispatch === "untracked"
+            ? connectorWith({
+                id: "tickets",
+                kind: "api",
+                tools: [write],
+                call: async () => {
+                  sent();
+                  return new Promise(() => {});
+                },
+              })
+            : tracksEveryRequest(
+                api("tickets", {
+                  tools: [
+                    {
+                      ...write,
+                      handler: async (_args, ctx) => {
+                        await request(
+                          {
+                            method: dispatch === "auxiliary" ? "GET" : "POST",
+                            path: "/items",
+                            auxiliary: dispatch === "auxiliary",
+                            classification: dispatch === "auxiliary" ? "read" : "write",
+                          },
+                          ctx,
+                          (response) => response.json(),
+                        );
+                        sent();
+                        return new Promise(() => {});
+                      },
+                    },
+                  ],
+                }),
+              );
+        const writes = makeRegistry([connector]);
+        const cancel = new AbortController();
+        const pendingWrite = new InvocationService(writes, new CatalogService(writes, BASE)).invoke(
+          "tickets.send",
+          {},
+          { source: "call_destructive_tool", timeoutMs: 100, requestSignal: cancel.signal },
+        );
+        await reached;
+        if (end === "deadline") await vi.advanceTimersByTimeAsync(100);
+        else cancel.abort();
+        const outcome = await pendingWrite;
+        expect(requests, label).toEqual(dispatch === "untracked" ? [] : [dispatch === "auxiliary" ? "GET" : "POST"]);
+        expect(outcome, label).toMatchObject({
+          ok: false,
+          answered: false,
+          error: {
+            code: end === "deadline" ? "write_outcome_unknown" : "cancelled",
+            retryable: false,
+            ...(end === "cancel" ? { writeOutcome: "unknown" } : {}),
+          },
+        });
+        expect(outcome.timing.connectorMs, label).toBe(end === "deadline" ? 100 : 0);
+      }
+    }
   });
 
   it("releases a permit granted only after the deadline ended the wait", async () => {

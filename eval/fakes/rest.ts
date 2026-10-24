@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 import { stripeStep2Read } from "./stripe.js";
 import { vercelStep2Dispatch } from "./vercel.js";
+import { cloudflareStep2Read } from "./cloudflare.js";
 
 export type RestVendor = "stripe" | "cloudflare" | "vercel";
 export const ACCOUNT_A = "a".repeat(32);
@@ -44,6 +45,7 @@ function installTransport() {
     if (
       !Object.values(HOSTS).flat().includes(url.hostname) &&
       url.hostname !== "church.breezechms.com" &&
+      url.hostname !== "api.github.com" &&
       url.hostname !== "api.ccbchurch.com"
     )
       return forward(request);
@@ -58,7 +60,14 @@ function installTransport() {
       request.headers.get("api-key") ??
       request.headers.get("x-auth-key") ??
       request.headers.get("authorization")?.replace(/^Bearer /, "");
-    const target = key ? routes.get(key) : undefined;
+    let target = key ? routes.get(key) : undefined;
+    if (!target && url.hostname === "api.github.com" && key) {
+      try {
+        target = routes.get(`jwt:${JSON.parse(Buffer.from(key.split(".")[1] ?? "", "base64url").toString()).iss}`);
+      } catch {
+        /* unregistered credentials refuse below */
+      }
+    }
     if (!target || !target.hosts.includes(url.hostname)) throw new Error("Eval refused non-fake vendor transport");
     return forward(new Request(`${target.url}${url.pathname}${url.search}`, request));
   }) as typeof fetch;
@@ -106,6 +115,7 @@ export function restState() {
     refundKeys: {} as Record<string, { params: string; status: number; value: unknown }>,
     refundFaulted: false,
     vercelFaulted: false,
+    dnsFaulted: false,
     dns: [
       {
         id: DNS_ID,
@@ -156,6 +166,7 @@ export class FakeRestService {
     private readonly stripeMode: "test" | "live" = "test",
     private readonly stripeAccount = "acct_eval",
     private readonly stripeStep2 = false,
+    private readonly cloudflareStep2?: { fault?: boolean },
     private readonly vercelStep2 = false,
   ) {
     this.token = `${vendor === "stripe" ? `sk_${stripeMode}_eval_` : "eval_"}${randomUUID()}`;
@@ -366,6 +377,10 @@ export class FakeRestService {
         return ok({ object: "list", data: this.state.refunds, has_more: false });
     }
     if (this.vendor === "cloudflare") {
+      if (this.cloudflareStep2 && method === "GET") {
+        const answer = cloudflareStep2Read(path, query, this.state.dns);
+        if (answer !== undefined) return ok(answer);
+      }
       const zones = [
         { id: ZONE, name: "example.com", account: { id: ACCOUNT_A }, status: "active" },
         { id: OTHER_ZONE, name: "example.net", account: { id: ACCOUNT_A }, status: "active" },
@@ -402,6 +417,17 @@ export class FakeRestService {
         if (method === "GET") return ok(cf(dns[2] ? rows[0] : rows));
         if (["PATCH", "PUT"].includes(method) && rows.length === 1) {
           Object.assign(rows[0]!, body);
+          if (this.cloudflareStep2?.fault && !this.state.dnsFaulted) {
+            this.state.dnsFaulted = true;
+            return {
+              status: 500,
+              value: {
+                success: false,
+                errors: [{ code: 1000, message: "Upstream write answer unavailable" }],
+                result: null,
+              },
+            };
+          }
           return ok(cf(rows[0]));
         }
       }

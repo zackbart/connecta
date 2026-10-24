@@ -56,6 +56,24 @@ export function counterexamples(
         world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
       });
   }
+  if (task.id.startsWith("github-")) {
+    const changedCalls = (calls: World["ledger"]["calls"]): World =>
+      Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+      });
+    cases.push({ name: "no GitHub HTTP evidence", world: changedCalls([]) });
+    const write = world.ledger.calls.find((c) => c.service === "github" && c.kind === "write");
+    if (write)
+      cases.push({
+        name: "duplicate business write",
+        world: changedCalls([...world.ledger.calls, { ...write, seq: 99999 }]),
+      });
+    if (task.id === "github-repository-paging")
+      cases.push({
+        name: "first page only",
+        world: changedCalls(world.ledger.calls.filter((c) => Number((c.args.query as any)?.page ?? 1) < 2)),
+      });
+  }
   if (task.id.startsWith("pco-step2-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {

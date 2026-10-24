@@ -9,6 +9,8 @@ export interface HatchPageAdapter {
   /** With a separate cursor, permit a first-request raw record id. Parameter-based
    * paging permits only a numeric timestamp anchor; opaque tokens stay signed. */
   readonly initialAnchor?: boolean;
+  /** Opt-in repair guidance for unsigned first-page/raw vendor continuations. */
+  readonly cursorInputMessage?: string;
   /** Validate and restore a decoded cursor's vendor type before index.check. */
   readonly decode: (cursor: string | number) => string | number;
   /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor;

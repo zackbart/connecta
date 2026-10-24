@@ -17,7 +17,8 @@ describeValueSafety("Cloudflare", {
   source,
   candidates,
   counts: { refuse: 61, redact: 268, safe: 482 },
-  // The tools return the v4 envelope's `result`; its paging and messages are not data.
+  // Reviewed operation paths are relative to result; the provider also scans the
+  // outer envelope before retaining its safe metadata.
   dataPath: (field) => {
     if (/^(?:result_info|messages|errors|success)\b/.test(field)) return undefined;
     const data = field.replace(/^result(?:\[\])?(?=\.|\{|$)/, "").replace(/^\./, "");

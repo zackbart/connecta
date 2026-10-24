@@ -310,13 +310,13 @@ describe("resend advice is a segment of its own (round 14)", () => {
   });
 });
 
-describe("a shared token flight hands each caller the refusal's advice (round 15)", () => {
+describe("a shared token flight gives each caller advice for its write outcome (round 15)", () => {
   it.each([
     ["write", "docs.create_document", { title: "Review" }, "call_destructive_tool"],
     ["read", "docs.get_document", { documentId: "document_1" }, "call_tool"],
   ] as const)(
     "INV-9: two concurrent %ss refused by one shared token mint get identical messages and advice",
-    async (_kind, address, args, source) => {
+    async (kind, address, args, source) => {
       let mints = 0;
       let release!: () => void;
       const pending = new Promise<void>((resolve) => {
@@ -342,9 +342,13 @@ describe("a shared token flight hands each caller the refusal's advice (round 15
       const [owner, follower] = await Promise.all(calls);
       expect(mints).toBe(1);
       if (owner!.ok || follower!.ok) throw new Error("expected both refusals");
-      expect(owner!.error.writeOutcome).toBeUndefined();
-      expect(follower!.error.writeOutcome).toBeUndefined();
-      expect(owner!.error.message).toMatch(/Check the deployment's subject mapping and the key before retrying\.$/);
+      expect(owner!.error.writeOutcome).toBe(kind === "write" ? "unknown" : undefined);
+      expect(follower!.error.writeOutcome).toBe(kind === "write" ? "unknown" : undefined);
+      expect(owner!.error.message).toMatch(
+        kind === "write"
+          ? /Check the deployment's subject mapping and the key\.$/
+          : /Check the deployment's subject mapping and the key before retrying\.$/,
+      );
       expect(follower!.error.message).toBe(owner!.error.message);
       expect(follower!.error).toEqual(owner!.error);
     },

@@ -1,0 +1,15 @@
+{
+  "url": "https://raw.githubusercontent.com/github/rest-api-description/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/api.github.com/api.github.com.json",
+  "revision": "755ee33b4a81d51f6f07a902cce26cbec3b822f2",
+  "digest": "sha256:3177ad6a86ca04c57a9bef3fc24e28a339efb8eb040c6f950af3d3ed2fee7fa3",
+  "latest": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+  "options": {
+    "depth": 2,
+    "descriptions": 100,
+    "maxEnum": 50,
+    "pathParams": "typed",
+    "opBudget": 12000,
+    "numericBounds": true,
+    "valueSafety": true
+  }
+}

@@ -1,7 +1,7 @@
 import { cloudflare } from "./index.js";
 type Options = Parameters<typeof cloudflare>[1];
 // The API-token REST connector is the default: its tools are Connecta's own,
-// so the hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+// so the maintained conventions apply to it. Hosted selectors are refused.
 const options: Options = { "purpose":"Audit fixture", "auth":{"type":"apiToken"} };
 export const fixture = {
   name: "cloudflare",

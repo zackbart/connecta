@@ -152,10 +152,10 @@ it("INV-5: withholds signing values before Stripe/Cloudflare named projections",
   respond = () => Response.json({ id: "acct_1", business_profile: { name: input } });
   expect((await call(VENDORS[0].create(), "get_stripe_account_info", {})).name).not.toContain("PRIVATE");
   respond = () => VENDORS[2].envelope([{ id: ACCOUNT, name: input }]);
-  expect((await call(VENDORS[2].create(), "list_accounts", {})).accounts[0].name).not.toContain("PRIVATE");
+  expect((await call(VENDORS[2].create(), "list_accounts", {})).items[0].name).not.toContain("PRIVATE");
 });
 
-it("INV-5: omits URL-bearing Cloudflare envelope cursors and preserves ordinary opaque cursors", async () => {
+it("INV-5: withholds URL-bearing Cloudflare envelope cursors and preserves ordinary opaque cursors", async () => {
   const connector = VENDORS[2].create();
   for (const cursor of [
     "opaque_cursor_1",
@@ -166,9 +166,18 @@ it("INV-5: omits URL-bearing Cloudflare envelope cursors and preserves ordinary 
     const result = await call(connector, "cloudflare_api_read", {
       path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/keys`,
     });
-    expect(result.page).toEqual(
-      cursor === "opaque_cursor_1" ? { hasMore: true, next: cursor, param: "cursor" } : { hasMore: false },
-    );
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    if (cursor === "opaque_cursor_1")
+      expect(result.page).toMatchObject({
+        hasMore: true,
+        nextCursor: expect.any(String),
+        param: "cursor",
+        in: "query",
+      });
+    else {
+      expect(result.page).toEqual({ hasMore: true, param: "cursor", in: "query" });
+      expect(result.page).not.toHaveProperty("nextCursor");
+    }
   }
 });
 
@@ -193,7 +202,7 @@ it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-respons
 });
 
 it.each(["events", "invocations"])(
-  "INV-5: sanitizes Cloudflare telemetry metadata and raw string/object sources in %s before select",
+  "INV-5: sanitizes Cloudflare telemetry metadata and raw string/object sources in %s before fields",
   async (view) => {
     const connector = VENDORS[2].create();
     const input = "Fetched https://imagedelivery.net/account/image/private?exp=2000000000&sig=PRIVATE";
@@ -212,8 +221,10 @@ it.each(["events", "invocations"])(
     const selected = view === "events" ? "events.events" : "invocations";
     for (const projection of [
       {},
-      { select: [selected] },
-      ...(view === "events" ? [{ select: ["events.events.source", "events.events.$metadata.message"] }] : []),
+      { fields: [`result.${selected}`] },
+      ...(view === "events"
+        ? [{ fields: ["result.events.events.source", "result.events.events.$metadata.message"] }]
+        : []),
     ]) {
       const result = await call(connector, "cloudflare_api_read", {
         method: "POST",

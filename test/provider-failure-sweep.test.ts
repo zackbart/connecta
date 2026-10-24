@@ -47,7 +47,7 @@ const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
   "planning-center.pco_api_details",
-  ...["breeze", "ccb", "cloudflare", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "ccb", "cloudflare", "github", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -100,7 +100,7 @@ afterEach(() => {
 });
 
 describe("API provider failure sweep", () => {
-  it("INV-9: inventories every API surface and catalog tool, including local tools", () => {
+  it("INV-9: inventories every API surface and catalog tool, including local tools", async () => {
     const actual = fixtures
       .filter(
         (fixture) =>
@@ -131,18 +131,31 @@ describe("API provider failure sweep", () => {
         `${provider.name}: cover tools from every API mode`,
       ).toEqual(tools);
       expect(Object.keys(argumentsTable[provider.name]!).sort(), provider.name).toEqual(tools);
+      // Fold GitHub's two new offline hatches here: injected remote failures
+      // cannot affect metadata that sends no request.
+      if (provider.name === "github")
+        for (const name of ["github_api_search", "github_api_details"]) {
+          const result = await sweepCall(provider, name, `github.${name}`, argumentsTable.github![name], "read", () => {
+            throw new Error("An offline GitHub hatch dispatched a request.");
+          });
+          expect(result.isError).toBeFalsy();
+        }
     }
     expect(typeof outcomes.providerCallFailure).toBe("function");
   });
 
   for (const provider of providers) {
     describe(provider.name, () => {
-      const examples = provider.catalog.flatMap((tool) => [
-        { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
-        ...(provider.name === "github" && tool.name === "list_scopes"
-          ? [{ tool, args: { owner: "acme" }, suffix: " (owner lookup)" }]
-          : []),
-      ]);
+      const examples = provider.catalog
+        .filter(
+          (tool) => !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)),
+        )
+        .flatMap((tool) => [
+          { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
+          ...(provider.name === "github" && tool.name === "list_scopes"
+            ? [{ tool, args: { owner: "acme" }, suffix: " (owner lookup)" }]
+            : []),
+        ]);
       for (const { tool, args, suffix } of examples) {
         const address = `${provider.name}.${tool.name}`;
         // Sweep every tool at its declared verdict; shared contract cases below
@@ -348,6 +361,30 @@ describe("API provider failure sweep", () => {
               expect(outcomes.classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error })).toBe(
                 "unknown",
               );
+            if (address === "gmail.update_draft") {
+              const sent: string[] = [];
+              const lookup = await sweepCall(
+                provider,
+                tool.name,
+                address,
+                args,
+                "write",
+                (request) => {
+                  sent.push(request.method);
+                  return Response.json({ error: { code: 401, message: "Unauthorized" } }, { status: 401 });
+                },
+                HANDOFFS,
+                { failAuxiliary: true },
+              );
+              expect(sent).toEqual(["GET"]);
+              const auxiliary = (lookup.structuredContent as { error: CallErrorDetails }).error;
+              expect(auxiliary).toMatchObject({
+                code: "auth_required",
+                retry: `Retry ${address} after the operator completes recovery.`,
+              });
+              expect(auxiliary).not.toHaveProperty("writeOutcome");
+              expect(auxiliary).not.toHaveProperty("reconciliationRequired");
+            }
           });
         }
       }
@@ -404,6 +441,11 @@ async function sweepCall(
       if (request.url.pathname === "/app/installations" || request.url.pathname.endsWith("/access_tokens"))
         return undefined;
       if (request.url.pathname === "/installation/repositories" && tool !== "list_scopes") return undefined;
+      if (tool === "merge_pull_request" && request.method === "GET" && !options.failAuxiliary)
+        return Response.json({
+          head: { sha: args!.sha, repo: { full_name: `${args!.owner}/${args!.repo}` } },
+          base: { repo: { full_name: `${args!.owner}/${args!.repo}` } },
+        });
       return fail(new Request(request.url, { method: request.method }));
     });
   } else {
@@ -796,9 +838,9 @@ describe("round-5 whole-call failure sweep", () => {
       fake.respond((request) => (request.url.pathname === path ? Response.json({}, { status: 503 }) : undefined));
       const result = await invoke(
         provider("github"),
-        "update_release",
+        "github_api_write",
         "write",
-        argumentsTable.github!["update_release"]!,
+        argumentsTable.github!["github_api_write"]!,
       );
       expect(fake.requests.some((r) => r.url.pathname === path)).toBe(true);
       expect(

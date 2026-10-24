@@ -186,9 +186,9 @@
         "type": "A",
         "per_page": 2
       },
-      "select": [
-        "id",
-        "ttl"
+      "fields": [
+        "result.id",
+        "result.ttl"
       ]
     },
     "cloudflare_api_write": {
@@ -200,7 +200,7 @@
     },
     "verify_credential": {},
     "list_accounts": {
-      "perPage": 5
+      "limit": 5
     },
     "list_zones": {
       "name": "example.com",
@@ -313,7 +313,7 @@
     "create_file": {
       "name": "notes.md",
       "parentId": "folder-1",
-      "content": "# Notes \u2014 caf\u00e9",
+      "content": "# Notes — café",
       "mimeType": "text/markdown"
     },
     "update_file_content": {
@@ -421,28 +421,27 @@
     }
   },
   "github": {
+    "github_api_search": {
+      "query": "issues"
+    },
+    "github_api_details": {
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues"
+    },
+    "github_api_read": {
+      "path": "/repos/acme/one/issues"
+    },
+    "github_api_write": {
+      "method": "PATCH",
+      "path": "/repos/acme/one/releases/501",
+      "body": {
+        "draft": false
+      }
+    },
     "list_scopes": {},
     "search_scoped": {
       "terms": "widget",
       "kind": "repositories"
-    },
-    "create_release": {
-      "owner": "other",
-      "repo": "one",
-      "tag_name": "v1.2.0",
-      "name": "Release v1.2.0",
-      "draft": true
-    },
-    "update_release": {
-      "owner": "acme",
-      "repo": "one",
-      "release_id": 501,
-      "draft": false
-    },
-    "delete_release": {
-      "owner": "other",
-      "repo": "one",
-      "release_id": 501
     },
     "merge_pull_request": {
       "owner": "other",
@@ -484,9 +483,9 @@
       "cc": [
         "Smith, Dana <dana@example.com>"
       ],
-      "subject": "R\u00e9union des anciens",
-      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
-      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
+      "subject": "Réunion des anciens",
+      "body": "Bonjour à tous,\nÀ mardi.",
+      "htmlBody": "<p>Bonjour à tous</p>"
     },
     "update_draft": {
       "draftId": "d1",

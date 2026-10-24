@@ -14,6 +14,14 @@ export function parseGrading(value = "route"): Grading {
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
   ...Object.fromEntries(
+    ["filtered-dns", "account-zone-join", "dns-paging", "kv-hatch", "analytics"].map((suffix) => [
+      `cloudflare-step2-${suffix}`,
+      { route: [], outcome: ["reads-only"] },
+    ]),
+  ),
+  "cloudflare-step2-purge-once": { route: [], outcome: ["once", "state", "only-requested-writes"] },
+  "cloudflare-step2-dns-recovery": { route: [], outcome: ["once", "state", "only-requested-writes", "reconciled"] },
+  ...Object.fromEntries(
     ["filtered-individuals", "family-group-join", "individual-paging", "advanced-search", "campus-hatch"].map((s) => [
       `ccb-${s}`,
       { route: [], outcome: ["reads-only"] },
@@ -70,6 +78,13 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "pco-step2-merger-hatch": { route: [], outcome: ["reads-only"] },
   "pco-step2-note-once": { route: [], outcome: ["state", "only-requested-writes"] },
   "pco-step2-update-recovery": { route: [], outcome: ["state", "only-requested-writes", "reconciled"] },
+  "github-filtered-issues": { route: [], outcome: ["reads-only"] },
+  "github-repository-pr-join": { route: [], outcome: ["reads-only"] },
+  "github-repository-paging": { route: [], outcome: ["reads-only"] },
+  "github-contents-hatch": { route: [], outcome: ["reads-only"] },
+  "github-release-once": { route: [], outcome: ["state", "only-requested-writes"] },
+  "github-merge-once": { route: [], outcome: ["state", "only-requested-writes"] },
+  "github-search-recovery": { route: [], outcome: ["reads-only", "recovered"] },
   "overflow-filtered-gifts": { route: [], outcome: ["reads-only"] },
   "overflow-recurring-join": { route: [], outcome: ["reads-only"] },
   "overflow-donor-paging": { route: [], outcome: ["reads-only"] },

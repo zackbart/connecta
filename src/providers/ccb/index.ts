@@ -166,8 +166,8 @@ export const ccb = defineApiProvider<CcbOptions>({
   title: "Church Community Builder",
   readme: "Church Community Builder",
   bundle: {
-    baselineGzip: 389649,
-    note: "./providers/ccb step-2 standalone gzip snapshot at ffd64b04, CI run 40080865116 static job, Node 22.23.3, against main ce0c7492 (345,272 B). Includes the reviewed 385-operation request/response index. Shared Effect is paid once per deployment; provider entries are reported, uncapped and non-additive (#703) (#899).",
+    baselineGzip: 391649,
+    note: "./providers/ccb merged GitHub/Cloudflare/CCB step-2 snapshot measures 391,649 B standalone gzip-9 before recording these bundle facts, Node 26.12.0 with zlib-ng 1.3.1; recomputed with the combined opt-in hatch support. Earlier step-2 standalone gzip snapshot at ffd64b04, CI run 40080865116 static job, Node 22.23.3, against main ce0c7492 (345,272 B). Includes the reviewed 385-operation request/response index. Shared Effect is paid once per deployment; provider entries are reported, uncapped and non-additive (#703) (#899).",
   },
   skill,
   options: CCB_OPTIONS,

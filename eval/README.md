@@ -577,3 +577,12 @@ approval refusals still fail the program-route check. Outcome grading accepts on
 refused attempt on the requested target with the same unchanged-state and answer requirements. The self-test includes exact
 saved answers and channel aliases from the frozen baseline trial shapes, with
 wrong-destination and missing-evidence controls.
+
+Seven [Cloudflare step-2 tasks](tasks/cloudflare.ts) use the real Cloudflare
+provider against an isolated extension of the REST fake: filtered DNS, an
+account/zone/DNS join, complete numbered DNS pagination, token-paged KV metadata,
+GraphQL analytics, exactly one targeted purge, and reconciliation after a DNS
+PATCH commits then answers HTTP 500. The graders use state, HTTP requests and
+final answers across either surface. No vendor account is used. The historical
+#801 fake replies remain unchanged. Paired evidence lives in
+[the Cloudflare notes](baselines/notes-cloudflare-step2.md).
