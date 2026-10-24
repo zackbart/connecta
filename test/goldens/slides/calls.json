@@ -36,19 +36,19 @@
             "named": "get_page"
           },
           {
-            "method": "GET",
-            "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
-            "operationId": "slides.presentations.pages.getThumbnail",
-            "summary": "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
-            "named": "get_slide_thumbnail"
-          },
-          {
             "method": "POST",
             "path": "/presentations",
             "operationId": "slides.presentations.create",
             "summary": "Create a presentation deck.",
             "tool": "slides_api_write",
             "named": "create_presentation"
+          },
+          {
+            "method": "GET",
+            "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
+            "operationId": "slides.presentations.pages.getThumbnail",
+            "summary": "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
+            "named": "get_slide_thumbnail"
           }
         ],
         "revision": "20261019",

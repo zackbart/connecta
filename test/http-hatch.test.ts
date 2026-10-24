@@ -36,12 +36,8 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
-import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
-import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
-import { fixture as tithelyFixture } from "../src/providers/tithely/fixtures.js";
-import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
+import { providerFixtures } from "./providers.generated.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
-import { fixture as breezeFixture } from "../src/providers/breeze/fixtures.js";
 
 const DATA: OpenApiData = {
   source: "https://api.example/openapi.json",
@@ -228,7 +224,7 @@ function setup(
 
 it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
-  { ...NODE, timeout: 30_000 },
+  { ...NODE, timeout: 120_000 },
   async () => {
     const closed = setup({ writeEnabled: false });
     expect(closed.tools.map((tool) => tool.name)).not.toContain("items_api_write");
@@ -274,24 +270,27 @@ it(
     // An exact path noun leads, root collection first.
     const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
-    const fixtures = new Map(
-      [stripeFixture, pcoFixture, tithelyFixture, overflowFixture, breezeFixture, vercelFixture].map((fixture) => [
-        fixture.name,
-        fixture.create(),
-      ]),
-    );
+    const fixtures = new Map(providerFixtures.map((fixture) => [fixture.name, fixture.create()]));
     for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
       const connector = fixtures.get(provider)!;
       const prefix = provider === "planning-center" ? "pco" : provider;
       const args = { query, limit: 8 };
       const searchContext = connectorContext();
       const found = (await connector.callTool(`${prefix}_api_search`, args, searchContext)) as {
-        operations: Array<{ method: string; path: string }>;
+        operations: Array<{ method: string; path: string; summary: string; tool?: string; named?: string }>;
         page: { hasMore: boolean; nextCursor?: string };
       };
       const rank = found.operations.findIndex((op) => op.method === method && op.path === path) + 1;
       expect(rank, `${provider}: ${query}`).toBeGreaterThan(0);
       expect(rank, `${provider}: ${query}`).toBeLessThanOrEqual(maxRank);
+      if (
+        (provider === "drive" && query === "delete file permanently") ||
+        (provider === "gmail" && query === "send an email")
+      ) {
+        expect(found.operations[rank - 1]).toMatchObject({ summary: expect.stringMatching(/^Refused:/) });
+        expect(found.operations[rank - 1]!.tool).toBeUndefined();
+        expect(found.operations[rank - 1]!.named).toBeUndefined();
+      }
       if (provider === "vercel") {
         const filtered = (await connector.callTool(
           `${prefix}_api_search`,
@@ -940,7 +939,11 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       method: "HEAD",
       data: null,
     },
-    { kind: "read", args: { path: "/items", query: { tag: ["b", "a"], limit: 2 } }, url: "/items?tag=b&tag=a&limit=2" },
+    {
+      kind: "read",
+      args: { path: "/items", query: { tag: ["b", "a"], limit: 2 } },
+      url: "/items?tag=b&tag=a&limit=2",
+    },
     { kind: "read", args: { method: "POST", path: "/query", body: { filter: "open" } }, body: '{"filter":"open"}' },
     { kind: "write", args: { method: "GET", path: "/touch" } },
     { kind: "write", args: { method: "DELETE", path: "/items/i1" } },
@@ -1306,7 +1309,11 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     ])
       await expect(paged.call("read", changed)).rejects.toMatchObject({ code: "invalid_args" });
     await expect(
-      paged.call("write", { ...args, method: "GET", query: { ...args.query, [adapter.param]: first.page.nextCursor } }),
+      paged.call("write", {
+        ...args,
+        method: "GET",
+        query: { ...args.query, [adapter.param]: first.page.nextCursor },
+      }),
     ).rejects.toMatchObject({
       code: "invalid_args",
       message: expect.stringContaining("must be called with items_api_read"),
@@ -1522,7 +1529,12 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       query: { ...query, ...("anchor" in row ? { [row.param]: row.anchor } : {}) },
       fields: ["id"],
     })) as any;
-    expect(first.page).toMatchObject({ hasMore: true, param: row.param, in: "query", nextCursor: expect.any(String) });
+    expect(first.page).toMatchObject({
+      hasMore: true,
+      param: row.param,
+      in: "query",
+      nextCursor: expect.any(String),
+    });
     if (row.param !== "page") {
       for (const param of ["starting_after", "ending_before"]) {
         await expect(

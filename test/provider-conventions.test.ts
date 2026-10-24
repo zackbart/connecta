@@ -239,6 +239,14 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
   it("declares an output schema on every tool (H8)", () => {
     const undeclared = tools.filter((tool) => tool.outputSchema === undefined).map((tool) => tool.name);
     expect(undeclared).toEqual([]);
+    const paged = tools.filter((tool) => (tool.outputSchema as any)?.properties?.page);
+    const guide = connector.usageGuide;
+    if (paged.length && typeof guide === "object") {
+      const line = guide.content.split("\n").find((line) => line.startsWith("- **Paging:** every tool"));
+      expect(line).toBeDefined();
+      for (const tool of paged) expect(line, tool.name).toContain(`\`${tool.name}\``);
+      expect(line).toContain("return page.nextCursor and continue in the next program; don't restart");
+    }
   });
 
   it("declares an operator credential and a test for it (H12)", () => {

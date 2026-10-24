@@ -443,8 +443,47 @@ describe("decision 0011 guides and drift records", () => {
       files: ["drift.json"],
       read: (path: string) => (path === "drift.json" ? read(root, "src/providers/alpha/drift.json") : undefined),
     });
+    write(
+      root,
+      "src/providers/alpha/fixtures.ts",
+      read(root, "src/providers/alpha/fixtures.ts") +
+        `
+export const createAuthored = () => ({ staticTools: [
+  { name: "get_widget", outputSchema: { type: "object", properties: { page: { type: "object" } } } },
+  { name: "get_summary", outputSchema: { type: "object", properties: { title: { type: "string" } } } }
+] });
+`,
+    );
     // Generation accepts the rows --record will complete; the suite does not accept them committed.
     expect(run(root).status).toBe(0);
+    const guide = generatedSkill(root, "alpha").content;
+    expect(guide).toContain("every tool whose output declares `page` is paged: `get_widget`");
+    expect(guide).not.toContain("`get_summary`");
+    expect(guide).toContain("return page.nextCursor and continue in the next program; don't restart");
+    const { renderConventions } = await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href);
+    const kit = {
+      idempotencyKey: false,
+      errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
+    };
+    for (const count of [0, 1, 70, 10000]) {
+      const rendered = renderConventions({
+        name: "alpha",
+        kind: "api",
+        kit: {
+          ...kit,
+          hatch: {
+            name: "widgets",
+            verdicts: Object.fromEntries(Array.from({ length: count }, (_, i) => [`DELETE /widgets/${i}`, "refuse"])),
+          },
+        },
+      });
+      const line = rendered.split("\n").find((line: string) => line.startsWith("- **Hatch:**"))!;
+      expect(line).toContain(`${count} operations are refused by design`);
+      expect(line).toContain("use `widgets_api_details` with the method and path");
+      expect(line).toContain("An operation without a reviewed verdict is refused");
+      expect(line).not.toContain("DELETE /widgets");
+      expect(new TextEncoder().encode(line).length).toBeLessThan(550);
+    }
     expect(driftViolations(facts(), "2026-10-20")).toEqual([
       "D3: providers:check rejects checks[0]: invalid contract digest: GET /a",
     ]);

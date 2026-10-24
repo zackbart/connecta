@@ -161,7 +161,11 @@ function walk(directory, prefix = "") {
 // missing or stale, without a write or a stale-module import deadlock.
 async function loadDefinition(provider, skills) {
   const exports = await importBundle({
-    entryPoints: [provider.index],
+    stdin: {
+      contents: `export * from ${JSON.stringify(provider.index)}; export * from ${JSON.stringify(provider.fixtures)};`,
+      resolveDir: provider.directory,
+      loader: "ts",
+    },
     plugins: [
       {
         name: "current-provider-skills",
@@ -210,6 +214,7 @@ async function loadDefinition(provider, skills) {
   ) {
     fail(provider.name, "definition.readme must be a non-empty single-line display name");
   }
+  provider.tools = exports.createAuthored?.().staticTools ?? [];
   return definition;
 }
 
@@ -300,6 +305,7 @@ export async function generateProviders({ root = repositoryRoot, check = false }
         name: provider.name,
         kind: definition.kind,
         kit: definition.kit,
+        tools: provider.tools,
         keys,
       });
       const skill = {

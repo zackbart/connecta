@@ -60,18 +60,15 @@ function hatchLine(name, hatch) {
     fail(name, 'kit.hatch.verdicts map "METHOD /path" to read, write, destructive, or refuse');
   }
   const tool = (part) => `\`${hatch.name}_api_${part}\``;
-  const refused = entries
-    .filter(([, verdict]) => verdict === "refuse")
-    .map(([key]) => `\`${key}\``)
-    .sort();
+  const refused = entries.filter(([, verdict]) => verdict === "refuse").length;
   return (
     `- **Hatch:** ${tool("search")} finds this API's operations and reads no account data, ` +
     `${tool("details")} shows one operation's contract, and ${tool("read")} calls a reviewed read.` +
     (entries.some(([, verdict]) => verdict === "write" || verdict === "destructive")
       ? ` ${tool("write")} calls a reviewed write; the host may ask the user to confirm it.`
       : "") +
-    " An operation without a reviewed verdict is refused" +
-    (refused.length ? `; these are refused by design: ${refused.join(", ")}.` : ".")
+    " An operation without a reviewed verdict is refused." +
+    ` ${refused} operations are refused by design; use ${tool("details")} with the method and path to inspect an operation's contract and refusal.`
   );
 }
 
@@ -103,11 +100,22 @@ function errorsLine(name, errors) {
  * withheld-values line renders only for a kit whose hatch refuses a write
  * carrying a withheld placeholder (`kit.refusesWithheld`).
  */
-export function renderConventions({ name, kind, kit }) {
+export function renderConventions({ name, kind, kit, tools = [] }) {
   if (kind !== "api") fail(name, `a standard provider's kind is api, not ${kind}`);
   const api = [];
   const tail = [];
   {
+    const paged = tools
+      .filter((tool) => tool.outputSchema?.properties?.page)
+      .map((tool) => `\`${tool.name}\``)
+      .sort();
+    if (paged.length) {
+      api.push(
+        `- **Paging:** every tool whose output declares \`page\` is paged: ${paged.join(", ")}. ` +
+          "While `page.hasMore` is true, pass `page.nextCursor` back unchanged using the continuation argument its schema declares; keep the original arguments. " +
+          "The last page has no `nextCursor`. At execute_code's per-program call limit, return page.nextCursor and continue in the next program; don't restart.",
+      );
+    }
     const pageSize = kit?.pageSize;
     if (pageSize !== undefined) {
       if (!Number.isSafeInteger(pageSize.default) || pageSize.default < 1 || !Number.isSafeInteger(pageSize.max)) {
