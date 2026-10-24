@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { cloudflareStep2Dns } from "./cloudflare.js";
 import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
@@ -61,6 +62,7 @@ export interface WorldOptions {
   refundFault?: boolean;
   /** Stripe step-2 reads; isolated from the historical #801 fixtures. */
   stripeStep2?: boolean;
+  cloudflareStep2?: { fault?: boolean };
   prerequisites?: boolean;
   assets?: boolean;
   oauth?: boolean;
@@ -102,6 +104,7 @@ export class World {
   programs: ProgramObservation[] = [];
 
   constructor(readonly options: WorldOptions = {}) {
+    if (options.cloudflareStep2) this.rest.dns.push(...cloudflareStep2Dns());
     if (options.restVendor) {
       const vendor = options.restVendor;
       const ids =
@@ -119,6 +122,7 @@ export class World {
             "test",
             "acct_eval",
             options.stripeStep2,
+            options.cloudflareStep2,
           ),
       );
     }
