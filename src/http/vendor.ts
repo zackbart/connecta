@@ -323,10 +323,13 @@ type PathRequest = WriteRequest & {
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
   readonly safety: ResultSafety;
+  /** Capture declared facts on successful responses for a result hook that can report in-band refusals. */
+  readonly inBandRefusals?: true;
   /**
    * Unwrap a vendor envelope or fail an in-band refusal, after sent-secret
    * value redaction and before result safety.
    * `withheld` says whether this operation's failures may quote vendor text.
+   * With `inBandRefusals`, an in-band StatusFailure uses the whole response's declared classifier facts.
    */
   readonly result?: (
     body: unknown,
@@ -452,7 +455,7 @@ export function connect<R>(
             : parse(
                 reply.text,
                 (value, format) => {
-                  if (reply.status < 200 || reply.status > 299 || options.result)
+                  if (reply.status < 200 || reply.status > 299 || options.inBandRefusals)
                     classifierFacts = captureClassifierFacts(value, options.errors);
                   const provenance =
                     format === "json" && encodedFields.length > 0

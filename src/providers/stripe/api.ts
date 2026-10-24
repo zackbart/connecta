@@ -37,6 +37,8 @@ interface StripeFacts {
   readonly param?: string | undefined;
 }
 
+const LOCK_TIMEOUT = "lock_timeout";
+
 export const stripeErrors: VendorErrors<StripeFacts> = {
   authBeforeExecution: {
     evidence:
@@ -44,7 +46,7 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
     matches: ({ operation, headers }) => operation.template.startsWith("/v1/") && !!headers["request-id"],
   },
   provider: "Stripe",
-  factVocabulary: { code: ["lock_timeout"] },
+  factVocabulary: { code: [LOCK_TIMEOUT] },
   facts: (body) => {
     const error = record(record(body)["error"]);
     return {
@@ -70,7 +72,7 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
     // Stripe did not process the request (docs.stripe.com/rate-limits#object-lock-timeouts):
     // a definite conflict, safe to retry once the other request finishes.
     ({ status, facts }) =>
-      status === 429 && facts.code === "lock_timeout"
+      status === 429 && facts.code === LOCK_TIMEOUT
         ? {
             code: "conflict",
             retryable: true,

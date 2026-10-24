@@ -88,6 +88,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly errors: VendorErrors<any>;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
+  readonly inBandRefusals?: ConnectOptions["inBandRefusals"];
   readonly probe: {
     /** A candidate problem returned before authentication or dispatch. */
     readonly check?: (values: ConnectorCredentialValues, options: Readonly<O>) => string | undefined;
@@ -176,6 +177,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     errors,
     safety,
     result,
+    inBandRefusals,
     probe,
     guide,
     hatch: declaredHatch,
@@ -280,6 +282,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         {
           errors,
           safety: resultSafety(safety(options)),
+          ...(inBandRefusals ? { inBandRefusals } : {}),
           ...(result ? { result } : {}),
         },
       );

@@ -74,10 +74,17 @@ function reasonsOf(tokens: unknown): string[] {
   return [...reasons];
 }
 
-/** The canonical and legacy spellings of a refused precondition. */
-const PRECONDITION_REASONS = ["FAILED_PRECONDITION", "failedPrecondition"];
-/** Concurrency aborts, which a revision-checked write also answers with. */
-const ABORTED_REASONS = ["ABORTED", "aborted"];
+/** Public reason spellings shared by classification and the pre-redaction vocabulary. */
+const REASONS = {
+  disabled: ["accessNotConfigured", "SERVICE_DISABLED"],
+  rateLimited: ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"],
+  insufficientScope: ["insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"],
+  exportSize: ["exportSizeLimitExceeded"],
+  domainPolicy: ["domainPolicy"],
+  filePermission: ["insufficientFilePermissions", "forbidden"],
+  precondition: ["FAILED_PRECONDITION", "failedPrecondition"],
+  aborted: ["ABORTED", "aborted"],
+} as const;
 
 /**
  * Google's failure table, in the legacy client's order: Google's own
@@ -92,23 +99,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
   return {
     provider,
     facts: (tokens) => ({ reasons: reasonsOf(tokens) }),
-    factVocabulary: {
-      reasons: [
-        "accessNotConfigured",
-        "SERVICE_DISABLED",
-        "rateLimitExceeded",
-        "userRateLimitExceeded",
-        "RATE_LIMIT_EXCEEDED",
-        "insufficientPermissions",
-        "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
-        "exportSizeLimitExceeded",
-        "domainPolicy",
-        "insufficientFilePermissions",
-        "forbidden",
-        ...PRECONDITION_REASONS,
-        ...ABORTED_REASONS,
-      ],
-    },
+    factVocabulary: { reasons: Object.values(REASONS).flat() },
     detail: ({ status, body }) => {
       const message = asRecord(asRecord(body)["error"])["message"];
       // The body arrives redacted whole, before anything here cuts it.
@@ -135,7 +126,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ facts }) =>
-        has(facts, ["accessNotConfigured", "SERVICE_DISABLED"])
+        has(facts, REASONS.disabled)
           ? {
               code: "connector_call_failed",
               retryable: false,
@@ -144,7 +135,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ status, facts, retryAfterMs }) =>
-        status === 429 || has(facts, ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"])
+        status === 429 || has(facts, REASONS.rateLimited)
           ? {
               code: "rate_limited",
               retryAfterMs,
@@ -153,7 +144,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ facts }) =>
-        has(facts, ["insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"])
+        has(facts, REASONS.insufficientScope)
           ? {
               code: "provider_permission_denied",
               words: (detail) =>
@@ -161,7 +152,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ facts }) =>
-        has(facts, ["exportSizeLimitExceeded"])
+        has(facts, REASONS.exportSize)
           ? {
               code: "connector_call_failed",
               retryable: false,
@@ -170,7 +161,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ facts }) =>
-        has(facts, ["domainPolicy"])
+        has(facts, REASONS.domainPolicy)
           ? {
               code: "provider_permission_denied",
               retryable: false,
@@ -179,7 +170,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
             }
           : undefined,
       ({ facts }) =>
-        has(facts, ["insufficientFilePermissions", "forbidden"])
+        has(facts, REASONS.filePermission)
           ? {
               code: "provider_permission_denied",
               retryable: false,
@@ -193,7 +184,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
       ({ status, facts, operation }) =>
         operation.flags?.["revisionGuarded"] === true &&
         (status === 400 || status === 409) &&
-        has(facts, [...PRECONDITION_REASONS, ...ABORTED_REASONS])
+        has(facts, [...REASONS.precondition, ...REASONS.aborted])
           ? {
               code: "conflict",
               words: () => `${provider} refused the write because the item changed after the revision it named.`,
@@ -203,7 +194,7 @@ export function googleErrors(product: GoogleProduct): VendorErrors<GoogleFacts> 
       // Google uses the same reason for a product switched off for this user
       // and for a stale write, so the classification asserts neither.
       ({ status, facts }) =>
-        status === 400 && has(facts, PRECONDITION_REASONS)
+        status === 400 && has(facts, REASONS.precondition)
           ? {
               code: "connector_call_failed",
               retryable: false,

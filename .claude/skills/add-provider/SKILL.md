@@ -224,6 +224,11 @@ placeholders.
   defaults (Google revision-guarded batchUpdate 400 precondition and Stripe
   429 lock_timeout are `conflict`). A write is never resent or
   advertised as retryable once it may have reached the vendor.
+  Declare each value-keyed body rule's closed public values in `factVocabulary`,
+  sharing constants with the rule so classification survives sent-secret
+  redaction while diagnostic facts and text stay redacted. Enable
+  `inBandRefusals` only when a result hook needs the whole response's declared
+  facts to classify a refusal on a successful response.
 - **S5 `fields`:** every named read and `_api_read`/`_api_write` take
   `fields`, dot paths that only narrow.
 - **S6 privacy:** no `raw` or any argument that widens what value safety or

@@ -1916,8 +1916,11 @@ bounded facts and reviewed headers. Only after the verdict is fixed does wording
 receive facts extracted separately from the redacted body (eight list entries)
 and, where the operation's value-safety review permits it, that redacted body.
 Pre-redaction facts never supply message text, logs, or operator records.
-The same path covers non-2xx responses and in-band refusals. Required vendor meanings
-for 401/403/404 precede the other defaults; 409 has no shared conflict default.
+Non-2xx responses always take this capture path. A connection opts in with
+`inBandRefusals: true` only when its result hook reports in-band refusals on
+successful statuses; their declared facts come from the whole response.
+Required vendor meanings for 401/403/404 precede the other defaults; 409 has no
+shared conflict default.
 A 421 is `unavailable` and retryable only when the transport's core
 positive-read classification proves that request a read, including its actual
 method and method-override headers. The agent chooses another call; the kit
