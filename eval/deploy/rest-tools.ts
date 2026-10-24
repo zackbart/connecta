@@ -2,6 +2,7 @@
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
+import { overflow } from "@zackbart/connecta/providers/overflow";
 import { breeze } from "@zackbart/connecta/providers/breeze";
 import { planningCenter } from "@zackbart/connecta/providers/planning-center";
 import { tithely } from "@zackbart/connecta/providers/tithely";
@@ -9,6 +10,7 @@ import { ACCOUNT_A } from "../fakes/rest.js";
 
 const connectors = [
   planningCenter("pco", { purpose: "Deterministic Planning Center acceptance grading" }),
+  overflow("overflow", { purpose: "Deterministic Overflow acceptance grading", environment: "staging" }),
   breeze("breeze", { purpose: "Deterministic Breeze acceptance grading", subdomain: "church" }),
   stripe("stripe_sandbox", {
     purpose: "Deterministic REST acceptance grading",

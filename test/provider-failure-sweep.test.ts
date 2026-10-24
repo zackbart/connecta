@@ -37,7 +37,7 @@ const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
   "planning-center.pco_api_details",
-  ...["breeze", "cloudflare", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "cloudflare", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),

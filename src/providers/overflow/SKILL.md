@@ -5,73 +5,47 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
+## Giving records and joins
 
+Donor ids join profiles, contributions, subscriptions and payment methods.
+Campaigns and subcampaigns allocate gifts; locations identify campuses.
+Resolve names to ids before editing a donor or moving money. There is no funds
+endpoint: fund and sub-fund identifiers occur only in payment authorization.
+A donor profile owned by a donor account cannot be edited through this API;
+when reads work but its edit is denied, changing the credential does not fix it.
 
-## Money, units, and status
+Tap groups contain devices and point to destinations. A tap is engagement,
+not a gift; use contributions to establish giving.
 
-Overflow does not use one money unit, so read the unit per field:
+## Money and final status
 
-- Fields named `…InCents` are cents: deposits and their line items and
-  totals, refunds, chargebacks, and the authorize body.
-- Recurring-gift `amount` is dollars: Overflow's create and update bodies
-  say so, and its subscription reads carry the same field.
-- Contribution `amount` states no unit in Overflow's schema. Check one known
-  gift before reporting totals.
-- `status` is per asset type. A gift is final at `PAID_OUT` (cash),
-  `CONFIRMED` (manual cash, crypto), `CONTRIBUTION_RECEIVED` or `BILLED`
-  (stock), and `CONTRIBUTION_RECEIVED` (DAF). `statusBucket` filters by
-  Overflow's coarser PENDING / CONFIRMED / FAILED / CANCELED.
-- There is no funds endpoint. A gift reports its campaign and subcampaign;
-  `fundId` and `subFundId` appear only in the payment-authorize body.
-- Poll for changes with `minimumUpdatedDate`; `minimumInitiatedDate` is
-  when the donor gave.
+Read the unit per field. Values named `InCents` are cents, including deposits,
+refunds, chargebacks and payment authorization. Subscription `amount` is
+in dollars. Contribution and saved-method charge `amount` have no stated unit
+in the public schema: establish it from a known gift before reporting a sum
+or authorizing a charge. Do not assume every numeric amount uses the same unit.
+
+A gift is final at `PAID_OUT` for `CASH`, `CONFIRMED` for manual cash or crypto,
+`CONTRIBUTION_RECEIVED` or `BILLED` for stock, and `CONTRIBUTION_RECEIVED` for
+DAF. A status bucket is coarser than those asset-specific states. Polling by
+updated date finds later state changes; initiated date identifies when a donor gave.
 
 ## Reconcile a deposit
 
-`list_deposits` → `get_deposit_summary` for totals → `get_deposit` for the
-line items, whose `referenceId` names the contribution, refund, or
-chargeback. Contributions also carry their `depositId`.
+Find the bank payout, inspect its summary totals, then its line items.
+Each line item's `referenceId` names a contribution, refund or chargeback
+according to its type; contributions can also carry a `depositId`.
+Keep gross, fee and net cent amounts separate and convert only for presentation.
+An eligible cash gift under $1,000 is refunded with `POST /contributions/{contributionId}/initiate-refund`, which takes no body; its string acknowledgement means the refund started.
+A refund request starts processing; verify the gift or refund before claiming
+that funds have reached the donor. Canceling a recurring gift stops future
+payments and does not refund earlier gifts.
 
-## Donor data is sensitive
+## Reduce donor and delivery data
 
-Giving history and donor contact details are personal data. Reduce inside
-`execute_code` — aggregate, count, or keep ids — and return names, emails,
-phones, or addresses only when the task needs them. Contribution rows carry
-only the donor's id and name; `list_donors` includes email but omits phone and
-address; `get_donor` is the deliberate full-contact lookup.
-
-## Writes go through `overflow_api_mutate`
-
-Every Overflow write moves money or changes a donor record, so none has a
-named tool. Each is one approval-gated `overflow_api_mutate` call with
-Overflow's documented body:
-
-- `POST /contributions` charges a saved payment method. Its `amount`
-  states no unit; confirm it against a known gift of the same donor before
-  charging. `POST /payments/authorize` takes `amountInCents` and
-  authorizes a new method (`0` only saves it).
-- `POST /contributions/{id}/initiate-refund` (under $1,000 only).
-- `POST` / `PATCH` / `DELETE /subscriptions/{donorId}[/{subscriptionId}]`
-  creates, changes, or cancels a recurring gift. Its `amount` is dollars,
-  not cents: a $50.00 monthly gift is `amount: 50`. Cancel takes a
-  `cancellationReason` body.
-- `POST /donors`, `PATCH /donors/{id}`.
-
-Resolve every id first — donors, payment methods (`list_payment_methods`),
-campaigns, locations — and never guess one. A write that fails with HTTP 5xx
-may still have happened: read before retrying.
-
-## Hatches, pages, and limits
-
-- `overflow_api_get` reaches the reads without a named tool: single refunds,
-  chargebacks, campaigns, locations, webhooks, and recurring gifts
-  (`/subscriptions/{donorId}/{id}`), and Tap devices, groups, and
-  destinations (`/tap/devices`, `/tap/groups`, `/tap/destinations`). Paths
-  are below `/api/v3`; array filters repeat a `name[]` query pair.
-- Lists page by number: pass `page` while `page.hasMore` is true.
-  `list_webhook_event_logs` pages by cursor instead.
-- Overflow allows 120 requests per minute per API client. This connection
-  admits the same per runtime, four at a time, which approximates rather than
-  enforces it; a `rate_limited` failure carries the wait.
-<!-- endfragment -->
+Giving history and donor contact details are personal data. Aggregate or join
+inside code and return names, email, phone and address only when the task needs
+them. Lean contribution rows carry donor identity; the full donor lookup
+carries contact details. Webhook delivery logs can include delivered donor
+payloads and the receiving server's response: select the status, response code
+and error needed for diagnosis instead of returning those payloads wholesale.

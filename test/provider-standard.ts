@@ -29,19 +29,7 @@ export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set<string>(),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
-  step2: new Set([
-    "ccb",
-    "cloudflare",
-    "docs",
-    "drive",
-    "forms",
-    "github",
-    "gmail",
-    "overflow",
-    "sheets",
-    "slides",
-    "vercel",
-  ]),
+  step2: new Set(["ccb", "cloudflare", "docs", "drive", "forms", "github", "gmail", "sheets", "slides", "vercel"]),
 } as const;
 
 /** Independent of optional H-convention metadata; omission must never skip the S checks. */

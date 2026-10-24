@@ -219,6 +219,8 @@ interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.To
   readonly row: Row;
   readonly limit: { readonly default: number; readonly max: number; readonly description: string };
   readonly cursor?: "plain" | "bound";
+  /** Expose only an exact count supplied by the vendor, never an estimate from observed rows. */
+  readonly total?: true;
   readonly page: (
     args: Schema.Struct<F>["Type"] & { readonly limit: number },
     cursor: string | undefined,
@@ -268,6 +270,8 @@ function standardList(
   spec: StandardListSpec<Schema.Struct.Fields, Schema.Top>,
 ): ApiTool {
   const { default: size, max } = spec.limit;
+  if (spec.total !== undefined && spec.total !== true)
+    throw new Error(`${spec.name} total must opt in with true for a vendor-stated exact count.`);
   if (!Number.isSafeInteger(size) || !Number.isSafeInteger(max) || size < 1 || max < size)
     throw new Error(`${spec.name} limit needs positive whole default and max values, with default <= max.`);
   for (const name of ["limit", "cursor", "fields"]) {
@@ -308,7 +312,17 @@ function standardList(
             cursor as string | undefined,
           );
           const items = selectFields(result.rows, fields);
-          if (!result.page.hasMore) return { items, page: { hasMore: false } };
+          const total = spec.total ? result.page.total : undefined;
+          if (total !== undefined && (!Number.isSafeInteger(total) || total < 0))
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError("connector_call_failed", "The vendor returned an invalid exact total.", {
+                  retryable: false,
+                }),
+              }),
+            );
+          const count = total === undefined ? {} : { total };
+          if (!result.page.hasMore) return { items, page: { hasMore: false, ...count } };
           if (result.page.nextCursor === null)
             return yield* Effect.fail(
               new Refusal({
@@ -322,14 +336,27 @@ function standardList(
           const nextCursor = bound
             ? yield* boundCursor.encode(spec.name, rest, result.page.nextCursor)
             : result.page.nextCursor;
-          return { items, page: { hasMore: true, nextCursor } };
+          return { items, page: { hasMore: true, nextCursor, ...count } };
         }),
     } as unknown as ToolSpec<Input, typeof Schema.Unknown>,
     "read",
     { readOnlyHint: true },
     undefined,
     undefined,
-    sparseItems(catalogSchema(Schema.Struct({ items: Schema.Array(spec.row), page: StandardPage }), "output")),
+    sparseItems(
+      catalogSchema(
+        Schema.Struct({
+          items: Schema.Array(spec.row),
+          page: spec.total
+            ? Schema.Struct({
+                ...StandardPage.fields,
+                total: Schema.optionalKey(Integer.check(Schema.isGreaterThanOrEqualTo(0))),
+              })
+            : StandardPage,
+        }),
+        "output",
+      ),
+    ),
   );
 }
 
