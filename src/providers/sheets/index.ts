@@ -97,8 +97,8 @@ export const sheets = defineApiProvider<SheetsOptions>({
   title: "Google Sheets",
   readme: "Google Sheets",
   bundle: {
-    baselineGzip: 395162,
-    note: "./providers/sheets step-2 merge with Drive main db979604 and approved review follow-ups measures 395,162 B gzip standalone before recording these bundle facts, versus 353,338 B on main db979604 (+41,824 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 521,763 B versus 489,536 B (+32,227 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
+    baselineGzip: 395178,
+    note: "./providers/sheets step-2 merge with Gmail main c6e91446 measures 395,178 B gzip standalone before recording these bundle facts, versus 353,451 B on main c6e91446 (+41,727 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 537,813 B versus 506,081 B (+31,732 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

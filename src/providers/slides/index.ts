@@ -115,7 +115,7 @@ export const slides = defineApiProvider<SlidesOptions>({
   readme: "Google Slides",
   bundle: {
     baselineGzip: 386289,
-    note: "./providers/slides round-1 measurement is 386,289 B gzip standalone (#703), Node 26.12.0 and zlib-ng 1.3.1. Same-toolchain merged main f9bf5afb measures 362,798 B: +23,491 B. The build report gives the current measurement. This includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    note: "./providers/slides round-1 measurement is 386,289 B gzip standalone (#703), Node 26.12.0 and zlib-ng 1.3.1. Same-toolchain merged main f9bf5afb measures 362,798 B: +23,491 B. The build report gives the current measurement. This includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Google merge snapshot over main db979604 measures 386,289 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

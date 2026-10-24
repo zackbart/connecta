@@ -1,0 +1,167 @@
+{
+  "format": 5,
+  "digest": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
+  "options": {},
+  "candidates": {
+    "GET /drafts": {
+      "fields": ["drafts[].message.payload.headers", "nextPageToken"],
+      "named": false
+    },
+    "POST /drafts": {
+      "fields": ["message.payload.headers"],
+      "named": false
+    },
+    "POST /drafts/send": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "GET /drafts/{id}": {
+      "fields": ["message.payload.headers"],
+      "named": false
+    },
+    "PUT /drafts/{id}": {
+      "fields": ["message.payload.headers"],
+      "named": false
+    },
+    "GET /history": {
+      "fields": [
+        "history[].labelsAdded[].message.payload.headers",
+        "history[].labelsRemoved[].message.payload.headers",
+        "history[].messagesAdded[].message.payload.headers",
+        "history[].messagesDeleted[].message.payload.headers",
+        "history[].messages[].payload.headers",
+        "nextPageToken"
+      ],
+      "named": false
+    },
+    "GET /messages": {
+      "fields": ["messages[].payload.headers", "nextPageToken"],
+      "named": false
+    },
+    "POST /messages": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "POST /messages/import": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "POST /messages/send": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "GET /messages/{id}": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "POST /messages/{id}/modify": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "POST /messages/{id}/trash": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "POST /messages/{id}/untrash": {
+      "fields": ["payload.headers"],
+      "named": false
+    },
+    "GET /settings/cse/identities": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /settings/cse/keypairs": {
+      "fields": [
+        "cseKeyPairs[].privateKeyMetadata",
+        "cseKeyPairs[].privateKeyMetadata[].hardwareKeyMetadata",
+        "cseKeyPairs[].privateKeyMetadata[].kaclsKeyMetadata",
+        "nextPageToken"
+      ],
+      "named": false
+    },
+    "POST /settings/cse/keypairs": {
+      "fields": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata"
+      ],
+      "named": false
+    },
+    "GET /settings/cse/keypairs/{keyPairId}": {
+      "fields": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata"
+      ],
+      "named": false
+    },
+    "POST /settings/cse/keypairs/{keyPairId}:disable": {
+      "fields": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata"
+      ],
+      "named": false
+    },
+    "POST /settings/cse/keypairs/{keyPairId}:enable": {
+      "fields": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata"
+      ],
+      "named": false
+    },
+    "GET /settings/sendAs": {
+      "fields": ["sendAs[].signature", "sendAs[].smtpMsa.password"],
+      "named": false
+    },
+    "POST /settings/sendAs": {
+      "fields": ["signature", "smtpMsa.password"],
+      "named": false
+    },
+    "GET /settings/sendAs/{sendAsEmail}": {
+      "fields": ["signature", "smtpMsa.password"],
+      "named": false
+    },
+    "PUT /settings/sendAs/{sendAsEmail}": {
+      "fields": ["signature", "smtpMsa.password"],
+      "named": false
+    },
+    "PATCH /settings/sendAs/{sendAsEmail}": {
+      "fields": ["signature", "smtpMsa.password"],
+      "named": false
+    },
+    "GET /settings/sendAs/{sendAsEmail}/smimeInfo": {
+      "fields": ["smimeInfo[].encryptedKeyPassword", "smimeInfo[].pem", "smimeInfo[].pkcs12"],
+      "named": false
+    },
+    "POST /settings/sendAs/{sendAsEmail}/smimeInfo": {
+      "fields": ["encryptedKeyPassword", "pem", "pkcs12"],
+      "named": false
+    },
+    "GET /settings/sendAs/{sendAsEmail}/smimeInfo/{id}": {
+      "fields": ["encryptedKeyPassword", "pem", "pkcs12"],
+      "named": false
+    },
+    "GET /threads": {
+      "fields": ["nextPageToken", "threads[].messages[].payload.headers"],
+      "named": false
+    },
+    "GET /threads/{id}": {
+      "fields": ["messages[].payload.headers"],
+      "named": false
+    },
+    "POST /threads/{id}/modify": {
+      "fields": ["messages[].payload.headers"],
+      "named": false
+    },
+    "POST /threads/{id}/trash": {
+      "fields": ["messages[].payload.headers"],
+      "named": false
+    },
+    "POST /threads/{id}/untrash": {
+      "fields": ["messages[].payload.headers"],
+      "named": false
+    }
+  }
+}

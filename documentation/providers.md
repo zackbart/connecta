@@ -514,6 +514,62 @@ category schedule lists one per two seconds. Override `callAdmission` to match
 shared usage, and respect the vendor's rate-limit wait. Replies are bounded
 at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.
 
+## Gmail
+
+Gmail uses a service account with Workspace domain-wide delegation. Enable
+Gmail API, create a service account with no IAM roles, and provide its JSON
+key as a deployment secret. A Workspace super administrator grants the
+service account's numeric client id exactly these scopes in Admin console →
+Security → Access and data control → API controls → Domain-wide delegation:
+`https://www.googleapis.com/auth/gmail.readonly` and
+`https://www.googleapis.com/auth/gmail.compose`. Changes can take up to 24 hours.
+If key creation is blocked, an organization policy administrator must review
+`iam.disableServiceAccountKeyCreation` for that project.
+
+```ts
+import { gmail } from "@zackbart/connecta/providers/gmail";
+
+gmail("mail", {
+  purpose: "Read mail and prepare reply drafts",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => mailboxes[identity.principal?.id ?? ""],
+});
+```
+
+Map admitted callers to Workspace addresses in deployment code. A fixed
+`subject: "alice@example.com"` instead shares that mailbox with every caller.
+Anonymous callers cannot use a subject function. No tool argument selects a
+mailbox. Both modes retain ownerless-pool hiding and the endpoint's read-only
+policy. `gmail.compose` technically permits sending; this provider admits no
+send route. Drafts are written only through `create_draft` and `update_draft`.
+Gmail is the documented three-hatch exception to the four-hatch default.
+
+Named reads return projected records or `{ items, page }`; `fields` narrows a
+record or each list item. Size cuts appear in `truncated`. The pinned index
+contains 79 methods and admits eleven reads. Settings, forwarding,
+delegation, CSE, S/MIME, watches, mailbox mutation and every send method are
+refused. Full MIME JSON crosses the same decoded sent-secret safety boundary.
+Use the named attachment tool for immutable part identity, charset rendering,
+one-MiB download bounds and decoded-size validation.
+
+A hatch read has three layers: the direct-call delivery contains the tool's
+`{ status, data, page? }` result, whose `data` is Google's JSON. In a program:
+
+```js
+const { data: first } = await connecta.call("mail.gmail_api_read", {
+  path: "/messages",
+  query: { q: "is:unread from:alice@example.com", maxResults: 10 },
+  fields: ["messages.id"],
+});
+return { messageIds: first.data.messages, continuation: first.page };
+```
+
+On continuation repeat the same arguments and add top-level
+`cursor: first.page.nextCursor`. Use `query.maxResults` from 1 to 500. Omit raw `query.pageToken`, even if Google's
+safe body includes it. The last page has no cursor. An empty page can still
+continue, and `resultSizeEstimate` never establishes an exact total. Named
+thread/content cursors are separate and reject changed earlier content.
+
 ## Google Docs
 
 ```ts

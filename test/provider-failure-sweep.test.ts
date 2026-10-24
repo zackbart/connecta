@@ -58,6 +58,7 @@ const LOCAL = new Set([
     "drive",
     "forms",
     "github",
+    "gmail",
     "overflow",
     "stripe",
     "tithely",
@@ -212,7 +213,7 @@ describe("API provider failure sweep", () => {
         }
       // Fold offline hatch coverage here: injected remote failures
       // cannot affect metadata that sends no request.
-      if (["github", "docs", "sheets", "slides"].includes(provider.name))
+      if (["github", "gmail", "docs", "sheets", "slides"].includes(provider.name))
         for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
           const result = await sweepCall(
             provider,
@@ -268,7 +269,7 @@ describe("API provider failure sweep", () => {
         .filter(
           (tool) =>
             !(
-              ["github", "slides"].includes(provider.name) &&
+              ["github", "gmail", "slides"].includes(provider.name) &&
               [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
             ) &&
             !(

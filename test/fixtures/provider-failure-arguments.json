@@ -556,6 +556,16 @@
       "draftId": "d1",
       "body": "Revised text.",
       "cc": []
+    },
+    "gmail_api_search": {
+      "query": "message headers"
+    },
+    "gmail_api_details": {
+      "method": "GET",
+      "path": "/messages/{id}"
+    },
+    "gmail_api_read": {
+      "path": "/messages/m1"
     }
   },
   "overflow": {

@@ -89,8 +89,8 @@ export const docs = defineApiProvider<DocsOptions>({
   title: "Google Docs",
   readme: "Google Docs",
   bundle: {
-    baselineGzip: 369878,
-    note: "./providers/docs evaluated snapshot 2ce02c7c measures 369,878 B gzip standalone for Docs step 2 (#703), versus 354,308 B on main ff3f7c3b (+15,570 B), using Node 22.23.3, gzip level 9 and the standard neutral esbuild settings. This includes the shared Effect kit, paid once per deployment; standalone sizes are not additive and remain report-only.",
+    baselineGzip: 370411,
+    note: "./providers/docs evaluated snapshot 2ce02c7c measures 369,878 B gzip standalone for Docs step 2 (#703), versus 354,308 B on main ff3f7c3b (+15,570 B), using Node 22.23.3, gzip level 9 and the standard neutral esbuild settings. This includes the shared Effect kit, paid once per deployment; standalone sizes are not additive and remain report-only. The combined Gmail/Docs merge snapshot over main f9bf5afb remeasures this standalone entry at 370,111 B gzip before recording these facts, with the same Node 22.23.3/neutral Worker/gzip-9 toolchain (#703). Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 370,210 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703). Combined Google merge snapshot over main db979604 measures 370,411 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

@@ -102,6 +102,8 @@ export default defineGoldenSpec({
     };
   },
   calls: [
+    { tool: "gmail_api_search", args: { query: "draft reply" }, replies: [] },
+    { tool: "gmail_api_details", args: { method: "GET", path: "/messages/{id}" }, replies: [] },
     {
       tool: "search_threads",
       args: { query: "from:bob newer_than:7d", limit: 5, includeSpamTrash: true },
@@ -142,9 +144,9 @@ export default defineGoldenSpec({
     { tool: "get_thread", args: { threadId: "t1" }, replies: [{ body: { id: "t1", messages: [MESSAGE] } }] },
     { tool: "get_message", args: { messageId: "m2", maxBodyChars: 11 }, replies: [{ body: MESSAGE }] },
     {
-      label: "get_message raw",
-      tool: "get_message",
-      args: { messageId: "m2", raw: true },
+      label: "gmail_api_read full MIME",
+      tool: "gmail_api_read",
+      args: { path: "/messages/m2", query: { format: "full" } },
       replies: [{ body: MESSAGE }],
     },
     {
