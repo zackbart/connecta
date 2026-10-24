@@ -1,6 +1,7 @@
 import { guestFailureFacts } from "./fixtures/misc.js";
 import type { Tool } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { z } from "zod";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
@@ -12,6 +13,10 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, makeRegistry, required, seedCatalog, silentLogger } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 const closers: Array<() => Promise<void>> = [];

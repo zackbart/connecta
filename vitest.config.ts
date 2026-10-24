@@ -39,6 +39,7 @@ const WORKERS_SUITES = [
   "test/oauth-refresh-http.test.ts",
   "test/write-unauthorized-oauth.test.ts",
   "test/remote-mcp.test.ts",
+  "test/remote-mcp-attempts.test.ts",
   "test/remote-mcp-headers.test.ts",
   "test/server.test.ts",
   "test/native-tools.test.ts",
@@ -230,6 +231,7 @@ export default defineConfig({
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
+            "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
           include: ["test/**/*.test.ts", "src/providers/**/*.test.ts"],
@@ -296,6 +298,7 @@ export default defineConfig({
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",
             "./test/fixtures/transport-evidence-server.ts",
+            "./test/fixtures/remote-mcp-attempt-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
           include: WORKERS_SUITES,

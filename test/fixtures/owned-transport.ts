@@ -6,7 +6,7 @@ import { configureGuardedTransport } from "../../src/guarded-transport.js";
  * Call inside a test or beforeEach so onTestFinished can own restoration.
  */
 export function installOwnedTransport() {
-  const send = vi.fn(async (url: URL, init: RequestInit) => globalThis.fetch(url, init));
+  const send = vi.fn((url: URL, init: RequestInit) => globalThis.fetch(url, init));
   const previous = configureGuardedTransport({ send });
   let active = true;
   const restore = () => {

@@ -1,7 +1,8 @@
 import { StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
@@ -22,6 +23,10 @@ import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger }
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc } from "./fixtures/http.js";
 import { seedGrant } from "./fixtures/oauth.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 

@@ -1,4 +1,4 @@
-// The plain runtime slot keeps the kit and Node implementations off the root
+// The plain runtime slot keeps the HTTP kit and Node sender off the root
 // and Worker graphs. /node installs its sender when listen() starts serving.
 import { ConnectorCallError } from "./errors.js";
 
@@ -18,7 +18,9 @@ export function configureGuardedTransport(transport: GuardedTransport | undefine
 export function guardedTransport(write: boolean): GuardedTransport {
   if (owned) return owned;
   const node =
-    typeof WebSocketPair === "undefined" && typeof process !== "undefined" && process.versions?.node !== undefined;
+    typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === "undefined" &&
+    typeof process !== "undefined" &&
+    process.versions?.node !== undefined;
   if (node && write) {
     throw new ConnectorCallError(
       "connector_call_failed",
