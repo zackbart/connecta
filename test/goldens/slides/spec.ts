@@ -199,11 +199,37 @@ export default defineGoldenSpec({
     body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
+    { tool: "slides_api_search", args: { query: "format slide text" }, replies: [] },
+    { tool: "slides_api_details", args: { method: "GET", path: "/presentations/{presentationsId}" }, replies: [] },
+    {
+      tool: "slides_api_write",
+      args: {
+        method: "POST",
+        path: "/presentations/deck1:batchUpdate",
+        body: {
+          requests: [{ createSlide: { objectId: "newslide" } }, { insertComment: { objectId: "p", content: "Hello" } }],
+          writeControl: { requiredRevisionId: "rev-1" },
+        },
+      },
+      replies: [
+        {
+          body: {
+            presentationId: "deck1",
+            replies: [
+              { createSlide: { objectId: "newslide" } },
+              { insertComment: { commentThread: { commentId: "newcomment", headPost: { postId: "newpost" } } } },
+            ],
+            commentUpdateState: "ALL_FAILED_UNKNOWN_REASON",
+          },
+        },
+      ],
+    },
+
     { tool: "get_presentation", args: { presentationId: "deck1" }, replies: [{ body: PRESENTATION }] },
     {
-      label: "get_presentation raw",
-      tool: "get_presentation",
-      args: { presentationId: "deck1", raw: true, limit: 1 },
+      label: "structural presentation hatch",
+      tool: "slides_api_read",
+      args: { path: "/presentations/deck1" },
       replies: [{ body: PRESENTATION }],
     },
     {
@@ -347,7 +373,14 @@ export default defineGoldenSpec({
     replies: (text) => [{ body: { ...PRESENTATION, title: text } }],
   },
   failures: {
-    read: { tool: "get_presentation", args: { presentationId: "deck1" } },
-    write: { tool: "create_slide", args: { presentationId: "deck1", layout: "TITLE_AND_BODY", insertionIndex: 1 } },
+    read: { tool: "slides_api_read", args: { path: "/presentations/deck1" } },
+    write: {
+      tool: "slides_api_write",
+      args: {
+        method: "POST",
+        path: "/presentations/deck1:batchUpdate",
+        body: { requests: [{ createSlide: { objectId: "newslide" } }], writeControl: { requiredRevisionId: "rev-1" } },
+      },
+    },
   },
 });

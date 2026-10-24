@@ -20,7 +20,7 @@ import { skill } from "./skill.generated.js";
  * shared Workspace result budget, so it is deliverable inside a program and
  * directly alike, and whatever a result cannot carry is named with the exact
  * cursor that reads it: text cut on a slide continues in get_page, element by
- * element and character by character; a page's raw JSON continues in chunks;
+ * element and character by character; full structural JSON comes from slides_api_read;
  * layouts continue in list_layouts. Every cursor is bound to the deck and to
  * the revision it was issued at, so a deck that changed between pages is a
  * `conflict` to restart, never a page that skips or repeats.
@@ -47,7 +47,18 @@ import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
-import { errors, SLIDES, SlidesApi, probe, safety } from "./api.js";
+import {
+  errors,
+  SLIDES,
+  SlidesApi,
+  probe,
+  safety,
+  result,
+  SLIDES_INDEX,
+  SLIDES_VERDICTS,
+  SLIDES_NAMED,
+  slidesBinding,
+} from "./api.js";
 import { SLIDES_API_BASE_URL, SLIDES_MAX_RESPONSE_BYTES } from "./lib/constants.js";
 import { slidesTools } from "./tools.js";
 export { SLIDES_API_BASE_URL, SLIDES_SCOPES } from "./lib/constants.js";
@@ -59,11 +70,6 @@ export type {
 } from "../_shared/google/workspace.js";
 /** Options for {@link slides}: the shared Workspace delegation options. */
 export type SlidesOptions = GoogleWorkspaceOptions;
-function usageGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
-}
-
 /**
  * A maintained Google Slides connection acting as each signed-in Workspace
  * user through a delegated service account.
@@ -90,7 +96,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * ```ts
  * slides("decks", {
- *   purpose: "Sermon slides and staff meeting decks",
+ *   purpose: "Team presentations",
  *   serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
  *   subject: (identity) => accounts[identity.principal?.id ?? ""],
  * });
@@ -108,8 +114,8 @@ export const slides = defineApiProvider<SlidesOptions>({
   title: "Google Slides",
   readme: "Google Slides",
   bundle: {
-    baselineGzip: 344074,
-    note: "./providers/slides measures 344,074 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 386289,
+    note: "./providers/slides round-1 measurement is 386,289 B gzip standalone (#703), Node 26.12.0 and zlib-ng 1.3.1. Same-toolchain merged main f9bf5afb measures 362,798 B: +23,491 B. The build report gives the current measurement. This includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -123,11 +129,28 @@ export const slides = defineApiProvider<SlidesOptions>({
   authenticate: bearer,
   errors,
   safety: () => safety,
+  result,
+  idempotencyKey: false,
+  hatch: {
+    name: "slides",
+    title: "Google Slides",
+    index: SLIDES_INDEX,
+    verdicts: SLIDES_VERDICTS,
+    named: SLIDES_NAMED,
+    pathExample: "/presentations/deck1",
+    pageCursor: "argument",
+    binding: ({ connection }) => slidesBinding(connection),
+  },
   probe,
   guide: (options) => ({
-    content: usageGuide(options.purpose, options.instructions),
-    summary:
-      "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+    context: [
+      `Purpose: ${options.purpose}`,
+      "Workspace delegation is configured. Each call acts as the account deployment code maps the caller to; an agent uses its pool owner unless one shared account is configured. No argument selects a subject.",
+      "Content windows: get_presentation defaults to 20 slides (maximum 100); get_page to 50 elements (maximum 500); list_layouts to 100 rows (maximum 500); list_comments to 50 threads (maximum 500). Slides has no vendor list pagination.",
+      "Generic thumbnails/preview links are refused; get_slide_thumbnail is the reviewed short-lived-link workflow. The generic batch retains only the 49 shipped request kinds; no extra preview methods are admitted.",
+      ...(options.readOnly ? ["This connection is read-only; writes are refused."] : []),
+    ],
+    summary: "Each caller's decks: text, notes, layouts, comments, guarded edits and indexed Slides JSON operations.",
     required: true,
   }),
   tools: slidesTools,

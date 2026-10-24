@@ -1,25 +1,24 @@
-// Google Slides step 1: legacy catalog, projections and private digest-bound cursors over kit tools.
-import { Effect } from "effect";
+// Google Slides named workflows on real kit schemas, with bound content continuation.
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { HttpFailure } from "../../http/errors.js";
 import type { CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
+import type { ConnectorContext } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampRedactedText, clampText, jsonBytes } from "../_shared/google/result-size.js";
-import {
-  googleClient,
-  googleTool,
-  googleOutcomeOf,
-  googleFailureMessage,
-  type GoogleClient,
-  type GoogleToolDeclaration,
-} from "../_shared/google/kit.js";
-import { encodeForAgent, requestSentSecrets, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
-import { SLIDES } from "./api.js";
+import { googleClient, googleOutcomeOf, googleFailureMessage, type GoogleClient } from "../_shared/google/kit.js";
+import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
+import { REQUEST_KINDS, COMMENT_KINDS, COMMENTS_UNSAVED } from "./lib/requests.js";
+import { SLIDES, SLIDES_INDEX } from "./api.js";
+import * as contracts from "./lib/schemas.js";
+import { read, write } from "../../http/tools.js";
+import { Operation } from "../../runtime/call.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { Refusal } from "../../http/errors.js";
+import { boundCursor } from "../../http/paging.js";
 
 /** Slides per page of get_presentation. Slides itself returns the whole deck. */
-const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
 /** Elements per page of get_page, and rows per page of list_layouts. */
 const MAX_ROWS = 500;
@@ -27,10 +26,7 @@ const DEFAULT_ELEMENTS = 50;
 const DEFAULT_LAYOUTS = 100;
 /** Text kept per slide (its elements together, and its notes apart). */
 const DEFAULT_SLIDE_CHARS = 4_000;
-const MAX_SLIDE_CHARS = 50_000;
 /** Requests per raw batch: connecta's bound; Slides publishes none. */
-const MAX_BATCH_REQUESTS = 100;
-const MAX_REPLACEMENTS = 50;
 /**
  * Every kind of Request Slides' batchUpdate accepts, from its Discovery
  * document's `Request` schema. The raw hatch checks each request's one key
@@ -40,58 +36,6 @@ const MAX_REPLACEMENTS = 50;
  * the H7 budget, so the handler holds the list. A kind Google adds moves
  * the batchUpdate contract `src/providers/slides/drift.json` records.
  */
-const REQUEST_KINDS: ReadonlySet<string> = new Set([
-  "addCommentReply",
-  "createImage",
-  "createLine",
-  "createParagraphBullets",
-  "createShape",
-  "createSheetsChart",
-  "createSlide",
-  "createTable",
-  "createVideo",
-  "deleteComment",
-  "deleteCommentReply",
-  "deleteObject",
-  "deleteParagraphBullets",
-  "deleteTableColumn",
-  "deleteTableRow",
-  "deleteText",
-  "duplicateObject",
-  "groupObjects",
-  "insertComment",
-  "insertTableColumns",
-  "insertTableRows",
-  "insertText",
-  "mergeTableCells",
-  "refreshSheetsChart",
-  "replaceAllShapesWithImage",
-  "replaceAllShapesWithSheetsChart",
-  "replaceAllText",
-  "replaceImage",
-  "rerouteLine",
-  "ungroupObjects",
-  "unmergeTableCells",
-  "updateCommentPost",
-  "updateImageProperties",
-  "updateLineCategory",
-  "updateLineProperties",
-  "updatePageElementAltText",
-  "updatePageElementTransform",
-  "updatePageElementsZOrder",
-  "updatePageProperties",
-  "updateParagraphStyle",
-  "updateShapeProperties",
-  "updateSlideProperties",
-  "updateSlidesPosition",
-  "updateTableBorderProperties",
-  "updateTableCellProperties",
-  "updateTableColumnProperties",
-  "updateTableRowProperties",
-  "updateTextStyle",
-  "updateVideoProperties",
-]);
-
 /** What get_presentation's first page may spend on its layout preview. */
 const MAX_LAYOUT_PREVIEW_BYTES = 24 * 1024;
 /** Byte bounds for short labels: names, titles, alt text. */
@@ -117,13 +61,6 @@ const MAX_ECHO_CHARS = 100;
  * comment changes Slides saves apart from the deck's, and only `ALL_SAVED`
  * says they all landed (#696).
  */
-const COMMENT_KINDS: ReadonlySet<string> = new Set([
-  "addCommentReply",
-  "deleteComment",
-  "deleteCommentReply",
-  "insertComment",
-  "updateCommentPost",
-]);
 
 /** The comment save states that say every comment change in a batch landed, or none was asked for. */
 const COMMENTS_SETTLED: ReadonlySet<string> = new Set(["NO_UPDATES_REQUESTED", "ALL_SAVED"]);
@@ -147,7 +84,6 @@ const COMMENTS_INCLUDED = "COMMENTS_VIEW_MODE_INCLUDED";
 const MAX_COMMENT_BYTES = 2048;
 /** Comment threads per page of list_comments. */
 const DEFAULT_THREADS = 50;
-const MAX_THREADS = 500;
 /** A post's text in a write result; Slides caps what it accepts well below this. */
 const MAX_POST_BYTES = 8 * 1024;
 
@@ -235,7 +171,7 @@ function editUrl(presentationId: string): string {
 function deliverable<T>(
   result: T,
   tool: string,
-  advice = "read a smaller part, or with raw: true, which pages in chunks",
+  advice = "read a smaller part, or through slides_api_read, which pages in chunks",
 ): T {
   const bytes = jsonBytes(result);
   if (bytes > RESULT_BUDGET_BYTES) {
@@ -318,8 +254,6 @@ interface Cursor {
   g?: string | undefined;
   /** The state it was issued at: `r:` and the revision, or `f:` and a fingerprint. */
   s: string;
-  /** Issued by a raw read. */
-  raw?: 1 | undefined;
   /** The next row: slide, layout, element, or comment thread. */
   i: number;
   /** Within a thread: the part it continues — 0 the quote, 1 the head post, 2 on its replies. */
@@ -355,10 +289,7 @@ function encodeCursor(ctx: ConnectorContext, cursor: Cursor): string {
  * refusal that says which of those it is not. The state is checked later,
  * against the deck as it is read.
  */
-function decodeCursor(
-  value: unknown,
-  expected: { k: Cursor["k"]; p: string; g?: string; raw: boolean },
-): Cursor | undefined {
+function decodeCursor(value: unknown, expected: { k: Cursor["k"]; p: string; g?: string }): Cursor | undefined {
   if (value === undefined) return undefined;
   const refuse = (why: string) =>
     new ConnectorCallError("invalid_args", `${why} Omit cursor to start from the beginning.`);
@@ -393,9 +324,6 @@ function decodeCursor(
   }
   if (cursor.p !== expected.p) throw refuse("cursor continues a different presentation.");
   if ((cursor.g ?? undefined) !== expected.g) throw refuse("cursor continues a different page.");
-  if ((cursor.raw === 1) !== expected.raw) {
-    throw refuse(`cursor was issued with raw: ${cursor.raw === 1}; pass the same raw to continue.`);
-  }
   return cursor;
 }
 
@@ -436,29 +364,6 @@ function assertUnchanged(cursor: Cursor | undefined, state: string, what: string
       `The ${what} changed since this cursor was issued, so continuing from it could skip or repeat what changed. Start again without a cursor.`,
     );
   }
-}
-
-// --- Reading elements ---------------------------------------------------------------
-
-/** Raw text runs have style metadata between them. Check their text lane
- * before chunk serialization can separate an echo into independently safe leaves. */
-function protectPageText(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
-  const visit = (value: unknown): void => {
-    if (!value || typeof value !== "object") return;
-    const elements = asRecord(value)["textElements"];
-    if (Array.isArray(elements)) {
-      const runs = elements.map((element) => asRecord(asRecord(element)["textRun"] ?? asRecord(element)["autoText"]));
-      const safe = requestSentSecrets(ctx).parts(
-        runs.map((run) => (typeof run["content"] === "string" ? run["content"] : "")),
-      );
-      runs.forEach((run, index) => {
-        if (typeof run["content"] === "string") run["content"] = safe[index];
-      });
-    }
-    for (const child of Object.values(value)) visit(child);
-  };
-  visit(page);
-  return page;
 }
 
 /** A shape's or cell's text: runs and auto text in order, soft breaks as newlines. */
@@ -619,7 +524,7 @@ function describeLeaf(ctx: ConnectorContext, leaf: Leaf, raw: string): JsonRecor
   });
 }
 
-const RAW_HAS_IT = "get_page with raw: true has all of it";
+const FULL_STRUCTURE = "slides_api_read has the complete structure";
 
 // --- get_presentation ---------------------------------------------------------------
 
@@ -683,7 +588,7 @@ async function projectSlide(
           ? `${keep}\n[… ${line.length - keep.length} more characters; the title element's text has them]`
           : line;
     }
-    const row = describeLeaf(ctx, leaf, RAW_HAS_IT);
+    const row = describeLeaf(ctx, leaf, FULL_STRUCTURE);
     if (row["altText"] !== alt) truncated = true;
     if (leaf.text) {
       const kept = headOf(leaf.text, Math.max(budget, 0));
@@ -812,20 +717,11 @@ async function fitSlide(
   }
 }
 
-/** A raw slide no result can carry, named, with where to read it instead. */
-function rawNotShown(value: unknown, bytes: number): JsonRecord {
-  const id = text(asRecord(value)["objectId"]);
-  return compact({
-    objectId: id,
-    rawNotShown: `This slide's raw JSON is ${bytes} bytes, more than one result can carry. get_page with pageObjectId "${id ?? ""}" and raw: true reads all of it, in chunks.`,
-  });
-}
-
 // --- Layouts ------------------------------------------------------------------------
 
 /** Masters, each followed by its layouts, as rows create_slide and get_page take ids from. */
 function layoutRows(ctx: ConnectorContext, presentation: JsonRecord): JsonRecord[] {
-  const whole = "get_page on this id with raw: true has the whole name";
+  const whole = "get_page on this id through slides_api_read has the whole name";
   const masters = asArray(presentation["masters"]).map(asRecord);
   const layouts = asArray(presentation["layouts"]).map(asRecord);
   const layoutRow = (layout: JsonRecord) => {
@@ -875,7 +771,7 @@ function layoutNames(ctx: ConnectorContext, presentation: JsonRecord): Map<strin
       ctx,
       text(properties["displayName"]) ?? text(properties["name"]),
       MAX_NAME_BYTES,
-      "get_page on layoutId with raw: true has the whole name",
+      "get_page on layoutId through slides_api_read has the whole name",
     );
     if (id && name) names.set(id, name);
   }
@@ -916,14 +812,14 @@ function dimension(value: unknown): { magnitude: number; unit: string } | undefi
 function pageEnvelopeBytes(cursor: Cursor): number {
   const longest = { ...cursor, i: 999_999, o: 99_999_999, j: cursor.j === undefined ? undefined : 999_999 };
   const units = Math.ceil((new TextEncoder().encode(cursorText(longest)).length * 4) / 3);
-  return jsonBytes({ page: { hasMore: true, nextCursor: "x".repeat(units) } });
+  return 1024 + jsonBytes({ page: { hasMore: true, nextCursor: "x".repeat(units) } });
 }
 
 // --- get_page -------------------------------------------------------------------------
 
 /** What get_page says about the page itself, by the page's kind. */
 function describePage(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
-  const whole = "raw: true has the whole name";
+  const whole = "slides_api_read has the whole name";
   const slide = asRecord(page["slideProperties"]);
   const layout = asRecord(page["layoutProperties"]);
   return compact({
@@ -941,23 +837,6 @@ function describePage(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
       whole,
     ),
   });
-}
-
-/**
- * A page's raw rows: the page itself without its elements — its notes page
- * reduced to its id, which get_page reads on its own — then each top-level
- * element as Slides sends it.
- */
-function rawItems(page: JsonRecord): JsonRecord[] {
-  const { pageElements, ...properties } = page;
-  const slide = asRecord(properties["slideProperties"]);
-  if (slide["notesPage"]) {
-    properties["slideProperties"] = {
-      ...slide,
-      notesPage: compact({ objectId: text(asRecord(slide["notesPage"])["objectId"]) }),
-    };
-  }
-  return [properties, ...asArray(pageElements).map(asRecord)];
 }
 
 interface PageRows {
@@ -987,7 +866,7 @@ function projectedRows(
     const leaf = leaves[index]!;
     const placeholder = placeholderOf(leaf);
     const row: JsonRecord = {
-      ...describeLeaf(ctx, leaf, RAW_HAS_IT),
+      ...describeLeaf(ctx, leaf, FULL_STRUCTURE),
       ...compact({
         groupId: leaf.groupId,
         placeholderIndex: typeof placeholder["index"] === "number" ? placeholder["index"] : undefined,
@@ -1035,94 +914,6 @@ function projectedRows(
   return { elements, next: index < leaves.length ? { i: index, o: offset } : undefined };
 }
 
-/** How one raw reader lays out its rows. */
-interface RawLayout {
-  /** The tool, for its refusal. */
-  tool: string;
-  /** Item 0 is the page's own properties, returned apart from the rows. */
-  propertiesFirst: boolean;
-  /** What names a chunked item beside its chunk. */
-  idOf: (item: JsonRecord) => JsonRecord;
-}
-
-const PAGE_RAW: RawLayout = {
-  tool: "get_page",
-  propertiesFirst: true,
-  idOf: (item) => ({ objectId: text(item["objectId"]) }),
-};
-
-/**
- * Raw rows from item `i` (for get_page, 0 is the page's own properties),
- * JSON offset `o`: each whole where it fits, and one that fits no page alone
- * in chunks of its JSON text, which concatenated parse to the item.
- */
-function rawRows(
-  ctx: ConnectorContext,
-  items: readonly JsonRecord[],
-  start: { i: number; o: number },
-  limit: number,
-  room: number,
-  layout: RawLayout = PAGE_RAW,
-): PageRows {
-  const out: PageRows = { elements: [], next: undefined };
-  let used = 2;
-  let index = start.i;
-  let offset = start.o;
-  let rows = 0;
-  while (index < items.length && rows < limit) {
-    const item = items[index]!;
-    const size = jsonBytes(item) + 32;
-    if (offset === 0 && used + size <= room) {
-      if (index === 0 && layout.propertiesFirst) out.properties = item;
-      else out.elements.push(item);
-      used += size;
-      rows += 1;
-      index += 1;
-      continue;
-    }
-    // Whole on a page of its own: start the next page with it.
-    if (offset === 0 && rows > 0 && size <= room) break;
-    // Chunks of the item with every sent secret replaced, so they still concatenate.
-    const json = JSON.stringify(redactBeforeCut(ctx, item));
-    const id = index === 0 && layout.propertiesFirst ? {} : layout.idOf(item);
-    const shell = { ...id, rawJson: { json: "", offset, length: json.length } };
-    const available = room - used - (jsonBytes(shell) - 2) - 32;
-    const cut = available > 2 ? prefixWithin(json.slice(offset), available, () => "") : { text: "", kept: 0 };
-    if (cut.kept === 0) {
-      if (rows > 0) break;
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `${layout.tool} could not fit any part of a raw item in one result.`,
-        {
-          retryable: false,
-        },
-      );
-    }
-    const chunk = { json: cut.text, offset, length: json.length };
-    if (index === 0 && layout.propertiesFirst) out.propertiesJson = chunk;
-    else out.elements.push(compact({ ...id, rawJson: chunk }));
-    rows += 1;
-    if (offset + cut.kept < json.length) {
-      out.next = { i: index, o: offset + cut.kept };
-      return out;
-    }
-    used += jsonBytes(chunk) + 32;
-    index += 1;
-    offset = 0;
-  }
-  out.next = index < items.length ? { i: index, o: offset } : undefined;
-  return out;
-}
-
-/**
- * What a raw get_page cursor depends on when there is no revision: the exact
- * JSON of every item, since a chunk resumes at an offset into that text, and
- * an edit of equal size would otherwise stitch two versions into one.
- */
-function rawFingerprint(items: readonly JsonRecord[]): unknown {
-  return items.map((item) => JSON.stringify(item));
-}
-
 // --- Writing ----------------------------------------------------------------------
 
 /**
@@ -1144,6 +935,7 @@ function batchUpdate(
       yield* client.json(
         {
           method: "POST",
+          template: "/presentations/{presentationId}:batchUpdate",
           path: `/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
           body: compact({
             requests,
@@ -1360,9 +1152,6 @@ function commentSaveFields(
 }
 
 /** What a write whose comments did not all save tells its caller. */
-const COMMENTS_UNSAVED =
-  "Slides accepted the write but did not report its comment changes saved (commentUpdateState), so it was not all or none: " +
-  "other changes may have applied. Do not repeat it; re-read with list_comments to see what saved.";
 
 /** One post's fields, its text apart: the text pages, the rest is small. */
 interface PostPart {
@@ -1578,7 +1367,7 @@ function threadRows(
   const unfit = () =>
     new ConnectorCallError(
       "connector_call_failed",
-      "list_comments could not fit any of a comment thread in one result; raw: true pages it in JSON chunks.",
+      "list_comments could not fit any of a comment thread in one result; slides_api_read pages it in JSON chunks.",
       {
         retryable: false,
       },
@@ -1652,32 +1441,6 @@ function commentsState(
     pages.map((page) => [page["objectId"] ?? null, page["commentAnchors"] ?? null]),
   ]);
 }
-
-/**
- * A thread as Slides sends it — what raw: true returns, and where the
- * projection's dropped fields live: `contentHtml` and
- * `fromCopiedPresentation` — with one key added, `commentAnchors`: every
- * CommentAnchor on the pages read that bears its anchorId, as Slides sends
- * it, with the `pageObjectId` it sits on. Their text and cell ranges are the
- * anchor fields the projection leaves out.
- */
-function rawThread(value: unknown, pages: readonly JsonRecord[]): JsonRecord {
-  const thread = asRecord(value);
-  const anchorId = thread["anchorId"];
-  const anchors = pages.flatMap((page) =>
-    asArray(page["commentAnchors"])
-      .map(asRecord)
-      .filter((anchor) => anchorId !== undefined && anchor["anchorId"] === anchorId)
-      .map((anchor) => ({ pageObjectId: page["objectId"], ...anchor })),
-  );
-  return anchors.length > 0 ? { ...thread, commentAnchors: anchors } : thread;
-}
-
-const COMMENTS_RAW: RawLayout = {
-  tool: "list_comments",
-  propertiesFirst: false,
-  idOf: (item) => ({ commentId: wholeId(item["commentId"]) }),
-};
 
 /** A 403 on a comment read: what it most likely means, beside Google's words. */
 function commentAccess(connection: Connection, failure: HttpFailure): Effect.Effect<never, HttpFailure, CallServices> {
@@ -1772,277 +1535,32 @@ function postToThread(
   });
 }
 
-// --- Schemas ----------------------------------------------------------------------
-
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-
-const PRESENTATION_ID: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 256,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description: "Presentation id: the part after /presentation/d/ in its URL, or from Drive.",
-};
-
-/** Slides object ids: a word character, then word characters, `-`, or `:`. */
-function objectIdProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 256, pattern: "^[A-Za-z0-9_][A-Za-z0-9_:-]*$", description };
-}
-
-const REVISION_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 512,
-  pattern: "^[^\\s]+$",
-  description: "revisionId from get_presentation; the write is refused, unapplied, if the deck changed since.",
-};
-
-const CURSOR_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 4096,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description:
-    "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged.",
-};
-
-function limitProperty(maximum: number, fallback: number, what: string): JsonSchema {
-  return {
-    type: "integer",
-    minimum: 1,
-    maximum,
-    description: `${what} per page, 1 to ${maximum}; defaults to ${fallback}. A page also ends before ~192 KB.`,
-  };
-}
-
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-
-const DIMENSION_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: { magnitude: { type: "number" }, unit: { type: "string" } },
-};
-
-const KIND_SCHEMA: JsonSchema = {
-  type: "string",
-  enum: ["shape", "table", "wordArt", "image", "video", "chart", "line", "other"],
-};
-
-const SLIDE_ELEMENT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    objectId: { type: "string" },
-    kind: KIND_SCHEMA,
-    placeholder: { type: "string" },
-    text: { type: "string" },
-    truncated: { type: "boolean" },
-    textCursor: { type: "string" },
-    altText: { type: "string" },
-    spreadsheetId: { type: "string" },
-  },
-};
-
-const SLIDE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    objectId: { type: "string" },
-    index: { type: "integer" },
-    layout: { type: "string" },
-    layoutId: { type: "string" },
-    skipped: { type: "boolean" },
-    title: { type: "string" },
-    elements: { type: "array", items: SLIDE_ELEMENT_SCHEMA },
-    omittedElements: { type: "integer" },
-    elementsNotShown: { type: "integer" },
-    elementsCursor: { type: "string" },
-    notesPageId: { type: "string" },
-    notes: { type: "string" },
-    notesCursor: { type: "string" },
-    truncated: { type: "boolean" },
-    rawNotShown: { type: "string" },
-  },
-};
-
-const LAYOUT_ROW_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    objectId: { type: "string" },
-    kind: { type: "string", enum: ["master", "layout"] },
-    name: { type: "string" },
-    displayName: { type: "string" },
-    masterId: { type: "string" },
-  },
-};
-
-const CHUNK_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: { json: { type: "string" }, offset: { type: "integer" }, length: { type: "integer" } },
-};
-
-const PAGE_ELEMENT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    objectId: { type: "string" },
-    kind: KIND_SCHEMA,
-    groupId: { type: "string" },
-    placeholder: { type: "string" },
-    placeholderIndex: { type: "integer" },
-    placeholderParentId: { type: "string" },
-    text: { type: "string" },
-    textOffset: { type: "integer" },
-    textLength: { type: "integer" },
-    truncated: { type: "boolean" },
-    altText: { type: "string" },
-    spreadsheetId: { type: "string" },
-    rawJson: CHUNK_SCHEMA,
-  },
-};
-
-const WRITE_RESULT_PROPERTIES: Record<string, JsonSchema> = {
-  presentationId: { type: "string" },
-  revisionId: { type: "string" },
-  revisionIdNotShown: { type: "boolean" },
-};
-
-/** Comment and post ids go in a request body, never a path; Slides validates them. */
-function commentIdProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 1024, pattern: "^\\S+$", description };
-}
-
-const COMMENT_ID = commentIdProperty("commentId from list_comments or create_comment.");
-const POST_ID = commentIdProperty("postId of the post, from list_comments.");
-
-function commentContentProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: MAX_COMMENT_BYTES, description };
-}
-
-const ASSIGNEE_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 3,
-  maxLength: 320,
-  pattern: "^[^\\s@]+@[^\\s@]+$",
-  description: "Assign the thread to this address; Slides notifies them.",
-};
-
-const POST_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    postId: { type: "string" },
-    author: {
-      type: "object",
-      properties: {
-        user: { type: "string" },
-        displayName: { type: "string" },
-        me: { type: "boolean" },
-        anonymous: { type: "boolean" },
-      },
-    },
-    content: { type: "string" },
-    contentOffset: { type: "integer" },
-    contentLength: { type: "integer" },
-    commentAction: { type: "string" },
-    assigneeEmail: { type: "string" },
-    createTime: { type: "string" },
-    updateTime: { type: "string" },
-    deleted: { type: "boolean" },
-    imported: { type: "boolean" },
-  },
-};
-
-/** What every comment write returns beside its own ids. */
-const COMMENT_WRITE_PROPERTIES: Record<string, JsonSchema> = {
-  ...WRITE_RESULT_PROPERTIES,
-  commentUpdateState: { type: "string" },
-  note: { type: "string" },
-};
-
-/** What a post added to a thread returns. */
-const REPLY_RESULT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    ...COMMENT_WRITE_PROPERTIES,
-    commentId: { type: "string" },
-    post: POST_SCHEMA,
-    idsNotShown: { type: "boolean" },
-  },
-  required: ["presentationId", "commentId"],
-};
-
-// --- Tools ------------------------------------------------------------------------
-
 export function slidesTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, SLIDES.provider);
+  const client = googleClient(connection, SLIDES.provider, { standard: true, index: SLIDES_INDEX });
   const readOnly = { readOnlyHint: true } as const;
   const presentationPath = (id: string) => `/presentations/${encodeURIComponent(id)}`;
-  const nextPage = (cursor: string | null) => ({ hasMore: cursor !== null, nextCursor: cursor });
+  const nextPage = (cursor: string | null) =>
+    cursor === null ? { hasMore: false } : { hasMore: true, nextCursor: cursor };
 
-  const declarations: GoogleToolDeclaration[] = [
+  const declarations: SlidesToolDeclaration[] = [
     {
       name: "get_presentation",
       description:
         "Read a Google Slides deck: title, page size, revisionId, layouts, and each slide's text in reading order with speaker notes, capped per slide. Cannot find decks; that is Drive's job.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          limit: limitProperty(MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE, "Slides"),
-          cursor: CURSOR_PROPERTY,
-          maxCharsPerSlide: {
-            type: "integer",
-            minimum: 0,
-            maximum: MAX_SLIDE_CHARS,
-            description: `Text kept per slide (notes apart), 0 to ${MAX_SLIDE_CHARS}; defaults to ${DEFAULT_SLIDE_CHARS}. A cut gives a get_page cursor for the rest.`,
-          },
-          raw: {
-            type: "boolean",
-            description:
-              "Return this page's slides as Slides sends them, every style and transform, in place of the projection. No layouts or masters.",
-          },
-        },
-        ["presentationId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          presentationId: { type: "string" },
-          title: { type: "string" },
-          revisionId: { type: "string" },
-          url: { type: "string" },
-          locale: { type: "string" },
-          pageSize: {
-            type: "object",
-            properties: { width: DIMENSION_SCHEMA, height: DIMENSION_SCHEMA },
-          },
-          slideCount: { type: "integer" },
-          notesMasterId: { type: "string" },
-          layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
-          layoutsNotShown: { type: "integer" },
-          layoutsCursor: { type: "string" },
-          slides: { type: "array", items: SLIDE_SCHEMA },
-          page: PAGE_SCHEMA,
-        },
-        // ProtoJSON drops empty arrays, and `raw: true` passes Slides' own
-        // slide objects through, so only what connecta always sets is required.
-        required: ["presentationId", "slides", "page"],
-      },
+      input: contracts.get_presentation.input,
+      output: contracts.get_presentation.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const presentationId: string = args["presentationId"];
-          const raw = args["raw"] === true;
-          const cursor = decodeCursor(args["cursor"], { k: "deck", p: presentationId, raw });
+
+          const cursor = decodeCursor(args["cursor"], { k: "deck", p: presentationId });
           const presentation = asRecord(
             yield* client.json({
               method: "GET",
+              template: "/presentations/{presentationsId}",
               path: presentationPath(presentationId),
-              query: { fields: raw ? undefined : PRESENTATION_FIELDS },
+              query: { fields: PRESENTATION_FIELDS },
             }),
           );
           const all = asArray(presentation["slides"]);
@@ -2062,7 +1580,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
           // The first projected page previews the layouts, bounded; the rest
           // continue in list_layouts from layoutsCursor.
           let preview: JsonRecord = {};
-          if (start === 0 && !raw) {
+          if (start === 0) {
             const rows = layoutRows(ctx, presentation);
             const shown = rowsWithin(rows, 0, MAX_ROWS, MAX_LAYOUT_PREVIEW_BYTES);
             preview = compact({
@@ -2086,14 +1604,13 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
             revisionId: text(revisionId),
             url: editUrl(presentationId),
             locale: text(presentation["locale"]),
-            pageSize: width && height ? { width, height } : undefined,
+            canvasSize: width && height ? { width, height } : undefined,
             slideCount: all.length,
             // The one page no slide, layout, or master links to; get_page reads it.
             notesMasterId: text(asRecord(presentation["notesMaster"])["objectId"]),
             ...preview,
           });
-          const issue = (i: number) =>
-            encodeCursor(ctx, { k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
+          const issue = (i: number) => encodeCursor(ctx, { k: "deck", p: presentationId, s: state, i });
           // A page ends at the slide limit or at the byte budget, whichever is
           // first; the budget counts the header and the longest cursor.
           let used =
@@ -2102,15 +1619,11 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
           let next = start;
           while (next < all.length && slides.length < limit) {
             const room = RESULT_BUDGET_BYTES - used - 1;
-            let slide = raw
-              ? asRecord(all[next])
-              : finished(yield* Effect.promise(() => projectSlide(ctx, all[next], next, deck, maxChars)));
+            let slide = finished(yield* Effect.promise(() => projectSlide(ctx, all[next], next, deck, maxChars)));
             let size = jsonBytes(slide);
             if (size > room) {
               if (slides.length > 0) break;
-              slide = raw
-                ? rawNotShown(all[next], size)
-                : yield* Effect.promise(() => fitSlide(ctx, all[next], next, deck, maxChars, room));
+              slide = yield* Effect.promise(() => fitSlide(ctx, all[next], next, deck, maxChars, room));
               size = jsonBytes(slide);
             }
             slides.push(slide);
@@ -2128,59 +1641,25 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Read one page by objectId — slide, layout, master, or notes page — every element in reading order, with placeholder ids and text continued across pages.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          pageObjectId: objectIdProperty("A slide's, layout's, master's, or notes page's objectId."),
-          limit: limitProperty(MAX_ROWS, DEFAULT_ELEMENTS, "Elements"),
-          cursor: CURSOR_PROPERTY,
-          raw: {
-            type: "boolean",
-            description:
-              "The page and its top-level elements as Slides sends them; one too large is sent in JSON chunks.",
-          },
-        },
-        ["presentationId", "pageObjectId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          presentationId: { type: "string" },
-          pageObjectId: { type: "string" },
-          revisionId: { type: "string" },
-          pageType: { type: "string" },
-          layoutId: { type: "string" },
-          masterId: { type: "string" },
-          notesPageId: { type: "string" },
-          skipped: { type: "boolean" },
-          speakerNotesObjectId: { type: "string" },
-          name: { type: "string" },
-          displayName: { type: "string" },
-          elementCount: { type: "integer" },
-          properties: { type: "object" },
-          propertiesJson: CHUNK_SCHEMA,
-          elements: { type: "array", items: PAGE_ELEMENT_SCHEMA },
-          page: PAGE_SCHEMA,
-        },
-        required: ["presentationId", "pageObjectId", "elements", "page"],
-      },
+      input: contracts.get_page.input,
+      output: contracts.get_page.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const presentationId: string = args["presentationId"];
           const pageObjectId: string = args["pageObjectId"];
-          const raw = args["raw"] === true;
-          const cursor = decodeCursor(args["cursor"], { k: "page", p: presentationId, g: pageObjectId, raw });
+
+          const cursor = decodeCursor(args["cursor"], { k: "page", p: presentationId, g: pageObjectId });
           const page = asRecord(
             yield* client.json({
               method: "GET",
+              template: "/presentations/{presentationId}/pages/{pageObjectId}",
               path: `${presentationPath(presentationId)}/pages/${encodeURIComponent(pageObjectId)}`,
-              query: { fields: raw ? undefined : PAGE_FIELDS },
+              query: { fields: PAGE_FIELDS },
             }),
           );
-          const items = raw ? rawItems(redactBeforeCut(ctx, protectPageText(ctx, page))) : [];
-          const leaves = raw ? [] : readingOrder(ctx, page["pageElements"]);
+          const leaves = readingOrder(ctx, page["pageElements"]);
           const state = yield* Effect.promise(() =>
-            stateOf(ctx, page["revisionId"], () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)), true),
+            stateOf(ctx, page["revisionId"], () => leafFingerprint(leaves), true),
           );
           assertUnchanged(cursor, state, "page");
           const header = compact({
@@ -2188,7 +1667,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
             pageObjectId: text(page["objectId"]) ?? pageObjectId,
             revisionId: text(page["revisionId"]),
             ...describePage(ctx, page),
-            elementCount: raw ? items.length - 1 : leaves.length,
+            elementCount: leaves.length,
           });
           const room =
             RESULT_BUDGET_BYTES -
@@ -2198,20 +1677,18 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
               p: presentationId,
               g: pageObjectId,
               s: state,
-              raw: raw ? 1 : undefined,
               i: 0,
             }) -
             64;
           const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_ELEMENTS;
           const start = { i: cursor?.i ?? 0, o: cursor?.o ?? 0 };
-          const rows = raw ? rawRows(ctx, items, start, limit, room) : projectedRows(ctx, leaves, start, limit, room);
+          const rows = projectedRows(ctx, leaves, start, limit, room);
           const nextCursor = rows.next
             ? encodeCursor(ctx, {
                 k: "page",
                 p: presentationId,
                 g: pageObjectId,
                 s: state,
-                raw: raw ? 1 : undefined,
                 i: rows.next.i,
                 o: rows.next.o ? rows.next.o : undefined,
               })
@@ -2233,33 +1710,16 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       description:
         "List a deck's masters, each followed by its layouts, with the ids create_slide and get_page take. Names only; get_page reads a layout's placeholders.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          limit: limitProperty(MAX_ROWS, DEFAULT_LAYOUTS, "Masters and layouts"),
-          cursor: CURSOR_PROPERTY,
-        },
-        ["presentationId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          presentationId: { type: "string" },
-          revisionId: { type: "string" },
-          notesMasterId: { type: "string" },
-          total: { type: "integer" },
-          layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
-          page: PAGE_SCHEMA,
-        },
-        required: ["presentationId", "layouts", "page"],
-      },
+      input: contracts.list_layouts.input,
+      output: contracts.list_layouts.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const presentationId: string = args["presentationId"];
-          const cursor = decodeCursor(args["cursor"], { k: "layouts", p: presentationId, raw: false });
+          const cursor = decodeCursor(args["cursor"], { k: "layouts", p: presentationId });
           const presentation = asRecord(
             yield* client.json({
               method: "GET",
+              template: "/presentations/{presentationsId}",
               path: presentationPath(presentationId),
               query: { fields: LAYOUT_LIST_FIELDS },
             }),
@@ -2293,68 +1753,23 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       description:
         "List a deck's comment threads, or one page's: anchor, status, quoted text, head post, and replies, each author by user id. Long text continues across pages.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          pageObjectId: objectIdProperty("Only this slide's or notes page's threads; omit for the whole deck."),
-          limit: limitProperty(MAX_THREADS, DEFAULT_THREADS, "Threads"),
-          cursor: CURSOR_PROPERTY,
-          raw: {
-            type: "boolean",
-            description:
-              "Each thread as Slides sends it, HTML and copy flags kept, with its anchors' ranges; one too large is sent in JSON chunks.",
-          },
-        },
-        ["presentationId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          presentationId: { type: "string" },
-          pageObjectId: { type: "string" },
-          revisionId: { type: "string" },
-          total: { type: "integer" },
-          threads: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                commentId: { type: "string" },
-                anchorId: { type: "string" },
-                status: { type: "string" },
-                pageObjectIds: { type: "array", items: { type: "string" } },
-                objectIds: { type: "array", items: { type: "string" } },
-                replyCount: { type: "integer" },
-                quote: { type: "string" },
-                quoteOffset: { type: "integer" },
-                quoteLength: { type: "integer" },
-                headPost: POST_SCHEMA,
-                replies: { type: "array", items: POST_SCHEMA },
-                repliesOffset: { type: "integer" },
-                continued: { type: "boolean" },
-                truncated: { type: "boolean" },
-                idsNotShown: { type: "boolean" },
-                // raw: true passes Slides' own threads through, with their
-                // commentAnchors, or a chunk of one too large for a page.
-                rawJson: CHUNK_SCHEMA,
-              },
-            },
-          },
-          page: PAGE_SCHEMA,
-        },
-        required: ["presentationId", "total", "threads", "page"],
-      },
+      input: contracts.list_comments.input,
+      output: contracts.list_comments.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const presentationId: string = args["presentationId"];
           const pageObjectId: string | undefined = args["pageObjectId"];
-          const raw = args["raw"] === true;
+
           const scope = pageObjectId === undefined ? {} : { g: pageObjectId };
-          const cursor = decodeCursor(args["cursor"], { k: "comments", p: presentationId, ...scope, raw });
+          const cursor = decodeCursor(args["cursor"], { k: "comments", p: presentationId, ...scope });
           const source = asRecord(
             yield* client
               .json({
                 method: "GET",
+                template:
+                  pageObjectId === undefined
+                    ? "/presentations/{presentationsId}"
+                    : "/presentations/{presentationId}/pages/{pageObjectId}",
                 path:
                   pageObjectId === undefined
                     ? presentationPath(presentationId)
@@ -2395,36 +1810,21 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
               p: presentationId,
               ...scope,
               s: state,
-              raw: raw ? 1 : undefined,
               i: 0,
               j: 0,
             }) -
             64;
           const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_THREADS;
           let shown: { threads: JsonRecord[]; next: { i: number; j?: number; o?: number } | undefined };
-          if (raw) {
-            // Slides' own threads, chunked like get_page's raw elements.
-            const rows = rawRows(
-              ctx,
-              comments.map((thread) => rawThread(thread, pages)),
-              { i: cursor?.i ?? 0, o: cursor?.o ?? 0 },
-              limit,
-              room,
-              COMMENTS_RAW,
-            );
-            shown = { threads: rows.elements, next: rows.next };
-          } else {
-            const places = anchorPlaces(pages);
-            const threads = comments.map((thread) => threadParts(ctx, thread, places));
-            shown = threadRows(threads, { i: cursor?.i ?? 0, j: cursor?.j ?? 0, o: cursor?.o ?? 0 }, limit, room);
-          }
+          const places = anchorPlaces(pages);
+          const threads = comments.map((thread) => threadParts(ctx, thread, places));
+          shown = threadRows(threads, { i: cursor?.i ?? 0, j: cursor?.j ?? 0, o: cursor?.o ?? 0 }, limit, room);
           const next = shown.next
             ? encodeCursor(ctx, {
                 k: "comments",
                 p: presentationId,
                 ...scope,
                 s: state,
-                raw: raw ? 1 : undefined,
                 i: shown.next.i,
                 j: shown.next.j ? shown.next.j : undefined,
                 o: shown.next.o ? shown.next.o : undefined,
@@ -2442,33 +1842,14 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Get a PNG thumbnail link for one slide: a URL valid about 30 minutes that opens as the user, plus its size. Never downloads the image.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          slideObjectId: objectIdProperty("Slide objectId from get_presentation."),
-          size: {
-            type: "string",
-            enum: ["SMALL", "MEDIUM", "LARGE", "WIDTH2000_PX"],
-            description:
-              "Width: SMALL 200px, MEDIUM 800px, LARGE 1600px, WIDTH2000_PX 2000px; Slides chooses when omitted.",
-          },
-        },
-        ["presentationId", "slideObjectId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          contentUrl: { type: "string" },
-          width: { type: "integer" },
-          height: { type: "integer" },
-        },
-        required: ["contentUrl"],
-      },
+      input: contracts.get_slide_thumbnail.input,
+      output: contracts.get_slide_thumbnail.output,
       run: (args) =>
         Effect.gen(function* () {
           const thumbnail = asRecord(
             yield* client.json({
               method: "GET",
+              template: "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
               path: `/presentations/${encodeURIComponent(args["presentationId"])}/pages/${encodeURIComponent(args["slideObjectId"])}/thumbnail`,
               query: {
                 "thumbnailProperties.mimeType": "PNG",
@@ -2505,34 +1886,18 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       // program calls require a writable endpoint; other writes use
       // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1000,
-            pattern: "^[^\\r\\n]*$",
-            description: "The deck's title, as Drive shows it.",
-          },
-        },
-        ["title"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          ...WRITE_RESULT_PROPERTIES,
-          title: { type: "string" },
-          url: { type: "string" },
-          slideObjectIds: { type: "array", items: { type: "string" } },
-          slideObjectIdsNotShown: { type: "integer" },
-        },
-        required: ["presentationId"],
-      },
+      input: contracts.create_presentation.input,
+      output: contracts.create_presentation.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const presentation = asRecord(
             yield* client
-              .json({ method: "POST", path: "/presentations", body: { title: args["title"] } })
+              .json({
+                method: "POST",
+                template: "/presentations",
+                path: "/presentations",
+                body: { title: args["title"] },
+              })
               .pipe(
                 Effect.catch((failure) =>
                   afterUnknownCreate(
@@ -2576,41 +1941,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         "Add one empty slide to a deck, from a predefined layout or one of its own layouts, at an index or the end. Adds no text; nothing existing changes.",
       // Additive: later slides move down one place, and nothing is lost.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          layout: {
-            type: "string",
-            enum: [
-              "BLANK",
-              "CAPTION_ONLY",
-              "TITLE",
-              "TITLE_AND_BODY",
-              "TITLE_AND_TWO_COLUMNS",
-              "TITLE_ONLY",
-              "SECTION_HEADER",
-              "SECTION_TITLE_AND_DESCRIPTION",
-              "ONE_COLUMN_TEXT",
-              "MAIN_POINT",
-              "BIG_NUMBER",
-            ],
-            description: "Predefined layout; the deck's theme must have it. Omit both layout and layoutId for BLANK.",
-          },
-          layoutId: objectIdProperty("A layouts[].objectId from get_presentation, instead of layout."),
-          insertionIndex: {
-            type: "integer",
-            minimum: 0,
-            maximum: 100_000,
-            description: "0-based position, as get_presentation numbers slides; omit to append.",
-          },
-        },
-        ["presentationId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { ...WRITE_RESULT_PROPERTIES, slideObjectId: { type: "string" } },
-        required: ["presentationId", "slideObjectId"],
-      },
+      input: contracts.create_slide.input,
+      output: contracts.create_slide.output,
       run: (args) =>
         Effect.gen(function* () {
           if (args["layout"] !== undefined && args["layoutId"] !== undefined) {
@@ -2651,52 +1983,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         "Replace every occurrence of literal text across a deck's slides, or the slides named, in one atomic write. No regex; formatting of the replaced text is kept.",
       // Destructive: the replaced text is gone, everywhere it matched.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          replacements: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_REPLACEMENTS,
-            description: `Applied in order, 1 to ${MAX_REPLACEMENTS} (connecta's bound).`,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["find", "replace"],
-              description: "One find-and-replace.",
-              properties: {
-                find: { type: "string", minLength: 1, maxLength: 1000, description: "Literal text to find." },
-                replace: { type: "string", maxLength: 10_000, description: "Replacement; empty deletes the match." },
-                matchCase: { type: "boolean", description: "Case-sensitive; defaults to true." },
-              },
-            },
-          },
-          slideObjectIds: {
-            type: "array",
-            minItems: 1,
-            maxItems: 500,
-            items: objectIdProperty("A slide objectId."),
-            description: "Limit to these slides; omit for every slide.",
-          },
-          requiredRevisionId: REVISION_PROPERTY,
-        },
-        ["presentationId", "replacements"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          ...WRITE_RESULT_PROPERTIES,
-          occurrencesChanged: { type: "integer" },
-          replacements: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { find: { type: "string" }, occurrencesChanged: { type: "integer" } },
-            },
-          },
-        },
-        required: ["presentationId", "occurrencesChanged", "replacements"],
-      },
+      input: contracts.replace_all_text.input,
+      output: contracts.replace_all_text.output,
       run: (args) =>
         Effect.gen(function* () {
           const replacements = asArray(args["replacements"]).map(asRecord);
@@ -2744,53 +2032,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       // so program calls require a writable endpoint; other writes use
       // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          objectId: objectIdProperty("The page or element to comment on: the shape or table, for text or a cell."),
-          content: commentContentProperty(`Plain text; Slides' cap is ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
-          textRange: {
-            type: "object",
-            additionalProperties: false,
-            required: ["startIndex", "endIndex"],
-            description: "Anchor to this text of the shape, or of the cell: 0-based, end exclusive.",
-            properties: {
-              startIndex: { type: "integer", minimum: 0, maximum: 10_000_000, description: "First character." },
-              endIndex: { type: "integer", minimum: 1, maximum: 10_000_000, description: "One past the last." },
-            },
-          },
-          cell: {
-            type: "object",
-            additionalProperties: false,
-            required: ["rowIndex", "columnIndex"],
-            description: "A table cell, 0-based: with textRange, that text in it; else the whole cell.",
-            properties: {
-              rowIndex: { type: "integer", minimum: 0, maximum: 100_000, description: "Row." },
-              columnIndex: { type: "integer", minimum: 0, maximum: 100_000, description: "Column." },
-            },
-          },
-          assigneeEmail: ASSIGNEE_PROPERTY,
-          requiredRevisionId: {
-            ...REVISION_PROPERTY,
-            description: "Refuse, unapplied, if the deck changed since this revision.",
-          },
-        },
-        ["presentationId", "objectId", "content"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          ...COMMENT_WRITE_PROPERTIES,
-          commentId: { type: "string" },
-          anchorId: { type: "string" },
-          status: { type: "string" },
-          quote: { type: "string" },
-          headPost: POST_SCHEMA,
-          replies: { type: "array", items: POST_SCHEMA },
-          idsNotShown: { type: "boolean" },
-        },
-        required: ["presentationId"],
-      },
+      input: contracts.create_comment.input,
+      output: contracts.create_comment.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const content = commentText(args["content"], "content");
@@ -2866,15 +2109,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       // Additive: a reply is a new post, and the thread's status and
       // assignee stay as they were.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          commentId: COMMENT_ID,
-          content: commentContentProperty(`Plain text, up to ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
-        },
-        ["presentationId", "commentId", "content"],
-      ),
-      outputSchema: REPLY_RESULT_SCHEMA,
+      input: contracts.create_comment_reply.input,
+      output: contracts.create_comment_reply.output,
       run: (args, ctx) =>
         postToThread(connection, client, ctx, "create_comment_reply", args, {
           content: commentText(args["content"], "content"),
@@ -2890,19 +2126,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
       // Keep the field schema flat: discovery renders oneOf before properties,
       // losing these fields for required-only branches. The handler enforces
       // exactly one change and text on reassignment before dispatch instead.
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          commentId: COMMENT_ID,
-          status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
-          assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
-          content: commentContentProperty(
-            `Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`,
-          ),
-        },
-        ["presentationId", "commentId"],
-      ),
-      outputSchema: REPLY_RESULT_SCHEMA,
+      input: contracts.update_comment_thread.input,
+      output: contracts.update_comment_thread.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           // Exactly one change per post. Slides requires text on reassignment;
@@ -2933,20 +2158,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         "Replace the text of one post in a comment thread, the head post or a reply. Only its author can; the old text is gone.",
       // Destructive: the post's previous text is overwritten.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          commentId: COMMENT_ID,
-          postId: POST_ID,
-          content: commentContentProperty(`The new plain text, up to ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
-        },
-        ["presentationId", "commentId", "postId", "content"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" }, postId: { type: "string" } },
-        required: ["presentationId", "commentId", "postId"],
-      },
+      input: contracts.update_comment_post.input,
+      output: contracts.update_comment_post.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const content = commentText(args["content"], "content");
@@ -2971,12 +2184,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         "Delete a whole comment thread, every reply with it. Only the author of its head post can, and the API cannot restore it.",
       // Destructive: the thread and its replies are gone.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input({ presentationId: PRESENTATION_ID, commentId: COMMENT_ID }, ["presentationId", "commentId"]),
-      outputSchema: {
-        type: "object",
-        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" } },
-        required: ["presentationId", "commentId"],
-      },
+      input: contracts.delete_comment.input,
+      output: contracts.delete_comment.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const written = yield* commentWrite(client, ctx, args["presentationId"], {
@@ -2999,19 +2208,8 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         "Delete one reply from a comment thread. Only its author can, and not a reply that resolved, reopened, or assigned the thread.",
       // Destructive: the reply is gone.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          commentId: COMMENT_ID,
-          postId: { ...POST_ID, description: "postId of the reply, from list_comments." },
-        },
-        ["presentationId", "commentId", "postId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" }, postId: { type: "string" } },
-        required: ["presentationId", "commentId", "postId"],
-      },
+      input: contracts.delete_comment_reply.input,
+      output: contracts.delete_comment_reply.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const written = yield* commentWrite(client, ctx, args["presentationId"], {
@@ -3032,49 +2230,16 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
     {
       name: "batch_update_presentation",
       description:
-        "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
+        "Send Slides batchUpdate at the read revision; insertComment and other comment kinds may share the batch but save apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
       // Destructive: a raw request can delete or overwrite anything in the deck.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          requiredRevisionId: REVISION_PROPERTY,
-          requests: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_BATCH_REQUESTS,
-            description: `Slides Request objects, applied in order, all or none but comments; 1 to ${MAX_BATCH_REQUESTS} (connecta's bound).`,
-            items: {
-              type: "object",
-              minProperties: 1,
-              maxProperties: 1,
-              description: 'One Request with one key, as the Slides reference defines it: {"insertText": {...}}.',
-            },
-          },
-        },
-        ["presentationId", "requiredRevisionId", "requests"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          ...WRITE_RESULT_PROPERTIES,
-          // Slides' own reply kinds pass through beside `cut`, the one key
-          // connecta adds: the paths a summarized reply left out.
-          replies: {
-            type: "array",
-            items: { type: "object", properties: { cut: { type: "array", items: { type: "string" } } } },
-          },
-          repliesNotShown: { type: "integer" },
-          commentUpdateState: { type: "string" },
-          note: { type: "string" },
-        },
-        required: ["presentationId", "replies"],
-      },
+      input: contracts.batch_update_presentation.input,
+      output: contracts.batch_update_presentation.output,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const requests = asArray(args["requests"]);
           const kinds = requests.map((request, index) => [index, Object.keys(asRecord(request))[0] ?? ""] as const);
-          const unknown = kinds.filter(([, kind]) => !REQUEST_KINDS.has(kind));
+          const unknown = kinds.filter(([, kind]) => !REQUEST_KINDS.includes(kind as (typeof REQUEST_KINDS)[number]));
           if (unknown.length > 0) {
             throw new ConnectorCallError(
               "invalid_args",
@@ -3117,7 +2282,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
             note: notes(
               unsaved,
               shown.replies.some((reply) => "cut" in reply)
-                ? `Large reply fields are named in cut; every id is kept${shown.oversized ? ", and no other text, since the ids alone pass this tool's 192 KiB budget" : ""}.`
+                ? `Large reply fields are named in truncated; every id is kept${shown.oversized ? ", and no other text, since the ids alone pass this tool's 192 KiB budget" : ""}.`
                 : undefined,
             ),
           });
@@ -3143,5 +2308,158 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
         }),
     },
   ];
-  return declarations.map((declaration) => googleTool(connection, declaration));
+  return declarations.map((declaration) => {
+    const isRead = declaration.annotations.readOnlyHint === true;
+    const isList = declaration.name.startsWith("list_");
+    const rowNames = new Set(
+      Object.keys(declaration.name === "list_layouts" ? contracts.LayoutRow.fields : contracts.CommentRow.fields),
+    );
+    const names = isList
+      ? rowNames
+      : new Set(Object.keys((declaration.output as Schema.Struct<Schema.Struct.Fields>).fields));
+    const spec = {
+      name: declaration.name,
+      description: declaration.description,
+      input: isRead
+        ? (Schema.Struct({
+            ...declaration.input.fields,
+            fields: Schema.optionalKey(
+              fieldsInput(
+                isList
+                  ? "Dot paths to keep in each item; truncation metadata is preserved."
+                  : "Dot paths to keep in the result; page and truncation metadata are preserved.",
+              ),
+            ),
+          }) as typeof declaration.input)
+        : declaration.input,
+      output: declaration.output,
+      ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
+      run: (args: Record<string, any>) =>
+        Effect.gen(function* () {
+          const problem = isRead
+            ? fieldsProblem(args["fields"], names, isList ? "a Slides list item" : "the result")
+            : undefined;
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          const current = yield* Effect.serviceOption(Operation);
+          if (Option.isNone(current) || !current.value)
+            return yield* Effect.die(new Error("Slides requires a call context."));
+          const ctx = current.value;
+          const supplied = args["cursor"];
+          const decoded =
+            typeof supplied === "string" ? yield* boundCursor.decode("slides-content-v1", {}, supplied) : undefined;
+          const result = yield* declaration.run(
+            { ...args, ...(decoded === undefined ? {} : { cursor: decoded }) },
+            ctx,
+          );
+          const normalized = normalizeResult(result, declaration.name);
+          const selected = isList
+            ? { ...normalized, items: selectNamedFields(normalized["items"], args["fields"]) }
+            : isRead
+              ? {
+                  ...asRecord(selectNamedFields(normalized, args["fields"])),
+                  ...(normalized["page"] ? { page: normalized["page"] } : {}),
+                }
+              : normalized;
+          return yield* signContinuations(selected, ctx);
+        }).pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
+          ),
+        ),
+    };
+    return isRead
+      ? read(connection, spec)
+      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
+  });
+}
+
+interface SlidesToolDeclaration {
+  readonly name: string;
+  readonly description: string;
+  readonly annotations: NonNullable<ApiTool["annotations"]>;
+  readonly input: Schema.Struct<Schema.Struct.Fields> & { readonly DecodingServices: never };
+  readonly output: Schema.Schema<any>;
+  readonly writeSteps?: Readonly<Record<string, "once">>;
+  readonly run: (args: Record<string, any>, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
+}
+
+/** Field selection narrows data while retaining every selected object's cut disclosure. */
+function selectNamedFields(value: unknown, fields: readonly string[] | undefined): unknown {
+  const restore = (source: unknown, selected: unknown): unknown => {
+    if (Array.isArray(source) && Array.isArray(selected))
+      return selected.map((item, index) => restore(source[index], item));
+    if (!source || !selected || typeof source !== "object" || typeof selected !== "object") return selected;
+    const original = asRecord(source);
+    const out = Object.fromEntries(Object.entries(selected).map(([key, item]) => [key, restore(original[key], item)]));
+    if (Array.isArray(original["truncated"])) out["truncated"] = original["truncated"];
+    return out;
+  };
+  return restore(value, selectFields(value, fields));
+}
+
+/** Size reports name the cut paths; content cursors retain their independent offsets. */
+function normalizeResult(value: unknown, tool: string): JsonRecord {
+  const allCuts = new Set<string>();
+  const normalize = (value: unknown, path = ""): unknown => {
+    if (Array.isArray(value)) return value.map((item) => normalize(item, `${path}[]`));
+    if (!value || typeof value !== "object") return value;
+    const out: JsonRecord = {};
+    const cut: string[] = [];
+    const source = asRecord(value);
+    for (const [key, item] of Object.entries(source)) {
+      if (key === "truncated" && item === true) {
+        if (source["textCursor"] || source["textLength"]) cut.push("text");
+        if (source["notesCursor"]) cut.push("notes");
+        if (!cut.length)
+          cut.push(
+            ...Object.keys(source).filter((name) => typeof source[name] === "string" && !/Id$|Cursor$/.test(name)),
+          );
+      } else if (key === "cut" && Array.isArray(item)) cut.push(...item.map(String));
+      else if (["elementsNotShown", "layoutsNotShown", "repliesNotShown", "revisionIdNotShown"].includes(key)) {
+        if (item) cut.push(key === "revisionIdNotShown" ? "revisionId" : key.replace("NotShown", "[]"));
+      } else {
+        out[key] = normalize(item, path ? `${path}.${key}` : key);
+        if (typeof item === "string" && /\[… \d+ more characters[; ]/.test(item)) cut.push(key);
+      }
+    }
+    if (cut.length) {
+      out["truncated"] = [...new Set(cut)];
+      for (const field of cut) allCuts.add(path ? `${path}.${field}` : field);
+    }
+    return out;
+  };
+  const result = asRecord(normalize(value));
+  if (allCuts.size) result["truncated"] = [...allCuts];
+  if (tool === "list_layouts" || tool === "list_comments") {
+    const noun = tool === "list_layouts" ? "layouts" : "threads";
+    result["items"] = result[noun];
+    delete result[noun];
+    if (allCuts.size) result["truncated"] = [...allCuts].map((path) => path.replace(`${noun}[]`, "items[]"));
+    if (typeof result["total"] === "number") {
+      result["page"] = { ...asRecord(result["page"]), total: result["total"] };
+      delete result["total"];
+    }
+  }
+  return result;
+}
+
+/** Cross-tool content cursors share one signed codec, bound to connection, owner and delegated caller. */
+function signContinuations(value: unknown, ctx: ConnectorContext): Effect.Effect<any, HttpFailure, CallServices> {
+  return Effect.gen(function* () {
+    if (Array.isArray(value)) {
+      const rows: unknown[] = [];
+      for (const item of value) rows.push(yield* signContinuations(item, ctx));
+      return rows;
+    }
+    if (!value || typeof value !== "object") return value;
+    const out: JsonRecord = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (key.endsWith("Cursor") && typeof item === "string") {
+        out[key] = yield* boundCursor.encode("slides-content-v1", {}, item, (json) =>
+          encodeForAgent(ctx, json, { url: true, claims: true }),
+        );
+      } else out[key] = yield* signContinuations(item, ctx);
+    }
+    return out;
+  });
 }

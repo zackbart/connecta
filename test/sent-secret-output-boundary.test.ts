@@ -378,7 +378,7 @@ describe("provider sites the boundary cannot cover", () => {
     expect(projected.tabs[0].elements[0].text).toBe(paragraph);
   });
 
-  it("INV-5: Slides raw text runs split below K with style between them leave no piece", async () => {
+  it("INV-5: Slides structural hatch text runs split below K with style between them leave no piece", async () => {
     const value = "Q8!wZ2?";
     stubGoogle(() => ({
       objectId: "s1",
@@ -397,8 +397,8 @@ describe("provider sites the boundary cannot cover", () => {
       ],
     }));
     const result = await slides("decks", await workspaceOptions()).callTool(
-      "get_page",
-      { presentationId: "p1", pageObjectId: "s1", raw: true },
+      "slides_api_read",
+      { path: "/presentations/p1/pages/s1" },
       context(value),
     );
     const text = shown(result);
@@ -664,12 +664,16 @@ describe("review round 4", () => {
   /** An array of `length` holes. */
   const holes = (length: number): unknown[] => Object.assign([], { length }) as unknown[];
   /** The claims a base64url cursor holds. */
-  const claimsOf = (cursor: string): Record<string, unknown> =>
+  const directClaimsOf = (cursor: string): Record<string, unknown> =>
     JSON.parse(
       new TextDecoder().decode(
         Uint8Array.from(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) => unit.charCodeAt(0)),
       ),
     ) as Record<string, unknown>;
+  const claimsOf = (cursor: string): Record<string, unknown> => {
+    const claims = directClaimsOf(cursor);
+    return claims["v"] === 2 && typeof claims["c"] === "string" ? directClaimsOf(claims["c"]) : claims;
+  };
 
   it.each([
     ["four", "Pq4!"],

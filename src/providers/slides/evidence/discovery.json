@@ -1,0 +1,7 @@
+{
+  "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
+  "documentation": "https://developers.google.com/workspace/slides/api/reference/rest",
+  "revision": "20261019",
+  "digest": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+  "vendored": true
+}

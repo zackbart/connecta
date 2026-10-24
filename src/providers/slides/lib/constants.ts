@@ -9,5 +9,5 @@ export const SLIDES_API_BASE_URL = "https://slides.googleapis.com/v1";
  */
 export const SLIDES_SCOPES = ["https://www.googleapis.com/auth/presentations"] as const;
 
-/** A whole presentation without styles; with raw: true, with them. */
+/** A bounded whole presentation, including structural hatch reads. */
 export const SLIDES_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
