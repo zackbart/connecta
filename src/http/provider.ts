@@ -222,7 +222,9 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     kit: {
       operations: operations(vendor),
       ...(pageSize ? { pageSize } : {}),
-      ...(hatchOptions ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts } } : {}),
+      ...(hatchOptions
+        ? { hatch: { name: hatchOptions.name, verdicts: hatchOptions.verdicts }, refusesWithheld: true }
+        : {}),
       ...(meanings ? { errors: meanings } : {}),
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     },

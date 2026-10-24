@@ -32,7 +32,13 @@
 // only a reviewed authentication-before-execution declaration proves refusal.
 
 import { Data } from "effect";
-import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
+import {
+  ConnectorCallError,
+  isConnectorCallErrorCode,
+  resendAdvice,
+  unavailableCallError,
+  type ConnectorCallErrorCode,
+} from "../errors.js";
 import { attachFailureFacts } from "../operator-record.js";
 import { vendorRefusal } from "../provider-call.js";
 import { providerFailureMessage } from "../write-outcome.js";
@@ -267,6 +273,7 @@ interface AuthBeforeExecution<F extends Facts> {
 
 /** Refuse empty evidence at connection construction (INV-11); prose is never proof by itself. */
 export function validateVendorErrors(vendor: VendorErrors<any>): void {
+  errorMeanings(vendor);
   captureErrorReviews(vendor);
   const proof = vendor.authBeforeExecution;
   if (proof && (typeof proof.evidence !== "string" || !proof.evidence.trim() || typeof proof.matches !== "function")) {
@@ -798,7 +805,7 @@ export function errorMeanings(vendor: VendorErrors<any>): ErrorMeanings | undefi
   if (declared === undefined) return undefined;
   const { unknownId, provesAbsence, conflicts } = declared;
   if (
-    typeof unknownId !== "string" ||
+    !isConnectorCallErrorCode(unknownId) ||
     typeof provesAbsence !== "boolean" ||
     (unknownId === "not_found") !== provesAbsence ||
     !Array.isArray(conflicts) ||

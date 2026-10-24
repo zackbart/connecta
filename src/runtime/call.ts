@@ -10,11 +10,22 @@ import {
   type LogicalCall,
 } from "../provider-call.js";
 import { SentSecrets, sentSecretsForRequest, registerCredentialValues } from "../sent-secrets.js";
-import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
+import type { ConnectorContext, ConnectorCredentialValues, KVStorage } from "../types.js";
 import { recordRecovery } from "../call-recovery.js";
 import { fromSignal, runEdge } from "./run.js";
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/call/Caller") {}
+
+/** The deployment's root store, used only for its durable continuation-signing key. */
+export const ContinuationStorage = Context.Reference<KVStorage | undefined>("connecta/call/ContinuationStorage", {
+  defaultValue: () => undefined,
+});
+
+/** Admitted connection and personal credential owner; never derived from tool arguments. */
+export const ContinuationBinding = Context.Reference<{
+  readonly connection: string;
+  readonly principal: string | null;
+}>("connecta/call/ContinuationBinding", { defaultValue: () => ({ connection: "", principal: null }) });
 
 /** The credentials this call may send, already registered as sent secrets when read. */
 export class Credentials extends Context.Service<

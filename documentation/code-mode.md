@@ -1021,6 +1021,15 @@ sent and records nothing: it was never an attempt (`W9`).
 
 ## Writes
 
+Kit write tools refuse whole `[redacted]` string values (including decoded
+spellings) and withheld links in argument keys/values with `invalid_args`
+before the program runs. Longer prose may mention the marker: for example,
+`{ body: "the log says [redacted]" }` is accepted. Standard hatches and typed
+kit requests refuse any marker containment in paths and queries, including on
+reads. Obtain the original value/link or omit the field when a whole value is
+withheld. Admission checks agent arguments rather than bodies later composed
+from internal reads. Legacy non-kit and remote MCP tools keep their own rules.
+
 Whether an endpoint writes belongs to deployment code. Every deployment sets
 `readOnly` for `/mcp` explicitly; construction fails without it. Each named pool inherits
 the deployment's `readOnly` unless it sets its own, in either direction. The

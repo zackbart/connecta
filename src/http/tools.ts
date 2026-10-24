@@ -18,6 +18,7 @@ import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import type { JsonSchema } from "../types.js";
 import { ConnectorCallError } from "../errors.js";
+import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import { runEdge } from "../runtime/run.js";
 import {
   recordUnauthorized,
@@ -484,9 +485,17 @@ function build<I extends Input, O extends Schema.Top>(
       const dispatches = Context.get(lease.services, Dispatches);
       const map = { classification, dispatches, withholds: connection.safety.withholdsErrors, signal: ctx.signal };
       return runEdge(
-        decode(args).pipe(
+        Effect.try({
+          try: () => {
+            if (verdict === "write" || classification === "write") refuseWithheldValues(args, spec.name);
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+          ),
           // Its message can quote the argument; as a defect, api() withholds it.
-          Effect.orDie,
+          Effect.flatMap(() => decode(args).pipe(Effect.orDie)),
           Effect.map((decoded) => (spec.inputOrder === "original" ? originalOrder(decoded, args) : decoded)),
           Effect.flatMap((decoded) =>
             Effect.gen(function* () {

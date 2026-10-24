@@ -731,7 +731,7 @@ is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: agent-token slot swaps and
 adoption, OAuth handoff ownership, single-use connect links, every downstream
-OAuth grant write and consent claim, and the result stash.
+OAuth grant write and consent claim, the result stash, and initialization of the cursor signing key.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
@@ -1416,8 +1416,10 @@ every vendor ships one reviewed table through one mechanism
    direct arguments refuse with `invalid_args`; repeated non-cyclic references
    are inspected. The scans remain linear in the supplied and decoded bytes.
    Withheld values must not be written back; obtain the original
-   link or omit the field. A placeholder outside a destination is ordinary
-   text.
+   link or omit the field. This link scanner alone treats a marker outside a
+   destination as ordinary text. Kit admission additionally refuses whole
+   marker values and any marker containment in paths and queries; longer prose
+   in body fields may mention a marker (see Contributor provider kit).
    Reviewed text paths withhold credential-bearing URL queries and fragments.
    AWS and Google signing parameter values are withheld at every host.
    `carriesWithheldLink(value)` is
@@ -1426,8 +1428,9 @@ every vendor ships one reviewed table through one mechanism
    placeholder, plain or up to four layers encoded. Admission resumes at
    each actual Markdown destination's close, including adjacent links and
    images and balanced/escaped parentheses; leading spaces, tabs, and one
-   line ending before the destination are recognized. A marker after the close is
-   ordinary text. This boundary is independent of redaction's fail-closed
+   line ending before the destination are recognized. This scanner treats a marker
+   after the close as ordinary text; kit admission applies the whole-value and
+   path/query rules described above. This boundary is independent of redaction's fail-closed
    span. Each string is scanned alone; split rich-text runs and encoded
    signing parameter names are outside this scan's threat model.
    Sent-secret redaction runs before this step, in the provider kit's parse
@@ -2084,6 +2087,45 @@ index's parameters, bodies, summaries and declared fields (optional
 `OpenApiData.fields`). Kit facts carry the vendor's declared
 `VendorErrors.meanings` and an `idempotencyKey` checked against the write
 builders at construction, which the generated Conventions state.
+
+Hatch request paths and query keys/values refuse any containment of the shared
+`[redacted]` marker, including decoded spellings. Body fields and kit write
+arguments refuse a string that equals the marker after decoding, or carries a
+withheld link (including origin-only links ending in the marker). Longer free
+text such as `the log says: Authorization: Bearer [redacted]` is accepted.
+Admission iteratively visits keys and values before the write program runs;
+it checks agent arguments, not whole bodies later composed from internal
+reads. The kit connection also checks actual typed path parameters and query
+values before transport. Legacy non-kit tools retain their link-only admission;
+arbitrary binary/base64 bytes are not decoded by this scalar rule. The kit
+sets `refusesWithheld` for the standard hatch, enabling the generated convention.
+Declared error-code facts use the closed `ConnectorCallErrorCode` set at
+construction (INV-11); classification callbacks are not run at construction.
+
+Bound cursors MAC a canonical tuple of version, admitted connection id,
+personal registry's credential-owner partition (null for shared registries),
+canonical tool/argument digest and continuation payload with HMAC-SHA-256.
+The canonical envelope spelling is required too. Hatch discovery binds a
+SHA-256 content hash of the index (operations, details, fields and routing
+metadata), alongside its declared label; the displayed revision label remains
+unchanged. Index edits invalidate old continuations even without a version
+bump. Search offsets, details pieces/chunks and surrogate boundaries are
+validated. Tampering or a changed scope/index fails `invalid_args`; changing
+only `limit` remains allowed.
+
+One random 256-bit signing key is initialized lazily with compare-and-set
+in the durable root `continuationKeys` family. Only resolved, nonextractable
+keys are cached per store; no request promise or key value is logged. Registry
+`rootStorage` preserves the explicit deployment root across personal partitions
+independently of `catalogStorage`; standalone API connectors bind their own id
+and use their supplied store. Every deployment resolves a store, so no unsigned
+fallback exists. SQL-backed cursors survive isolate/process changes; memory
+storage loses them with the store. Key-load outages or corrupt stored keys
+produce retryable `unavailable`, naming the cursor signing key without its
+value. See [cursor-key recovery](./deploying.md#recover-a-cursor-signing-key):
+after repairing/deleting a corrupt key, restart every process/isolate to clear
+cached keys. Pre-upgrade cursors require a new first page. Offline goldens
+preseed a fixed key only in their harness.
 
 The helper derives connection metadata and probe messages from
 validated options and accepts complete legacy usage guides, which providers in

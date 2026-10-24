@@ -929,14 +929,17 @@ function decodeLinkText(text: string, percent = true): string {
  * a person's text. Every destination uses the same policy regardless of host.
  */
 export function carriesWithheldLink(value: unknown): boolean {
-  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
-  const ancestors = new WeakSet<object>();
-  const inspect = (text: string): boolean => {
+  return carriesString(value, (text) => {
     for (const { cut, end } of linkSpans(text)) {
       if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
     }
     return false;
-  };
+  });
+}
+
+function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
+  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
+  const ancestors = new WeakSet<object>();
   // JSON structure is bounded by the admitted request's bytes. Visit every key
   // and value iteratively, without imposing a smaller node/depth limit. Reject
   // cycles from direct callers; repeated non-cyclic references remain valid.
@@ -950,7 +953,7 @@ export function carriesWithheldLink(value: unknown): boolean {
         continue;
       }
       if (ancestors.has(item)) {
-        throw new ConnectorCallError("invalid_args", "Not sent: URL admission cannot inspect cyclic JSON.");
+        throw new ConnectorCallError("invalid_args", "Not sent: value admission cannot inspect cyclic JSON.");
       }
       ancestors.add(item);
       pending.push({ value: item, leave: true });
@@ -965,6 +968,28 @@ export function carriesWithheldLink(value: unknown): boolean {
     }
   }
   return false;
+}
+
+/** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
+export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
+  if (
+    !carriesString(value, (text) => {
+      const decoded = decodeLinkText(text);
+      if (containment) return redactionAltered(text) || redactionAltered(decoded);
+      if (decoded === REDACTED) return true;
+      for (const candidate of [text, decoded])
+        for (const { start, end } of linkSpans(candidate))
+          if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
+      return false;
+    })
+  )
+    return;
+  throw new ConnectorCallError(
+    "invalid_args",
+    containment
+      ? `Not sent: ${title} path or query contains a withheld placeholder ([redacted]). Supply the original path/query value or omit the parameter.`
+      : `Not sent: ${title} arguments contain a whole withheld value ([redacted]) or a withheld link. Supply the original value/link or omit the field. Longer prose may mention the marker.`,
+  );
 }
 
 /** Refuse a withheld destination copied into customer data, before any dispatch. */
