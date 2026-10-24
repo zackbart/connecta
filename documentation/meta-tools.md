@@ -161,6 +161,17 @@ discovery. Both take the same arguments.
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
 
+When a non-empty query matches no catalog tool, visible standard API hatches
+may still cover it. `queryAnalysis.guidance` names up to three qualified API
+search tools in connector order and reports the omitted count; indexes have
+not been searched. For example, call `crm.crm_api_search` with the original
+query before concluding that the operation is unavailable. Browse with an
+empty query and follow every page, or search for `_api_search`, to list all API
+search tools. The pointer respects endpoint and tool visibility; a read search
+tool can discover indexed writes even when the catalog query selected
+`safety: "approvalRequired"`. Required connector guides and catalog failures
+still apply. Catalog search itself performs no API index lookup.
+
 `includeSchemas: "compact"` adds each match's input and any provider-declared
 output shape, plus `inputKeys`, `requiredInputKeys`, and `outputKeys` for
 bounded plain objects. Where the provider declared no output shape but an
@@ -748,6 +759,16 @@ The `connecta_auth` input request uses `elicitation/create`,
 from configured `publicUrl`. OAuth consent stays in the browser; a credential
 slot uses the authenticated operator UI. `authorize_connector` uses the same
 flow for explicit connect and restart. There is no legacy shim.
+
+For an operator-managed credential, an explicit `authorize_connector` returns
+`recovery: "ready"` when the declared credential fields are configured and no
+authentication failure has been observed in this request. Its message says no
+setup is needed and to proceed with the call. This is a local presence check,
+not a live credential test, and needs no operator UI. A missing, unreadable or
+mismatched slot, or a recorded auth failure in the request, retains the
+operator handoff. OAuth sign-in and restart behavior is unchanged. For example,
+if `crm` returns `ready`, call the requested `crm` operation; use recovery only
+if that call actually reports an authentication problem.
 
 The host echoes `requestState` and its bare `inputResponses.connecta_auth`
 response on the original `tools/call`. Accept re-runs the original call; it

@@ -396,6 +396,27 @@ describe("overflow() standard surface", () => {
       ),
     ).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(calls).toHaveLength(sent + 1);
+    for (const classification of ["read", "write"] as const) {
+      queue({ status: 200, text: "Unexpected acknowledgement", headers: { "content-type": "text/html" } });
+      const count = calls.length;
+      const error = await failure(
+        call(
+          connector,
+          `overflow_api_${classification}`,
+          classification === "read"
+            ? { path: `/donors/${id}` }
+            : { method: "PATCH", path: `/donors/${id}`, body: { phone: "new" } },
+          ctx,
+        ),
+      );
+      expect(error.message).toContain(`non-JSON body for a successful ${classification}.`);
+      expect(error.retryable).toBe(false);
+      if (classification === "write") {
+        expect(error.writeOutcome).toBe("unknown");
+        expect(error.message).toContain("Whether it took effect is unknown; check the target before repeating it.");
+      } else expect(error.writeOutcome).toBeUndefined();
+      expect(calls).toHaveLength(count + 1);
+    }
   });
 });
 

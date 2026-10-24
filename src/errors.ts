@@ -411,7 +411,7 @@ export class WithheldTextError extends Error {
 }
 
 /** Agent-visible recovery class for downstream credential failures. */
-export type AuthRecoveryMode = "oauth" | "operator_config" | "unavailable";
+export type AuthRecoveryMode = "ready" | "oauth" | "operator_config" | "unavailable";
 
 const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   timeout: true,

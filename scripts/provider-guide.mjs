@@ -68,7 +68,7 @@ function hatchLine(name, hatch) {
     `- **Hatch:** ${tool("search")} finds this API's operations and reads no account data, ` +
     `${tool("details")} shows one operation's contract, and ${tool("read")} calls a reviewed read.` +
     (entries.some(([, verdict]) => verdict === "write" || verdict === "destructive")
-      ? ` ${tool("write")} calls a reviewed write, and every call to it needs approval.`
+      ? ` ${tool("write")} calls a reviewed write. Use \`call_destructive_tool\` for a direct call; the host may ask the user to confirm it.`
       : "") +
     " An operation without a reviewed verdict is refused" +
     (refused.length ? `; these are refused by design: ${refused.join(", ")}.` : ".")

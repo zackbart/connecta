@@ -1,6 +1,7 @@
 import type { AuthorizationHandoff, CallErrorDetails } from "./errors.js";
 import { boundedEchoText } from "./errors.js";
 import type { RegistryView } from "./registry.js";
+import { hasAuthFailure } from "./invocation-auth.js";
 
 interface HandoffOptions {
   canManageAuth?: ((id: string) => boolean) | undefined;
@@ -49,6 +50,28 @@ export async function authorizationHandoff(
       }));
     }
     const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
+    // Presence is local evidence, not a live validation. An observed auth
+    // failure in this request still gets recovery even when the slot exists.
+    if (
+      ctx.credential &&
+      !hasAuthFailure(requestScope, connector.id) &&
+      !requests.get(requestScope)?.failures.has(connector.id)
+    ) {
+      try {
+        const values = await ctx.credential.getAll();
+        const fields = connector.credential.fields?.map((field) => field.name) ?? ["value"];
+        if (values && fields.every((field) => typeof values[field] === "string" && values[field]!.length > 0)) {
+          return {
+            connector: connector.id,
+            recovery: "ready",
+            message:
+              "The connector credential is already configured. No setup is needed; proceed with the requested call.",
+          };
+        }
+      } catch {
+        // An unreadable or declaration-mismatched slot needs operator repair.
+      }
+    }
     if (!ctx.credential || !opts.credentialHandoffUrl) {
       return {
         connector: connector.id,
@@ -113,12 +136,13 @@ interface RequestHandoffs {
   create: (connector: string) => Promise<AuthorizationHandoff>;
   enabled: boolean;
   handoffs: Map<string, Promise<AuthorizationHandoff>>;
+  failures: Set<string>;
 }
 const requests = new WeakMap<object, RequestHandoffs>();
 
 /** Retain the admitted route's factory when program utilities share its scope. */
 export function bindAuthorizationHandoffs(scope: object, create: RequestHandoffs["create"]): void {
-  if (!requests.has(scope)) requests.set(scope, { create, enabled: true, handoffs: new Map() });
+  if (!requests.has(scope)) requests.set(scope, { create, enabled: true, handoffs: new Map(), failures: new Set() });
 }
 
 export function enableAuthorizationHandoffs(scope: object, enabled: boolean): void {
@@ -129,14 +153,11 @@ export function enableAuthorizationHandoffs(scope: object, enabled: boolean): vo
 /** One promise per connector also bounds concurrent errors in a program. */
 export async function withAuthorizationHandoff<T extends CallErrorDetails>(scope: object, error: T): Promise<T> {
   const request = requests.get(scope);
-  if (
-    !request?.enabled ||
-    !error.nextAction ||
-    !("tool" in error.nextAction) ||
-    error.nextAction.tool !== "authorize_connector"
-  )
+  if (!request || !error.nextAction || !("tool" in error.nextAction) || error.nextAction.tool !== "authorize_connector")
     return error;
   const connector = error.nextAction.arguments.connector;
+  request.failures.add(connector);
+  if (!request.enabled) return error;
   let handoff = request.handoffs.get(connector);
   if (!handoff) {
     handoff = request.create(connector);

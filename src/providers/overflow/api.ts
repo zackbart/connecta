@@ -2,7 +2,7 @@
 // Public input: staging OpenAPI 3.0; exact retrieval and known upstream drift are in evidence/review.md.
 import { Effect, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
-import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
+import { Refusal, UnreadableBody, type HttpFailure, type VendorErrors } from "../../http/errors.js";
 import { Integer, isMinChars, isMaxChars } from "../../http/json-schema.js";
 import { Credentials } from "../../http/services.js";
 import { get, post, patch, del, Summary, vendor, type Vendor } from "../../http/vendor.js";
@@ -1422,6 +1422,8 @@ export const errors: VendorErrors = {
   facts: () => ({}),
   detail: ({ body, status }) => detailFor(body, status),
   unreadable: "Overflow returned a non-JSON body for a successful read.",
+  unreadableWrite:
+    "Overflow returned a non-JSON body for a successful write. Whether it took effect is unknown; check the target before repeating it.",
   meanings: { unknownId: "not_found", provesAbsence: true, conflicts: [] },
   statuses: {
     429: ({ numbers, retryAfterMs }) => ({
@@ -1455,15 +1457,7 @@ export const result = (
   answer.bodyFormat === "text" &&
   !(answer.operation.method === "GET" && answer.operation.template === "/health") &&
   !isRefund(answer.operation)
-    ? Effect.fail(
-        new Refusal({
-          error: new ConnectorCallError(
-            "connector_call_failed",
-            "Overflow returned a non-JSON body for a successful read.",
-            { retryable: false },
-          ),
-        }),
-      )
+    ? Effect.fail(new UnreadableBody())
     : Effect.succeed(body);
 
 /** Remove webhook signing secrets from bare, wrapped and list replies, never just a named projection. */

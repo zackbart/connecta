@@ -514,7 +514,7 @@ describe("remoteMcp() credential auth — through the deployment", () => {
     expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer first-secret", "Bearer second-secret"]);
   });
 
-  it("hands authorize_connector the operator UI recovery, not an OAuth URL", async () => {
+  it("configured credentials proceed and missing credentials get operator UI recovery without an OAuth URL", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,
@@ -529,9 +529,18 @@ describe("remoteMcp() credential auth — through the deployment", () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, CREDENTIAL_KEY);
     await vault.set("down", "do-not-return-this-secret", "user_1");
-    const result = await createMetaTools(makeRegistry([connector], { storage, credentialVault: vault }), BASE, {
+    const mt = createMetaTools(makeRegistry([connector], { storage, credentialVault: vault }), BASE, {
       credentialHandoffUrl: new URL("/", BASE).toString(),
-    }).authorizeConnector({ connector: "down" });
+    });
+    const ready = await mt.authorizeConnector({ connector: "down" });
+    expect(JSON.parse(required(ready.content[0]).text)).toMatchObject({
+      connector: "down",
+      recovery: "ready",
+      message: expect.stringContaining("proceed with the requested call"),
+    });
+    expect(JSON.stringify(ready)).not.toContain("do-not-return-this-secret");
+    await vault.delete("down");
+    const result = await mt.authorizeConnector({ connector: "down" });
 
     expect(result.isError).toBeFalsy();
     const text = required(result.content[0]).text;

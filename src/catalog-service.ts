@@ -42,6 +42,22 @@ const MAX_QUERY_TERM_LENGTH = 64;
  */
 const MAX_IDENTITY_CONNECTORS = 3;
 const MAX_DESCRIBE_SUGGESTIONS = 3;
+const MAX_API_SEARCH_POINTERS = 3;
+const MAX_API_SEARCH_ADDRESS_BYTES = 256;
+
+/** Recognize the visible standard family without importing provider implementations or indexes. */
+function apiSearchTools(tools: readonly ToolDef[]): ToolDef[] {
+  const names = new Set(tools.map((tool) => tool.name));
+  return tools.filter((tool) => {
+    if (!tool.name.endsWith("_api_search") || tool.classification !== "read") return false;
+    const prefix = tool.name.slice(0, -"search".length);
+    return (
+      names.has(`${prefix}details`) &&
+      names.has(`${prefix}read`) &&
+      schemaObjectKeys(tool.inputSchema)?.properties.includes("query") === true
+    );
+  });
+}
 
 // Recognized service names are query vocabulary, never a deployment inventory.
 // This includes generic hosted connections such as Notion and Mixpanel.
@@ -442,7 +458,7 @@ const catalogFailureProperties = {
   retryable: { type: "boolean" },
   retryAfterMs: { type: "integer", minimum: 0 },
   connector: { type: "string" },
-  recovery: { enum: ["oauth", "operator_config", "unavailable"] },
+  recovery: { enum: ["ready", "oauth", "operator_config", "unavailable"] },
   status: { const: "auth_required" },
   authorizationUrl: { type: "string" },
   operatorUrl: { type: "string" },
@@ -1296,6 +1312,40 @@ export class CatalogService {
           } ${namedIdentityConnectors}${
             unnamedIdentityConnectors > 0 ? ` and ${unnamedIdentityConnectors} more` : ""
           }. Scope by connector and browse with an empty query to list the tools there.${filterRecovery}`;
+    // Catalog matching cannot search operations that exist only in an API
+    // index. Point at already-loaded visible tools, in stable connector order.
+    // The caller's safety filter is not a visibility boundary: a read search
+    // tool is also how one discovers indexed writes for approvalRequired.
+    const apiSearchPointers =
+      matches.length === 0 && !isBrowse && !unsearchableQuery
+        ? catalogs.flatMap((catalog, index) =>
+            Result.isSuccess(catalog)
+              ? apiSearchTools(catalog.success).map((tool) => ({ connector: connectors[index]!.id, tool: tool.name }))
+              : [],
+          )
+        : [];
+    const namedApiSearchPointers = apiSearchPointers
+      .filter(({ connector, tool }) => encoder.encode(`${connector}.${tool}`).length <= MAX_API_SEARCH_ADDRESS_BYTES)
+      .slice(0, MAX_API_SEARCH_POINTERS);
+    const omittedApiSearchPointers = apiSearchPointers.length - namedApiSearchPointers.length;
+    const apiSearchGuidance =
+      apiSearchPointers.length === 0
+        ? undefined
+        : "No catalog tool matched this query. API operation indexes have not been searched." +
+          (namedApiSearchPointers.length
+            ? ` Search operations with ${namedApiSearchPointers.map(({ connector, tool }) => `\`${connector}.${tool}\``).join(", ")}.`
+            : "") +
+          (omittedApiSearchPointers
+            ? ` ${omittedApiSearchPointers} API search tool${omittedApiSearchPointers === 1 ? " was" : "s were"} omitted.`
+            : "") +
+          ' To list every API search tool, browse with an empty query and follow all pages, or search for "_api_search".' +
+          (scopedGuide?.required
+            ? " Fetch queryAnalysis.guide before calling."
+            : " Read the connector guide before calling when discovery requires it.") +
+          (unavailableCatalogs
+            ? ` ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable; inspect catalogErrors.`
+            : "") +
+          filterRecovery;
     // A scope that resolved to nothing is the same silence one step earlier in
     // the lookup: no connector resolved, so no catalog was even attempted, so
     // no catalog failed and the unavailable path below never fires. Name
@@ -1340,10 +1390,12 @@ export class CatalogService {
           if (unavailableCatalogs > 0) {
             return `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`;
           }
+          if (apiSearchGuidance) return apiSearchGuidance;
           return scopedGuide?.required
             ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
             : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`;
         }
+        if (apiSearchGuidance) return apiSearchGuidance;
         if (identityGuidance) return identityGuidance;
         return unavailableCatalogs === 0
           ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
@@ -1364,6 +1416,7 @@ export class CatalogService {
     // connector's contribution. Keep provenance host-only.
     for (const connector of connectors) onCatalogReference?.(connector.id);
     for (const entry of entries) onCatalogReference?.(entry.connector.id, entry.tool.name);
+    for (const pointer of apiSearchPointers) onCatalogReference?.(pointer.connector, pointer.tool);
     for (const connector of absence?.configuredConnectors ?? []) onCatalogReference?.(connector);
     // An unknown scope's guidance lists the visible roster without searching it.
     if (reportsQueryAnalysis && args.connector && !scopedConnector)
