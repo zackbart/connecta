@@ -214,3 +214,132 @@ transpilation are included; these are not a numerical SLA or production
 benchmark. Dead catalog overrides retire and decoder/schema parity is folded
 into an existing case (the earlier T7 concern). Other H items stay with their
 owning providers/shared work. No deadline or transport-settlement rule changes.
+
+## Round 1: neutral credentials and reviewed fixes
+
+Main `9e3fbbfb` (#990) is merged by `edd328e1`; both Stripe and Overflow task
+lists remain. No N11 shared approval wording changes are made. Refund discovery
+now includes gift/donation/issue/duplicate vocabulary and the guide names the
+bodyless refund path. Every reviewed refund query ranks the refund POST first,
+both unfiltered and with method POST; cancel, edit donor and charge saved card
+queries also rank their intended operations first.
+
+Refund initiation alone additionally accepts bounded plain-text string
+acknowledgements, including text/html; both JSON and text acknowledgements have
+Node/workerd golden cases. The donor list declares only its lean projection;
+phone/address remain available on the full donor lookup. Webhook reply keys
+match `/secret|signing|hmac/i` recursively, with non-webhook data unaffected.
+Scalar metadata is typed and id comes first; the documented asset enum and
+`CASH` guide spelling address the simple part of N2. Status/frequency remain
+open strings. Named-list cursors allow changing fields; hatch cursors bind
+fields. Those protocols are unchanged by the notes correction.
+
+The previous fake keys contained `overflow`. The real sent-secret engine
+withholds any eight-character run of a credential, corrupting public tool
+addresses and guide text after credentialed reads. The corrected keys contain
+no such public-text fragments; a self-test applies the real redactor to the
+entire catalog and guide and requires byte equality. The production safety
+boundary is unchanged. The observed original corruption is BEFORE Luna 3/14,
+AFTER Luna 9/14, BEFORE Sonnet 2/14 and AFTER Sonnet 5/14. It invalidates the
+previous causal attribution of the score difference to standardization.
+
+Fresh BEFORE Luna uses clean `2fa5d765`: frozen eval commit `2b95f0ee` with
+**only the two fake key values changed**, no main merge or provider fixes.
+Fresh AFTER uses clean `6cc7b82d`. CLI versions, models, effort, prompts,
+fake data, outcome grading and timeout stay as before. Both primary Luna
+arms have seven tasks × two repeats; AFTER Sonnet has one repeat per task;
+Luna has two additional AFTER refund-only repeats. At most two model trials
+run concurrently. All 37 requested new trials are retained.
+
+A new valid route exposed an additional grader defect: the recurring-join
+source check demanded `GET /donors`, rejecting correct answers that fetched
+the matching profile with `GET /donors/<id>`. Commit `c8c0bea3` accepts that
+successful donor-ID lookup from the same selected service; all answer checks
+and other requirements stay fixed. All **93 original and new trials** are
+uniformly regraded offline, with raw files untouched and separate regraded
+files/digests recorded. Exactly two statuses change: first AFTER Luna join
+and AFTER Sonnet join become passes. Original arm scores and neutral BEFORE
+scores do not change. The corrected grader's reference/no-op, source and
+evidence controls pass on both surfaces and grading modes.
+
+| Arm | Original, credential-confounded | Neutral raw score | Uniform regrade |
+| --- | ---: | ---: | ---: |
+| Luna BEFORE | 12/14 | 11/14 | 11/14 |
+| Luna AFTER, primary | 10/14 | 10/14 | 11/14 |
+| Sonnet BEFORE | 14/14 | not rerun | 14/14 original |
+| Sonnet AFTER | 14/14 | 6/7 | 7/7 |
+| Luna AFTER, extra refunds | — | 2/2 | 2/2 |
+
+Neutral paired task results, using the uniform grader:
+
+| Task | Luna BEFORE | Luna AFTER primary | Sonnet AFTER |
+| --- | ---: | ---: | ---: |
+| filtered-gifts | 1/2 | 2/2 | 1/1 |
+| recurring-join | 0/2 | 1/2 | 1/1 |
+| donor-paging | 2/2 | 2/2 | 1/1 |
+| deposit-reconciliation | 2/2 | 2/2 | 1/1 |
+| tap-hatch | 2/2 | 1/2 | 1/1 |
+| refund-once | 2/2 | 2/2 | 1/1 |
+| donor-update-recovery | 2/2 | 1/2 | 1/1 |
+
+Luna is stable overall at 11/14 in the neutral pair, with different misses.
+BEFORE manually counts eleven instead of ten gifts and misses both joins
+(one incomplete donor-page reconciliation, one omitted one-time condition).
+AFTER misses one join and one Tap lookup after incomplete discovery, and
+declares the donor-update operation unavailable without attempting the second
+edit. The operation exists and its natural edit query passes; this is a
+model discovery miss, not a transport refusal. The first join's correct
+ID-based answer is the disclosed grader correction. The first donor-edit
+recovery succeeds. Sonnet completes all seven tasks with the corrected
+source check. These small samples establish no general accuracy gain.
+
+All **four AFTER Luna refund trials pass**, including the two requested extra
+repeats, and each sends one request and verifies the result. All 37 new trials
+have **zero public-name redaction** and **zero final-answer authorization
+phrasing**. The original AFTER Luna refund deferral was the sole authorization
+phrase/declined-refund observation (1/14); it does not recur. This does not
+establish that shared N11 wording is fixed. One new AFTER donor edit is
+unperformed because of incomplete discovery, with no authorization language.
+All eleven new sent writes dispatch once, and every original/new trial has
+zero duplicate writes.
+
+The final-answer phrase count matches words beginning `approv` or
+`authoriz`/`authoris`, or `permission`; it measures wording, not host approval
+validity. Redaction incidence matches public tool/connector names or the known
+fake-purpose string in model-visible tool replies; the JSON states the exact
+pattern. Both counts are per trial. Raw and regraded files include complete
+saved evidence, not just the clipped transcript.
+
+| Neutral arm | Mean MCP calls | Mean discovery bytes | Maximum discovery bytes |
+| --- | ---: | ---: | ---: |
+| r1-before-luna | 4.93 | 31,536 | 73,719 |
+| r1-after-luna | 6.71 | 63,085 | 129,006 |
+| r1-after-sonnet | 5.14 | 20,784 | 29,700 |
+| r1-after-luna-refund-extra | 7.00 | 27,794 | 31,722 |
+
+Luna's discovery cost still increases; repeated broad catalog searches in
+failed discovery tasks dominate it. No efficiency improvement is claimed.
+Neutral BEFORE uses none of the three removed wrappers, so their removals
+still satisfy the retention guard.
+
+Round-1 checks: `check:static` and `check:build`, 700 focused Node cases in ten
+suites, all-provider deterministic Node goldens (16 cases), final Overflow
+repeat/jitter with both refund body formats, and 31 active workerd cases in
+four suites all pass. There is no native timeout in this round. Browser is
+20/20; Node 24 Eve's five tests, typecheck, build and runtime/type package smoke
+pass. Provider self-tests cover all seven tasks and the redaction guard;
+the corrected join source check's controls also pass. The full check is not run.
+
+Fix-round collected test delta is **0** (584→584 across the three affected
+case-generating suites: http-kit 83, Overflow 2, failure sweep 499). The
+original provider step-2 delta remains **−2**. Assertions and golden call
+scenarios are folded into existing Vitest rows.
+
+Standalone gzip is **354,269 B**, versus the reviewed head's 352,521 B
+(+1,748 B). The merge-only snapshot is 354,046 B, so main accounts for
++1,525 B and the review fixes for **+223 B**. Same esbuild / Node 26.12.0 /
+zlib-ng 1.3.1, with no cap changes. The existing historical baseline remains
+identified by its original measurement commit; shared Effect is paid once and
+provider entry sizes are not additive. Only Overflow golden bytes differ
+from merged main; catalog/guide/schema changes and new refund acknowledgement
+calls are explicit. Failure golden bytes do not change in this round.
