@@ -875,7 +875,11 @@ Programs and direct calls use the same invocation deadline and stages. A call's
 and request ceilings still bound the whole run. Timeout details are agent-facing;
 operator records retain only checked classifications and numeric facts.
 A dispatched write timeout becomes `write_outcome_unknown` and retains its
-deadline details even when the program catches the failure. The final program
+deadline details even when the program catches the failure. A completed call
+that reports a timeout keeps `timeout` when its complete request ledger proves
+that only auxiliary requests departed; no write outcome is unknown in that
+case. Invocation deadlines and cancellation without a complete answer retain
+the conservative write outcome. The final program
 error includes the first timeout in `details`; multiple write timeouts also
 appear in `timeouts`, bounded to ten entries.
 

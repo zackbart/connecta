@@ -419,6 +419,15 @@ export class InvocationService {
       const enrich = (error: CallErrorDetails, target: typeof activityTarget, settled: boolean): CallErrorDetails => {
         if (!target) return error;
         const recovery = recoveryState.facts;
+        const enteredWrite =
+          dispatchedToConnector &&
+          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
+        // `answered` proves the failure holds for the whole logical call,
+        // including complete request tracking. An empty ledger alone proves
+        // nothing for an untracked handler or an interrupted call.
+        const mayHaveWritten =
+          enteredWrite &&
+          !(answered && logicalCall && !logicalCall.sent.some((request) => request.dispatched && !request.auxiliary));
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
         // settled verdict is final: no enricher adds advice to it.
@@ -426,11 +435,7 @@ export class InvocationService {
           !settled && keyProtectsCall(logicalCall, recovery?.["idempotencyKey"])
             ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
             : "";
-        if (
-          isTimeoutFailure(error) &&
-          dispatchedToConnector &&
-          (resolved?.definition.classification === "write" || sentSourceWrite())
-        ) {
+        if (isTimeoutFailure(error) && mayHaveWritten) {
           const echoed = argumentEcho;
           return {
             ...error,
@@ -456,14 +461,11 @@ export class InvocationService {
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
         }
-        const enteredWrite =
-          dispatchedToConnector &&
-          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
         // A dispatched write without refusal provenance is unknown whatever
         // its connector's code says, a custom connector's included: never
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
-          enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
+          mayHaveWritten && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
         if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
@@ -547,13 +549,13 @@ export class InvocationService {
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
               recovery: recoveryMode(this.registry, target.connector, this.catalog.baseUrl),
-              ...(enteredWrite ? { reconciliationRequired: true as const, retryable: false } : {}),
+              ...(mayHaveWritten ? { reconciliationRequired: true as const, retryable: false } : {}),
               nextAction: {
                 tool: "authorize_connector" as const,
                 arguments: { connector: target.connector.id },
                 operatorHandoff: "Give the URL and instructions it returns to the operator.",
               },
-              retry: enteredWrite
+              retry: mayHaveWritten
                 ? "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
                 : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };

@@ -22,7 +22,7 @@ import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError, resendAdvice } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
@@ -87,7 +87,7 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
     expect(sent).toBe(2);
   });
 
-  it("INV-9: a tracked api() write answered 408 whose mapper throws timeout is unknown, not a refusal", async () => {
+  it("INV-9: only a complete call's auxiliary-only failure rules out a write, including a reported timeout", async () => {
     let sent = 0;
     const deadline = guardedFetch({
       provider: "Tickets",
@@ -118,6 +118,92 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
     expect(sent).toBe(1);
     expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: false, writeOutcome: "unknown" });
     expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+
+    for (const code of ["auth_required", "timeout", "unavailable"] as const) {
+      for (const ownership of ["auxiliary", "call-owned"] as const) {
+        for (const tracking of ["complete", "untracked", "wrapper", "no-ledger"] as const) {
+          const label = `${code}, ${ownership}, ${tracking}`;
+          const requests: string[] = [];
+          const request = guardedFetch({
+            provider: "Tickets",
+            baseUrl: "https://tickets.test",
+            authenticate: () => ({}),
+            maxResponseBytes: 1024,
+            fetch: async (_input, init) => {
+              requests.push(init?.method ?? "GET");
+              return Response.json({}, { status: code === "auth_required" ? 401 : code === "timeout" ? 408 : 503 });
+            },
+          });
+          const send = (ctx: ConnectorContext) =>
+            request(
+              {
+                method: ownership === "auxiliary" ? "GET" : "POST",
+                path: "/items",
+                auxiliary: ownership === "auxiliary",
+                classification: ownership === "auxiliary" ? "read" : "write",
+              },
+              ctx,
+              () => {
+                throw resendAdvice(
+                  new ConnectorCallError(code, "The request failed.", { retryable: code === "unavailable" }),
+                  "Retry this call later.",
+                );
+              },
+            );
+          let boundary = api("tickets", {
+            tools: [
+              {
+                name: "send",
+                description: "Look up, then send",
+                annotations: { readOnlyHint: false },
+                handler: (_args, ctx) => send(ctx),
+              },
+            ],
+          });
+          if (tracking !== "untracked") boundary = tracksEveryRequest(boundary);
+          const target: Connector =
+            tracking === "no-ledger"
+              ? { ...boundary, callTool: (_name, _args, ctx) => send(ctx) }
+              : tracking === "wrapper"
+                ? { ...boundary }
+                : boundary;
+          const registry = makeRegistry([target]);
+          const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+            "tickets.send",
+            {},
+            { source: "call_destructive_tool" },
+          );
+          expect(requests, label).toEqual([ownership === "auxiliary" ? "GET" : "POST"]);
+          if (served.ok) throw new Error(`expected failure: ${label}`);
+          const noWrite = ownership === "auxiliary" && tracking === "complete";
+          expect(served.answered, label).toBe(noWrite);
+          expect(classifyWriteOutcome(served), label).toBe(noWrite ? "failed" : "unknown");
+          if (noWrite) expect(served.error.writeOutcome, label).toBeUndefined();
+          else if (code !== "timeout") expect(served.error.writeOutcome, label).toBe("unknown");
+          expect(served.error.code, label).toBe(
+            code === "timeout" && !noWrite
+              ? "write_outcome_unknown"
+              : code === "unavailable" && (ownership === "call-owned" || tracking === "untracked")
+                ? "connector_call_failed"
+                : code,
+          );
+          if (code === "timeout" && !noWrite) expect(served.error.uncertainCall, label).toBeDefined();
+          else expect(served.error.uncertainCall, label).toBeUndefined();
+          if (code === "auth_required") {
+            expect(served.error.reconciliationRequired, label).toBe(noWrite ? undefined : true);
+            expect(served.error.retry, label).toBe(
+              noWrite
+                ? "Retry tickets.send after the operator completes recovery."
+                : "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+            );
+          }
+          if (code === "unavailable") {
+            expect(served.error.retryable, label).toBe(noWrite);
+            expect(served.error.message.includes("Retry this call later."), label).toBe(noWrite);
+          }
+        }
+      }
+    }
   });
 });
 
