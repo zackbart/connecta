@@ -350,6 +350,24 @@ export const breezePeoplePage: HatchPageAdapter = {
 };
 export const accountSummary = declared.find((operation) => operation.identifier === "account_summary")!;
 
+/** Breeze accepts one value per query name; REST-style repeated scalars are not a batch. */
+export const admit = (url: URL): Effect.Effect<void, Refusal> => {
+  const seen = new Set<string>();
+  for (const name of url.searchParams.keys()) {
+    if (seen.has(name))
+      return Effect.fail(
+        new Refusal({
+          error: new ConnectorCallError(
+            "invalid_args",
+            `Breeze takes one value for query parameter ${name}; serialize JSON parameters as strings.`,
+          ),
+        }),
+      );
+    seen.add(name);
+  }
+  return Effect.void;
+};
+
 export const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
   const key = values?.["value"]?.trim();

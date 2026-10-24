@@ -91,7 +91,11 @@ Hatch `query` is now a JSON object instead of name/value pairs. Values for
 `filter_json`, `fields_json`, `people_ids_json`, `role_ids_json`, `person_json`
 and `funds_json` must be serialized JSON strings. Replies change from
 `{ result }` to `{ status, data, page? }`. Non-JSON successful bodies now fail
-instead of returning text. The recorded HTML conversion/pin remains the drift
+instead of returning text. Repeated values for a query name remain refused;
+Breeze does not interpret them as a batch. Named person writes return the
+projected record when supplied, otherwise `{ ok: true }`; an acknowledgement
+no longer fabricates an update record id or fails solely for a missing
+creation record. The recorded HTML conversion/pin remains the drift
 reference; the runtime index derives from reviewed vendor declarations.
 
 Remove every `raw` argument. Retained named reads take `fields` to narrow

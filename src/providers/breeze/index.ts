@@ -5,6 +5,7 @@ import { defineApiProvider } from "../../http/provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   accountSummary,
+  admit,
   asRecord,
   authenticate,
   BreezeApi,
@@ -72,8 +73,8 @@ export const breeze = defineApiProvider<BreezeOptions>({
   skill,
   options: BREEZE_OPTIONS,
   bundle: {
-    baselineGzip: 328064,
-    note: "./providers/breeze measures 328,064 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 345800,
+    note: "./providers/breeze baseline: 345,800 B gzip standalone measured at f2f48656 in decision 0011 step 2, versus 341,226 B on main e4401cd7 (+4,574 B), Node 26.12.0 with system zlib. The standard indexed hatch, fields, bound paging and smaller curated surface replace the legacy hatches. This includes the shared Effect kit, paid once per deployment; standalone sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   displayTitle: (options) => `Breeze ChMS (${normalizeSubdomain(options.subdomain)})`,
   description: (options) =>
@@ -84,6 +85,7 @@ export const breeze = defineApiProvider<BreezeOptions>({
   headers: { Accept: "application/json" },
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   authenticate,
+  admit,
   errors,
   idempotencyKey: false,
   safety: () => breezeSafety,

@@ -57,8 +57,10 @@ The standard hatch derives its runtime index from `BreezeApi` through
 unchanged as drift evidence. The 49 operation identities remain the same;
 23 reviewed observational operations are reads and the other 26 are explicit
 write/destructive reviews, although all use GET. Unindexed paths and
-unreviewed query names are refused. The person template additionally requires
-a numeric id before authentication; literal write endpoints never inherit its
+unreviewed query names are refused. Repeated values for one query name stay
+refused before authentication; REST-style repeated scalars are not Breeze
+batches. The person template additionally requires a numeric id before
+authentication; literal write endpoints never inherit its
 read verdict. Calendar feed addresses and embed keys are always removed,
 including when `fields` requests them.
 

@@ -369,7 +369,7 @@
     {
       "type": "manual",
       "source": "https://app.breezechms.com/api",
-      "reason": "Breeze publishes HTML only. Compare its endpoint paths, query names and GET-write semantics with the reviewed JSON conversion and per-operation reference pages. The conversion pins current public bytes; archival giving routes remain a reviewed legacy exception, and the destructive hatch still admits unindexed paths. Automated digests cannot establish their semantics or continued availability.",
+      "reason": "Breeze publishes HTML only. Compare its endpoint paths, query names and GET-write semantics with the reviewed JSON conversion and per-operation reference pages. The conversion pins current public bytes; archival giving routes remain a reviewed legacy exception, and the indexed hatch admits only explicitly reviewed operations. Automated digests cannot establish their semantics or continued availability.",
       "lastVerified": "2026-10-23",
       "evidence": {
         "documentedEndpointRows": 42,

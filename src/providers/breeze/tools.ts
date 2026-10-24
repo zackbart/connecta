@@ -407,7 +407,7 @@ export function breezeTools({
         };
       }),
     );
-  const load_list_profile_fields = (args: JsonRecord) =>
+  const load_list_profile_fields = (_args: JsonRecord) =>
     projected(Result_list_profile_fields, () =>
       Effect.gen(function* () {
         const payload = yield* get("/profile", {});
@@ -636,29 +636,27 @@ export function breezeTools({
       description:
         "List event instances between two dates with instance id, series id, calendar, and times. Breeze caches this list for up to 15 minutes.",
       input: Schema.Struct({
-        ...{
-          "start": Schema.optionalKey(
-            Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-              description: "First day, YYYY-MM-DD. Defaults to the first of this month.",
-            }),
-          ),
-          "end": Schema.optionalKey(
-            Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
-              description: "Last day, YYYY-MM-DD. Defaults to the end of this month.",
-            }),
-          ),
-          "calendarId": Schema.optionalKey(
-            Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
-              description: "Only events on this calendar from breeze_api_read /events/calendars/list.",
-            }),
-          ),
-          "limit": Schema.optionalKey(
-            Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1000)).annotate({
-              description: "Instances returned, 1 to Breeze's 1000. Defaults to 100.",
-              default: 100,
-            }),
-          ),
-        },
+        "start": Schema.optionalKey(
+          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
+            description: "First day, YYYY-MM-DD. Defaults to the first of this month.",
+          }),
+        ),
+        "end": Schema.optionalKey(
+          Schema.String.check(matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")).annotate({
+            description: "Last day, YYYY-MM-DD. Defaults to the end of this month.",
+          }),
+        ),
+        "calendarId": Schema.optionalKey(
+          Schema.String.check(matches("^[0-9]+$"), isMaxChars(20)).annotate({
+            description: "Only events on this calendar from breeze_api_read /events/calendars/list.",
+          }),
+        ),
+        "limit": Schema.optionalKey(
+          Integer.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1000)).annotate({
+            description: "Instances returned, 1 to Breeze's 1000. Defaults to 100.",
+            default: 100,
+          }),
+        ),
         fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each event item.")),
       }),
       output: Schema.Struct({

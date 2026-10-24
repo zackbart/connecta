@@ -7,6 +7,47 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+## Breeze ChMS
+
+`breeze()` connects one church's Breeze account through its API.
+
+```ts
+import { breeze } from "@zackbart/connecta/providers/breeze";
+
+const church = breeze("church", {
+  purpose: "Attendance and giving reports",
+  subdomain: "church",
+});
+```
+
+**Credential.** Enter the church's API key from **Extensions → API** on the
+connection in the operator UI. The Test action reads the account summary and
+checks its reported subdomain. The key has no scopes: it reaches the whole
+account, giving included. It is sent only to the configured church hostname.
+
+**Options.** `subdomain` is one hostname label before `.breezechms.com`, never
+a URL. `readOnly: true` omits and refuses writes on every endpoint, including
+writes that Breeze sends as GET requests. `defaultPageSize` sets paged-list
+sizes from 1 to 1,000 (default 100). `list_events` separately defaults to 100
+and caps at 1,000 without a continuation. `authScope` selects shared or
+personal credential ownership. `callAdmission` sets a per-runtime budget;
+none is declared by default because Breeze publishes no rate limit.
+
+There is no `sensitiveFields` option: profile detail maps contain church-specific
+field ids, and this provider declares no configurable sensitive set. Select
+only needed fields and reduce personal records in code. Calendar feed addresses
+and embed keys are always removed from every result.
+
+**Vendor prerequisites.** An administrator must enable/access Extensions → API
+and supply the account-wide key. Giving, funds and pledges use archival routes
+that are no longer in Breeze's public reference; verify the church still
+supports them before depending on those workflows.
+
+**Limits.** Requests stay below the church's `/api` path. Responses are bounded
+to 8 MiB and standard hatch successes must be JSON. People page by offset;
+other paged named lists window a bounded vendor response locally. Events and
+account logs have vendor caps; narrow date ranges when a reply fills its limit.
+
 ## Tithe.ly
 
 `tithely()` connects one Tithe.ly giving account through its v1 REST API.
@@ -55,44 +96,3 @@ accounts with separate key pairs.
 **Limits.** Only API v1 is reachable; Tithe.ly's undocumented v2 is not. Card
 and bank tokens for one-time charges and new payment methods come only from
 Tithely.js in a donor's browser. A response is read up to 4 MiB.
-
-## Breeze ChMS
-
-`breeze()` connects one church's Breeze account through its API.
-
-```ts
-import { breeze } from "@zackbart/connecta/providers/breeze";
-
-const church = breeze("church", {
-  purpose: "Attendance and giving reports",
-  subdomain: "church",
-});
-```
-
-**Credential.** Enter the church's API key from **Extensions → API** on the
-connection in the operator UI. The Test action reads the account summary and
-checks its reported subdomain. The key has no scopes: it reaches the whole
-account, giving included. It is sent only to the configured church hostname.
-
-**Options.** `subdomain` is one hostname label before `.breezechms.com`, never
-a URL. `readOnly: true` omits and refuses writes on every endpoint, including
-writes that Breeze sends as GET requests. `defaultPageSize` sets paged-list
-sizes from 1 to 1,000 (default 100). `list_events` separately defaults to 100
-and caps at 1,000 without a continuation. `authScope` selects shared or
-personal credential ownership. `callAdmission` sets a per-runtime budget;
-none is declared by default because Breeze publishes no rate limit.
-
-There is no `sensitiveFields` option: profile detail maps contain church-specific
-field ids, and this provider declares no configurable sensitive set. Select
-only needed fields and reduce personal records in code. Calendar feed addresses
-and embed keys are always removed from every result.
-
-**Vendor prerequisites.** An administrator must enable/access Extensions → API
-and supply the account-wide key. Giving, funds and pledges use archival routes
-that are no longer in Breeze's public reference; verify the church still
-supports them before depending on those workflows.
-
-**Limits.** Requests stay below the church's `/api` path. Responses are bounded
-to 8 MiB and standard hatch successes must be JSON. People page by offset;
-other paged named lists window a bounded vendor response locally. Events and
-account logs have vendor caps; narrow date ranges when a reply fills its limit.

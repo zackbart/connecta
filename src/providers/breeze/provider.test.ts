@@ -181,6 +181,7 @@ it("INV-1 INV-4 INV-9: routes reviewed GET verdicts, fields and bound pages befo
     { _method: "DELETE" },
     { filter_json: { tag_contains: "y_1" } },
     { details: "[redacted]" },
+    { details: [0, 1] },
   ])
     expect((await failure(call(connector, "breeze_api_read", { path: "/people", query }, ctx))).code).toBe(
       "invalid_args",
