@@ -1,0 +1,49 @@
+{
+  "format": 5,
+  "digest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+  "options": {},
+  "candidates": {
+    "POST /documents": {
+      "fields": [
+        "body.content[].sectionBreak.sectionStyle.marginHeader",
+        "documentStyle.marginHeader",
+        "footers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "footnotes{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "headers",
+        "headers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "suggestedDocumentStyleChanges{}.documentStyle.marginHeader",
+        "tabs[].documentTab.body.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.documentStyle.marginHeader",
+        "tabs[].documentTab.footers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.footnotes{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.headers",
+        "tabs[].documentTab.headers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.suggestedDocumentStyleChanges{}.documentStyle.marginHeader"
+      ],
+      "named": false
+    },
+    "GET /documents/{documentId}": {
+      "fields": [
+        "body.content[].sectionBreak.sectionStyle.marginHeader",
+        "documentStyle.marginHeader",
+        "footers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "footnotes{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "headers",
+        "headers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "suggestedDocumentStyleChanges{}.documentStyle.marginHeader",
+        "tabs[].documentTab.body.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.documentStyle.marginHeader",
+        "tabs[].documentTab.footers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.footnotes{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.headers",
+        "tabs[].documentTab.headers{}.content[].sectionBreak.sectionStyle.marginHeader",
+        "tabs[].documentTab.suggestedDocumentStyleChanges{}.documentStyle.marginHeader"
+      ],
+      "named": false
+    },
+    "POST /documents/{documentId}:batchUpdate": {
+      "fields": ["replies[].createHeader"],
+      "named": false
+    }
+  }
+}

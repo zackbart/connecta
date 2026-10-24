@@ -513,3 +513,76 @@ call per second, individual advanced searches one per five seconds, and
 category schedule lists one per two seconds. Override `callAdmission` to match
 shared usage, and respect the vendor's rate-limit wait. Replies are bounded
 at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.
+
+## Google Docs
+
+```ts
+import { docs } from "@zackbart/connecta/providers/docs";
+
+const documents = docs("documents", {
+  purpose: "Team notes and drafts",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+Enable Google Docs API in the service account's Google Cloud project. Create
+a service account and JSON key; no project IAM role grants document access.
+A Workspace super administrator must authorize its numeric client ID for
+`https://www.googleapis.com/auth/documents` under Admin console → Security →
+Access and data control → API controls → Manage Domain Wide Delegation.
+Add this scope to the same entry as other Workspace products; changes can take
+24 hours. Store the key as a deployment secret. If key creation is blocked,
+an organization administrator must resolve the key-creation policy.
+
+Configure inbound auth and map admitted identities to Workspace addresses.
+Each call acts as that user and reaches documents shared with them in Drive.
+An unmapped caller is refused. A fixed `subject: "alice@example.com"` instead
+shares one Workspace account across callers. See [Workspace delegation](./auth.md#pool-owners-for-google-workspace).
+`readOnly: true` omits and refuses all writes. Optional `instructions` append
+connection-specific guidance; `baseUrl` is an operator-controlled API root.
+There is no configurable sensitive-field set: document text is requested data.
+
+Six named tools retain rendered reads and common edits. Four `docs_api_*`
+hatches discover all three pinned methods and expose JSON reads and writes.
+`docs_api_search` searches operations; use Drive to find document data.
+Batch hatch writes require `writeControl.requiredRevisionId`, 1–100 requests,
+and exactly one supported generally available request kind each. Preview
+comment and suggestion writes are refused. All hatch writes are destructive.
+The named create/append/insert catalog entries now omit the previous explicit
+`destructiveHint:false`; approval routing is unchanged. Writes
+are never replayed and take no idempotency key. A named create with text uses
+two explicit steps: one create POST and at most one initial-text batch POST.
+
+`get_document` supports `fields`, a shared text budget (20,000 characters by
+default, at most 1,000,000), and 64 KiB pages of UTF-16 index rows. Keep the
+same read arguments when passing its signed content cursor. Changed content
+requires a fresh read. Docs has no vendor list pagination. `truncated` lists
+size cuts; `notRendered` describes semantic omissions. Direct rendering
+results can reach 4 MiB when `maxChars` is explicit; programs carry at most
+256 KiB per result. Read one tab or reduce `maxChars` to fit.
+
+For complete styles or named ranges, use a hatch read:
+
+```ts
+const reply = await connecta.call("documents.docs_api_read", {
+  path: "/documents/doc_123",
+  query: { includeTabsContent: true },
+  fields: ["documentId", "revisionId", "tabs"],
+});
+// The guest delivery wraps the hatch value; vendor data is under data.data.
+const document = reply.data.data;
+```
+
+With `includeTabsContent:true`, named ranges are in
+`document.tabs[].documentTab.namedRanges`; select `tabs` as above to read them.
+`fields` selects vendor-body paths. Hatch values are `{status,data}` inside
+Connecta's [guest call delivery](./code-mode.md). Caller headers,
+credential query arguments, alternate origins and media transport are refused.
+A 404 cannot distinguish missing from inaccessible documents and reports
+`connector_call_failed`; only reviewed revision-precondition facts report
+`conflict`. Token and JSON response handling use the same safety boundary as
+named tools.
+
+Google Docs image `contentUri` values are temporary access capabilities and are
+withheld in all responses. Authored links and image `sourceUri` remain available.

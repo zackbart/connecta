@@ -1,25 +1,23 @@
-// Google Docs' tools and projections on the provider kit (C.7 step 1).
-// Catalogs, rendering, index cursors and recovery advice keep their legacy bytes.
-import { Effect } from "effect";
+// Google Docs named projections and bounded writes over the provider kit.
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
+import { canonicalJson } from "../../canonical-json.js";
 import { ConnectorCallError } from "../../errors.js";
-import type { HttpFailure } from "../../http/errors.js";
-import type { CallServices } from "../../http/services.js";
+import { Refusal, type HttpFailure } from "../../http/errors.js";
+import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { Recovery, type CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
 import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
+import type { ConnectorContext } from "../../types.js";
 import { providerCallFailure } from "../../write-outcome.js";
-import {
-  googleClient,
-  googleFailureMessage,
-  googleOutcomeOf,
-  googleTool,
-  type GoogleClient,
-  type GoogleRequest,
-  type GoogleToolDeclaration,
-} from "../_shared/google/kit.js";
+import { googleClient, googleFailureMessage, googleOutcomeOf, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { DOCS } from "./api.js";
+import { DOCS_INDEX } from "./lib/discovery.js";
+import { Operation } from "../../runtime/call.js";
+import { boundCursor } from "../../http/paging.js";
+import { read, write } from "../../http/tools.js";
+import * as schemas from "./lib/schemas.js";
 
 /**
  * Rendered characters kept across a document's tabs by default: at most about
@@ -28,18 +26,6 @@ import { DOCS } from "./api.js";
  */
 const DEFAULT_MAX_CHARS = 20_000;
 /**
- * Connecta's ceiling on one rendering; Google caps a document near 1.02M
- * characters. At most about 3 MB of JSON, inside what a direct call can stash
- * and page with connecta.result; past 256 KiB it cannot cross into execute_code.
- */
-const MAX_CHARS = 1_000_000;
-/**
- * Connecta's ceiling on a raw document, in UTF-8 bytes of JSON: styles ride
- * on every run, so this is a long document's whole structure, and past it one
- * tab at a time is the readable answer.
- */
-const MAX_RAW_BYTES = 4 * 1024 * 1024;
-/**
  * Serialized bytes of index rows in one page. Rows are a few hundred bytes at
  * most, so a page is hundreds of them; a long document pages by cursor rather
  * than returning more than the execute_code bridge carries.
@@ -47,65 +33,6 @@ const MAX_RAW_BYTES = 4 * 1024 * 1024;
 const ELEMENT_PAGE_BYTES = 64 * 1024;
 /** Characters of each index row's text preview. */
 const PREVIEW_CHARS = 80;
-/** One text argument; Google caps a whole document near 1.02M characters. */
-const MAX_TEXT_CHARS = 1_000_000;
-/** Raw requests in one batch_update_document call; connecta's cap. */
-const MAX_REQUESTS = 100;
-
-/**
- * The Request kinds batch_update_document forwards: every generally available
- * member of the Docs API's `Request` union. The Developer Preview comment and
- * suggestion kinds are left out — they answer only for enrolled projects, and
- * comments are Drive's surface. A kind is checked, its contents are not:
- * Google owns their shape, and a drift check reports a new or retired kind.
- */
-const REQUEST_KINDS = [
-  "addDocumentTab",
-  "createDropdownDefinition",
-  "createFooter",
-  "createFootnote",
-  "createHeader",
-  "createNamedRange",
-  "createParagraphBullets",
-  "deleteContentRange",
-  "deleteDropdownDefinition",
-  "deleteFooter",
-  "deleteHeader",
-  "deleteNamedRange",
-  "deleteParagraphBullets",
-  "deletePositionedObject",
-  "deleteTab",
-  "deleteTableColumn",
-  "deleteTableRow",
-  "insertDate",
-  "insertDropdown",
-  "insertInlineImage",
-  "insertPageBreak",
-  "insertPerson",
-  "insertRichLink",
-  "insertSectionBreak",
-  "insertTable",
-  "insertTableColumn",
-  "insertTableRow",
-  "insertText",
-  "mergeTableCells",
-  "pinTableHeaderRows",
-  "replaceAllText",
-  "replaceImage",
-  "replaceNamedRangeContent",
-  "unmergeTableCells",
-  "updateDocumentStyle",
-  "updateDocumentTabProperties",
-  "updateDropdownDefinitionProperties",
-  "updateDropdownProperties",
-  "updateNamedStyle",
-  "updateParagraphStyle",
-  "updateSectionStyle",
-  "updateTableCellStyle",
-  "updateTableColumnProperties",
-  "updateTableRowStyle",
-  "updateTextStyle",
-] as const;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
@@ -183,6 +110,7 @@ interface IndexRow {
   row?: number | undefined;
   column?: number | undefined;
   text?: string | undefined;
+  previewCut?: boolean | undefined;
 }
 
 interface RenderState {
@@ -303,23 +231,6 @@ function elementText(element: JsonRecord, state: RenderState): { text: string; u
   return { text: "" };
 }
 
-/** Check the source lane across paragraphs before closing newlines disappear.
- * This also protects raw copies; each affected run keeps its link and style. */
-function protectDocumentText(ctx: ConnectorContext, document: JsonRecord): void {
-  const runs: JsonRecord[] = [];
-  const visit = (value: unknown): void => {
-    if (!value || typeof value !== "object") return;
-    const run = asRecord(asRecord(value)["textRun"]);
-    if (typeof run["content"] === "string") runs.push(run);
-    for (const child of Object.values(value)) visit(child);
-  };
-  visit(document);
-  const safe = requestSentSecrets(ctx).parts(runs.map((run) => run["content"]));
-  runs.forEach((run, index) => {
-    run["content"] = safe[index];
-  });
-}
-
 /** Docs' soft line break (Shift+Enter) inside one paragraph. */
 const VERTICAL_TAB = String.fromCharCode(0x0b);
 
@@ -355,10 +266,13 @@ function safeCut(value: string, max: number): number {
   return max > 0 && code >= 0xd800 && code <= 0xdbff ? max - 1 : max;
 }
 
-function preview(ctx: ConnectorContext, value: string): string {
+function preview(ctx: ConnectorContext, value: string): { text: string; cut: boolean } {
   // Collapsing whitespace can join a value that spans lines, so the flat text is checked too.
   const flat = redactBeforeCut(ctx, redactBeforeCut(ctx, value).replace(/\s+/g, " ").trim());
-  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
+  return {
+    text: flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat,
+    cut: flat.length > PREVIEW_CHARS,
+  };
 }
 
 /** Render structural elements as markdown-ish lines, collecting index rows. */
@@ -380,6 +294,7 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
         prefix = HEADINGS[style]!;
       }
       lines.push(`${prefix}${body}`);
+      const peek = preview(state.ctx, body);
       state.rows?.push(
         compact({
           type: "paragraph" as const,
@@ -388,7 +303,8 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
           style: style && style !== "NORMAL_TEXT" ? style : undefined,
           row: cell?.row,
           column: cell?.column,
-          text: preview(state.ctx, body),
+          text: peek.text,
+          previewCut: peek.cut || undefined,
         }),
       );
     } else if (element["table"]) {
@@ -513,50 +429,6 @@ function capped(ctx: ConnectorContext, whole: string, max: number): { text: stri
   };
 }
 
-/** One tab as Google sent it, child tabs included, found at any depth. */
-function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undefined {
-  for (const value of asArray(tabs)) {
-    const tab = asRecord(value);
-    if (asRecord(tab["tabProperties"])["tabId"] === tabId) return tab;
-    if (depth < 20) {
-      const found = findRawTab(tab["childTabs"], tabId, depth + 1);
-      if (found) return found;
-    }
-  }
-  return undefined;
-}
-
-/**
- * The untouched resource, narrowed to one tab when asked, under a ceiling on
- * the whole result as delivered — envelope included — that names its way out
- * rather than handing back a partial tree.
- */
-function rawDocument(
-  ctx: ConnectorContext,
-  document: JsonRecord,
-  documentId: string,
-  tabId: string | undefined,
-): JsonRecord {
-  const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
-  const dropped: string[] = [];
-  const result = compact({
-    documentId,
-    title: boundedTitle(ctx, document["title"]),
-    revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
-    url: documentUrl(documentId),
-    dropped: droppedField(dropped),
-    raw: resource,
-  });
-  const bytes = jsonBytes(result);
-  if (bytes > MAX_RAW_BYTES) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      `The raw document${tabId === undefined ? "" : ` tab ${tabId}`} is ${bytes} bytes as a result, past connecta's ${MAX_RAW_BYTES}-byte raw ceiling. ${tabId === undefined ? "Pass tabId for one tab, or" : "Read"} the rendering instead.`,
-    );
-  }
-  return result;
-}
-
 const SUGGESTION_MODES: Readonly<Record<string, string>> = {
   inline: "SUGGESTIONS_INLINE",
   accepted: "PREVIEW_SUGGESTIONS_ACCEPTED",
@@ -632,40 +504,6 @@ function writeOutcome(error: unknown): WriteOutcome {
   }
 }
 
-/** The words a write's uncertain outcomes are told in, per tool. */
-interface WriteWords {
-  /** Sent, and no answer came back, or Google answered a 5xx. */
-  unknown: (detail: string) => string;
-  /** Google answered 2xx and the reply could not be used. */
-  applied: string;
-}
-
-/** Send one write through the kit; keep the tool's recovery advice for every uncertain outcome. */
-function sendWrite(
-  connection: Connection,
-  client: GoogleClient,
-  ctx: ConnectorContext,
-  request: GoogleRequest,
-  revisionGuarded: boolean,
-  words: WriteWords,
-  step?: string,
-): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
-  return client
-    .json(request, { ...(revisionGuarded ? { revisionGuarded: true } : {}), ...(step ? { step } : {}) })
-    .pipe(
-      Effect.map(asRecord),
-      Effect.catch((failure) => {
-        // A cancelled call is the caller's own decision; its reason stays whole.
-        if (ctx.signal?.aborted) return Effect.fail(failure);
-        const outcome = writeOutcome(failure);
-        if (outcome === "not-sent" || outcome === "refused") return Effect.fail(failure);
-        return googleFailureMessage(connection, failure, (detail) =>
-          outcome === "probably-applied" ? words.applied : words.unknown(detail),
-        );
-      }),
-    );
-}
-
 /**
  * One `documents.batchUpdate`, atomic on Google's side: every request applies
  * or none does. A write naming `requiredRevisionId` is sent revision-guarded,
@@ -676,37 +514,23 @@ function sendWrite(
  * for what every other failure means.
  */
 function batchUpdate(
-  connection: Connection,
   client: GoogleClient,
-  ctx: ConnectorContext,
   documentId: string,
   requests: unknown[],
   requiredRevisionId: string | undefined,
   step?: string,
 ): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
-  return sendWrite(
-    connection,
-    client,
-    ctx,
-    {
-      method: "POST",
-      path: batchPath(documentId),
-      body: compact({
-        requests,
-        writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
-      }),
-    },
-    requiredRevisionId !== undefined,
-    {
-      // A requiredRevisionId is a precondition, not an idempotency key the
-      // vendor honors, so it grants no repeat (INV-9).
-      unknown: (detail) =>
-        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.`,
-      applied:
-        "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
-    },
-    step,
-  );
+  return client
+    .json(
+      {
+        method: "POST",
+        path: batchPath(documentId),
+        template: "/documents/{documentId}:batchUpdate",
+        body: compact({ requests, writeControl: requiredRevisionId ? { requiredRevisionId } : undefined }),
+      },
+      { ...(requiredRevisionId !== undefined ? { revisionGuarded: true } : {}), ...(step ? { step } : {}) },
+    )
+    .pipe(Effect.map(asRecord));
 }
 
 /** Characters of one projected reply string: an id or a short value, never prose. */
@@ -715,8 +539,8 @@ const REPLY_STRING_CHARS = 512;
 /**
  * One batchUpdate reply kept to what a later request needs: its kind, and
  * the ids and counts beneath it to two levels. A string too long to be an id
- * is dropped whole, never cut into a different one; `repliesTruncated` says
- * the replies were projected. Most replies are `{}` or one id; this only
+ * is dropped whole, never cut into a different one; `truncated` names
+ * the projected replies. Most replies are `{}` or one id; this only
  * bites on the rare kind that echoes more.
  */
 function projectReply(value: JsonRecord, depth = 0): JsonRecord {
@@ -740,10 +564,10 @@ function projectReply(value: JsonRecord, depth = 0): JsonRecord {
  * answers `requests[i]`. A cut result still says the batch applied — it did.
  */
 function boundedReplies(saved: JsonRecord, replies: JsonRecord[]): JsonRecord {
-  const whole = { ...saved, replies, replyCount: replies.length };
+  const whole = { ...saved, replies };
   if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
   const projected = replies.map((reply) => projectReply(reply));
-  const slim = { ...saved, replies: projected, replyCount: replies.length, repliesTruncated: true };
+  const slim = { ...saved, replies: projected, truncated: ["replies[]"] };
   const notice = (shown: number) =>
     `The batch applied. ${shown === replies.length ? "Every" : `${shown} of ${replies.length}`} replies ${shown === replies.length ? "is" : "are"} shown, projected to ids and counts, to stay inside the result budget. Do not repeat it; re-read the document with get_document for anything else.`;
   if (jsonBytes({ ...slim, notice: notice(replies.length) }) <= RESULT_BUDGET_BYTES) {
@@ -768,142 +592,10 @@ function savedEdit(documentId: string, reply: JsonRecord): JsonRecord {
   return compact({ documentId, revisionId: revisionAfter(reply, dropped), dropped: droppedField(dropped) });
 }
 
-// --- Schemas -----------------------------------------------------------------------
-
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-
-const DOCUMENT_ID: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 256,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description: "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc.",
-};
-
-const TAB_ID_PATTERN = "^[A-Za-z0-9._-]+$";
-
-function tabIdProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 128, pattern: TAB_ID_PATTERN, description };
-}
-
-const REVISION_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 512,
-  pattern: "^\\S+$",
-  description:
-    "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied.",
-};
-
-const TEXT_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: MAX_TEXT_CHARS,
-  description: "Plain text; \\n starts a new paragraph. Google caps a document near 1.02 million characters.",
-};
-
-/**
- * Google's Document resource: every field Docs v1's Discovery document
- * declares on it. With `includeTabsContent` the tabs carry the content and
- * the legacy top-level content fields stay empty, but each is declared so
- * nothing a raw read can emit goes undeclared. Nothing is required, because
- * ProtoJSON omits every empty field.
- */
-const RAW_OUTPUT: JsonSchema = {
-  type: "object",
-  properties: {
-    documentId: { type: "string" },
-    title: { type: "string" },
-    revisionId: { type: "string" },
-    suggestionsViewMode: { type: "string" },
-    commentsViewMode: { type: "string" },
-    body: { type: "object" },
-    headers: { type: "object" },
-    footers: { type: "object" },
-    footnotes: { type: "object" },
-    documentStyle: { type: "object" },
-    namedStyles: { type: "object" },
-    lists: { type: "object" },
-    namedRanges: { type: "object" },
-    inlineObjects: { type: "object" },
-    positionedObjects: { type: "object" },
-    suggestedDocumentStyleChanges: { type: "object" },
-    suggestedNamedStylesChanges: { type: "object" },
-    comments: { type: "array", items: { type: "object" } },
-    suggestions: { type: "array", items: { type: "object" } },
-    tabs: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          tabProperties: { type: "object" },
-          documentTab: { type: "object" },
-          childTabs: { type: "array", items: { type: "object" } },
-        },
-      },
-    },
-  },
-};
-
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-
-/** Names of ids Google sent that were dropped rather than cut; see `keptId`. */
-const DROPPED_OUTPUT: JsonSchema = { type: "array", items: { type: "string" } };
-
-const EDIT_OUTPUT: JsonSchema = {
-  type: "object",
-  properties: {
-    documentId: { type: "string" },
-    revisionId: { type: "string" },
-    dropped: DROPPED_OUTPUT,
-    notice: { type: "string" },
-  },
-  required: ["documentId"],
-};
-
-const TAB_OUTPUT: JsonSchema = {
-  type: "object",
-  properties: {
-    tabId: { type: "string" },
-    title: { type: "string" },
-    parentTabId: { type: "string" },
-    nestingLevel: { type: "integer" },
-    endIndex: { type: "integer" },
-    text: { type: "string" },
-    textTruncated: { type: "boolean" },
-    notRendered: { type: "array", items: { type: "string", enum: [...NOT_RENDERED] } },
-    elements: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          type: { type: "string", enum: ["paragraph", "table", "table_of_contents"] },
-          startIndex: { type: "integer" },
-          endIndex: { type: "integer" },
-          style: { type: "string" },
-          row: { type: "integer" },
-          column: { type: "integer" },
-          text: { type: "string" },
-        },
-      },
-    },
-  },
-  required: ["text", "textTruncated"],
-};
-
 // --- Tools -------------------------------------------------------------------------
 
 /**
- * Connecta's ceiling on a rendered or raw read: inside the 8 MiB stash a
+ * Connecta's ceiling on a rendered read: inside the 8 MiB stash a
  * direct call pages from, with room for its envelope.
  */
 const MAX_READ_RESULT_BYTES = 4 * 1024 * 1024;
@@ -917,8 +609,8 @@ const MAX_READ_RESULT_BYTES = 4 * 1024 * 1024;
 function delivered(name: string, args: JsonRecord, result: unknown): unknown {
   const read = name === "get_document";
   // A default read must also cross the execute_code bridge; an explicit
-  // maxChars or raw read is for a direct call, which the stash pages.
-  const explicit = read && (args["maxChars"] !== undefined || args["raw"] === true);
+  // maxChars is for a direct call, which the stash pages.
+  const explicit = read && args["maxChars"] !== undefined;
   const limit = explicit ? MAX_READ_RESULT_BYTES : RESULT_BUDGET_BYTES;
   const bytes = jsonBytes(result);
   if (bytes <= limit) return result;
@@ -930,13 +622,13 @@ function delivered(name: string, args: JsonRecord, result: unknown): unknown {
   }
   const full = asRecord(result);
   const small: JsonRecord = {};
-  for (const key of ["documentId", "url", "occurrencesChanged", "replyCount"]) {
+  for (const key of ["documentId", "url", "occurrencesChanged"]) {
     const value = full[key];
     if (typeof value === "number" || (typeof value === "string" && value.length <= 1024)) small[key] = value;
   }
   if (name === "batch_update_document") {
     small["replies"] = [];
-    small["repliesTruncated"] = true;
+    small["truncated"] = ["replies[]"];
   }
   small["notice"] =
     `Google Docs applied this ${name === "create_document" ? "create" : "edit"}, but its full result (${bytes} bytes) is too large to return. Do not repeat it; re-read the document with get_document.`;
@@ -944,16 +636,55 @@ function delivered(name: string, args: JsonRecord, result: unknown): unknown {
 }
 
 export function docsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, DOCS.provider);
-  return toolDefinitions(connection, client).map((tool) =>
-    googleTool(connection, {
-      ...tool,
-      run: (args, ctx) => Effect.map(tool.run(args, ctx), (result) => delivered(tool.name, args, result)),
-    }),
-  );
+  const client = googleClient(connection, DOCS.provider, { standard: true, index: DOCS_INDEX });
+  return toolDefinitions(connection, client).map((tool) => {
+    const isRead = tool.annotations.readOnlyHint === true;
+    const spec = {
+      name: tool.name,
+      description: tool.description,
+      input: tool.input,
+      output: tool.output,
+      ...(tool.writeSteps ? { writeSteps: tool.writeSteps } : {}),
+      run: (args: JsonRecord) =>
+        Effect.gen(function* () {
+          const fields = isRead ? (args["fields"] as readonly string[] | undefined) : undefined;
+          const problem = isRead
+            ? fieldsProblem(fields, new Set(Object.keys(schemas.GET_DOCUMENT_OUTPUT.fields)), "the result")
+            : undefined;
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          const operation = yield* Effect.serviceOption(Operation);
+          if (Option.isNone(operation) || !operation.value)
+            return yield* Effect.die(new Error("Docs needs a call context."));
+          const result = delivered(tool.name, args, yield* tool.run(args, operation.value));
+          if (!isRead) return result;
+          const record = asRecord(result);
+          return {
+            ...asRecord(selectFields(record, fields)),
+            ...(record["page"] ? { page: record["page"] } : {}),
+            ...(record["truncated"] ? { truncated: record["truncated"] } : {}),
+          };
+        }).pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
+          ),
+        ),
+    };
+    return isRead
+      ? read(connection, spec)
+      : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+  });
 }
 
-function toolDefinitions(connection: Connection, client: GoogleClient): GoogleToolDeclaration[] {
+interface DocsTool {
+  name: string;
+  description: string;
+  input: Schema.Codec<JsonRecord>;
+  output: Schema.Top;
+  annotations: { readOnlyHint: boolean; destructiveHint?: boolean };
+  writeSteps?: Readonly<Record<string, "once">>;
+  run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
+}
+function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool[] {
   const revision = (args: JsonRecord): string | undefined =>
     typeof args["requiredRevisionId"] === "string" ? args["requiredRevisionId"] : undefined;
 
@@ -963,70 +694,31 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
       description:
         "Get one Google Doc as readable markdown-ish text per tab, with its title and revisionId; withIndexes adds the start/end indexes edits target. Cannot search or list documents.",
       annotations: { readOnlyHint: true },
-      inputSchema: input(
-        {
-          documentId: DOCUMENT_ID,
-          tabId: tabIdProperty("Render only this tab (from a previous get_document); omit for every tab."),
-          maxChars: {
-            type: "integer",
-            minimum: 0,
-            maximum: MAX_CHARS,
-            description: `Characters of text kept across all rendered tabs, 0 to ${MAX_CHARS}; defaults to ${DEFAULT_MAX_CHARS}. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.`,
-          },
-          withIndexes: {
-            type: "boolean",
-            description: `Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, ${ELEMENT_PAGE_BYTES / 1024} KiB per page (connecta's cap); page with cursor.`,
-          },
-          cursor: {
-            type: "string",
-            minLength: 3,
-            maxLength: 12,
-            pattern: "^e:[0-9]{1,9}$",
-            description:
-              "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again.",
-          },
-          raw: {
-            type: "boolean",
-            description: `Return Google's document resource (every style, header, footer, named range, list and segment id) for the tabs instead of the rendering; not with maxChars or withIndexes. Connecta caps it at ${MAX_RAW_BYTES} bytes.`,
-          },
-          suggestions: {
-            type: "string",
-            enum: ["inline", "accepted", "rejected"],
-            description:
-              "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
-          },
-        },
-        ["documentId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          documentId: { type: "string" },
-          title: { type: "string" },
-          revisionId: { type: "string" },
-          url: { type: "string" },
-          tabs: { type: "array", items: TAB_OUTPUT },
-          page: PAGE_SCHEMA,
-          dropped: DROPPED_OUTPUT,
-          raw: RAW_OUTPUT,
-        },
-        required: ["documentId"],
-      },
+      input: schemas.GET_DOCUMENT_INPUT,
+      output: schemas.GET_DOCUMENT_OUTPUT,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const documentId = String(args["documentId"]);
-          const raw = args["raw"] === true;
-          if (
-            raw &&
-            (args["maxChars"] !== undefined || args["withIndexes"] !== undefined || args["cursor"] !== undefined)
-          ) {
-            throw new ConnectorCallError(
-              "invalid_args",
-              "raw returns Google's resource untouched, so maxChars, withIndexes, and cursor do not apply; send raw alone, or read the rendering.",
-            );
-          }
+
           if (args["cursor"] !== undefined && args["withIndexes"] !== true) {
             throw new ConnectorCallError("invalid_args", "cursor pages index rows; send it with withIndexes: true.");
+          }
+          const binding = { ...args, fields: undefined };
+          let from = 0;
+          let expectedSnapshot: string | undefined;
+          if (typeof args["cursor"] === "string") {
+            const payload = yield* boundCursor.decode("get_document", binding, args["cursor"]);
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(payload);
+            } catch {
+              throw new ConnectorCallError("invalid_args", "Invalid document cursor; start a fresh indexed read.");
+            }
+            const claim = asRecord(parsed);
+            if (typeof claim["snapshot"] !== "string" || !Number.isSafeInteger(claim["from"]) || claim["from"] <= 0)
+              throw new ConnectorCallError("invalid_args", "Invalid document cursor position.");
+            from = claim["from"];
+            expectedSnapshot = claim["snapshot"];
           }
           const suggestions =
             typeof args["suggestions"] === "string" ? SUGGESTION_MODES[args["suggestions"]] : undefined;
@@ -1034,10 +726,10 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
             yield* client.json({
               method: "GET",
               path: `/documents/${encodeURIComponent(documentId)}`,
+              template: "/documents/{documentId}",
               query: { includeTabsContent: true, suggestionsViewMode: suggestions },
             }),
           );
-          protectDocumentText(ctx, document);
           let tabs = flattenTabs(document);
           const wanted = typeof args["tabId"] === "string" ? args["tabId"] : undefined;
           if (wanted !== undefined) {
@@ -1052,16 +744,29 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
               );
             }
           }
-          if (raw) return rawDocument(ctx, document, documentId, wanted);
+
           const withIndexes = args["withIndexes"] === true;
           let budget = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MAX_CHARS;
           // Index rows form one sequence across tabs; a page is the rows from
           // the cursor's ordinal until the byte budget is spent.
-          const from = typeof args["cursor"] === "string" ? Number(args["cursor"].slice(2)) : 0;
+          const snapshot = withIndexes
+            ? yield* Effect.promise(async () => {
+                const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJson(document)));
+                return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+              })
+            : undefined;
+          if (expectedSnapshot !== undefined && expectedSnapshot !== snapshot)
+            throw new ConnectorCallError(
+              "conflict",
+              "This document changed since the indexed read. Start again without a cursor and plan edits at the new revision.",
+            );
           let ordinal = 0;
           let pageBytes = 0;
           let next: number | undefined;
           const dropped: string[] = [];
+          const truncated: string[] = [];
+          const title = boundedTitle(ctx, document["title"]);
+          if (title !== undefined && title !== document["title"]) truncated.push("title");
           const rendered = tabs.map((tab, index) => {
             const rows: IndexRow[] | undefined = withIndexes ? [] : undefined;
             const sources: TabSources = {
@@ -1071,7 +776,10 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
             };
             const { text: full, notRendered } = renderTab(ctx, tab.documentTab, sources, rows);
             const cut = capped(ctx, full, budget);
+            const tabTitle = boundedTitle(ctx, tab.title);
+            if (tabTitle !== undefined && tabTitle !== tab.title) truncated.push(`tabs[${index}].title`);
             budget = Math.max(0, budget - full.length);
+            if (cut.textTruncated) truncated.push(`tabs[${index}].text`);
             let elements: IndexRow[] | undefined;
             if (rows) {
               elements = [];
@@ -1085,30 +793,36 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
                   continue;
                 }
                 pageBytes += size;
-                elements.push(row);
+                const { previewCut, ...kept } = row;
+                if (previewCut) truncated.push(`tabs[${index}].elements[].text`);
+                elements.push(kept);
               }
             }
             return compact({
               tabId: keptId(tab.tabId, "tabId", `tabs[${index}].tabId`, dropped),
-              title: boundedTitle(ctx, tab.title),
+              title: tabTitle,
               parentTabId: keptId(tab.parentTabId, "tabId", `tabs[${index}].parentTabId`, dropped),
               nestingLevel: tab.nestingLevel,
               endIndex: endIndexOf(tab.documentTab["body"]),
-              ...cut,
+              text: cut.text,
               notRendered: notRendered.length > 0 ? notRendered : undefined,
               elements,
             });
           });
+          if (from > ordinal) throw new ConnectorCallError("invalid_args", "Invalid document cursor position.");
+          const nextCursor =
+            next === undefined
+              ? undefined
+              : yield* boundCursor.encode("get_document", binding, JSON.stringify({ snapshot, from: next }));
           return compact({
             documentId,
-            title: boundedTitle(ctx, document["title"]),
+            title,
             revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
             url: documentUrl(documentId),
             dropped: droppedField(dropped),
             tabs: rendered,
-            page: withIndexes
-              ? { hasMore: next !== undefined, nextCursor: next === undefined ? null : `e:${next}` }
-              : undefined,
+            truncated: truncated.length ? [...new Set(truncated)] : undefined,
+            page: withIndexes ? compact({ hasMore: next !== undefined, nextCursor }) : undefined,
           });
         }),
     },
@@ -1121,31 +835,8 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
       // so program calls require a writable endpoint; other writes use
       // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1000,
-            pattern: "^[^\\r\\n]*$",
-            description: "Document title, one line. Connecta's 1,000-character cap.",
-          },
-          text: { ...TEXT_PROPERTY, description: "Optional plain-text body; \\n starts a new paragraph." },
-        },
-        ["title"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          documentId: { type: "string" },
-          title: { type: "string" },
-          revisionId: { type: "string" },
-          url: { type: "string" },
-          dropped: DROPPED_OUTPUT,
-          notice: { type: "string" },
-        },
-        required: ["documentId", "url"],
-      },
+      input: schemas.CREATE_DOCUMENT_INPUT,
+      output: schemas.CREATE_DOCUMENT_OUTPUT,
       run: (args, ctx) =>
         Effect.gen(function* () {
           // Google's create takes a title and ignores any content, so a body is
@@ -1153,29 +844,25 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
           // that may have left a document behind says so and is not retryable.
           const title = String(args["title"]);
           const createdButUnknown = `Google Docs created the document (HTTP 2xx), but its reply could not be read, so its id is unknown. Do not create it again; find "${title}" in Drive (a Google Drive connection's search) and use that id.`;
-          const created = yield* sendWrite(
-            connection,
-            client,
-            ctx,
-            { method: "POST", path: "/documents", body: { title } },
-            false,
-            {
-              unknown: (detail) =>
-                `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
-              applied: createdButUnknown,
-            },
-            "create",
-          );
+          const created = yield* client
+            .json({ method: "POST", path: "/documents", template: "/documents", body: { title } }, { step: "create" })
+            .pipe(
+              Effect.map(asRecord),
+              Effect.catch((failure) =>
+                !ctx.signal?.aborted && writeOutcome(failure) === "probably-applied"
+                  ? googleFailureMessage(connection, failure, () => createdButUnknown)
+                  : Effect.fail(failure),
+              ),
+            );
           const dropped: string[] = [];
           // An id that could not be passed back is no id at all.
           const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
           if (!documentId) throw uncertain(createdButUnknown, ctx);
+          yield* (yield* Recovery).record({ documentId });
           let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
           if (typeof args["text"] === "string") {
             const reply = yield* batchUpdate(
-              connection,
               client,
-              ctx,
               documentId,
               [{ insertText: { text: args["text"], endOfSegmentLocation: {} } }],
               undefined,
@@ -1186,11 +873,12 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
                 // second one, so the failure names it and is not retryable. Only
                 // an explicit refusal proves the text is absent; anything else
                 // sends the caller to look before appending.
-                return googleFailureMessage(connection, cause, (detail) =>
-                  ["refused", "not-sent"].includes(writeOutcome(cause))
-                    ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
-                    : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
-                );
+                return googleFailureMessage(connection, cause, (detail) => {
+                  const sentence = /[.!?]$/.test(detail.trim()) ? detail.trim() : `${detail.trim()}.`;
+                  return ["refused", "not-sent"].includes(writeOutcome(cause))
+                    ? `Created document ${documentId}, but Google refused its initial text: ${sentence} Do not create it again; add the text with append_text on ${documentId}.`
+                    : `Created document ${documentId}, but whether its initial text was written is unknown: ${sentence} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+                });
               }),
             );
             revisionId = revisionAfter(reply, dropped) ?? revisionId;
@@ -1211,22 +899,12 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
         "Append plain text to the end of a Google Doc's body, or of one tab. It joins the last paragraph; start with \\n for a new one. Never removes or restyles text.",
       // Additive: the text lands after everything that was there.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          documentId: DOCUMENT_ID,
-          text: TEXT_PROPERTY,
-          tabId: tabIdProperty("Tab to append to; omit for the first tab."),
-          requiredRevisionId: REVISION_PROPERTY,
-        },
-        ["documentId", "text"],
-      ),
-      outputSchema: EDIT_OUTPUT,
-      run: (args, ctx) =>
+      input: schemas.APPEND_TEXT_INPUT,
+      output: schemas.APPEND_TEXT_OUTPUT,
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [{ insertText: { text: args["text"], endOfSegmentLocation: compact({ tabId: args["tabId"] }) } }],
             revision(args),
@@ -1240,29 +918,12 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
         "Insert plain text at one UTF-16 index of a Google Doc's body, from get_document withIndexes. Inserts only; nothing existing is removed or restyled.",
       // Additive: text goes in at a point; nothing that was there is lost.
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          documentId: DOCUMENT_ID,
-          index: {
-            type: "integer",
-            minimum: 1,
-            maximum: 10_000_000,
-            description:
-              "UTF-16 index inside an existing paragraph, from get_document withIndexes; 1 is the body's start. Not a table's start index.",
-          },
-          text: TEXT_PROPERTY,
-          tabId: tabIdProperty("Tab the index belongs to; omit for the first tab."),
-          requiredRevisionId: REVISION_PROPERTY,
-        },
-        ["documentId", "index", "text"],
-      ),
-      outputSchema: EDIT_OUTPUT,
-      run: (args, ctx) =>
+      input: schemas.INSERT_TEXT_INPUT,
+      output: schemas.INSERT_TEXT_OUTPUT,
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [{ insertText: { text: args["text"], location: compact({ index: args["index"], tabId: args["tabId"] }) } }],
             revision(args),
@@ -1277,50 +938,12 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
       // Destructive: the matched text is gone, and a broad match can rewrite
       // far more of the document than was meant.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          documentId: DOCUMENT_ID,
-          find: {
-            type: "string",
-            minLength: 1,
-            maxLength: 10_000,
-            description: "Text to find. With regex: true, a regular expression in Google's RE2 syntax.",
-          },
-          replaceWith: {
-            type: "string",
-            maxLength: MAX_TEXT_CHARS,
-            description: "Replacement text; an empty string deletes every match.",
-          },
-          matchCase: { type: "boolean", description: "Match case exactly. Defaults to false." },
-          regex: { type: "boolean", description: "Treat find as an RE2 regular expression. Defaults to false." },
-          tabIds: {
-            type: "array",
-            minItems: 1,
-            maxItems: 100,
-            items: tabIdProperty("Tab id from get_document."),
-            description: "Only these tabs; omit for every tab.",
-          },
-          requiredRevisionId: REVISION_PROPERTY,
-        },
-        ["documentId", "find", "replaceWith"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          documentId: { type: "string" },
-          occurrencesChanged: { type: "integer" },
-          revisionId: { type: "string" },
-          dropped: DROPPED_OUTPUT,
-          notice: { type: "string" },
-        },
-        required: ["documentId", "occurrencesChanged"],
-      },
-      run: (args, ctx) =>
+      input: schemas.REPLACE_ALL_TEXT_INPUT,
+      output: schemas.REPLACE_ALL_TEXT_OUTPUT,
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [
               {
@@ -1351,54 +974,11 @@ function toolDefinitions(connection: Connection, client: GoogleClient): GoogleTo
       // Destructive by construction: a raw request can delete ranges, restyle
       // the whole document, or drop tables, and no schema here can tell which.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          documentId: DOCUMENT_ID,
-          requests: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_REQUESTS,
-            items: {
-              type: "object",
-              minProperties: 1,
-              maxProperties: 1,
-              propertyNames: { enum: [...REQUEST_KINDS] },
-              description:
-                'One Docs API Request, exactly one kind (insertText, deleteContentRange, updateTextStyle, …), e.g. {"deleteContentRange":{"range":{"startIndex":5,"endIndex":9}}}. Indexes are UTF-16, from get_document withIndexes.',
-            },
-            description: `Requests in order, 1 to ${MAX_REQUESTS} (connecta's cap). Later requests see earlier ones' index shifts.`,
-          },
-          requiredRevisionId: {
-            ...REVISION_PROPERTY,
-            description:
-              "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. If the document has changed, it fails conflict and nothing is applied.",
-          },
-        },
-        ["documentId", "requests", "requiredRevisionId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          documentId: { type: "string" },
-          revisionId: { type: "string" },
-          replies: { type: "array", items: { type: "object" } },
-          dropped: DROPPED_OUTPUT,
-          replyCount: { type: "integer" },
-          repliesTruncated: { type: "boolean" },
-          notice: { type: "string" },
-        },
-        required: ["documentId", "replies", "replyCount"],
-      },
-      run: (args, ctx) =>
+      input: schemas.BATCH_UPDATE_DOCUMENT_INPUT,
+      output: schemas.BATCH_UPDATE_DOCUMENT_OUTPUT,
+      run: (args) =>
         Effect.gen(function* () {
-          const reply = yield* batchUpdate(
-            connection,
-            client,
-            ctx,
-            args["documentId"],
-            args["requests"],
-            revision(args),
-          );
+          const reply = yield* batchUpdate(client, args["documentId"], args["requests"], revision(args));
           return boundedReplies(savedEdit(args["documentId"], reply), asArray(reply["replies"]).map(asRecord));
         }),
     },
