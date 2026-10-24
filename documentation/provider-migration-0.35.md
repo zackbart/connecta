@@ -258,3 +258,11 @@ exclusions still close live People-list and webhook cross-product routes.
 Standard fallback diagnostics replace redundant rate-limit/upstream wording;
 JSON:API diagnostics are complete sentences. Writes are sent once; reconcile
 unknown outcomes with a read.
+
+The pinned source describes `send_verification` at the empty People path. Its
+`POST /people/v2` entry remains discoverable, but calls are refused because the
+source does not establish an unambiguous callable route. Use a reviewed pin
+update to enable it. Response stream failures now say “Planning Center's
+response body could not be read completely.” Malformed JSON says “Planning
+Center returned malformed JSON.” Both retain `connector_call_failed` and
+unknown write outcomes still require reconciliation.

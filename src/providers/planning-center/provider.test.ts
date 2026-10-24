@@ -113,21 +113,8 @@ function person(id: string, attributes: Record<string, unknown>, relationships: 
   return { type: "Person", id, attributes, relationships };
 }
 
-describe("Planning Center credentials", () => {
-  it("INV-5 INV-11: keeps catalog decoding, private values, discovery budgets, paging and error meanings aligned", async () => {
-    const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
-    for (const tool of planningCenterTools({
-      connection: kitConnection,
-      pageSize: 100,
-      options: { purpose: "Catalog agreement" },
-    })) {
-      const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
-      expect(
-        validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }),
-        tool.name,
-      ).toBeNull();
-      expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
-    }
+describe("Planning Center contracts", () => {
+  it("INV-5 INV-11: preserves credential withholding and body-failure wording", async () => {
     const connector = connection(),
       ctx = context();
     const invoke = (name: string, args: Record<string, unknown>) => call(name, args, connector, ctx);
@@ -239,25 +226,12 @@ describe("Planning Center credentials", () => {
       code: "connector_call_failed",
       message: "Planning Center returned malformed JSON.",
     });
-    for (const [app, resource] of Object.entries({
-      people: "people",
-      services: "service_types",
-      groups: "groups",
-      "check-ins": "events",
-      calendar: "event_instances",
-      registrations: "signups",
-      giving: "funds",
-      publishing: "episodes",
-      webhooks: "webhook_subscriptions",
-      api: "personal_access_tokens",
-    })) {
-      queue({ body: { data: [], meta: { total_count: 0 } } });
-      await invoke("pco_api_read", { path: `/${app}/v2/${resource}` });
-      expect(calls.at(-1)!.headers["x-pco-api-version"]).toBe(
-        PLANNING_CENTER_API_VERSIONS[app as keyof typeof PLANNING_CENTER_API_VERSIONS],
-      );
-    }
+  });
 
+  it("INV-1 INV-11: ranks full-index discovery and continues large contracts within their byte budgets", async () => {
+    const connector = connection(),
+      ctx = context();
+    const invoke = (name: string, args: Record<string, unknown>) => call(name, args, connector, ctx);
     // Discovery must remain useful with all 1,753 operations, within 0014's budgets.
     const beforeDiscovery = calls.length;
     expect(PCO_INDEX.ops).toHaveLength(1753);
@@ -297,7 +271,12 @@ describe("Planning Center credentials", () => {
       [...PCO_INDEX.contract(operation).parameters].sort((a, b) => a.name.localeCompare(b.name)),
     );
     expect(calls).toHaveLength(beforeDiscovery);
+  });
 
+  it("INV-3 INV-9 INV-11: binds paging, validates fields before dispatch and preserves scoped error meanings", async () => {
+    const connector = connection(),
+      ctx = context();
+    const invoke = (name: string, args: Record<string, unknown>) => call(name, args, connector, ctx);
     // A real signed continuation changes only the vendor offset, preserving filters and projection.
     queue({ body: { data: [person("1", { name: "Alice" })], meta: { total_count: 2, next: { offset: 1 } } } });
     const first = await invoke("search_people", { status: "active", limit: 1, fields: ["id"] });
@@ -363,16 +342,16 @@ describe("Planning Center credentials", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_args" });
     await expect(invoke("get_person", { personId: "999" })).rejects.toMatchObject({ code: "not_found" });
-  }, 60_000);
+  });
 });
 
 describe("Planning Center excludeApps", () => {
   const withoutGiving = () => connection({ excludeApps: ["giving"] });
   const names = async (connector: Connector) => (await connector.listTools(context())).map((tool) => tool.name);
 
-  it("INV-4: refuses literal and encoded excluded products through both hatches before any request", async () => {
+  it("INV-4: refuses excluded and ambiguous paths through both hatches before any request", async () => {
+    const connector = withoutGiving();
     for (const path of ["/giving/v2/donations", "/GIVING/v2/donations", "/%67iving/v2/donations"]) {
-      const connector = withoutGiving();
       for (const [tool, args] of [
         ["pco_api_read", { path }],
         [
@@ -395,12 +374,9 @@ describe("Planning Center excludeApps", () => {
       }
       expect(globalThis.fetch).not.toHaveBeenCalled();
     }
-  });
 
-  // Each of these once normalized, decoded, or delimited differently on the
-  // way to Planning Center than where it was checked. While an app is
-  // excluded none is admitted: the path must be literal.
-  it("INV-4: refuses ambiguous paths through both hatches before any request", async () => {
+    // Ambiguous or unindexed paths also refuse before any transport.
+
     for (const path of [
       "/people/v2/%23/../../../giving/v2/donations",
       "/people/v2/%3F/../giving/v2/donations",
@@ -414,7 +390,6 @@ describe("Planning Center excludeApps", () => {
       "/giving/v2/donations#fragment",
       "/giving/v2/%E0%A4%A",
     ]) {
-      const connector = withoutGiving();
       for (const [tool, args] of [
         ["pco_api_read", { path }],
         [
@@ -435,7 +410,7 @@ describe("Planning Center excludeApps", () => {
     }
   });
 
-  it("INV-4: checks the exact URL the transport would fetch, including the query it encodes", async () => {
+  it("INV-4 INV-11: checks the exact transport URL, query and reviewed product-version headers", async () => {
     const connector = withoutGiving();
     for (const path of ["/people/v2/%23/../../../giving/v2/donations", "/people/v2/x%3Fy/../../../giving/v2/funds"]) {
       await expect(call("pco_api_read", { path }, connector), path).rejects.toMatchObject({
@@ -451,9 +426,28 @@ describe("Planning Center excludeApps", () => {
     queue({ body: {} });
     await call("pco_api_read", { path: "/people/v2/people/1" }, proxied);
     expect(calls.map((entry) => entry.url.href)).toEqual(["https://proxy.example/pco/people/v2/people/1"]);
+    const pinned = connection();
+    for (const [app, resource] of Object.entries({
+      people: "people",
+      services: "service_types",
+      groups: "groups",
+      "check-ins": "events",
+      calendar: "event_instances",
+      registrations: "signups",
+      giving: "funds",
+      publishing: "episodes",
+      webhooks: "webhook_subscriptions",
+      api: "personal_access_tokens",
+    })) {
+      queue({ body: { data: [], meta: { total_count: 0 } } });
+      await call("pco_api_read", { path: `/${app}/v2/${resource}` }, pinned);
+      expect(calls.at(-1)!.headers["x-pco-api-version"]).toBe(
+        PLANNING_CENTER_API_VERSIONS[app as keyof typeof PLANNING_CENTER_API_VERSIONS],
+      );
+    }
   });
 
-  it("INV-4: refuses a webhook subscription to Giving events and every webhook payload, before any request", async () => {
+  it("INV-4: refuses excluded webhook payloads and subscription changes while admitting reachable subscriptions", async () => {
     const connector = withoutGiving();
     for (const name of ["giving.v2.events.donation.created", "  Giving.V2.events.batch.committed"]) {
       await expect(
@@ -488,6 +482,36 @@ describe("Planning Center excludeApps", () => {
     }
     expect(globalThis.fetch).not.toHaveBeenCalled();
 
+    const existing = expect.stringContaining("does not enable, disable, delete, or re-key an existing subscription");
+    const enable = (type: string) => ({ data: { type, attributes: { active: true } } });
+    for (const [method, path, body] of [
+      ["PATCH", "/webhooks/v2/webhook_subscriptions/123", enable("WebhookSubscription")],
+      ["DELETE", "/webhooks/v2/subscriptions/123", undefined],
+      ["POST", "/webhooks/v2/webhook_subscriptions/123/rotate_secret", undefined],
+    ] as const) {
+      await expect(
+        call("pco_api_write", compactArgs({ method, path, body }), connector),
+        `${method} ${path}`,
+      ).rejects.toMatchObject(
+        path.includes("/subscriptions/")
+          ? { code: "invalid_args", retryable: false }
+          : { code: "provider_permission_denied", retryable: false, message: existing },
+      );
+    }
+    const unnamed = expect.stringContaining("a new webhook subscription must name one product's event");
+    for (const body of [
+      { data: { type: "WebhookSubscription", attributes: { url: "https://evil.example/hook" } } },
+      { data: [{ type: "WebhookSubscription", attributes: { name: "people.v2.events.person.created" } }] },
+    ]) {
+      await expect(
+        call("pco_api_write", { method: "POST", path: "/webhooks/v2/webhook_subscriptions", body }, connector),
+        JSON.stringify(body),
+      ).rejects.toMatchObject(
+        Array.isArray(body.data) ? { code: "invalid_args" } : { code: "provider_permission_denied", message: unnamed },
+      );
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+
     // Subscriptions to other products still reach Planning Center.
     queue({ status: 201, body: { data: { type: "WebhookSubscription", id: "9" } } });
     await call(
@@ -500,6 +524,17 @@ describe("Planning Center excludeApps", () => {
       connector,
     );
     expect(calls.map((entry) => entry.url.pathname)).toEqual(["/webhooks/v2/webhook_subscriptions"]);
+    // Nothing excluded, nothing refused: the same change reaches Planning Center.
+    queue({ body: { data: { type: "WebhookSubscription", id: "123" } } });
+    await call("pco_api_write", {
+      method: "PATCH",
+      path: "/webhooks/v2/webhook_subscriptions/123",
+      body: enable("WebhookSubscription"),
+    });
+    expect(calls.map((entry) => [entry.method, entry.url.pathname])).toEqual([
+      ["POST", "/webhooks/v2/webhook_subscriptions"],
+      ["PATCH", "/webhooks/v2/webhook_subscriptions/123"],
+    ]);
   });
 
   it("INV-4: removes the list tools and refuses every list, result, rule, and condition read while an app is excluded", async () => {
@@ -533,53 +568,19 @@ describe("Planning Center excludeApps", () => {
     await call("get_person", { personId: "42" }, connector);
     expect(calls.map((entry) => entry.url.pathname)).toEqual(["/people/v2/list_categories", "/people/v2/people/42"]);
   });
-
-  it("INV-4: refuses every change to an existing webhook subscription, with the legacy version path refused by the index, before any request", async () => {
-    const connector = withoutGiving();
-    const existing = expect.stringContaining("does not enable, disable, delete, or re-key an existing subscription");
-    const enable = (type: string) => ({ data: { type, attributes: { active: true } } });
-    for (const [method, path, body] of [
-      ["PATCH", "/webhooks/v2/webhook_subscriptions/123", enable("WebhookSubscription")],
-      ["DELETE", "/webhooks/v2/subscriptions/123", undefined],
-      ["POST", "/webhooks/v2/webhook_subscriptions/123/rotate_secret", undefined],
-    ] as const) {
-      await expect(
-        call("pco_api_write", compactArgs({ method, path, body }), connector),
-        `${method} ${path}`,
-      ).rejects.toMatchObject(
-        path.includes("/subscriptions/")
-          ? { code: "invalid_args", retryable: false }
-          : { code: "provider_permission_denied", retryable: false, message: existing },
-      );
-    }
-    const unnamed = expect.stringContaining("a new webhook subscription must name one product's event");
-    for (const body of [
-      { data: { type: "WebhookSubscription", attributes: { url: "https://evil.example/hook" } } },
-      { data: [{ type: "WebhookSubscription", attributes: { name: "people.v2.events.person.created" } }] },
-    ]) {
-      await expect(
-        call("pco_api_write", { method: "POST", path: "/webhooks/v2/webhook_subscriptions", body }, connector),
-        JSON.stringify(body),
-      ).rejects.toMatchObject(
-        Array.isArray(body.data) ? { code: "invalid_args" } : { code: "provider_permission_denied", message: unnamed },
-      );
-    }
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-
-    // Nothing excluded, nothing refused: the same change reaches Planning Center.
-    queue({ body: { data: { type: "WebhookSubscription", id: "123" } } });
-    await call("pco_api_write", {
-      method: "PATCH",
-      path: "/webhooks/v2/webhook_subscriptions/123",
-      body: enable("WebhookSubscription"),
-    });
-    expect(calls.map((entry) => [entry.method, entry.url.pathname])).toEqual([
-      ["PATCH", "/webhooks/v2/webhook_subscriptions/123"],
-    ]);
-  });
 });
 
-it("INV-5 INV-10: credential probes preserve candidate keys, framing, failures, and response descriptions", async () => {
+it("INV-5 INV-10 INV-11: catalog decoding and credential probes preserve candidate keys, framing, failures, and response descriptions", async () => {
+  const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
+  for (const tool of planningCenterTools({
+    connection: kitConnection,
+    pageSize: 100,
+    options: { purpose: "Catalog agreement" },
+  })) {
+    const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
+    expect(validateToolInput(tool.inputSchema!, base, { address: tool.name, failClosed: true }), tool.name).toBeNull();
+    expect(kitInputDisagreements(tool, base), tool.name).toEqual([]);
+  }
   const connector = connection({ userAgent: "fixture-agent/1", authScope: "personal" });
   const candidate = { applicationId: "candidate-id", secret: "candidate-secret" };
   for (const [body, expected] of [

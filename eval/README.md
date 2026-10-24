@@ -303,6 +303,7 @@ and reconciliation after a committed profile update answers HTTP 500. The same
 frozen prompts, state/HTTP-ledger graders and references support the legacy and
 standard surfaces. Structured answers require exact observed ids and facts;
 server-side filtering is an advisory efficiency check. No vendor account is used.
+The [paired notes](baselines/notes-planning-center-step2.md) preserve all final and diagnostic trials.
 
 Seven [Stripe step-2 tasks](tasks/stripe.ts) use an isolated extension of the
 REST fake: account/balance scope, filtered customers, a PaymentIntent/charge
