@@ -294,7 +294,9 @@ describe("an idempotency key proves a write repeatable only when the vendor rece
         const stripe = await stripeAt(server.origin);
         const direct = await stripe.direct({ ...CUSTOMER, idempotencyKey });
         expect(direct).toMatchObject({ code: "invalid_args", retryable: false });
-        expect((direct as Error).message).toContain("idempotencyKey is blank");
+        expect((direct as Error).message).toContain(
+          "The idempotency key is blank or holds a character an HTTP header cannot carry.",
+        );
         const served = await stripe.served({ ...CUSTOMER, idempotencyKey });
         if (served.ok) throw new Error("expected the write to fail");
         expect(served.error).toMatchObject({ code: "invalid_args", retryable: false });
@@ -317,7 +319,9 @@ describe("an idempotency key proves a write repeatable only when the vendor rece
         const stripe = await stripeAt(server.origin);
         const direct = await stripe.direct({ ...CUSTOMER, idempotencyKey });
         expect(direct).toMatchObject({ code: "invalid_args", retryable: false });
-        expect((direct as Error).message).toContain("idempotencyKey contains a character an HTTP header cannot carry");
+        expect((direct as Error).message).toContain(
+          "The idempotency key is blank or holds a character an HTTP header cannot carry.",
+        );
         const served = await stripe.served({ ...CUSTOMER, idempotencyKey });
         if (served.ok) throw new Error("expected the write to fail");
         expect(served.error).toMatchObject({ code: "invalid_args", retryable: false });
