@@ -116,6 +116,8 @@ export interface ValueSafetyHarness extends ValueSafetyReview {
   readonly echo: {
     readonly tool: string;
     readonly args: Record<string, unknown>;
+    /** A separately reviewed streaming route when the JSON echo operation forbids text. */
+    readonly stream?: { readonly tool: string; readonly args: Record<string, unknown> };
     respond(marker: string): Response;
   };
 }
@@ -711,6 +713,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         '{"src":"/","headers":[{"key":"X-Custom","value":"VENDOR_HELD_ROUTE"}]}\n' +
         JSON.stringify(references) + "\n";
       let streaming = false;
+      const echo = () => (streaming ? harness.echo.stream : undefined) ?? harness.echo;
       let full = true;
       const realFetch = globalThis.fetch;
       globalThis.fetch = (async () => {
@@ -769,7 +772,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         const mode = full ? "overlap" : submitted.length === 0 ? "no private value" : "unrelated private value";
         const ctx = { ...harness.ctx(), requestScope: {} };
         requestSentSecrets(ctx).arguments({ pins: submitted }, pins);
-        clean(await both(() => harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx)), `${mode}, direct`);
+        clean(await both(() => harness.connector().callTool(echo().tool, echo().args, ctx)), `${mode}, direct`);
         const credential = (await harness.ctx().credential!.getAll())!["value"]!;
         for (const readOnly of [false, true]) {
           const connector = harness.connector();
@@ -793,7 +796,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
               const host = providers[0]!.fns;
               await host.call!("pins.set_pins", { pins: submitted }).catch((error: unknown) => refusals.push(error));
               return {
-                result: await both(() => host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args)),
+                result: await both(() => host.call!(`${connector.id}.${echo().tool}`, echo().args)),
                 logs: [],
               };
             },

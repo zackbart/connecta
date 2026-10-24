@@ -2,6 +2,7 @@ const absent = {
   "reason":
     "Paths a shared verdict carries (drains, webhooks, projects, deployments, firewall configurations, environment variables) that this operation's pinned response schema does not declare, including list-root and create-only variants. They stay applied at runtime, so an undeclared field the vendor returns is still removed; listing them here keeps every other path checked against the schema.",
   "operations": {
+    "GET /v1/projects/{idOrName}/daemons": ["daemons.replicas.items.iroh.publicKeyCiphertext"],
     "DELETE /v1/env": ["created[].value", "data[].value", "updated[].value"],
     "DELETE /v1/projects/{idOrName}/avatar": [
       "internalRoutes[].missing[?header].value",
@@ -329,6 +330,22 @@ const TEAM_INVITE = "Teams carry inviteCode, which lets its holder join the team
  * these operations project it themselves (value-safe environment variables).
  */
 const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
+  // Re-pin 4a06e85c: withhold the entire extensible API-key subtree, including
+  // arbitrary metadata/leakedUrl, rather than exempting a credential object.
+  "PATCH /api-keys/{apiKeyID}/quota": redact(
+    "Changes a budget, not an API key; withhold the complete API-key metadata subtree and retain quota facts.",
+    ["apiKey"],
+    ["quota"],
+  ),
+  "GET /v1/projects/{projectIdOrName}/feature-flags/labels": safe(
+    "Lists attribute labels: entity kind, attribute key, label and value; no credential-bearing fields.",
+  ),
+  "GET /v1/projects/{projectIdOrName}/feature-flags/labels/counts": safe(
+    "Lists attribute label counts without credentials or stored secret values.",
+  ),
+  "POST /v1/projects/{projectIdOrName}/feature-flags/labels/lookup": safe(
+    "Returns matching attribute labels and missing keys, without credentials; retains conservative write classification.",
+  ),
   "GET /ai-gateway/budgets/list": safe("Coverage counts per API key; no key value.", ["defaultCoveredCounts.api-key"]),
   "GET /v8/artifacts/status": safe("Remote-cache read-only status is a flag.", ["readOnly"]),
   "GET /v1/security/firewall/bypass/rules": redact(FIREWALL_REASON, under(["", "rules[]"], BYPASS_CONDITIONS)),
@@ -625,42 +642,55 @@ export const VERCEL_VALUE_SAFETY: ValueSafetyTable = {
   operations: VALUE_SAFETY,
   envBodies: /^\/v\d+\/(?:env(?:\/|$)|projects\/\{[^}]+\}\/env(?:\/|$))/,
   scopeMaps: ["permissions"],
-  fields: Object.fromEntries(
-    (
-      [
-        ["env", "Environment names and variable-name lists; values inside environment containers go structurally."],
-        ["environments", "Environment slugs or ids a policy or variable applies to."],
-        ["environmentVariables", "Environment variable names a store connects, never values."],
-        ["type", "A variable's or record's type (plain, encrypted, sensitive, secret)."],
-        ["visibility", "A variable's visibility setting."],
-        ["keys", "Rate-limit key kinds (ip, ja4) and changed variable names."],
-        ["logHeaders", "Header names a firewall rule logs."],
-        ["log_headers", "Header names the firewall logs."],
-        ["signingKeys", "KMS signing key metadata and public key material; private keys stay with Vercel."],
-        ["bindings", "Service-to-service binding names and targets."],
-        ["canaryResponseHeader", "Whether a canary response sets a header; a boolean."],
-        ["inferenceRegion", "An AI Gateway routing region."],
-        ["providerTimeouts", "Provider timeouts in milliseconds."],
-        ["redirectUri", "A connector's registered OAuth redirect URI, public by design."],
-        ["supportsRevocation", "Whether a connector can revoke tokens; a boolean."],
-        ["claims", "OIDC claim matchers a policy requires, not tokens."],
-        ["customClaims", "OIDC claim configuration, not tokens."],
-        ["limited", "Whether a record is limited by the token's privileges; a boolean."],
-        ["enforced", "Whether SAML is enforced; a boolean."],
-        ["kind", "A store or record kind."],
-        ["budget", "An AI Gateway key's spend budget."],
-        ["origin", "How a token was issued (manual, oauth)."],
-        ["scope", "A token's scope (user, team, project)."],
-        ["issuedBefore", "A revocation cutoff timestamp."],
-        ["issuerUrl", "The OIDC issuer URL, public by design."],
-        ["oidcSubject", "The OIDC subject claim, an identifier."],
-        ["next", "A pagination cursor; it grants nothing."],
-        ["partialKeyValue", "A masked SDK key preview."],
-        ["appUrlRegistrationSupport", "Whether a partner accepts app URLs; a boolean."],
-        ["disjunctiveProductionSecretPolicy", "A team policy setting."],
-        ["sensitiveEnvironmentVariablePolicy", "A team policy setting."],
-        ["strictPasswordProtectionSettings", "A team policy setting."],
-      ] as const
-    ).map(([name, reason]) => [name, { verdict: "keep" as const, reason }]),
-  ),
+  fields: {
+    ...Object.fromEntries(
+      ["drainUrl", "logDrainUrl", "webhookUrl", "prevWebhookUrl"].map((name) => [
+        name,
+        {
+          verdict: "redact" as const,
+          reason:
+            "Audit-event drain and budget webhook destinations may embed credentials in path segments and query tokens; withhold the entire URL in every response shape.",
+        },
+      ]),
+    ),
+    ...Object.fromEntries(
+      (
+        [
+          ["env", "Environment names and variable-name lists; values inside environment containers go structurally."],
+          ["environments", "Environment slugs or ids a policy or variable applies to."],
+          ["environmentVariables", "Environment variable names a store connects, never values."],
+          ["secretsOutdated", "A boolean indicating outdated integration secrets; no secret value."],
+          ["type", "A variable's or record's type (plain, encrypted, sensitive, secret)."],
+          ["visibility", "A variable's visibility setting."],
+          ["keys", "Rate-limit key kinds (ip, ja4) and changed variable names."],
+          ["logHeaders", "Header names a firewall rule logs."],
+          ["log_headers", "Header names the firewall logs."],
+          ["signingKeys", "KMS signing key metadata and public key material; private keys stay with Vercel."],
+          ["bindings", "Service-to-service binding names and targets."],
+          ["canaryResponseHeader", "Whether a canary response sets a header; a boolean."],
+          ["inferenceRegion", "An AI Gateway routing region."],
+          ["providerTimeouts", "Provider timeouts in milliseconds."],
+          ["redirectUri", "A connector's registered OAuth redirect URI, public by design."],
+          ["supportsRevocation", "Whether a connector can revoke tokens; a boolean."],
+          ["claims", "OIDC claim matchers a policy requires, not tokens."],
+          ["customClaims", "OIDC claim configuration, not tokens."],
+          ["limited", "Whether a record is limited by the token's privileges; a boolean."],
+          ["enforced", "Whether SAML is enforced; a boolean."],
+          ["kind", "A store or record kind."],
+          ["budget", "An AI Gateway key's spend budget."],
+          ["origin", "How a token was issued (manual, oauth)."],
+          ["scope", "A token's scope (user, team, project)."],
+          ["issuedBefore", "A revocation cutoff timestamp."],
+          ["issuerUrl", "The OIDC issuer URL, public by design."],
+          ["oidcSubject", "The OIDC subject claim, an identifier."],
+          ["next", "A pagination cursor; it grants nothing."],
+          ["partialKeyValue", "A masked SDK key preview."],
+          ["appUrlRegistrationSupport", "Whether a partner accepts app URLs; a boolean."],
+          ["disjunctiveProductionSecretPolicy", "A team policy setting."],
+          ["sensitiveEnvironmentVariablePolicy", "A team policy setting."],
+          ["strictPasswordProtectionSettings", "A team policy setting."],
+        ] as const
+      ).map(([name, reason]) => [name, { verdict: "keep" as const, reason }]),
+    ),
+  },
 };
