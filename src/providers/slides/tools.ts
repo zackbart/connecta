@@ -2230,7 +2230,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
     {
       name: "batch_update_presentation",
       description:
-        "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
+        "Send Slides batchUpdate at the read revision; insertComment and other comment kinds may share the batch but save apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
       // Destructive: a raw request can delete or overwrite anything in the deck.
       annotations: { readOnlyHint: false, destructiveHint: true },
       input: contracts.batch_update_presentation.input,
@@ -2327,7 +2327,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
               fieldsInput(
                 isList
                   ? "Dot paths to keep in each item; truncation metadata is preserved."
-                  : "Dot paths to keep in the result; truncation metadata is preserved.",
+                  : "Dot paths to keep in the result; page and truncation metadata are preserved.",
               ),
             ),
           }) as typeof declaration.input)
@@ -2355,7 +2355,10 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
           const selected = isList
             ? { ...normalized, items: selectNamedFields(normalized["items"], args["fields"]) }
             : isRead
-              ? selectNamedFields(normalized, args["fields"])
+              ? {
+                  ...asRecord(selectNamedFields(normalized, args["fields"])),
+                  ...(normalized["page"] ? { page: normalized["page"] } : {}),
+                }
               : normalized;
           return yield* signContinuations(selected, ctx);
         }).pipe(

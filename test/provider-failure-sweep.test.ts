@@ -158,8 +158,10 @@ describe("API provider failure sweep", () => {
       const examples = provider.catalog
         .filter(
           (tool) =>
-            !(["github", "slides"].includes(provider.name) && [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)) &&
-            !(provider.name === "docs" && tool.name.startsWith("docs_api_")),
+            !(
+              ["github", "slides"].includes(provider.name) &&
+              [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
+            ) && !(provider.name === "docs" && tool.name.startsWith("docs_api_")),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },

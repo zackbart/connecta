@@ -80,7 +80,7 @@ export const probe = {
 
 // Full frozen inventory; execution is the literal reviewed subset below.
 export const SLIDES_INDEX = new OperationIndex(openapi, {
-  vendor: "Google Slides",
+  vendor: "slides",
   title: "Google Slides",
   pathMatching: "uri-template",
 });
@@ -127,11 +127,9 @@ export function slidesBinding(connection: Connection): HatchBinding {
           )
             return {
               ...answer,
-              data: {
-                ...data,
-                commentUpdateState: state ?? "COMMENT_UPDATE_STATE_UNSPECIFIED",
-                note: COMMENTS_UNSAVED,
-              },
+              warnings: [
+                `commentUpdateState: ${state === undefined ? "not reported" : String(state)}. ${COMMENTS_UNSAVED}`,
+              ],
             };
           return answer;
         }),

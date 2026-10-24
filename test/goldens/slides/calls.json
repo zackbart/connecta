@@ -248,9 +248,11 @@
               }
             }
           ],
-          "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
-          "note": "Slides accepted the write but did not report its comment changes saved (commentUpdateState), so it was not all or none: other changes may have applied. Do not repeat it; re-read with list_comments to see what saved."
-        }
+          "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"
+        },
+        "warnings": [
+          "commentUpdateState: ALL_FAILED_UNKNOWN_REASON. Slides accepted the write but did not report its comment changes saved (commentUpdateState), so it was not all or none: other changes may have applied. Do not repeat it; re-read with list_comments to see what saved."
+        ]
       }
     }
   },

@@ -396,6 +396,45 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
       else expect(selected).toEqual({ width: 800 });
       if (tool === "get_page") expect(selected.elements[0].truncated).toContain("text");
     }
+    // Field-selected content windows must still advertise and accept continuation.
+    for (const [tool, args, body, key, firstCount, finalCount] of [
+      [
+        "get_presentation",
+        { presentationId: "deck1", limit: 2, fields: ["slides"] },
+        {
+          presentationId: "deck1",
+          revisionId: "rev1",
+          slides: Array.from({ length: 3 }, (_, i) => ({ objectId: `s${i}` })),
+        },
+        "slides",
+        2,
+        1,
+      ],
+      [
+        "get_page",
+        { presentationId: "deck1", pageObjectId: "p", fields: ["elements.objectId"] },
+        {
+          objectId: "p",
+          revisionId: "rev1",
+          pageElements: Array.from({ length: 80 }, (_, i) => ({
+            objectId: `e${i}`,
+            shape: { text: textContent("short") },
+          })),
+        },
+        "elements",
+        50,
+        30,
+      ],
+    ] as const) {
+      route = () => ({ body });
+      const first = await call(connector, tool, args);
+      expect(first[key]).toHaveLength(firstCount);
+      expect(first.page).toMatchObject({ hasMore: true, nextCursor: expect.any(String) });
+      expect(first.truncated).toBeUndefined();
+      const last = await call(connector, tool, { ...args, cursor: first.page.nextCursor });
+      expect(last[key]).toHaveLength(finalCount);
+      expect(last.page).toEqual({ hasMore: false });
+    }
   });
 
   it("INV-3 INV-4 INV-10: indexes exactly five methods with plural presentationsId and refuses invalid fields before minting", async () => {
@@ -1006,6 +1045,10 @@ describe("comments: full JSON through the hatch (#696)", { timeout: 60_000 }, ()
     const c = connection();
     for (const path of ["/presentations/deck1/pages/p/thumbnail", "/presentations/deck1/pages/p/%74humbnail"])
       await expect(call(c, "slides_api_read", { path })).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(c, "slides_api_read", { path: "/v1/presentations/deck1" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("slides_api_search"),
+    });
     for (const body of [
       { requests: [{ unknownKind: {} }], writeControl: { requiredRevisionId: "rev1" } },
       { requests: [{ insertText: {} }] },
@@ -1031,33 +1074,54 @@ describe("comments: a thread whose anchors alone pass one result (#696)", () => 
   it("INV-5 INV-9: hatch batches retain every id and report independent comment saves, including missing state", async () => {
     installOwnedTransport();
     const c = connection();
-    for (const state of [undefined, "ALL_FAILED_UNKNOWN_REASON", "ALL_SAVED"]) {
-      route = () => ({
-        body: {
-          presentationId: "deck1",
-          replies: [
-            { createSlide: { objectId: "newslide" } },
-            { insertComment: { commentThread: { commentId: "comment9", headPost: { postId: "post9" } } } },
-          ],
-          ...(state ? { commentUpdateState: state } : {}),
-        },
-      });
-      const result = await call(c, "slides_api_write", {
+    for (const state of [
+      undefined,
+      "NO_UPDATES_REQUESTED",
+      "ALL_FAILED_UNKNOWN_REASON",
+      "FUTURE_SAVE_STATE",
+      "ALL_SAVED",
+    ]) {
+      const body = {
+        presentationId: "deck1",
+        replies: [
+          { createSlide: { objectId: "newslide" } },
+          { insertComment: { commentThread: { commentId: "comment9", headPost: { postId: "post9" } } } },
+        ],
+        ...(state ? { commentUpdateState: state } : {}),
+      };
+      route = () => ({ body });
+      for (const fields of [undefined, ["replies"]]) {
+        const result = await call(c, "slides_api_write", {
+          method: "POST",
+          path: "/presentations/deck1:batchUpdate",
+          body: {
+            requests: [
+              { createSlide: { objectId: "newslide" } },
+              { insertComment: { objectId: "p", content: "Hello" } },
+            ],
+            writeControl: { requiredRevisionId: "rev1" },
+          },
+          ...(fields ? { fields } : {}),
+        });
+        expect(result.data).toEqual(fields ? { replies: body.replies } : body);
+        expect(result.data.replies[0].createSlide.objectId).toBe("newslide");
+        expect(result.data.replies[1].insertComment.commentThread.headPost.postId).toBe("post9");
+        if (state !== "ALL_SAVED") {
+          expect(result.warnings).toEqual([expect.stringContaining(`commentUpdateState: ${state ?? "not reported"}.`)]);
+          expect(result.warnings[0]).toContain("Do not repeat");
+        } else expect(result.warnings).toBeUndefined();
+      }
+    }
+    // A deck-only batch with no comment updates needs no warning.
+    route = () => ({ body: { replies: [], commentUpdateState: "NO_UPDATES_REQUESTED" } });
+    expect(
+      await call(c, "slides_api_write", {
         method: "POST",
         path: "/presentations/deck1:batchUpdate",
-        body: {
-          requests: [{ createSlide: { objectId: "newslide" } }, { insertComment: { objectId: "p", content: "Hello" } }],
-          writeControl: { requiredRevisionId: "rev1" },
-        },
-      });
-      expect(result.data.replies[0].createSlide.objectId).toBe("newslide");
-      expect(result.data.replies[1].insertComment.commentThread.headPost.postId).toBe("post9");
-      if (state !== "ALL_SAVED") {
-        expect(result.data.commentUpdateState).toBe(state ?? "COMMENT_UPDATE_STATE_UNSPECIFIED");
-        expect(result.data.note).toContain("Do not repeat");
-      } else expect(result.data.note).toBeUndefined();
-    }
-    expect(calls).toHaveLength(3);
+        body: { requests: [{ createSlide: { objectId: "unique" } }], writeControl: { requiredRevisionId: "rev1" } },
+      }),
+    ).not.toHaveProperty("warnings");
+    expect(calls).toHaveLength(11);
     route = () => ({ status: 500, body: { error: { message: "Temporary failure" } } });
     await expect(
       call(c, "slides_api_write", {
@@ -1066,6 +1130,6 @@ describe("comments: a thread whose anchors alone pass one result (#696)", () => 
         body: { requests: [{ createSlide: { objectId: "unique" } }], writeControl: { requiredRevisionId: "rev1" } },
       }),
     ).rejects.toMatchObject({ retryable: false });
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(12);
   });
 });

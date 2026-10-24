@@ -9,13 +9,14 @@
 
 Slides cannot search or list decks. Find the file through Drive, or take the
 presentation id from `/presentation/d/<id>/` in its URL. A presentation is a
-Drive file; finding one does not grant permission to open it.
+Drive file; finding one does not grant permission to open it. A user-given id
+works as is; no Drive lookup is needed to use it.
 
 `get_presentation` reads text in page order, with speaker notes, alt text and
 placeholder ids. `get_page` opens groups and reads a slide, layout, master or
 notes page. A slide's `index` is zero-based. Resolve a layout's placeholders
 with `list_layouts` and `get_page` before filling a new slide.
-Named-read `fields` narrows data while preserving `truncated` cut disclosures.
+Named-read `fields` narrows data while preserving `page` and `truncated` cut disclosures.
 
 Text and notes have independent continuation. Pass an element's `textCursor`
 or a slide's `elementsCursor` to `get_page` with that slide's id; pass a
@@ -31,12 +32,10 @@ structural JSON, use `slides_api_read`. Operation details use the legacy
 Spell colons and unreserved characters literally in hatch paths; encode other
 characters within one id segment. Named tools handle their own id encoding.
 
-In code, `const {data: reply} = await connecta.call("decks.slides_api_read",
-{path: "/presentations/deck1"});` exposes the vendor presentation as
-`reply.data`.
-A direct call wraps that same `{status,data}` tool value in Connecta's result
-delivery; follow its result handle for large JSON. Content cursors belong to
-the named reading tools and are separate from that delivery handle.
+`slides_api_read` with `{path: "/presentations/<id>"}` returns `{status,data}`;
+the vendor presentation is `data`. A Connecta call's result delivery wraps that
+tool value in its own `data`; follow its result handle for large JSON.
+Content cursors belong to the named reading tools and are separate from that delivery handle.
 
 `get_slide_thumbnail` returns a link that opens as the delegated person for
 about 30 minutes. Keep it private. Generic thumbnail/preview operations are
@@ -47,7 +46,12 @@ refused; use the named thumbnail workflow.
 Read before editing and use its `revisionId` as the write precondition.
 Revision ids are preconditions, not replay keys. `create_slide` adds an empty
 slide; read its placeholder ids before inserting text. `replace_all_text`
-replaces literal text. No Slides tool shares, moves or deletes the deck file.
+replaces literal text, with `matchCase` and an optional `requiredRevisionId`.
+Each write returns the new `revisionId` for the next one. A `conflict` means
+the deck changed since your read: re-read, rebuild the requests, and send them
+with the new `revisionId`. A failure that says the write applied means Google
+answered 2xx: do not repeat it; re-read. No Slides tool shares, moves or deletes
+the deck file.
 
 `batch_update_presentation` takes the existing reviewed Request kinds.
 The generic batch hatch uses `POST /presentations/deck1:batchUpdate` with
@@ -69,8 +73,18 @@ text with `update_comment_post`. Reassignment requires content. Only the
 post's author can edit or delete that post. Comments notify people as in the
 Slides editor.
 
-Slides saves deck changes and comment changes separately. A successful mixed
-batch can save the deck without confirming the comments. When
-`commentUpdateState` is not `ALL_SAVED`, or the result says comment saves are
-unconfirmed, read the deck and `list_comments`, report each outcome separately,
-and avoid replaying the whole batch. Keep every created id for reconciliation.
+`create_comment` sends one `insertComment` by itself. When one edit changes
+the deck and adds or changes comments, send it as one `batch_update_presentation`
+call: `insertComment`, `addCommentReply`, `updateCommentPost`, `deleteComment`
+and `deleteCommentReply` are Request kinds and share a batch with deck kinds
+such as `updateTextStyle`, under the same `requiredRevisionId`. Slides saves
+the deck part and the comment part separately, so a successful mixed batch can
+save the deck without confirming the comments. When `commentUpdateState` is not
+`ALL_SAVED`, or the result says comment saves are unconfirmed, read the deck and
+`list_comments`, report the deck part and the comment part each as saved or
+unconfirmed, and send neither the batch nor its comment part again. Keep every
+created id for reconciliation.
+
+`create_comment_reply` sends one reply by itself. The write hatch keeps
+comment-save state and advice in envelope-level `warnings`, even with
+`fields: ["replies"]`; Google's own state remains in vendor `data` when supplied.
