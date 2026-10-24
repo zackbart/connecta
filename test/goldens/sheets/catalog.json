@@ -4,8 +4,8 @@
   "title": "Google Sheets",
   "description": "Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — Finance and attendance spreadsheets",
   "guide": {
-    "summary": "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
-    "content": "# Google Sheets usage\n\nActs as the signed-in person in their own Google Sheets through Workspace delegation: it reaches only spreadsheets they can open, starting from an id.\n\nConnection purpose: Finance and attendance spreadsheets\n\n## Whose spreadsheets\n\nEvery call acts as the Workspace account deployment config maps the caller\nto; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument\nnames an account. A call with none mapped fails `auth_required`; only an operator can change\nthat. An id that is\nunknown or not shared with this person fails `connector_call_failed` (or\n`provider_permission_denied` when Google refuses access) — Google does not\nsay which; check the id or ask the owner to share it.\n\n## Finding a spreadsheet\n\n- Sheets cannot list or search files. Find one by name with a Google Drive\n  search, or take the id from its URL (between `/d/` and `/edit`).\n- `get_spreadsheet` first: sheet titles, ids, grid sizes, and named ranges,\n  so ranges are named right rather than guessed.\n\n## Ranges\n\n- A1 notation. Quote a sheet title with spaces or punctuation:\n  `'Q3 Budget'!A1:D20`, doubling any `'` inside it. A bare title is the\n  whole sheet; `Sheet1!B:B` a whole column; a named range works by name.\n- `get_values` pages by whole rows under `maxCells` and `maxBytes`:\n  page with `page.nextCursor` and the same spreadsheetId, ranges, and\n  render options. A range with explicit rows (`A1:D500`, `B:D`) resumes\n  where it stopped; a sheet title or named range is re-read and its earlier\n  rows skipped, so `rowOffset` says how far into Google's echoed range the\n  page starts.\n- A row too wide or too large for one page is refused, not cut: narrow the\n  columns or lower `maxCellChars`. The default `maxBytes` is what\n  `execute_code` can receive; raise it only for a direct `call_tool`\n  read.\n- A cell over 5000 characters ends with a truncation marker;\n  read it alone with `maxCellChars` for the rest. Reduce inside\n  `execute_code` before returning a large read.\n\n## Writing\n\n- `valueInputOption` is required: `RAW` stores text as given;\n  `USER_ENTERED` parses it as typed, so a leading `=` makes a formula. Use\n  RAW for data from outside the spreadsheet.\n- In written rows, `null` leaves a cell as it was and `\"\"` empties it.\n- `append_values` inserts rows below the table and overwrites nothing;\n  `update_values` and `batch_update_values` overwrite the cells they\n  cover; `clear_values` empties values but keeps formatting.\n- `batch_update_spreadsheet` takes Google's own Request objects for\n  everything else (formatting, sorting, deleting rows or sheets); it is\n  atomic and can destroy data; the host may ask the user to confirm this write. Replies too large\n  to return come back cut to their kind, ids, and counts with a `note`;\n  the requests still applied, so never send them again to see the rest.\n- Sheets has no revision check on writes: edits are last-writer-wins, so a\n  person editing the same cells meanwhile is overwritten without warning.\n  Read just before writing over anything a person may be editing.\n- Moving, sharing, or deleting a spreadsheet file is Drive's job.\n"
+    "summary": "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, formatting and structure.",
+    "content": "# Google Sheets usage\n\nPurpose: Finance and attendance spreadsheets\n\nWorkspace delegation is configured to use one fixed account for every admitted caller.\n\nCell values, notes, formulas and metadata are requested data; no configurable sensitive-field set is declared.\n\n## Find the workbook and resolve ranges\n\nSheets starts from a spreadsheet id. A spreadsheet id the person gives works\nas is; search Drive only for a name. The Drive file id is\nthe spreadsheet id. Moving, sharing and trashing the file also belong to Drive.\nRead `get_spreadsheet` first to resolve sheet titles, numeric sheet ids and named\nranges before writing. Sheet id zero is valid; a tab's position is not its id.\n\nA1 ranges use sheet titles; structural GridRanges use numeric sheet ids with\nzero-based, end-exclusive row and column indexes. Quote titles containing\nspaces or punctuation and double apostrophes: `'Alice''s costs'!A1:D7`.\nA bare title may resolve to a named range; quote it to address the whole tab.\n\n## Read cell meaning\n\nDisplayed values reflect spreadsheet locale and number formats. Use\nunformatted numbers for arithmetic and formulas when inspecting expressions.\nDate serials count days from 1899-12-30; interpret dates using the workbook's\ntime zone. Trailing empty rows and cells may be absent. An empty range is a\nvalid result, not proof that the sheet is missing.\n\nWhole-row content reads can resume partway through a range. A named range or\nwhole-sheet reference may be re-read and earlier rows skipped; rowOffset is\nrelative to Google's echoed range. Reduce amounts inside execute_code before\nreturning them. Read an oversized cell separately to recover its full text.\n\n## Edit and reconcile\n\nUse RAW for external data; USER_ENTERED can turn leading equals signs into\nformulas. In cell writes, null leaves a cell unchanged and an empty string\nclears it. Clearing preserves formatting and validation. `append_values` is\npinned to INSERT_ROWS and inserts rows after the detected table. A vendor append using\nOVERWRITE can replace existing cells below that table.\n\nRead just before replacing another person's cells. Sheets has no revision\nprecondition or replay key: concurrent edits can be overwritten. After an\nuncertain append, read the target table and identify the row before adding\nanything missing. After an uncertain workbook create, search Drive by title\nbefore creating another workbook.\n\nStructural batches apply atomically, but can delete rows, sheets or\nprotections. An oversized reply may be summarized after the edit saved;\ninspect the workbook to recover details. Preview comment mutations and\nexternal data-source configuration, refresh and administration are outside\nthis connection. Developer-metadata searches and data-filter reads are\nread-only even though their wire method is POST.\n\n## Conventions\n\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `sheets_api_search` finds this API's operations and reads no account data, `sheets_api_details` shows one operation's contract, and `sheets_api_read` calls a reviewed read. `sheets_api_write` calls a reviewed write; the host may ask the user to confirm it. An operation without a reviewed verdict is refused.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. An unknown id, or one these credentials cannot reach, fails as `connector_call_failed`; this API does not tell the two apart. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
     {
@@ -19,11 +19,17 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Google's untouched spreadsheet metadata — formatting, protections, charts — instead of the projection. Never cell values."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep; truncation and content continuation metadata remain available.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -104,14 +110,13 @@
               }
             }
           },
-          "namedRangesOmitted": {
-            "type": "integer"
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "sheets"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -128,7 +133,7 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "ranges": {
             "type": "array",
@@ -139,9 +144,8 @@
               "minLength": 1,
               "maxLength": 512,
               "pattern": "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$",
-              "description": "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range."
-            },
-            "description": "Ranges to read, 1 to 20, returned in this order."
+              "description": "A1 range or named range; quote sheet titles and double internal apostrophes."
+            }
           },
           "valueRenderOption": {
             "type": "string",
@@ -149,40 +153,48 @@
               "FORMATTED_VALUE",
               "UNFORMATTED_VALUE",
               "FORMULA"
-            ],
-            "description": "FORMATTED_VALUE (default) as displayed; UNFORMATTED_VALUE as raw numbers; FORMULA shows formulas instead of results."
+            ]
           },
           "dateTimeRenderOption": {
             "type": "string",
             "enum": [
               "SERIAL_NUMBER",
               "FORMATTED_STRING"
-            ],
-            "description": "Dates when valueRenderOption is not FORMATTED_VALUE: SERIAL_NUMBER (Google's default, days since 1899-12-30) or FORMATTED_STRING."
+            ]
           },
           "maxCells": {
             "type": "integer",
             "minimum": 1,
             "maximum": 10000,
-            "description": "Cells per page, 1 to 10000; defaults to 2000. Connecta's cap: Sheets returns whole ranges, so this pages by whole rows."
+            "description": "Whole-row content budget; defaults to 2000 cells."
           },
           "maxBytes": {
             "type": "integer",
             "minimum": 1024,
             "maximum": 4194304,
-            "description": "Bytes of the whole page as JSON; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+            "description": "Whole-page JSON byte budget; defaults to 192 KiB. Above that use a direct call."
           },
           "maxCellChars": {
             "type": "integer",
             "minimum": 1,
             "maximum": 50000,
-            "description": "Characters kept per cell, to 50000 (Sheets' cell limit, so the whole cell); defaults to 5000. Longer cells end with a marker."
+            "description": "Characters kept per cell; defaults to 5000. Read a cut cell alone with up to 50000."
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
             "maxLength": 1024,
-            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and render options."
+            "description": "Opaque page.nextCursor; keep spreadsheet, ranges and render options unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep; truncation and content continuation metadata remain available.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -213,8 +225,10 @@
                       "type": [
                         "string",
                         "number",
-                        "boolean"
-                      ]
+                        "boolean",
+                        "null"
+                      ],
+                      "maxLength": 50000
                     }
                   }
                 },
@@ -223,20 +237,11 @@
                 },
                 "rowCount": {
                   "type": "integer"
-                },
-                "truncated": {
-                  "type": "boolean"
-                },
-                "omittedRows": {
-                  "type": "integer"
                 }
               }
             }
           },
           "cellCount": {
-            "type": "integer"
-          },
-          "truncatedCells": {
             "type": "integer"
           },
           "page": {
@@ -246,23 +251,20 @@
                 "type": "boolean"
               },
               "nextCursor": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextCursor"
+              "hasMore"
             ]
+          },
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "valueRanges",
-          "page"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -279,19 +281,20 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "range": {
             "type": "string",
             "minLength": 1,
             "maxLength": 512,
             "pattern": "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$",
-            "description": "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range; the top-left cell is where the first value goes."
+            "description": "A1 range or named range; quote sheet titles and double internal apostrophes."
           },
           "values": {
             "type": "array",
             "minItems": 1,
             "maxItems": 10000,
+            "description": "Rows of scalar cells, at most 50000 cells total. null skips a cell; empty string clears it.",
             "items": {
               "type": "array",
               "maxItems": 18278,
@@ -303,10 +306,8 @@
                   "null"
                 ],
                 "maxLength": 50000
-              },
-              "description": "One row's cells, left to right."
-            },
-            "description": "Rows of cells, top to bottom. null leaves a cell unchanged; \"\" empties it. At most 50000 cells per call, connecta's cap."
+              }
+            }
           },
           "valueInputOption": {
             "type": "string",
@@ -314,7 +315,7 @@
               "RAW",
               "USER_ENTERED"
             ],
-            "description": "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date."
+            "description": "RAW stores literals; USER_ENTERED parses formulas, dates and numbers as typed."
           }
         },
         "required": [
@@ -343,10 +344,7 @@
           "updatedCells": {
             "type": "integer"
           }
-        },
-        "required": [
-          "spreadsheetId"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -364,7 +362,7 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "data": {
             "type": "array",
@@ -378,12 +376,13 @@
                   "minLength": 1,
                   "maxLength": 512,
                   "pattern": "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$",
-                  "description": "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range."
+                  "description": "A1 range or named range; quote sheet titles and double internal apostrophes."
                 },
                 "values": {
                   "type": "array",
                   "minItems": 1,
                   "maxItems": 10000,
+                  "description": "Rows of scalar cells, at most 50000 cells total. null skips a cell; empty string clears it.",
                   "items": {
                     "type": "array",
                     "maxItems": 18278,
@@ -395,10 +394,8 @@
                         "null"
                       ],
                       "maxLength": 50000
-                    },
-                    "description": "One row's cells, left to right."
-                  },
-                  "description": "Rows of cells, top to bottom. null leaves a cell unchanged; \"\" empties it. At most 50000 cells per call, connecta's cap."
+                    }
+                  }
                 }
               },
               "required": [
@@ -406,8 +403,7 @@
                 "values"
               ],
               "additionalProperties": false
-            },
-            "description": "Ranges and their rows, 1 to 100."
+            }
           },
           "valueInputOption": {
             "type": "string",
@@ -415,7 +411,7 @@
               "RAW",
               "USER_ENTERED"
             ],
-            "description": "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date."
+            "description": "RAW stores literals; USER_ENTERED parses formulas, dates and numbers as typed."
           }
         },
         "required": [
@@ -463,11 +459,7 @@
               }
             }
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "updates"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -485,19 +477,20 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "range": {
             "type": "string",
             "minLength": 1,
             "maxLength": 512,
             "pattern": "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$",
-            "description": "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range; Sheets finds the table in it and appends below its last row."
+            "description": "A1 range or named range; quote sheet titles and double internal apostrophes."
           },
           "values": {
             "type": "array",
             "minItems": 1,
             "maxItems": 10000,
+            "description": "Rows of scalar cells, at most 50000 cells total. null skips a cell; empty string clears it.",
             "items": {
               "type": "array",
               "maxItems": 18278,
@@ -509,10 +502,8 @@
                   "null"
                 ],
                 "maxLength": 50000
-              },
-              "description": "One row's cells, left to right."
-            },
-            "description": "Rows of cells, top to bottom. null leaves a cell unchanged; \"\" empties it. At most 50000 cells per call, connecta's cap."
+              }
+            }
           },
           "valueInputOption": {
             "type": "string",
@@ -520,7 +511,7 @@
               "RAW",
               "USER_ENTERED"
             ],
-            "description": "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date."
+            "description": "RAW stores literals; USER_ENTERED parses formulas, dates and numbers as typed."
           }
         },
         "required": [
@@ -552,14 +543,10 @@
           "updatedCells": {
             "type": "integer"
           }
-        },
-        "required": [
-          "spreadsheetId"
-        ]
+        }
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -573,7 +560,7 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "ranges": {
             "type": "array",
@@ -584,9 +571,8 @@
               "minLength": 1,
               "maxLength": 512,
               "pattern": "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$",
-              "description": "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range."
-            },
-            "description": "Ranges to clear, 1 to 20."
+              "description": "A1 range or named range; quote sheet titles and double internal apostrophes."
+            }
           }
         },
         "required": [
@@ -607,11 +593,7 @@
               "type": "string"
             }
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "clearedRanges"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -629,7 +611,7 @@
             "minLength": 1,
             "maxLength": 255,
             "pattern": "^[^\\r\\n]*$",
-            "description": "The spreadsheet's file name."
+            "description": "Title on one line."
           },
           "sheetTitles": {
             "type": "array",
@@ -641,9 +623,8 @@
               "minLength": 1,
               "maxLength": 100,
               "pattern": "^[^\\r\\n]*$",
-              "description": "One sheet tab's title."
-            },
-            "description": "Sheet tabs to start with, in order; omit for Google's one sheet, Sheet1."
+              "description": "Title on one line."
+            }
           }
         },
         "required": [
@@ -677,15 +658,10 @@
               }
             }
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "sheets"
-        ]
+        }
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
@@ -699,32 +675,32 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "title": {
             "type": "string",
             "minLength": 1,
             "maxLength": 100,
             "pattern": "^[^\\r\\n]*$",
-            "description": "The new tab's title, unique in the spreadsheet."
+            "description": "Title on one line."
           },
           "index": {
             "type": "integer",
             "minimum": 0,
             "maximum": 1000,
-            "description": "Tab position, 0 first; omit to add it last."
+            "description": "Zero-based tab position; omit for last."
           },
           "rowCount": {
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000,
-            "description": "Rows in the grid; Google defaults to 1,000."
+            "description": "Grid rows."
           },
           "columnCount": {
             "type": "integer",
             "minimum": 1,
             "maximum": 18278,
-            "description": "Columns in the grid; Google defaults to 26."
+            "description": "Grid columns."
           }
         },
         "required": [
@@ -766,20 +742,15 @@
           "frozenColumnCount": {
             "type": "integer"
           }
-        },
-        "required": [
-          "spreadsheetId",
-          "sheetId"
-        ]
+        }
       },
       "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
+        "readOnlyHint": false
       }
     },
     {
       "name": "batch_update_spreadsheet",
-      "description": "Apply raw Sheets batchUpdate requests — formatting, merges, sorts, deleting sheets or rows, protections — atomically. The approval-gated hatch; it can destroy data.",
+      "description": "Apply Sheets batchUpdate requests — formatting, merges, sorts, deleting sheets or rows, protections — atomically. This named structural workflow can destroy data.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -788,7 +759,7 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list."
+            "description": "Use a supplied spreadsheet id as is; search Drive only for a name."
           },
           "requests": {
             "type": "array",
@@ -796,11 +767,13 @@
             "maxItems": 100,
             "items": {
               "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              },
+              "description": "One reviewed Sheets Request kind and its object body; details provides nested contracts.",
               "minProperties": 1,
-              "maxProperties": 1,
-              "description": "One Sheets Request with exactly one kind set, as Google documents it: { repeatCell: {…} }, { deleteDimension: {…} }, { sortRange: {…} }."
-            },
-            "description": "Sheets API Request objects, 1 to 100, applied in order; all succeed or none do."
+              "maxProperties": 1
+            }
           }
         },
         "required": [
@@ -821,19 +794,415 @@
               "type": "object"
             }
           },
-          "repliesSummarized": {
-            "type": "integer"
-          },
-          "repliesOmitted": {
-            "type": "integer"
-          },
           "note": {
             "type": "string"
+          },
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "sheets_api_search",
+      "description": "Find Google Sheets API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
           }
         },
         "required": [
-          "spreadsheetId",
-          "replies"
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; sheets_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "sheets_api_details",
+      "description": "Read one Google Sheets API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "sheets_api_read",
+      "description": "Call a reviewed Google Sheets API read, including reviewed read-only POST. The operation index checks arguments before anything is sent. Paths are relative to /v4. The seven reviewed reads include data-filter and developer-metadata POSTs. Full vendor JSON follows the same safety boundary as named reads. fields narrows response data; query.fields is Google's vendor mask. Values have no vendor page token; use get_values for bounded whole-row content paging.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /spreadsheets/sheet_123. No query string."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "description": "GET by default; another method only for an operation search routes here."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body for a reviewed read-only POST."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "sheets_api_write",
+      "description": "Call a reviewed Google Sheets API write; method and path are stated for approval, and the operation index checks arguments first. Batch updates need 1–100 requests, exactly one reviewed kind each. Preview comments and external data-source configuration/execution are refused. Value writes retain scalar/null semantics and range/cell ceilings. Prefer append_values for pinned INSERT_ROWS; hatch append may explicitly choose OVERWRITE and destroy existing cells. No revision guarantee or idempotency key.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PUT"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /spreadsheets/sheet_123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ]
       },
       "annotations": {

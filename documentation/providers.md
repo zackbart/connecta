@@ -643,6 +643,69 @@ named tools.
 Google Docs image `contentUri` values are temporary access capabilities and are
 withheld in all responses. Authored links and image `sourceUri` remain available.
 
+## Google Sheets
+
+```ts
+import { sheets } from "@zackbart/connecta/providers/sheets";
+
+const workbook = sheets("workbook", {
+  purpose: "Review tables and quarterly budgets",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+**Authentication.** Enable Google Sheets API in a Google Cloud project. Create
+a service account with domain-wide delegation and a JSON private key; no
+project IAM role grants spreadsheet access. In the Workspace Admin console,
+a super admin adds its numeric client id to API controls → Domain Wide
+Delegation with `https://www.googleapis.com/auth/spreadsheets`. Add to an
+existing client's scopes instead of replacing them. A grant can take up to
+24 hours to propagate. Supply the key through the deployment's secret store;
+there is no operator credential slot or per-user consent flow. If organization
+policy disables key creation, a Workspace administrator must authorize it.
+
+**Options and boundaries.** `subject` is a fixed Workspace address or a
+function mapping admitted identities. Unmapped callers fail `auth_required`;
+agent pools need an owner unless a fixed subject is configured. Configure
+inbound authentication. `readOnly: true` omits and refuses writes, including
+hatch mutations. `instructions` appends deployment guidance. `baseUrl` may
+select a confined HTTPS proxy (HTTP loopback for tests). Cell values, notes,
+formulas and metadata are requested content; no `sensitiveFields` switch is
+provided. Sent credentials and private signed destinations remain withheld.
+
+**Coverage and limits.** Thirteen tools include the nine named workflows and
+four indexed hatches over all 17 pinned Sheets v4 methods. Seven are reviewed
+reads, including three POST methods: spreadsheet/get values by data filter
+and developer metadata search. Ten are writes. Generic batches accept 1–100
+requests, exactly one reviewed kind each; preview comments and external
+data-source kinds are refused. Values use at most 20 read/clear ranges,
+100 batch write ranges, 10,000 rows per value block and 50,000 cells per write.
+No new OAuth scopes, revision guarantee or automatic write replay is added.
+
+`get_values` pages whole rows with `maxCells` (2,000 default, 10,000 maximum),
+`maxBytes` (192 KiB default, 4 MiB maximum) and `maxCellChars` (5,000 default,
+50,000 maximum). A row that cannot fit is refused before returning that page;
+narrow the columns or adjust the budgets. Use large byte budgets only with
+direct calls; reduce within code for its bounded result bridge. Sheets has no
+vendor page token. Standard result `fields` selects dot paths after safety;
+Google's `query.fields` and batch field masks are distinct vendor syntax.
+
+For full metadata, read `workbook.sheets_api_read` with
+`{ method: "GET", path: "/spreadsheets/workbook_123" }`. A direct call's
+Connecta delivery contains the hatch result `{ status, data }`; in code,
+`const { data: reply } = await connecta.call("workbook.sheets_api_read", args)`
+and `reply.data.sheets` accesses the vendor sheets. Paths are relative to
+`/v4`. Range colons can be literal or `%3A`; action suffixes such as `:append`
+must be literal. Prefer `append_values` for pinned `INSERT_ROWS`; generic
+append's explicit `OVERWRITE` can overwrite cells.
+
+Named-read field selection keeps `truncated` metadata, and value reads keep
+`page` for continuation. `get_values` cursors are signed and bind the connection
+and read arguments through the shared deployment store. Mapped Workspace
+subjects also bind the admitted caller. Restart an old unsigned continuation
+after upgrading; changing mapped callers requires a new read.
+
 ## Google Forms
 
 ```ts

@@ -1,0 +1,40 @@
+{
+  "documentation": "https://developers.google.com/workspace/sheets/api/reference/rest",
+  "url": "https://sheets.googleapis.com/$discovery/rest?version=v4",
+  "revision": "20261019",
+  "digest": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+  "vendored": true,
+  "discovery": {
+    "pin": "discovery.json",
+    "format": "google-discovery-v1",
+    "summaries": {
+      "sheets.spreadsheets.get": "Get read spreadsheet metadata, named ranges, conditional formats, protections and optional cell grid data.",
+      "sheets.spreadsheets.getByDataFilter": "Get read spreadsheet cell grid data by data filter without changing the spreadsheet.",
+      "sheets.spreadsheets.create": "Create a new spreadsheet workbook with properties and initial sheets.",
+      "sheets.spreadsheets.batchUpdate": "Make cells bold, format, sort, merge, insert or delete rows, freeze, rename sheet; Refused: comments, data sources.",
+      "sheets.spreadsheets.sheets.copyTo": "Copy duplicate a sheet tab into another spreadsheet.",
+      "sheets.spreadsheets.developerMetadata.get": "Get read developer metadata by metadata id.",
+      "sheets.spreadsheets.developerMetadata.search": "Search find developer metadata by data filter key, value or location; read only.",
+      "sheets.spreadsheets.values.get": "Get read cells by A1 range; read cell formulas, displayed text or unformatted numbers.",
+      "sheets.spreadsheets.values.batchGet": "Batch get read cells across multiple A1 ranges; read cell formulas or unformatted numbers.",
+      "sheets.spreadsheets.values.batchGetByDataFilter": "Batch get read cell values by data filter without changing cells.",
+      "sheets.spreadsheets.values.update": "Update write cell values into one range, overwriting existing cells.",
+      "sheets.spreadsheets.values.batchUpdate": "Batch update write cell values across ranges, overwriting existing cells.",
+      "sheets.spreadsheets.values.batchUpdateByDataFilter": "Batch update write cell values by data filter, overwriting matched cells.",
+      "sheets.spreadsheets.values.append": "Append rows as RAW literals or parsed USER_ENTERED values; INSERT_ROWS inserts, OVERWRITE can overwrite cells.",
+      "sheets.spreadsheets.values.clear": "Clear empty cell values in one range, preserving formatting and validation.",
+      "sheets.spreadsheets.values.batchClear": "Batch clear empty cell values across ranges, preserving formatting.",
+      "sheets.spreadsheets.values.batchClearByDataFilter": "Batch clear empty cell values by data filter, preserving formatting."
+    }
+  },
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "maxEnum": 200,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true,
+    "valueSafety": true
+  }
+}

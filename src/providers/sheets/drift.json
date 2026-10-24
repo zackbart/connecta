@@ -4,16 +4,36 @@
   "generated": {
     "operations": [
       "GET /v4/spreadsheets/{spreadsheetId}",
+      "GET /v4/spreadsheets/{spreadsheetId}/developerMetadata/{metadataId}",
+      "GET /v4/spreadsheets/{spreadsheetId}/values/{range}",
       "GET /v4/spreadsheets/{spreadsheetId}/values:batchGet",
       "POST /v4/spreadsheets",
+      "POST /v4/spreadsheets/{spreadsheetId}/developerMetadata:search",
+      "POST /v4/spreadsheets/{spreadsheetId}/sheets/{sheetId}:copyTo",
       "POST /v4/spreadsheets/{spreadsheetId}/values/{range}:append",
+      "POST /v4/spreadsheets/{spreadsheetId}/values/{range}:clear",
       "POST /v4/spreadsheets/{spreadsheetId}/values:batchClear",
+      "POST /v4/spreadsheets/{spreadsheetId}/values:batchClearByDataFilter",
+      "POST /v4/spreadsheets/{spreadsheetId}/values:batchGetByDataFilter",
       "POST /v4/spreadsheets/{spreadsheetId}/values:batchUpdate",
-      "POST /v4/spreadsheets/{spreadsheetId}:batchUpdate"
+      "POST /v4/spreadsheets/{spreadsheetId}/values:batchUpdateByDataFilter",
+      "POST /v4/spreadsheets/{spreadsheetId}:batchUpdate",
+      "POST /v4/spreadsheets/{spreadsheetId}:getByDataFilter",
+      "PUT /v4/spreadsheets/{spreadsheetId}/values/{range}"
     ],
-    "evidence": {}
+    "evidence": {
+      "discovery.document.json": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+      "discovery.json": "sha256:45f20583300cef320821d6fa3b0aee28fd10e29fea355c1cceef79ba3d0100a0",
+      "openapi.document.json": "sha256:271687300c50028991b76cbd4f96f656ca6c3ac3b7ec4704a71e492495729eb9",
+      "openapi.json": "sha256:a89acf45d61f31fd153bf2fec4453341ac8f65f1893fe07451d41d14b0c7ec48",
+      "value-safety.json": "sha256:d72e7aa298dad48f0f8e8757cf931bdebbd47d9003fe8a34254f879b415d4b51"
+    }
   },
   "checks": [
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
     {
       "type": "endpoints",
       "specification": {
@@ -58,6 +78,56 @@
           "operation": "POST /v4/spreadsheets/{spreadsheetId}/values/{range}:append",
           "specRevision": "20261019",
           "contract": "sha256:de88d859a3d49f6862fdb6a367e6f8d3b917881c037747fa411d159e6f4098a2"
+        },
+        {
+          "operation": "GET /v4/spreadsheets/{spreadsheetId}/developerMetadata/{metadataId}",
+          "specRevision": "20261019",
+          "contract": "sha256:87d55f78684ceb5a338cdd897eb90a302d6ed223e83da85c690d452e5f756e5c"
+        },
+        {
+          "operation": "GET /v4/spreadsheets/{spreadsheetId}/values/{range}",
+          "specRevision": "20261019",
+          "contract": "sha256:29454b167c833aad7285788f64cc2aaa614a88931b2bcd62ab5fff4e972c77c9"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/developerMetadata:search",
+          "specRevision": "20261019",
+          "contract": "sha256:122c433b4a3d61298390b7d255a646c2501988898852c51391ae8b59f369a790"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/sheets/{sheetId}:copyTo",
+          "specRevision": "20261019",
+          "contract": "sha256:f7708db114e2eef6d54867ff82c6b13a0c003bf583f4e305c83568374627f13a"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/values/{range}:clear",
+          "specRevision": "20261019",
+          "contract": "sha256:86194b48ccc8cae9bfa322fdfa12ce5fa64e4f7c57f5df9ac5fe97c154125131"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/values:batchClearByDataFilter",
+          "specRevision": "20261019",
+          "contract": "sha256:50c4d7d0c1981dd7131d3a3f95bff9ea87ebc7b8619c2134d7e088570a552553"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/values:batchGetByDataFilter",
+          "specRevision": "20261019",
+          "contract": "sha256:e9de85eccb0a0c2a67038b523a7b857ca3baca8af9dbe538ef2ae0f9ef652766"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}/values:batchUpdateByDataFilter",
+          "specRevision": "20261019",
+          "contract": "sha256:d6f659cf48efcfc05cf1fed95af18c62975f6b134dfda34d28c3638938fb291f"
+        },
+        {
+          "operation": "POST /v4/spreadsheets/{spreadsheetId}:getByDataFilter",
+          "specRevision": "20261019",
+          "contract": "sha256:9ef2e1deb944f205e54476e17d893cc322a256f32f136f0b8e135cca9623af1a"
+        },
+        {
+          "operation": "PUT /v4/spreadsheets/{spreadsheetId}/values/{range}",
+          "specRevision": "20261019",
+          "contract": "sha256:fb9e59db92e5290c1b2d3a5c8314403bbcc8d437bf98ab1d9c5ca39a599a8ac8"
         }
       ]
     }

@@ -11,9 +11,11 @@ import { requestSentSecrets } from "../../sent-secrets.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 
 import { sheets } from "./index.js";
+import { SHEETS_HATCH, sheetsIndex } from "./lib/hatch.js";
+import { SHEETS_ADMITTED_KINDS, SHEETS_REQUEST_KINDS, SHEETS_REFUSED_KINDS } from "./lib/requests.js";
 
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -39,8 +41,10 @@ const calls: ApiCall[] = [];
 let tokenRequests = 0;
 let route: Route = () => undefined;
 const realFetch = globalThis.fetch;
+let storage = memoryStorage();
 
 beforeEach(() => {
+  storage = memoryStorage();
   calls.length = 0;
   tokenRequests = 0;
   route = () => undefined;
@@ -78,7 +82,7 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
 }
 
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
@@ -106,15 +110,14 @@ describe("reading values (H9, H10)", () => {
     };
   }
 
-  it("pages by whole rows under maxCells, resuming a bounded range where it stopped", async () => {
+  it("INV-2 INV-5: pages whole rows and admits only reviewed Sheets hatch reads", async () => {
+    installOwnedTransport();
     route = sheetData;
     const connector = connection();
     const ranges = ["Data!A1:B10", "Other!A1:A2"];
 
     const first = await call(connector, "get_values", { spreadsheetId: ID, ranges, maxCells: 6 });
-    expect(first.valueRanges).toEqual([
-      { range: "Data!A1:B10", values: rows(1, 3), rowCount: 3, truncated: true, omittedRows: 7 },
-    ]);
+    expect(first.valueRanges).toEqual([{ range: "Data!A1:B10", values: rows(1, 3), rowCount: 3 }]);
     expect(first.cellCount).toBe(6);
     expect(first.page.hasMore).toBe(true);
     expect(first.page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -132,70 +135,219 @@ describe("reading values (H9, H10)", () => {
       { range: "Data!A4:B10", values: rows(4, 7), rowCount: 7 },
       { range: "Other!A1:A2", values: [["x"], ["y"]], rowCount: 2 },
     ]);
-    expect(second.page).toEqual({ hasMore: false, nextCursor: null });
-  });
-
-  it("never returns more than maxCells: a row wider than the page is refused, not cut", async () => {
-    const wideRow = Array.from({ length: 18_278 }, () => 1);
-    route = (request) => {
-      const range = request.url.searchParams.get("ranges")!;
-      return { body: { valueRanges: [{ range, values: range === "W!A2:ZZZ2" ? [wideRow] : [[1, 2, 3], wideRow] }] } };
-    };
-    const narrow = await call(connection(), "get_values", {
+    expect(second.page).toEqual({ hasMore: false });
+    route = () => ({ body: { valueRanges: [{ range: "Data!A1:A2", values: [["long cell"], ["other"]] }] } });
+    const selected = await call(connector, "get_values", {
       spreadsheetId: ID,
-      ranges: ["W!A1:ZZZ2"],
+      ranges: ["Data!A1:A2"],
       maxCells: 1,
-    }).catch((error) => error);
-    expect(narrow).toMatchObject({ code: "invalid_args" });
-    expect(narrow.message).toContain("raise maxCells to at least 3");
-
-    // The first row fits; the page stops before the one that cannot.
-    const first = await call(connection(), "get_values", {
-      spreadsheetId: ID,
-      ranges: ["W!A1:ZZZ2"],
-      maxCells: 10_000,
+      maxCellChars: 1,
+      fields: ["valueRanges.values"],
     });
-    expect(first.cellCount).toBe(3);
-    expect(first.page.hasMore).toBe(true);
-    const wide = await call(connection(), "get_values", {
-      spreadsheetId: ID,
-      ranges: ["W!A1:ZZZ2"],
-      maxCells: 10_000,
-      cursor: first.page.nextCursor,
-    }).catch((error) => error);
-    expect(wide).toMatchObject({ code: "invalid_args" });
-    expect(wide.message).toContain("narrow the range's columns");
-    expect(wide.message).toContain("18278 cells");
+    expect(selected.truncated).toEqual(["valueRanges[].values"]);
+    expect(selected.page.hasMore).toBe(true);
+    expect(selected.page.nextCursor).toBeTypeOf("string");
+    expect(selected).not.toHaveProperty("cellCount");
+    route = () => ({
+      body: {
+        spreadsheetId: ID,
+        properties: { title: "Review" },
+        namedRanges: Array.from({ length: 201 }, (_, i) => ({
+          name: `Range${i}`,
+          range: { sheetId: 0, startRowIndex: i, endRowIndex: i + 1, startColumnIndex: 0, endColumnIndex: 1 },
+        })),
+      },
+    });
+    expect(await call(connector, "get_spreadsheet", { spreadsheetId: ID, fields: ["title"] })).toEqual({
+      title: "Review",
+      truncated: ["namedRanges[]"],
+    });
+
+    expect(sheetsIndex.pathMatching).toBe("uri-template");
+    expect(sheetsIndex.ops).toHaveLength(17);
+    for (const op of sheetsIndex.ops) {
+      expect(op.summary.length).toBeLessThanOrEqual(120);
+      expect(op.summary).not.toContain("…");
+    }
+    expect(Object.keys(SHEETS_HATCH.verdicts).sort()).toEqual(
+      sheetsIndex.ops.map((op) => `${op.method} ${op.path}`).sort(),
+    );
+    for (const [query, expected] of [
+      ["append rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
+      ["write cell values", "/spreadsheets/{spreadsheetId}/values:batchUpdate"],
+      ["format cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["make cells bold", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["sort range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["sort rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["merge cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["delete rows", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["rename sheet", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["freeze header row", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["read header row", "/spreadsheets/{spreadsheetId}/values:batchGet"],
+      ["update range", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["append literal rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
+      ["create spreadsheet", "/spreadsheets"],
+      ["find developer metadata", "/spreadsheets/{spreadsheetId}/developerMetadata:search"],
+    ]) {
+      const result = await call(connector, "sheets_api_search", { query });
+      expect(
+        result.operations.slice(0, 2).map((op: any) => op.path),
+        query,
+      ).toContain(expected);
+      if (query === "read header row") expect(result.operations[0]).toMatchObject({ method: "GET", path: expected });
+    }
+
+    expect(Object.values(SHEETS_HATCH.verdicts).filter((value) => value === "read")).toHaveLength(7);
+    expect(SHEETS_REQUEST_KINDS).toHaveLength(74);
+    expect(SHEETS_ADMITTED_KINDS).toHaveLength(64);
+    route = () => ({
+      body: {
+        spreadsheetId: ID,
+        values: [["visible", 3]],
+        matchedDeveloperMetadata: [{ developerMetadata: { metadataId: 7, metadataKey: "review" } }],
+      },
+    });
+    for (const path of ["Sheet1!A1%3AD7", "'Alice''s%20costs'!A1%3AD7", "Sheet1!A1:D7"]) {
+      const result = await call(connector, "sheets_api_read", {
+        method: "GET",
+        path: `/spreadsheets/${ID}/values/${path}`,
+        fields: ["values"],
+      });
+      expect(result).toEqual({ status: 200, data: { values: [["visible", 3]] } });
+      expect(calls.at(-1)!.url.pathname).toContain("A1:D7");
+    }
+    const readOnlyConnector = connection({ readOnly: true });
+    expect(readOnlyConnector.readOnly).toBe(true);
+    for (const path of ["/developerMetadata:search", ":getByDataFilter", "/values:batchGetByDataFilter"]) {
+      const result = await call(readOnlyConnector, "sheets_api_read", {
+        method: "POST",
+        path: `/spreadsheets/${ID}${path}`,
+        body: { dataFilters: [{ a1Range: "Sheet1!A1:D7" }] },
+      });
+      expect(result.status).toBe(200);
+      expect(calls.at(-1)!.method).toBe("POST");
+    }
+    const reads = calls.length;
+    for (const args of [
+      { method: "GET", path: `/spreadsheets/${ID}/values/%41%31` },
+      { method: "POST", path: `/spreadsheets/${ID}/values/A1%3Aclear` },
+      { method: "GET", path: `/spreadsheets/${ID}`, fields: ["unknownRoot"] },
+      { method: "GET", path: `/spreadsheets/${ID}`, query: { userId: "bob@example.com" } },
+      { method: "GET", path: `/spreadsheets/${ID}`, query: { access_token: "x" } },
+      { method: "GET", path: `/spreadsheets/${ID}`, headers: { authorization: "Bearer x" } },
+      { method: "GET", path: `/spreadsheets/${ID}`, query: { ranges: Array(21).fill("A1") } },
+    ])
+      await expect(call(connector, "sheets_api_read", args)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(reads);
+    await expect(call(connector, "get_spreadsheet", { spreadsheetId: ID, raw: true })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(
+      call(connector, "sheets_api_read", {
+        method: "POST",
+        path: `/spreadsheets/${ID}:batchUpdate`,
+        body: { requests: [{ repeatCell: {} }] },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+
+    {
+      const wideRow = Array.from({ length: 18_278 }, () => 1);
+      route = (request) => {
+        const range = request.url.searchParams.get("ranges")!;
+        return { body: { valueRanges: [{ range, values: range === "W!A2:ZZZ2" ? [wideRow] : [[1, 2, 3], wideRow] }] } };
+      };
+      const narrow = await call(connection(), "get_values", {
+        spreadsheetId: ID,
+        ranges: ["W!A1:ZZZ2"],
+        maxCells: 1,
+      }).catch((error) => error);
+      expect(narrow).toMatchObject({ code: "invalid_args" });
+      expect(narrow.message).toContain("raise maxCells to at least 3");
+
+      // The first row fits; the page stops before the one that cannot.
+      const first = await call(connection(), "get_values", {
+        spreadsheetId: ID,
+        ranges: ["W!A1:ZZZ2"],
+        maxCells: 10_000,
+      });
+      expect(first.cellCount).toBe(3);
+      expect(first.page.hasMore).toBe(true);
+      const wide = await call(connection(), "get_values", {
+        spreadsheetId: ID,
+        ranges: ["W!A1:ZZZ2"],
+        maxCells: 10_000,
+        cursor: first.page.nextCursor,
+      }).catch((error) => error);
+      expect(wide).toMatchObject({ code: "invalid_args" });
+      expect(wide.message).toContain("narrow the range's columns");
+      expect(wide.message).toContain("18278 cells");
+    }
   });
 
-  it("binds a cursor to its spreadsheet, ranges, and render options, and refuses one forged", async () => {
-    route = () => ({ body: { valueRanges: [{ range: "S!A1:A3", values: [[1], [2], [3]] }] } });
+  it("INV-4 INV-5: signed value cursors refuse tampering and delegated caller changes without sending", async () => {
+    route = (request) => {
+      const range = request.url.searchParams.get("ranges") ?? "S!A1:A3";
+      const start = Number(/S!A(\d+)/.exec(range)?.[1] ?? 1);
+      return { body: { valueRanges: [{ range, values: [1, 2, 3].slice(start - 1).map((value) => [value]) }] } };
+    };
     const args = { spreadsheetId: ID, ranges: ["S!A1:A3"], valueRenderOption: "FORMULA" };
-    const first = await call(connection(), "get_values", { ...args, maxCells: 1 });
+    const connector = connection();
+    const first = await call(connector, "get_values", { ...args, maxCells: 1 });
     const cursor = first.page.nextCursor;
     const forge = (value: unknown) =>
-      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, " ").trim();
     const decoded = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
     calls.length = 0;
+    const mints = tokenRequests;
     for (const attempt of [
-      // Replayed against other arguments of the same shape.
       { ...args, ranges: ["Private!Z1:Z3"], cursor },
       { ...args, spreadsheetId: "another-spreadsheet", cursor },
       { ...args, valueRenderOption: "FORMATTED_VALUE", cursor },
-      // Forged: a range of its own, an index past the ranges, a wrong digest.
-      { ...args, cursor: forge({ n: 1, i: 0, r: "Private!Z1:Z2", s: 0 }) },
-      { ...args, cursor: forge({ ...decoded, r: "Private!Z1:Z2" }) },
-      { ...args, cursor: forge({ ...decoded, i: 1 }) },
+      { ...args, cursor: forge({ d: "legacy", i: 0, s: 2 }) },
+      { ...args, cursor: forge({ ...decoded, c: JSON.stringify({ i: 0, s: 2 }) }) },
       { ...args, cursor: forge({ ...decoded, d: "AAAAAAAAAAAAAAAAAAAAAA" }) },
       { ...args, cursor: "not-a-cursor" },
-    ]) {
-      await expect(call(connection(), "get_values", attempt)).rejects.toMatchObject({ code: "invalid_args" });
-    }
+    ])
+      await expect(call(connector, "get_values", attempt)).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toEqual([]);
+    expect(tokenRequests).toBe(mints);
+    await call(connector, "get_values", { ...args, cursor });
+    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A2:A3"]);
 
-    // Whatever row offset a cursor claims, only the caller's own range is read.
-    await call(connection(), "get_values", { ...args, cursor: forge({ ...decoded, s: 2 }) });
-    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A3:A3"]);
+    const mapped = connection({
+      subject: (identity: { principal?: { id: string } }) => `${identity.principal?.id}@example.com`,
+    });
+    const registry = makeRegistry([mapped], { storage: memoryStorage() });
+    const callerContext = (id: string) =>
+      registry
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: {
+              actor: { kind: "test-users", namespace: "https://identity.test", id },
+              subject: { namespace: "https://identity.test", id },
+              principal: { namespace: "https://identity.test", id },
+              interactive: true,
+            },
+          },
+        })
+        .contextFor("sheets", "https://connecta.example");
+    const issued = (await mapped.callTool("get_values", { ...args, maxCells: 1 }, callerContext("alice"))) as any;
+    const before = { api: calls.length, tokens: tokenRequests };
+    await expect(
+      mapped.callTool("get_values", { ...args, cursor: issued.page.nextCursor }, callerContext("bob")),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(before.api);
+    expect(tokenRequests).toBe(before.tokens);
+    const continued = (await mapped.callTool(
+      "get_values",
+      { ...args, cursor: issued.page.nextCursor },
+      callerContext("alice"),
+    )) as any;
+    expect(continued.valueRanges[0].values).toEqual([[2], [3]]);
+    expect(continued.page).toEqual({ hasMore: false });
+    expect(calls).toHaveLength(before.api + 1);
   });
 });
 
@@ -284,7 +436,7 @@ describe("the raw batchUpdate hatch", () => {
     expect(bytesOf({ ok: true, value: result })).toBeLessThanOrEqual(MAX_QUICKJS_HOST_RPC_BYTES);
     expect(result.replies).toHaveLength(100);
     expect(result.replies[0]).toEqual(replies[0]);
-    expect(result.repliesSummarized).toBeGreaterThan(0);
+    expect(result.truncated).toEqual(["replies[]"]);
     expect(result.replies[99]).toEqual({
       kind: "duplicateSheet",
       properties: { sheetId: 1_099, title: "Copy 99", index: 99, sheetType: "GRID" },
@@ -292,6 +444,84 @@ describe("the raw batchUpdate hatch", () => {
     expect(result.note).toContain("All 100 requests applied");
     expect(result.note).toContain("Do not send the requests again");
     expect(result.note).not.toMatch(/nothing was/i);
+    const connector = connection();
+    const sent = calls.length;
+    const mints = tokenRequests;
+    for (const kind of Object.keys(SHEETS_REFUSED_KINDS)) {
+      for (const [tool, args] of [
+        ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ [kind]: {} }] }],
+        [
+          "sheets_api_write",
+          { method: "POST", path: `/spreadsheets/${ID}:batchUpdate`, body: { requests: [{ [kind]: {} }] } },
+        ],
+      ] as const)
+        await expect(call(connector, tool, args)).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringContaining(SHEETS_REFUSED_KINDS[kind]!),
+        });
+    }
+    for (const kind of ["constructor", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf", "__proto__"]) {
+      for (const [tool, args] of [
+        ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ [kind]: {} }] }],
+        [
+          "sheets_api_write",
+          { method: "POST", path: `/spreadsheets/${ID}:batchUpdate`, body: { requests: [{ [kind]: {} }] } },
+        ],
+      ] as const)
+        await expect(call(connector, tool, args)).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringContaining(
+            tool === "batch_update_spreadsheet"
+              ? "exactly one Sheets Request kind"
+              : "exactly one reviewed request kind",
+          ),
+        });
+    }
+    for (const body of [
+      { requests: [] },
+      { requests: Array(101).fill({ repeatCell: {} }) },
+      { requests: [{ repeatCell: {}, deleteSheet: {} }] },
+      { requests: [{ futureKind: {} }] },
+    ]) {
+      await expect(
+        call(connector, "sheets_api_write", { method: "POST", path: `/spreadsheets/${ID}:batchUpdate`, body }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    for (const values of [
+      [[{ nested: true }]],
+      [["x".repeat(50001)]],
+      Array.from({ length: 6 }, () => Array(10000).fill(1)),
+    ]) {
+      await expect(
+        call(connector, "sheets_api_write", {
+          method: "POST",
+          path: `/spreadsheets/${ID}/values:batchUpdateByDataFilter`,
+          body: { valueInputOption: "RAW", data: [{ dataFilter: { a1Range: "A1" }, values }] },
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(sent);
+    expect(tokenRequests).toBe(mints);
+    await expect(
+      call(connector, "sheets_api_write", {
+        method: "PUT",
+        path: `/spreadsheets/${ID}/values/A1`,
+        query: { valueInputOption: "RAW" },
+        body: { values: [["x"]] },
+        fields: ["unknownRoot"],
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(sent);
+    expect(tokenRequests).toBe(mints);
+    route = () => ({ body: { spreadsheetId: ID, updatedCells: 1 } });
+    const updated = await call(connector, "sheets_api_write", {
+      method: "PUT",
+      path: `/spreadsheets/${ID}/values/Sheet1!A1%3AB1`,
+      query: { valueInputOption: "RAW" },
+      body: { values: [[null, ""]] },
+    });
+    expect(updated.status).toBe(200);
+    expect(calls.at(-1)!.body.values).toEqual([[null, ""]]);
   });
 });
 

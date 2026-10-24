@@ -45,6 +45,8 @@ const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
   "github.list_scopes",
+  "sheets.sheets_api_search",
+  "sheets.sheets_api_details",
   "planning-center.pco_api_search",
   "docs.docs_api_search",
   "docs.docs_api_details",
@@ -87,6 +89,43 @@ const providers = fixtures.map((fixture) => ({
   create: () => create(fixture),
   catalog: create(fixture).staticTools!,
 }));
+
+/** Fold Sheets' new hatch routes into the existing representative failure cases. */
+async function sweepSheetsHatch(provider: (typeof providers)[number], named: string, failure: string) {
+  if (provider.name !== "sheets") return;
+  const hatch =
+    named === "get_spreadsheet" ? "sheets_api_read" : named === "update_values" ? "sheets_api_write" : undefined;
+  if (!hatch) return;
+  const classification = hatch === "sheets_api_read" ? "read" : "write";
+  const sent: string[] = [];
+  const result = await sweepCall(
+    provider,
+    hatch,
+    `sheets.${hatch}`,
+    argumentsTable.sheets![hatch],
+    classification,
+    (request) => {
+      sent.push(`${request.method} ${request.url}`);
+      if (failure === "network-after-send")
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      const status = failure === "401" ? 401 : 503;
+      return Response.json({ error: { code: status, message: "Refused" } }, { status });
+    },
+    HANDOFFS,
+  );
+  expect(sent).toHaveLength(classification === "read" && failure === "401" ? 2 : 1);
+  expect(result.structuredContent).toMatchObject({
+    ok: false,
+    error: {
+      retryable: classification === "read" && failure !== "401",
+      ...(classification === "write" ? { writeOutcome: "unknown" } : {}),
+    },
+  });
+  const error = (result.structuredContent as { error: CallErrorDetails }).error;
+  if (classification === "read") expect(error).not.toHaveProperty("writeOutcome");
+  if (failure === "401")
+    expect(error).toMatchObject({ code: "auth_required", nextAction: { tool: "authorize_connector" } });
+}
 
 function credential(name: string): Record<string, string> {
   return {
@@ -174,7 +213,7 @@ describe("API provider failure sweep", () => {
         }
       // Fold offline hatch coverage here: injected remote failures
       // cannot affect metadata that sends no request.
-      if (["github", "gmail", "docs", "slides"].includes(provider.name))
+      if (["github", "gmail", "docs", "sheets", "slides"].includes(provider.name))
         for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
           const result = await sweepCall(
             provider,
@@ -232,7 +271,11 @@ describe("API provider failure sweep", () => {
             !(
               ["github", "gmail", "slides"].includes(provider.name) &&
               [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
-            ) && !(["docs", "drive", "forms"].includes(provider.name) && tool.name.startsWith(`${provider.name}_api_`)),
+            ) &&
+            !(
+              ["docs", "drive", "forms", "sheets"].includes(provider.name) &&
+              tool.name.startsWith(`${provider.name}_api_`)
+            ),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
@@ -364,6 +407,7 @@ describe("API provider failure sweep", () => {
                 "writeOutcome",
               );
             }
+            await sweepSheetsHatch(provider, tool.name, failure);
             await docsHatchFailure(provider, tool.name, classification, failure);
           });
           // A write answered 401 is an unknown outcome unless its provider
@@ -472,6 +516,7 @@ describe("API provider failure sweep", () => {
               expect(auxiliary).not.toHaveProperty("writeOutcome");
               expect(auxiliary).not.toHaveProperty("reconciliationRequired");
             }
+            await sweepSheetsHatch(provider, tool.name, "401");
             await docsHatchFailure(provider, tool.name, classification, "401");
           });
         }

@@ -1,23 +1,22 @@
-// Google Sheets on the provider kit (C.7 step 1). Keep the legacy catalog,
-// A1 path encoding, cursor codec, projections and uncertain-write advice.
-import { Effect } from "effect";
+// Google Sheets named projections, bounded cell reads and guarded writes.
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
-import type { HttpFailure } from "../../http/errors.js";
+import { Refusal, type HttpFailure } from "../../http/errors.js";
 import type { CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
-import {
-  googleClient,
-  googleFailureMessage,
-  googleOutcomeOf,
-  googleTool,
-  type GoogleToolDeclaration,
-} from "../_shared/google/kit.js";
+import type { ConnectorContext } from "../../types.js";
+import { googleClient, googleFailureMessage, googleOutcomeOf } from "../_shared/google/kit.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 import { SHEETS } from "./api.js";
-import { skill } from "./skill.generated.js";
+import { read, write } from "../../http/tools.js";
+import { boundCursor } from "../../http/paging.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { Operation } from "../../runtime/call.js";
+import { sheetsIndex } from "./lib/hatch.js";
+import { SHEETS_ADMITTED_KINDS, SHEETS_REFUSED_KINDS, sheetsExternalDataProblem } from "./lib/requests.js";
+import { inputs, outputs } from "./lib/schemas.js";
 
 /** Cells per page of get_values: connecta's cap, since Sheets has no paging. */
 const DEFAULT_PAGE_CELLS = 2_000;
@@ -41,19 +40,10 @@ const MAX_PAGE_BYTES = 4 * 1024 * 1024;
  */
 const DEFAULT_CELL_CHARS = 5_000;
 const MAX_CELL_CHARS = 50_000;
-/** Ranges per read or clear. */
-const MAX_RANGES = 20;
-/** Ranges per batch_update_values. */
-const MAX_DATA_RANGES = 100;
 /** Rows and cells one write may carry: connecta's cap, under Google's 10 MB request. */
-const MAX_WRITE_ROWS = 10_000;
 const MAX_WRITE_CELLS = 50_000;
-/** Sheets' own column ceiling (ZZZ). */
-const MAX_COLUMNS = 18_278;
-/** Named ranges a metadata read lists before saying how many it left out. */
+/** Named ranges a metadata read lists before reporting a size cut. */
 const MAX_NAMED_RANGES = 200;
-/** Requests per raw batchUpdate. */
-const MAX_BATCH_REQUESTS = 100;
 
 type JsonRecord = Record<string, any>;
 
@@ -120,70 +110,52 @@ function gridRangeA1(range: JsonRecord, title: string | undefined): string | und
 
 // --- Reading values ---------------------------------------------------------------
 
-/**
- * Where a values read resumes: an index into the caller's own `ranges` and
- * the rows of that range already returned, bound by digest to the call's
- * spreadsheet, ranges, and render options. It carries no range of its own, so
- * a cursor can only ever continue what the arguments name.
- */
+/** Signed positions within the caller's ranges; the shared codec binds deployment, caller and read arguments. */
 interface ValuesCursor {
-  d: string;
   i: number;
   s: number;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function valuesCursorArgs(args: JsonRecord): JsonRecord {
+  return {
+    spreadsheetId: args["spreadsheetId"],
+    ranges: args["ranges"],
+    valueRenderOption: args["valueRenderOption"] ?? null,
+    dateTimeRenderOption: args["dateTimeRenderOption"] ?? null,
+  };
 }
 
-/** What a cursor is bound to: everything that decides which cells a page reads. */
-async function readDigest(args: JsonRecord): Promise<string> {
-  const bound = JSON.stringify([
-    args["spreadsheetId"],
-    args["ranges"],
-    args["valueRenderOption"] ?? null,
-    args["dateTimeRenderOption"] ?? null,
-  ]);
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bound)));
-  return base64Url(hash.subarray(0, 16));
+function encodeCursor(ctx: ConnectorContext, args: JsonRecord, cursor: ValuesCursor) {
+  return boundCursor.encode("get_values", valuesCursorArgs(args), JSON.stringify(cursor), (json) =>
+    encodeForAgent(ctx, json, { url: true, claims: true }),
+  );
 }
 
-/** A cursor of connecta's own digest and counts, encoded as every cursor an agent decodes is. */
-function encodeCursor(ctx: ConnectorContext, cursor: ValuesCursor): string {
-  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
-}
-
-function decodeCursor(value: string, ranges: readonly string[], digest: string): ValuesCursor {
-  const refuse = () =>
-    new ConnectorCallError(
-      "invalid_args",
-      "cursor is not one get_values returned for this call. Pass page.nextCursor back unchanged, with the same spreadsheetId, ranges, and render options.",
-    );
+function decodeCursor(value: string, ranges: readonly string[]): ValuesCursor {
   let parsed: unknown;
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-    parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0))));
+    parsed = JSON.parse(value);
   } catch {
-    throw refuse();
+    parsed = undefined;
   }
-  const cursor = asRecord(parsed);
-  const index = integer(cursor["i"]);
-  const skip = integer(cursor["s"]);
+  const cursor = asRecord(parsed),
+    index = integer(cursor["i"]),
+    skip = integer(cursor["s"]);
   if (
-    Object.keys(cursor).length !== 3 ||
-    cursor["d"] !== digest ||
+    Object.keys(cursor).length !== 2 ||
     index === undefined ||
     index < 0 ||
     index >= ranges.length ||
     skip === undefined ||
-    skip < 0
+    skip < 0 ||
+    !Number.isSafeInteger(skip)
   ) {
-    throw refuse();
+    throw new ConnectorCallError(
+      "invalid_args",
+      "Pass the get_values page.nextCursor back unchanged with the same spreadsheet, ranges and render options.",
+    );
   }
-  return { d: digest, i: index, s: skip };
+  return { i: index, s: skip };
 }
 
 /**
@@ -274,96 +246,17 @@ function projectUpdate(value: unknown): JsonRecord {
   });
 }
 
-/**
- * Every `Request` kind Sheets' batchUpdate accepts, from the Discovery
- * document's `Request` schema at revision 20260930. A request must set exactly
- * one of them; its body is Google's to validate. Too many to close in the
- * schema without overrunning H7, so the handler checks the kind before
- * anything is sent. A kind Google adds changes the batchUpdate contract digest,
- * so the drift check surfaces it for this list rather than letting it pass.
- */
-const REQUEST_KINDS: ReadonlySet<string> = new Set([
-  "addBanding",
-  "addChart",
-  "addCommentReply",
-  "addConditionalFormatRule",
-  "addDataSource",
-  "addDimensionGroup",
-  "addFilterView",
-  "addNamedRange",
-  "addProtectedRange",
-  "addSheet",
-  "addSlicer",
-  "addTable",
-  "appendCells",
-  "appendDimension",
-  "autoFill",
-  "autoResizeDimensions",
-  "cancelDataSourceRefresh",
-  "clearBasicFilter",
-  "copyPaste",
-  "createDeveloperMetadata",
-  "cutPaste",
-  "deleteBanding",
-  "deleteComment",
-  "deleteCommentReply",
-  "deleteConditionalFormatRule",
-  "deleteDataSource",
-  "deleteDeveloperMetadata",
-  "deleteDimension",
-  "deleteDimensionGroup",
-  "deleteDuplicates",
-  "deleteEmbeddedObject",
-  "deleteFilterView",
-  "deleteNamedRange",
-  "deleteProtectedRange",
-  "deleteRange",
-  "deleteSheet",
-  "deleteTable",
-  "duplicateFilterView",
-  "duplicateSheet",
-  "findReplace",
-  "insertComment",
-  "insertDimension",
-  "insertRange",
-  "mergeCells",
-  "moveDimension",
-  "pasteData",
-  "randomizeRange",
-  "refreshDataSource",
-  "repeatCell",
-  "setBasicFilter",
-  "setDataValidation",
-  "sortRange",
-  "textToColumns",
-  "trimWhitespace",
-  "unmergeCells",
-  "updateBanding",
-  "updateBorders",
-  "updateCells",
-  "updateChartSpec",
-  "updateCommentPost",
-  "updateConditionalFormatRule",
-  "updateDataSource",
-  "updateDeveloperMetadata",
-  "updateDimensionGroup",
-  "updateDimensionProperties",
-  "updateEmbeddedObjectBorder",
-  "updateEmbeddedObjectPosition",
-  "updateFilterView",
-  "updateNamedRange",
-  "updateProtectedRange",
-  "updateSheetProperties",
-  "updateSlicerSpec",
-  "updateSpreadsheetProperties",
-  "updateTable",
-]);
-
 /** Refuse a raw request that is not exactly one known kind, unsent. */
 function checkRequestKinds(requests: readonly unknown[]): void {
+  for (const request of requests)
+    for (const kind of Object.keys(asRecord(request)))
+      if (Object.hasOwn(SHEETS_REFUSED_KINDS, kind))
+        throw new ConnectorCallError("invalid_args", SHEETS_REFUSED_KINDS[kind]!);
+  const problem = sheetsExternalDataProblem(requests);
+  if (problem) throw new ConnectorCallError("invalid_args", problem);
   requests.forEach((request, index) => {
     const kinds = Object.keys(asRecord(request));
-    if (kinds.length !== 1 || !REQUEST_KINDS.has(kinds[0]!)) {
+    if (kinds.length !== 1 || !SHEETS_ADMITTED_KINDS.includes(kinds[0]! as (typeof SHEETS_ADMITTED_KINDS)[number])) {
       throw new ConnectorCallError(
         "invalid_args",
         `requests[${index}] must set exactly one Sheets Request kind (addSheet, repeatCell, deleteDimension, …); it sets ${kinds.length === 0 ? "none" : kinds.slice(0, 3).join(", ")}. Nothing was sent.`,
@@ -454,7 +347,7 @@ function deliverableReplies(
   for (let index = replies.length - 1; index >= 0; index -= 1) {
     rest[index] = rest[index + 1]! + jsonBytes(summaries[index]) + 1;
   }
-  let bytes = jsonBytes({ spreadsheetId, replies: [], repliesSummarized: replies.length, note });
+  let bytes = jsonBytes({ spreadsheetId, replies: [], truncated: ["replies[]"], note });
   if (bytes + rest[0]! <= RESULT_BUDGET_BYTES) {
     const kept: JsonRecord[] = [];
     let summarized = 0;
@@ -468,106 +361,15 @@ function deliverableReplies(
         kept.push(summaries[index]!);
       }
     });
-    return { spreadsheetId, replies: kept, repliesSummarized: summarized, note };
+    return { spreadsheetId, replies: kept, truncated: ["replies[]"], note };
   }
   return {
     spreadsheetId,
     replies: [],
-    repliesOmitted: replies.length,
+    truncated: ["replies[]"],
     note: `All ${requestCount} requests applied, but their ${replies.length} replies are too large to return even summarized. Read the spreadsheet with get_spreadsheet or get_values to see the result. Do not send the requests again.`,
   };
 }
-
-// --- Schemas ----------------------------------------------------------------------
-
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-
-const SPREADSHEET_ID_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 256,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description:
-    "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list.",
-};
-
-/**
- * One line, at least one character that is not a dot: a range is a path
- * segment for append, and `.` or `..` there would climb out of it.
- */
-const RANGE_PATTERN = "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$";
-
-function rangeProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 512, pattern: RANGE_PATTERN, description };
-}
-
-const A1_HELP = "A1 notation: Sheet1!A1:D20, 'Q3 Budget'!B:B, a sheet title alone, or a named range";
-
-const RANGES_PROPERTY: JsonSchema = {
-  type: "array",
-  minItems: 1,
-  maxItems: MAX_RANGES,
-  items: rangeProperty(`${A1_HELP}.`),
-  description: `Ranges to read, 1 to ${MAX_RANGES}, returned in this order.`,
-};
-
-const VALUE_INPUT_PROPERTY: JsonSchema = {
-  type: "string",
-  enum: ["RAW", "USER_ENTERED"],
-  description:
-    "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date.",
-};
-
-const ROWS_PROPERTY: JsonSchema = {
-  type: "array",
-  minItems: 1,
-  maxItems: MAX_WRITE_ROWS,
-  items: {
-    type: "array",
-    maxItems: MAX_COLUMNS,
-    items: { type: ["string", "number", "boolean", "null"], maxLength: 50_000 },
-    description: "One row's cells, left to right.",
-  },
-  description: `Rows of cells, top to bottom. null leaves a cell unchanged; "" empties it. At most ${MAX_WRITE_CELLS} cells per call, connecta's cap.`,
-};
-
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-
-const CELL_SCHEMA: JsonSchema = { type: ["string", "number", "boolean"] };
-
-const UPDATE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    updatedRange: { type: "string" },
-    updatedRows: { type: "integer" },
-    updatedColumns: { type: "integer" },
-    updatedCells: { type: "integer" },
-  },
-};
-
-const SHEET_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    sheetId: { type: "integer" },
-    title: { type: "string" },
-    index: { type: "integer" },
-    type: { type: "string" },
-    hidden: { type: "boolean" },
-    rowCount: { type: "integer" },
-    columnCount: { type: "integer" },
-    frozenRowCount: { type: "integer" },
-    frozenColumnCount: { type: "integer" },
-  },
-};
 
 function projectSheet(value: unknown): JsonRecord {
   const properties = asRecord(asRecord(value)["properties"]);
@@ -598,7 +400,7 @@ const SPREADSHEET_FIELDS = [
 // --- Tools ------------------------------------------------------------------------
 
 export function sheetsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, SHEETS.provider);
+  const client = googleClient(connection, SHEETS.provider, { standard: true, index: sheetsIndex });
   const readOnly = { readOnlyHint: true } as const;
   // Additive: nothing that existed is lost. Writes require a writable
   // endpoint: call_destructive_tool or a program. The host controls approval.
@@ -606,59 +408,23 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const spreadsheetPath = (args: JsonRecord) => `/spreadsheets/${encodeURIComponent(String(args["spreadsheetId"]))}`;
 
-  const declarations: GoogleToolDeclaration[] = [
+  const declarations = [
     {
       name: "get_spreadsheet",
       description:
         "Get a spreadsheet's title, sheets (ids, titles, grid sizes), and named ranges as A1, never cell values. To find one by name, search Drive; Sheets cannot list.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          raw: {
-            type: "boolean",
-            description:
-              "Return Google's untouched spreadsheet metadata — formatting, protections, charts — instead of the projection. Never cell values.",
-          },
-        },
-        ["spreadsheetId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          title: { type: "string" },
-          url: { type: "string" },
-          locale: { type: "string" },
-          timeZone: { type: "string" },
-          sheets: { type: "array", items: SHEET_SCHEMA },
-          namedRanges: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                namedRangeId: { type: "string" },
-                name: { type: "string" },
-                sheetId: { type: "integer" },
-                range: { type: "string" },
-              },
-            },
-          },
-          namedRangesOmitted: { type: "integer" },
-        },
-        required: ["spreadsheetId", "sheets"],
-      },
-      run: (args) =>
+      input: inputs.get_spreadsheet,
+      output: outputs.get_spreadsheet,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
-          if (args["raw"] === true) {
-            return yield* client.json({
+          const spreadsheet = asRecord(
+            yield* client.json({
               method: "GET",
               path: spreadsheetPath(args),
-              query: { includeGridData: false },
-            });
-          }
-          const spreadsheet = asRecord(
-            yield* client.json({ method: "GET", path: spreadsheetPath(args), query: { fields: SPREADSHEET_FIELDS } }),
+              template: "/spreadsheets/{spreadsheetId}",
+              query: { fields: SPREADSHEET_FIELDS },
+            }),
           );
           const properties = asRecord(spreadsheet["properties"]);
           const sheets = asArray(spreadsheet["sheets"]).map(projectSheet);
@@ -685,7 +451,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
                     });
                   })
                 : undefined,
-            namedRangesOmitted: named.length > MAX_NAMED_RANGES ? named.length - MAX_NAMED_RANGES : undefined,
+            truncated: named.length > MAX_NAMED_RANGES ? ["namedRanges[]"] : undefined,
           });
         }),
     },
@@ -694,85 +460,18 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Read cell values from one or more A1 ranges as rows, paged by cell count. Long cells are cut with a marker; no formatting, notes, or formulas unless asked.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          ranges: RANGES_PROPERTY,
-          valueRenderOption: {
-            type: "string",
-            enum: ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
-            description:
-              "FORMATTED_VALUE (default) as displayed; UNFORMATTED_VALUE as raw numbers; FORMULA shows formulas instead of results.",
-          },
-          dateTimeRenderOption: {
-            type: "string",
-            enum: ["SERIAL_NUMBER", "FORMATTED_STRING"],
-            description:
-              "Dates when valueRenderOption is not FORMATTED_VALUE: SERIAL_NUMBER (Google's default, days since 1899-12-30) or FORMATTED_STRING.",
-          },
-          maxCells: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_PAGE_CELLS,
-            description: `Cells per page, 1 to ${MAX_PAGE_CELLS}; defaults to ${DEFAULT_PAGE_CELLS}. Connecta's cap: Sheets returns whole ranges, so this pages by whole rows.`,
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1_024,
-            maximum: MAX_PAGE_BYTES,
-            description: `Bytes of the whole page as JSON; defaults to ${DEFAULT_PAGE_BYTES}, what execute_code can receive. Raise it, to ${MAX_PAGE_BYTES}, only for a direct call_tool read.`,
-          },
-          maxCellChars: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_CELL_CHARS,
-            description: `Characters kept per cell, to ${MAX_CELL_CHARS} (Sheets' cell limit, so the whole cell); defaults to ${DEFAULT_CELL_CHARS}. Longer cells end with a marker.`,
-          },
-          cursor: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1024,
-            description:
-              "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and render options.",
-          },
-        },
-        ["spreadsheetId", "ranges"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          valueRanges: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                range: { type: "string" },
-                values: { type: "array", items: { type: "array", items: CELL_SCHEMA } },
-                rowOffset: { type: "integer" },
-                rowCount: { type: "integer" },
-                truncated: { type: "boolean" },
-                omittedRows: { type: "integer" },
-              },
-            },
-          },
-          cellCount: { type: "integer" },
-          truncatedCells: { type: "integer" },
-          page: PAGE_SCHEMA,
-        },
-        required: ["spreadsheetId", "valueRanges", "page"],
-      },
-      run: (args, ctx) =>
+      input: inputs.get_values,
+      output: outputs.get_values,
+      run: (args: JsonRecord, ctx: ConnectorContext) =>
         Effect.gen(function* () {
           const ranges: string[] = args["ranges"];
           const budget: number = args["maxCells"] ?? DEFAULT_PAGE_CELLS;
           const byteBudget: number = args["maxBytes"] ?? DEFAULT_PAGE_BYTES;
           const cellChars: number = args["maxCellChars"] ?? DEFAULT_CELL_CHARS;
-          const digest = yield* Effect.promise(() => readDigest(args));
           const resume =
             typeof args["cursor"] === "string"
-              ? decodeCursor(args["cursor"], ranges, digest)
-              : { d: digest, i: 0, s: 0 };
+              ? decodeCursor(yield* boundCursor.decode("get_values", valuesCursorArgs(args), args["cursor"]), ranges)
+              : { i: 0, s: 0 };
           // Every range sent is the caller's own, or the caller's own rewritten
           // to start further down; nothing in the cursor names a range.
           const rewritten = rangeAfter(ranges[resume.i]!, resume.s);
@@ -782,6 +481,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             yield* client.json({
               method: "GET",
               path: `${spreadsheetPath(args)}/values:batchGet`,
+              template: "/spreadsheets/{spreadsheetId}/values:batchGet",
               query: {
                 ranges: sent,
                 majorDimension: "ROWS",
@@ -801,10 +501,10 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             spreadsheetId,
             valueRanges: [],
             cellCount: MAX_PAGE_CELLS,
-            truncatedCells: MAX_PAGE_CELLS,
+            truncated: ["valueRanges[].values"],
             page: {
               hasMore: false,
-              nextCursor: encodeCursor(ctx, { d: digest, i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
+              nextCursor: yield* encodeCursor(ctx, args, { i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
             },
           });
           let next: ValuesCursor | undefined;
@@ -817,14 +517,12 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             const dropped = index === 0 ? skip : 0;
             const rows = asArray(valueRange["values"]).slice(dropped);
             const echoed = text(valueRange["range"]) ?? sent[index]!;
-            const entry = (kept: unknown[][], truncated: boolean) =>
+            const entry = (kept: unknown[][]) =>
               compact({
                 range: echoed,
                 rowOffset: dropped > 0 ? dropped : undefined,
                 values: kept,
                 rowCount: kept.length,
-                truncated: truncated ? true : undefined,
-                omittedRows: truncated ? rows.length - kept.length : undefined,
               });
             // This range's own fields at their largest, and the comma before it;
             // an empty range costs them too.
@@ -835,13 +533,11 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
                   rowOffset: dropped > 0 ? dropped : undefined,
                   values: [],
                   rowCount: rows.length,
-                  truncated: true,
-                  omittedRows: rows.length,
                 }),
               ) + 1;
             if (bytes + fields > byteBudget) {
               if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget);
-              next = { d: digest, i: resume.i + index, s: before };
+              next = { i: resume.i + index, s: before };
               break;
             }
             bytes += fields;
@@ -868,24 +564,24 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               kept.push(capped);
             }
             if (kept.length < rows.length) {
-              next = { d: digest, i: resume.i + index, s: before + kept.length };
+              next = { i: resume.i + index, s: before + kept.length };
               // A range this page never reached is not reported half-read; the
               // next page starts it.
-              if (kept.length > 0) valueRanges.push(entry(kept, true));
+              if (kept.length > 0) valueRanges.push(entry(kept));
               break;
             }
-            valueRanges.push(entry(kept, false));
+            valueRanges.push(entry(kept));
             if (cells >= budget && index + 1 < returned.length) {
-              next = { d: digest, i: resume.i + index + 1, s: 0 };
+              next = { i: resume.i + index + 1, s: 0 };
             }
           }
-          const nextCursor = next ? encodeCursor(ctx, next) : null;
+          const nextCursor = next ? yield* encodeCursor(ctx, args, next) : null;
           return compact({
             spreadsheetId,
             valueRanges,
             cellCount: cells,
-            truncatedCells: cut.cells > 0 ? cut.cells : undefined,
-            page: { hasMore: nextCursor !== null, nextCursor },
+            truncated: cut.cells > 0 || next ? ["valueRanges[].values"] : undefined,
+            page: compact({ hasMore: nextCursor !== null, nextCursor: nextCursor ?? undefined }),
           });
         }),
     },
@@ -894,27 +590,16 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Write rows of values into one A1 range, overwriting what is there. Cells past the given rows are untouched; to add rows below a table use append_values.",
       annotations: destructive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          range: rangeProperty(`${A1_HELP}; the top-left cell is where the first value goes.`),
-          values: ROWS_PROPERTY,
-          valueInputOption: VALUE_INPUT_PROPERTY,
-        },
-        ["spreadsheetId", "range", "values", "valueInputOption"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { spreadsheetId: { type: "string" }, ...(UPDATE_SCHEMA.properties as Record<string, JsonSchema>) },
-        required: ["spreadsheetId"],
-      },
-      run: (args) =>
+      input: inputs.update_values,
+      output: outputs.update_values,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           checkWriteSize([args["values"]]);
           const response = asRecord(
             yield* client.json({
               method: "POST",
               path: `${spreadsheetPath(args)}/values:batchUpdate`,
+              template: "/spreadsheets/{spreadsheetId}/values:batchUpdate",
               body: {
                 valueInputOption: args["valueInputOption"],
                 data: [{ range: args["range"], majorDimension: "ROWS", values: args["values"] }],
@@ -933,41 +618,9 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Write values into several A1 ranges in one call, overwriting each. All succeed or none do. For formatting or structure use batch_update_spreadsheet.",
       annotations: destructive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          data: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_DATA_RANGES,
-            items: {
-              type: "object",
-              properties: {
-                range: rangeProperty(`${A1_HELP}.`),
-                values: ROWS_PROPERTY,
-              },
-              required: ["range", "values"],
-              additionalProperties: false,
-            },
-            description: `Ranges and their rows, 1 to ${MAX_DATA_RANGES}.`,
-          },
-          valueInputOption: VALUE_INPUT_PROPERTY,
-        },
-        ["spreadsheetId", "data", "valueInputOption"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          totalUpdatedRows: { type: "integer" },
-          totalUpdatedColumns: { type: "integer" },
-          totalUpdatedCells: { type: "integer" },
-          totalUpdatedSheets: { type: "integer" },
-          updates: { type: "array", items: UPDATE_SCHEMA },
-        },
-        required: ["spreadsheetId", "updates"],
-      },
-      run: (args) =>
+      input: inputs.batch_update_values,
+      output: outputs.batch_update_values,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const data = asArray(args["data"]).map(asRecord);
           checkWriteSize(data.map((entry) => entry["values"]));
@@ -975,6 +628,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             yield* client.json({
               method: "POST",
               path: `${spreadsheetPath(args)}/values:batchUpdate`,
+              template: "/spreadsheets/{spreadsheetId}/values:batchUpdate",
               body: {
                 valueInputOption: args["valueInputOption"],
                 data: data.map((entry) => ({ range: entry["range"], majorDimension: "ROWS", values: entry["values"] })),
@@ -997,25 +651,9 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Append rows after the last row of the table in an A1 range, inserting new rows so nothing below is overwritten. Returns where they landed.",
       annotations: additive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          range: rangeProperty(`${A1_HELP}; Sheets finds the table in it and appends below its last row.`),
-          values: ROWS_PROPERTY,
-          valueInputOption: VALUE_INPUT_PROPERTY,
-        },
-        ["spreadsheetId", "range", "values", "valueInputOption"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          tableRange: { type: "string" },
-          ...(UPDATE_SCHEMA.properties as Record<string, JsonSchema>),
-        },
-        required: ["spreadsheetId"],
-      },
-      run: (args) =>
+      input: inputs.append_values,
+      output: outputs.append_values,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           checkWriteSize([args["values"]]);
           const response = asRecord(
@@ -1026,6 +664,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               client.json({
                 method: "POST",
                 path: `${spreadsheetPath(args)}/values/${encodeURIComponent(String(args["range"]))}:append`,
+                template: "/spreadsheets/{spreadsheetId}/values/{range}:append",
                 query: {
                   valueInputOption: args["valueInputOption"],
                   // Pinned: OVERWRITE writes over whatever sits below the table.
@@ -1048,27 +687,15 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Clear the values in one or more A1 ranges, keeping formatting, notes, and validation. The values are gone; nothing is deleted or shifted.",
       annotations: destructive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          ranges: { ...RANGES_PROPERTY, description: `Ranges to clear, 1 to ${MAX_RANGES}.` },
-        },
-        ["spreadsheetId", "ranges"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          clearedRanges: { type: "array", items: { type: "string" } },
-        },
-        required: ["spreadsheetId", "clearedRanges"],
-      },
-      run: (args) =>
+      input: inputs.clear_values,
+      output: outputs.clear_values,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const response = asRecord(
             yield* client.json({
               method: "POST",
               path: `${spreadsheetPath(args)}/values:batchClear`,
+              template: "/spreadsheets/{spreadsheetId}/values:batchClear",
               body: { ranges: args["ranges"] },
             }),
           );
@@ -1083,46 +710,9 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Create a new spreadsheet in the user's My Drive root, optionally with named sheets. It is not shared or moved; that is Drive's job.",
       annotations: additive,
-      inputSchema: input(
-        {
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 255,
-            pattern: "^[^\\r\\n]*$",
-            description: "The spreadsheet's file name.",
-          },
-          sheetTitles: {
-            type: "array",
-            minItems: 1,
-            maxItems: 50,
-            uniqueItems: true,
-            items: {
-              type: "string",
-              minLength: 1,
-              maxLength: 100,
-              pattern: "^[^\\r\\n]*$",
-              description: "One sheet tab's title.",
-            },
-            description: "Sheet tabs to start with, in order; omit for Google's one sheet, Sheet1.",
-          },
-        },
-        ["title"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          title: { type: "string" },
-          url: { type: "string" },
-          sheets: {
-            type: "array",
-            items: { type: "object", properties: { sheetId: { type: "integer" }, title: { type: "string" } } },
-          },
-        },
-        required: ["spreadsheetId", "sheets"],
-      },
-      run: (args) =>
+      input: inputs.create_spreadsheet,
+      output: outputs.create_spreadsheet,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const titles: string[] | undefined = args["sheetTitles"];
           const spreadsheet = asRecord(
@@ -1134,6 +724,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               client.json({
                 method: "POST",
                 path: "/spreadsheets",
+                template: "/spreadsheets",
                 query: { fields: "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)" },
                 body: compact({
                   properties: { title: args["title"] },
@@ -1158,49 +749,16 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
       description:
         "Add a new, empty sheet tab to a spreadsheet. Fails if the title is taken; it never renames, replaces, or copies an existing sheet.",
       annotations: additive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 100,
-            pattern: "^[^\\r\\n]*$",
-            description: "The new tab's title, unique in the spreadsheet.",
-          },
-          index: {
-            type: "integer",
-            minimum: 0,
-            maximum: 1_000,
-            description: "Tab position, 0 first; omit to add it last.",
-          },
-          rowCount: {
-            type: "integer",
-            minimum: 1,
-            maximum: 1_000_000,
-            description: "Rows in the grid; Google defaults to 1,000.",
-          },
-          columnCount: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_COLUMNS,
-            description: "Columns in the grid; Google defaults to 26.",
-          },
-        },
-        ["spreadsheetId", "title"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { spreadsheetId: { type: "string" }, ...(SHEET_SCHEMA.properties as Record<string, JsonSchema>) },
-        required: ["spreadsheetId", "sheetId"],
-      },
-      run: (args) =>
+      input: inputs.add_sheet,
+      output: outputs.add_sheet,
+      run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const grid = compact({ rowCount: args["rowCount"], columnCount: args["columnCount"] });
           const response = asRecord(
             yield* client.json({
               method: "POST",
               path: `${spreadsheetPath(args)}:batchUpdate`,
+              template: "/spreadsheets/{spreadsheetId}:batchUpdate",
               body: {
                 requests: [
                   {
@@ -1226,47 +784,20 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
     {
       name: "batch_update_spreadsheet",
       description:
-        "Apply raw Sheets batchUpdate requests — formatting, merges, sorts, deleting sheets or rows, protections — atomically. The approval-gated hatch; it can destroy data.",
+        "Apply Sheets batchUpdate requests — formatting, merges, sorts, deleting sheets or rows, protections — atomically. This named structural workflow can destroy data.",
       // Destructive, whatever the requests are: they can delete sheets, rows,
       // ranges, and protections, and connecta does not read them to guess.
       annotations: destructive,
-      inputSchema: input(
-        {
-          spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          requests: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_BATCH_REQUESTS,
-            items: {
-              type: "object",
-              minProperties: 1,
-              maxProperties: 1,
-              description:
-                "One Sheets Request with exactly one kind set, as Google documents it: { repeatCell: {…} }, { deleteDimension: {…} }, { sortRange: {…} }.",
-            },
-            description: `Sheets API Request objects, 1 to ${MAX_BATCH_REQUESTS}, applied in order; all succeed or none do.`,
-          },
-        },
-        ["spreadsheetId", "requests"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          spreadsheetId: { type: "string" },
-          replies: { type: "array", items: { type: "object" } },
-          repliesSummarized: { type: "integer" },
-          repliesOmitted: { type: "integer" },
-          note: { type: "string" },
-        },
-        required: ["spreadsheetId", "replies"],
-      },
-      run: (args, ctx) =>
+      input: inputs.batch_update_spreadsheet,
+      output: outputs.batch_update_spreadsheet,
+      run: (args: JsonRecord, ctx: ConnectorContext) =>
         Effect.gen(function* () {
           checkRequestKinds(args["requests"]);
           const response = asRecord(
             yield* client.json({
               method: "POST",
               path: `${spreadsheetPath(args)}:batchUpdate`,
+              template: "/spreadsheets/{spreadsheetId}:batchUpdate",
               body: { requests: args["requests"], includeSpreadsheetInResponse: false },
             }),
           );
@@ -1279,12 +810,46 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
         }),
     },
   ];
-  return declarations.map((declaration) => googleTool(connection, declaration));
-}
-
-// --- Guide ------------------------------------------------------------------------
-
-export function sheetsGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${DEFAULT_CELL_CHARS}${skill.fragments.guide_2}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
+  return declarations.map((declaration) => {
+    const spec = {
+      name: declaration.name,
+      description: declaration.description,
+      input: declaration.input,
+      output: declaration.output,
+      run: (args: JsonRecord) =>
+        Effect.gen(function* () {
+          const current = yield* Effect.serviceOption(Operation);
+          if (Option.isNone(current) || !current.value)
+            return yield* Effect.die(new Error("Sheets tools require a call context."));
+          return yield* declaration.run(args, current.value);
+        }).pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
+          ),
+        ),
+    };
+    if (!declaration.annotations.readOnlyHint)
+      return write(connection, { ...spec, destructive: declaration.annotations.destructiveHint });
+    return read(connection, {
+      ...spec,
+      input: Schema.Struct({
+        ...declaration.input.fields,
+        fields: Schema.optionalKey(
+          fieldsInput("Dot paths to keep; truncation and content continuation metadata remain available."),
+        ),
+      }),
+      run: (args: JsonRecord) =>
+        Effect.gen(function* () {
+          const { fields, ...rest } = args;
+          const problem = fieldsProblem(fields, new Set(Object.keys(declaration.output.fields)), "the Sheets result");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          const result: JsonRecord = yield* spec.run(rest);
+          return {
+            ...(selectFields(result, fields) as JsonRecord),
+            ...(result["truncated"] ? { truncated: result["truncated"] } : {}),
+            ...(declaration.name === "get_values" ? { page: result["page"] } : {}),
+          };
+        }),
+    });
+  });
 }

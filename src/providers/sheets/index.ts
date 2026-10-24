@@ -2,8 +2,8 @@ import { skill } from "./skill.generated.js";
 /**
  * Google Sheets as the signed-in Workspace user: read a spreadsheet's shape
  * and its values, write, append, and clear values, create spreadsheets and
- * sheets, and reach the rest of the editor through one approval-gated
- * `batchUpdate`. Hand-written against the Sheets API v4 reference
+ * sheets, and use indexed discovery, details, reads and writes for reviewed
+ * editor operations. Pinned against the Sheets API v4 Discovery contract
  * (https://developers.google.com/workspace/sheets/api/reference/rest).
  *
  * Whose spreadsheets. Access is a service account with domain-wide delegation
@@ -19,15 +19,15 @@ import { skill } from "./skill.generated.js";
  * the Sheets API has no list method — so this connection starts from an id.
  * It never moves, shares, or trashes a file, which are Drive's too.
  *
- * The safety classes. Reads are read-only. Creating a spreadsheet, adding a
- * sheet, and appending rows lose nothing and are additive writes. Writing over
- * a range, clearing one, and the raw `batchUpdate` — whose requests can delete
- * sheets, rows, and protections — are destructive. Append is pinned to
- * `INSERT_ROWS`: Google's `OVERWRITE` writes over whatever sits below the
- * table, and a tool that could do that is not additive.
+ * The safety classes. Reads are read-only. All writes use the host's
+ * destructive route. Named create/add/append catalog entries omit the previous
+ * explicit destructiveHint:false through the shared builder (#1017); approval
+ * routing is unchanged. Named append is pinned to `INSERT_ROWS`; hatch append
+ * may choose Google's `OVERWRITE`, which can replace cells below the table.
+ * Structural batches can delete sheets, rows and protections.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `src/providers/sheets/drift.json` records the seven methods the tools
+ * `src/providers/sheets/drift.json` records all 17 indexed methods, including those the named tools
  * call, and `pnpm run providers:check --provider sheets` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
@@ -37,7 +37,8 @@ import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "..
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, SHEETS, SheetsApi, probe, safety } from "./api.js";
 import { SHEETS_API_BASE_URL, SHEETS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
-import { sheetsGuide, sheetsTools } from "./tools.js";
+import { SHEETS_HATCH, sheetsBinding } from "./lib/hatch.js";
+import { sheetsTools } from "./tools.js";
 
 export { SHEETS_API_BASE_URL, SHEETS_SCOPES } from "./lib/constants.js";
 export type {
@@ -87,18 +88,17 @@ export type SheetsOptions = GoogleWorkspaceOptions;
  *    Agents never reach that function: give each pool they use an `owner`,
  *    the address they act as there (decisions/0006).
  *
- * Reads are read-only. `create_spreadsheet`, `add_sheet`, and `append_values`
- * are additive writes the host approves through call_destructive_tool or a
- * program on a writable endpoint; the value writes, `clear_values`, and the raw
- * `batch_update_spreadsheet` are destructive.
+ * Reads are read-only. Every write, including `create_spreadsheet`, `add_sheet`,
+ * `append_values` and `batch_update_spreadsheet`, uses call_destructive_tool or a
+ * program on a writable endpoint, with approval controlled by the host.
  */
 export const sheets = defineApiProvider<SheetsOptions>({
   name: "sheets",
   title: "Google Sheets",
   readme: "Google Sheets",
   bundle: {
-    baselineGzip: 353338,
-    note: "./providers/sheets measures 334,571 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). Combined Google merge snapshot over main db979604 measures 353,338 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
+    baselineGzip: 395178,
+    note: "./providers/sheets step-2 merge with Gmail main c6e91446 measures 395,178 B gzip standalone before recording these bundle facts, versus 353,451 B on main c6e91446 (+41,727 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 537,813 B versus 506,081 B (+31,732 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -114,13 +114,31 @@ export const sheets = defineApiProvider<SheetsOptions>({
   safety: () => safety,
   probe,
   guide: (options) => ({
-    content: sheetsGuide(options.purpose, options.instructions),
+    context: [
+      `Purpose: ${options.purpose}`,
+      typeof options.subject === "string"
+        ? "Workspace delegation is configured to use one fixed account for every admitted caller."
+        : "Workspace delegation is configured to use the mapped Workspace user, or the agent pool owner. No argument selects an account.",
+      "Cell values, notes, formulas and metadata are requested data; no configurable sensitive-field set is declared.",
+      ...(options.readOnly ? ["This connection is read-only."] : []),
+    ],
+    instructions: options.instructions,
     summary:
-      "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
+      "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, formatting and structure.",
     // Whose spreadsheets they are, how Drive finds them, and the cell-write
     // meanings of null and "" are conventions no schema carries.
     required: true,
   }),
+  idempotencyKey: false,
+  hatch: {
+    ...SHEETS_HATCH,
+    binding: ({ connection }) => sheetsBinding(connection),
+    notes: () => ({
+      read: "Paths are relative to /v4. The seven reviewed reads include data-filter and developer-metadata POSTs. Full vendor JSON follows the same safety boundary as named reads. fields narrows response data; query.fields is Google's vendor mask. Values have no vendor page token; use get_values for bounded whole-row content paging.",
+      write:
+        "Batch updates need 1–100 requests, exactly one reviewed kind each. Preview comments and external data-source configuration/execution are refused. Value writes retain scalar/null semantics and range/cell ceilings. Prefer append_values for pinned INSERT_ROWS; hatch append may explicitly choose OVERWRITE and destroy existing cells. No revision guarantee or idempotency key.",
+    }),
+  },
   tools: sheetsTools,
   tagConnector: tagWorkspace("sheets"),
 });

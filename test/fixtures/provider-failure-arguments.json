@@ -874,6 +874,31 @@
           }
         }
       ]
+    },
+    "sheets_api_search": {
+      "query": "read cell values"
+    },
+    "sheets_api_details": {
+      "method": "GET",
+      "path": "/spreadsheets/{spreadsheetId}"
+    },
+    "sheets_api_read": {
+      "method": "GET",
+      "path": "/spreadsheets/sheet-budget-1"
+    },
+    "sheets_api_write": {
+      "method": "PUT",
+      "path": "/spreadsheets/sheet-budget-1/values/A1",
+      "query": {
+        "valueInputOption": "RAW"
+      },
+      "body": {
+        "values": [
+          [
+            "x"
+          ]
+        ]
+      }
     }
   },
   "slides": {

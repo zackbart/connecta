@@ -1,0 +1,43 @@
+{
+  "format": 5,
+  "digest": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+  "options": {},
+  "candidates": {
+    "POST /spreadsheets": {
+      "fields": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "named": false
+    },
+    "GET /spreadsheets/{spreadsheetId}": {
+      "fields": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "named": false
+    },
+    "POST /spreadsheets/{spreadsheetId}/developerMetadata:search": {
+      "fields": [],
+      "named": true
+    },
+    "POST /spreadsheets/{spreadsheetId}:batchUpdate": {
+      "fields": [
+        "replies[].addChart.chart.spec.scorecardChart.keyValueData",
+        "updatedSpreadsheet.sheets[].charts[].spec.scorecardChart.keyValueData"
+      ],
+      "named": false
+    },
+    "POST /spreadsheets/{spreadsheetId}:getByDataFilter": {
+      "fields": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "POST /spreadsheets": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "GET /spreadsheets/{spreadsheetId}": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "POST /spreadsheets/{spreadsheetId}:getByDataFilter": ["sheets[].charts[].spec.scorecardChart.keyValueData"],
+      "POST /spreadsheets/{spreadsheetId}:batchUpdate": [
+        "replies[].addChart.chart.spec.scorecardChart.keyValueData",
+        "updatedSpreadsheet.sheets[].charts[].spec.scorecardChart.keyValueData"
+      ]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

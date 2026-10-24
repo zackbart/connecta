@@ -5,71 +5,49 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
-# Google Sheets usage
+## Find the workbook and resolve ranges
 
-Acts as the signed-in person in their own Google Sheets through Workspace delegation: it reaches only spreadsheets they can open, starting from an id.
+Sheets starts from a spreadsheet id. A spreadsheet id the person gives works
+as is; search Drive only for a name. The Drive file id is
+the spreadsheet id. Moving, sharing and trashing the file also belong to Drive.
+Read `get_spreadsheet` first to resolve sheet titles, numeric sheet ids and named
+ranges before writing. Sheet id zero is valid; a tab's position is not its id.
 
-Connection purpose: <!-- endfragment -->
+A1 ranges use sheet titles; structural GridRanges use numeric sheet ids with
+zero-based, end-exclusive row and column indexes. Quote titles containing
+spaces or punctuation and double apostrophes: `'Alice''s costs'!A1:D7`.
+A bare title may resolve to a named range; quote it to address the whole tab.
 
-<!-- fragment: guide_1 -->
+## Read cell meaning
 
+Displayed values reflect spreadsheet locale and number formats. Use
+unformatted numbers for arithmetic and formulas when inspecting expressions.
+Date serials count days from 1899-12-30; interpret dates using the workbook's
+time zone. Trailing empty rows and cells may be absent. An empty range is a
+valid result, not proof that the sheet is missing.
 
-## Whose spreadsheets
+Whole-row content reads can resume partway through a range. A named range or
+whole-sheet reference may be re-read and earlier rows skipped; rowOffset is
+relative to Google's echoed range. Reduce amounts inside execute_code before
+returning them. Read an oversized cell separately to recover its full text.
 
-Every call acts as the Workspace account deployment config maps the caller
-to; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument
-names an account. A call with none mapped fails `auth_required`; only an operator can change
-that. An id that is
-unknown or not shared with this person fails `connector_call_failed` (or
-`provider_permission_denied` when Google refuses access) — Google does not
-say which; check the id or ask the owner to share it.
+## Edit and reconcile
 
-## Finding a spreadsheet
+Use RAW for external data; USER_ENTERED can turn leading equals signs into
+formulas. In cell writes, null leaves a cell unchanged and an empty string
+clears it. Clearing preserves formatting and validation. `append_values` is
+pinned to INSERT_ROWS and inserts rows after the detected table. A vendor append using
+OVERWRITE can replace existing cells below that table.
 
-- Sheets cannot list or search files. Find one by name with a Google Drive
-  search, or take the id from its URL (between `/d/` and `/edit`).
-- `get_spreadsheet` first: sheet titles, ids, grid sizes, and named ranges,
-  so ranges are named right rather than guessed.
+Read just before replacing another person's cells. Sheets has no revision
+precondition or replay key: concurrent edits can be overwritten. After an
+uncertain append, read the target table and identify the row before adding
+anything missing. After an uncertain workbook create, search Drive by title
+before creating another workbook.
 
-## Ranges
-
-- A1 notation. Quote a sheet title with spaces or punctuation:
-  `'Q3 Budget'!A1:D20`, doubling any `'` inside it. A bare title is the
-  whole sheet; `Sheet1!B:B` a whole column; a named range works by name.
-- `get_values` pages by whole rows under `maxCells` and `maxBytes`:
-  page with `page.nextCursor` and the same spreadsheetId, ranges, and
-  render options. A range with explicit rows (`A1:D500`, `B:D`) resumes
-  where it stopped; a sheet title or named range is re-read and its earlier
-  rows skipped, so `rowOffset` says how far into Google's echoed range the
-  page starts.
-- A row too wide or too large for one page is refused, not cut: narrow the
-  columns or lower `maxCellChars`. The default `maxBytes` is what
-  `execute_code` can receive; raise it only for a direct `call_tool`
-  read.
-- A cell over <!-- endfragment -->
-
-<!-- fragment: guide_2 -->
- characters ends with a truncation marker;
-  read it alone with `maxCellChars` for the rest. Reduce inside
-  `execute_code` before returning a large read.
-
-## Writing
-
-- `valueInputOption` is required: `RAW` stores text as given;
-  `USER_ENTERED` parses it as typed, so a leading `=` makes a formula. Use
-  RAW for data from outside the spreadsheet.
-- In written rows, `null` leaves a cell as it was and `""` empties it.
-- `append_values` inserts rows below the table and overwrites nothing;
-  `update_values` and `batch_update_values` overwrite the cells they
-  cover; `clear_values` empties values but keeps formatting.
-- `batch_update_spreadsheet` takes Google's own Request objects for
-  everything else (formatting, sorting, deleting rows or sheets); it is
-  atomic and can destroy data; the host may ask the user to confirm this write. Replies too large
-  to return come back cut to their kind, ids, and counts with a `note`;
-  the requests still applied, so never send them again to see the rest.
-- Sheets has no revision check on writes: edits are last-writer-wins, so a
-  person editing the same cells meanwhile is overwritten without warning.
-  Read just before writing over anything a person may be editing.
-- Moving, sharing, or deleting a spreadsheet file is Drive's job.
-<!-- endfragment -->
+Structural batches apply atomically, but can delete rows, sheets or
+protections. An oversized reply may be summarized after the edit saved;
+inspect the workbook to recover details. Preview comment mutations and
+external data-source configuration, refresh and administration are outside
+this connection. Developer-metadata searches and data-filter reads are
+read-only even though their wire method is POST.
