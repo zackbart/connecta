@@ -5,17 +5,31 @@
     "operations": [
       "GET /gmail/v1/users/{userId}/drafts",
       "GET /gmail/v1/users/{userId}/drafts/{id}",
+      "GET /gmail/v1/users/{userId}/history",
       "GET /gmail/v1/users/{userId}/labels",
+      "GET /gmail/v1/users/{userId}/labels/{id}",
+      "GET /gmail/v1/users/{userId}/messages",
       "GET /gmail/v1/users/{userId}/messages/{id}",
       "GET /gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+      "GET /gmail/v1/users/{userId}/profile",
       "GET /gmail/v1/users/{userId}/threads",
       "GET /gmail/v1/users/{userId}/threads/{id}",
       "POST /gmail/v1/users/{userId}/drafts",
       "PUT /gmail/v1/users/{userId}/drafts/{id}"
     ],
-    "evidence": {}
+    "evidence": {
+      "discovery.document.json": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
+      "discovery.json": "sha256:a2bd789138a168bef6ba8a5e41b7fd29dec6f27ea179c014dfddbfdd51eeafb9",
+      "openapi.document.json": "sha256:f750e8716954bca4eaedbf1751d01faed58d73d6fc78dabdb7a6250e5f7bbdfb",
+      "openapi.json": "sha256:46cd7752c7def702bcf3db91a4f77c063ba8791769bb0851b78abf4ecdf956ed",
+      "value-safety.json": "sha256:0d7b5b81cbaf73d70b8c8a075521b4bb44d5e5df913bc5691c3121769054e3d2"
+    }
   },
   "checks": [
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
     {
       "type": "endpoints",
       "specification": {
@@ -28,49 +42,69 @@
       ],
       "endpoints": [
         {
-          "specRevision": "20260928",
-          "contract": "sha256:8355c6f416e03262594915a0da51deb2da82cd5b08f334371967153fddd88056",
-          "operation": "GET /gmail/v1/users/{userId}/threads"
+          "operation": "GET /gmail/v1/users/{userId}/drafts",
+          "specRevision": "20261019",
+          "contract": "sha256:90b04234d5d7c500363ceeacb963dfce147336ec7caaf646216e24c730b3d263"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:badfddbba2a67a76fec84d34f2c5ef30f1c6a4843f19b7231658b2f59107c518",
-          "operation": "GET /gmail/v1/users/{userId}/threads/{id}"
+          "operation": "GET /gmail/v1/users/{userId}/drafts/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:a91d516bb1fb871d3f4e644cb0f62a54a320f634adb630c1db8ec899b8767a1a"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:df6b555263a6ea860679c86f3eee0648f5ab6f711b830540a896b3fa39d57c64",
-          "operation": "GET /gmail/v1/users/{userId}/messages/{id}"
+          "operation": "GET /gmail/v1/users/{userId}/history",
+          "specRevision": "20261019",
+          "contract": "sha256:c0b1c7f1ae19ea0ab915ab9ec73d2af4c3228b940392d387191a15c0c92afb1b"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:235047e99780a97b82c425ce78d3ebb9d11d965f818d88f7999f7fb22cb8acce",
-          "operation": "GET /gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}"
+          "operation": "GET /gmail/v1/users/{userId}/labels",
+          "specRevision": "20261019",
+          "contract": "sha256:2e75b578aec905fe0afa4878e45441d528b65996a0d0e56adc471a2f57e739e5"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:2e75b578aec905fe0afa4878e45441d528b65996a0d0e56adc471a2f57e739e5",
-          "operation": "GET /gmail/v1/users/{userId}/labels"
+          "operation": "GET /gmail/v1/users/{userId}/labels/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:649699f7149667a8f8dc83c171623fecdae5f9b7ae029ac19e9bfb7fb52a97cc"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:90b04234d5d7c500363ceeacb963dfce147336ec7caaf646216e24c730b3d263",
-          "operation": "GET /gmail/v1/users/{userId}/drafts"
+          "operation": "GET /gmail/v1/users/{userId}/messages",
+          "specRevision": "20261019",
+          "contract": "sha256:7d2f10253bafa673fdae8298bb78c603d34885f98d3cf7dee1942e8c9a14b7af"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:a91d516bb1fb871d3f4e644cb0f62a54a320f634adb630c1db8ec899b8767a1a",
-          "operation": "GET /gmail/v1/users/{userId}/drafts/{id}"
+          "operation": "GET /gmail/v1/users/{userId}/messages/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:df6b555263a6ea860679c86f3eee0648f5ab6f711b830540a896b3fa39d57c64"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:9cbac4eb5dbb560eb012c0b48df971e8ec80958338931f2b70bda9dc2b3daf81",
-          "operation": "POST /gmail/v1/users/{userId}/drafts"
+          "operation": "GET /gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:235047e99780a97b82c425ce78d3ebb9d11d965f818d88f7999f7fb22cb8acce"
         },
         {
-          "specRevision": "20260928",
-          "contract": "sha256:aca8b1ba77ee4b3f59166cb97716ba1baea4a6f36d4346e8d1eefd47a750d344",
-          "operation": "PUT /gmail/v1/users/{userId}/drafts/{id}"
+          "operation": "GET /gmail/v1/users/{userId}/profile",
+          "specRevision": "20261019",
+          "contract": "sha256:df5a5de014b48a49f4464ba2729c3f48d65253e7c16ec2722efe7d805884b0ed"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/threads",
+          "specRevision": "20261019",
+          "contract": "sha256:8355c6f416e03262594915a0da51deb2da82cd5b08f334371967153fddd88056"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/threads/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:badfddbba2a67a76fec84d34f2c5ef30f1c6a4843f19b7231658b2f59107c518"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/drafts",
+          "specRevision": "20261019",
+          "contract": "sha256:9cbac4eb5dbb560eb012c0b48df971e8ec80958338931f2b70bda9dc2b3daf81"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/drafts/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:aca8b1ba77ee4b3f59166cb97716ba1baea4a6f36d4346e8d1eefd47a750d344"
         }
       ]
     },

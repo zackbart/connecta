@@ -601,6 +601,59 @@ headers and reviewed text/SQL/NDJSON/upload framing remain supported. No tool
 argument can widen pin scope or reveal a stored secret. Operator setup is in
 [Cloudflare](./providers.md#cloudflare).
 
+## Gmail
+
+Gmail is the approved exception to decision 0014's four-hatch default:
+`gmail_api_search`, `gmail_api_details` and `gmail_api_read` are added;
+there is no `gmail_api_write`. Draft writes remain exclusively in
+`create_draft` and `update_draft`; sending is never available. All nine named
+tools remain. Write classifications and host approval routes stay the same.
+The index displays all 79 pinned methods but admits only eleven reviewed
+reads; refused draft operations point to the guarded named tools.
+
+- Replace `get_message({ messageId, raw: true })` with
+  `gmail_api_read({ path: "/messages/{id}", query: { format: "full" } })`.
+  Replace `{id}` with a message id from an earlier read.
+  Read the vendor resource from the tool result's `data`; the hatch envelope
+  also has `status` and optional `page`. `raw` is removed, including `raw: false`.
+- `search_threads.threads`, `list_drafts.drafts` and `list_labels.labels` become
+  `items`. `get_thread` remains a record with `messages` and `page`.
+  `search_threads.resultSizeEstimate` is removed; hatch JSON can retain the
+  vendor estimate, which is never an exact total.
+- `search_threads` and `list_drafts` use `limit`/`cursor` and return
+  `{ items, page }`; terminal pages omit `nextCursor` instead of returning null.
+  `list_labels` returns all labels in one bounded, terminal page from one read;
+  `truncated` reports any labels omitted by the byte bound. It takes no paging
+  arguments. Every named read accepts `fields`,
+  applied to the projected record or to each list item. `get_thread` retains
+  `page` after selection; follow `page.nextCursor` while `page.hasMore` is true.
+- Replace `bodyTruncated`, `contentTruncated`, `omittedIds`,
+  `labelIdsOmitted`, `attachmentsOmitted` and `labelsOmitted` with top-level
+  `truncated` dot paths such as `body`, `content`, `messages[].body` and
+  `items[].labelIds[]`. Charset notices, unavailable-body reasons and saved
+  state remain semantic metadata. `truncated` survives `fields` selection even
+  when the selected result omits the cut value.
+- Discard every pre-upgrade private cursor. New cursors are signed and bound
+  to the connection, owner and call. Connections with mapped Workspace
+  subjects also bind the admitted caller and pool owner. Named content cursors
+  additionally bind earlier safe content. For paged hatches omit `query.pageToken` on the first
+  call and pass `page.nextCursor` as top-level `cursor` thereafter, keeping
+  path, query and fields fixed. A nonempty token can continue an empty page.
+- Copied Message-ID, In-Reply-To and References require bounded ASCII
+  headers, including valid modern and legacy RFC forms. A damaged, withheld,
+  NUL, non-ASCII or control-containing threading
+  header refuses the draft before POST/PUT. Valid threading bytes are kept.
+- Standard Google error facts and fallback codes replace the legacy message
+  mapper. Read 5xx failures are `unavailable`; incomplete response bodies are
+  distinguished from malformed complete JSON. A dispatched draft write is
+  never replayed and an unknown outcome requires reconciliation.
+
+No new privacy-widening argument or scope is introduced. MIME decoding,
+attachment-id rotation, size provenance, one-MiB download limits and refusal
+to replace drafts with carried content remain enforced. The read hatch uses
+paths relative to `/gmail/v1/users/me` and cannot select another subject,
+origin, transport format or caller header.
+
 ## Google Docs
 
 Keep all six named tool names. `get_document.raw` is removed: replace
