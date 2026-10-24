@@ -11,6 +11,7 @@
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
+import { redactionAltered } from "../redaction-marker.js";
 import {
   type Operation,
   type OperationContract,
@@ -21,8 +22,10 @@ import {
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import { Refusal } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
+import type { HatchPageAdapter } from "./hatch-paging.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
 import { boundCursor, StandardPage } from "./paging.js";
+import { RequestSecrets } from "./services.js";
 import { read, write } from "./tools.js";
 import type { Connection } from "./vendor.js";
 import type { Parameters, WriteRequest } from "./write-request.js";
@@ -53,6 +56,8 @@ export interface HatchDeclaration {
   readonly named?: Readonly<Record<OperationKey, string>>;
   /** A concrete path for the path argument's description. */
   readonly pathExample?: string;
+  /** Opt in only reviewed paged reads; existing provider surfaces do not inherit adapters. */
+  readonly pages?: Readonly<Partial<Record<OperationKey, HatchPageAdapter>>>;
 }
 
 const text = (min: number, max: number) => Schema.String.check(isMinChars(min), isMaxChars(max));
@@ -82,6 +87,10 @@ function checked<A>(run: () => A) {
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function withheldCursor(value: string | number): boolean {
+  return redactionAltered(value) || (typeof value === "string" && /%5bredacted%5d/i.test(value));
 }
 
 /** A method enum; a single method renders as a plain enum, not a one-branch anyOf. */
@@ -185,6 +194,46 @@ export function hatch(
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
+  const pages = new Map(
+    Object.entries(options.pages ?? {}).map(([key, adapter]) => {
+      if (
+        !known(key) ||
+        verdicts.get(key) !== "read" ||
+        !adapter?.param.trim() ||
+        !["query", "body"].includes(adapter.in) ||
+        typeof adapter.next !== "function" ||
+        typeof adapter.decode !== "function"
+      ) {
+        throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
+      }
+      const op = index.ops.find((op) => `${op.method} ${op.path}` === key)!;
+      const contract = index.contract(op);
+      const body = contract.body?.schema as { properties?: Record<string, unknown> } | undefined;
+      if (
+        adapter.in === "query"
+          ? !contract.parameters.some((param) => param.in === "query" && param.name === adapter.param)
+          : !Object.hasOwn(body?.properties ?? {}, adapter.param)
+      ) {
+        throw new Error(`Hatch paging for ${key} must name a declared ${adapter.in} parameter.`);
+      }
+      return [
+        key,
+        Object.freeze({ ...adapter, ...(adapter.headers ? { headers: [...adapter.headers] } : {}) }),
+      ] as const;
+    }),
+  );
+  const envelope = pages.size
+    ? Schema.Struct({
+        ...Envelope.fields,
+        page: Schema.optionalKey(
+          Schema.Struct({
+            ...StandardPage.fields,
+            param: Schema.String.annotate({ description: "Put nextCursor in this vendor parameter, unchanged." }),
+            in: Schema.Literals(["query", "body"]),
+          }),
+        ),
+      })
+    : Envelope;
   const tool = (kind: string) => `${name}_api_${kind}`;
   const route = (op: Operation) => {
     const verdict = verdictOf(op);
@@ -628,60 +677,141 @@ export function hatch(
   ];
 
   const run = (kind: "read" | "write", args: CallArgs) =>
-    checked((): WriteRequest => {
-      refuseWithheldValues({ path: args.path, query: args.query }, name, true);
-      refuseWithheldValues(args.body, name);
+    Effect.gen(function* () {
+      yield* checked(() => {
+        refuseWithheldValues({ path: args.path, query: args.query }, name, true);
+        refuseWithheldValues(args.body, name);
+      });
       const method = args.method ?? defaultRead;
-      const { op } = index.resolve(method, args.path);
-      const verdict = verdictOf(op);
-      if (verdict === "refuse") invalid(`Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`);
-      if ((verdict === "read") !== (kind === "read")) {
-        invalid(`${method} ${op.path} must be called with ${tool(verdict === "read" ? "read" : "write")}.`);
+      const { op } = yield* checked(() => index.resolve(method, args.path));
+      yield* checked(() => {
+        const verdict = verdictOf(op);
+        if (verdict === "refuse") invalid(`Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`);
+        if ((verdict === "read") !== (kind === "read")) {
+          invalid(`${method} ${op.path} must be called with ${tool(verdict === "read" ? "read" : "write")}.`);
+        }
+      });
+      const adapter = pages.get(`${method} ${op.path}`);
+      let query = args.query ?? {};
+      let body = args.body;
+      const withoutCursor = (values: Readonly<Record<string, unknown>>) =>
+        Object.fromEntries(Object.entries(values).filter(([key]) => key !== adapter?.param));
+      const scope = adapter
+        ? {
+            revision: yield* Effect.promise(() => index.cursorRevision()),
+            method,
+            path: args.path,
+            query: adapter.in === "query" ? withoutCursor(query) : query,
+            ...(adapter?.in === "body"
+              ? { body: withoutCursor(record(body) ? body : {}) }
+              : body === undefined
+                ? {}
+                : { body }),
+            ...(args.fields ? { fields: args.fields } : {}),
+          }
+        : {};
+      if (adapter) {
+        const value = adapter.in === "query" ? query[adapter.param] : record(body) ? body[adapter.param] : undefined;
+        if (value !== undefined) {
+          if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
+          const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
+          const decoded = yield* checked(() => {
+            let token: unknown;
+            try {
+              token = JSON.parse(cursor);
+            } catch {
+              invalid("This paging cursor contains no valid vendor value.");
+            }
+            if ((typeof token !== "string" && typeof token !== "number") || withheldCursor(token)) {
+              invalid("This paging cursor contains no usable vendor value; withheld values cannot be sent.");
+            }
+            const decoded = adapter.decode(token);
+            if (withheldCursor(decoded)) invalid("This paging cursor contains a withheld vendor value.");
+            return decoded;
+          });
+          if (adapter.in === "query") query = { ...query, [adapter.param]: decoded };
+          else body = { ...(record(body) ? body : {}), [adapter.param]: decoded };
+        }
       }
-      // The current path binding has one origin and JSON/form bodies. Do not
-      // silently send another server's operation or reinterpret an upload.
-      if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
-      const contentType = index.bodyType(op)?.split(";", 1)[0]!.trim().toLowerCase();
-      if (
-        contentType &&
-        contentType !== "application/x-www-form-urlencoded" &&
-        !/^application\/(?:[^/]+\+)?json$/.test(contentType)
-      ) {
-        invalid(
-          `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
-        );
+      const request = yield* checked((): WriteRequest => {
+        // Admission must inspect restored vendor values, not just opaque input
+        // tokens: path/query reject containment; body values use the narrow rule.
+        refuseWithheldValues({ path: args.path, query }, name, true);
+        refuseWithheldValues(body, name);
+        // The current path binding has one origin and JSON/form bodies. Do not
+        // silently send another server's operation or reinterpret an upload.
+        if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
+        const contentType = index.bodyType(op)?.split(";", 1)[0]!.trim().toLowerCase();
+        if (
+          contentType &&
+          contentType !== "application/x-www-form-urlencoded" &&
+          !/^application\/(?:[^/]+\+)?json$/.test(contentType)
+        ) {
+          invalid(
+            `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
+          );
+        }
+        if ((method === "GET" || method === "HEAD") && body !== undefined)
+          invalid(`A ${method} operation takes query, not body.`);
+        index.check(op, query, body);
+        // S5: a bad first segment is refused before anything is sent, against the
+        // declared success contract, never against whatever one answer happens to hold.
+        if (args.fields?.length) {
+          const roots = index.responseRoots(op);
+          if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
+          const problem = fieldsProblem(args.fields, roots, "data");
+          if (problem) throw problem;
+        }
+        return {
+          method,
+          path: args.path,
+          template: op.path,
+          query: parameters(query),
+          ...(body === undefined
+            ? {}
+            : contentType === "application/x-www-form-urlencoded"
+              ? { form: parameters(record(body) ? body : invalid("A form body must be an object.")) }
+              : { json: JSON.stringify(body) }),
+        };
+      });
+      const answer = yield* connection.sendPath(
+        request,
+        adapter?.headers ? { responseHeaders: adapter.headers } : undefined,
+      );
+      // Extract before fields can omit paging evidence, after connection safety.
+      const next = adapter
+        ? yield* checked(() => adapter.next(answer.data, { path: args.path, query, headers: answer.headers ?? {} }))
+        : undefined;
+      let page;
+      if (adapter && next !== undefined) {
+        const secrets = yield* RequestSecrets;
+        if (next !== null && (withheldCursor(next) || secrets.redact(String(next)) !== String(next))) {
+          yield* checked(() => {
+            throw new ConnectorCallError("connector_call_failed", "The vendor returned a withheld paging cursor.", {
+              retryable: false,
+            });
+          });
+        }
+        page = {
+          hasMore: next !== null,
+          ...(next === null
+            ? {}
+            : {
+                nextCursor: yield* boundCursor.encode(tool(kind), scope, JSON.stringify(next), (json) =>
+                  secrets.encode(new TextEncoder().encode(json), { url: true, claims: true }),
+                ),
+              }),
+          param: adapter.param,
+          in: adapter.in,
+        };
       }
-      const query = args.query ?? {};
-      if ((method === "GET" || method === "HEAD") && args.body !== undefined)
-        invalid(`A ${method} operation takes query, not body.`);
-      index.check(op, query, args.body);
-      // S5: a bad first segment is refused before anything is sent, against the
-      // declared success contract, never against whatever one answer happens to hold.
-      if (args.fields?.length) {
-        const roots = index.responseRoots(op);
-        if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
-        const problem = fieldsProblem(args.fields, roots, "data");
-        if (problem) throw problem;
-      }
-      return {
-        method,
-        path: args.path,
-        template: op.path,
-        query: parameters(query),
-        ...(args.body === undefined
-          ? {}
-          : contentType === "application/x-www-form-urlencoded"
-            ? { form: parameters(record(args.body) ? args.body : invalid("A form body must be an object.")) }
-            : { json: JSON.stringify(args.body) }),
-      };
-    }).pipe(
-      Effect.flatMap((request) => connection.sendPath(request)),
       // Selection narrows the answer value safety and the privacy projection already made.
-      Effect.map((answer) => ({
+      return {
         status: answer.status,
         data: selectFields(answer.data === undefined ? null : answer.data, args.fields),
-      })),
-    );
+        ...(page ? { page } : {}),
+      };
+    });
 
   const note = (sentence: string | undefined) => (sentence ? ` ${sentence}` : "");
   const nonGetReads = readMethods.filter((method) => method !== "GET" && method !== "HEAD");
@@ -710,7 +840,7 @@ export function hatch(
     name: tool("read"),
     description: `Call a reviewed ${title} API read${nonGetReads.length ? `, including reviewed read-only ${nonGetReads.join(" and ")}` : ""}. The operation index checks arguments before anything is sent.${note(options.notes?.read)}`,
     input: Schema.Struct(readFields),
-    output: Envelope,
+    output: envelope,
     // The explicit per-operation read table replaces REST readPosts. The
     // builder's review permits its non-GET reads; run checks the exact row.
     review: "Only operations explicitly classified read in the hatch's snapshotted verdict table are admitted.",

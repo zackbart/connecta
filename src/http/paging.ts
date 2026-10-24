@@ -247,7 +247,12 @@ const keyForCall = ContinuationStorage.use((storage) =>
  * the key across isolates/restarts; limit and cursor are excluded from args.
  */
 export const boundCursor = {
-  encode(tool: string, args: Readonly<Record<string, unknown>>, cursor: string): Effect.Effect<string, Refusal> {
+  encode(
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    cursor: string,
+    encode: (json: string) => string = base64url,
+  ): Effect.Effect<string, Refusal> {
     return Effect.gen(function* () {
       const d = yield* digest(tool, args);
       const key = yield* keyForCall;
@@ -255,7 +260,7 @@ export const boundCursor = {
       const claims = new TextEncoder().encode(canonicalJson([2, binding.connection, binding.principal, d, cursor]));
       const mac = yield* Effect.promise(() => crypto.subtle.sign("HMAC", key, claims));
       const m = base64urlBytes(new Uint8Array(mac));
-      return base64url(JSON.stringify({ v: 2, d, c: cursor, m }));
+      return encode(JSON.stringify({ v: 2, d, c: cursor, m }));
     });
   },
   decode(tool: string, args: Readonly<Record<string, unknown>>, token: string): Effect.Effect<string, Refusal> {

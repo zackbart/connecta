@@ -588,6 +588,9 @@ describe("OpenAPI operation index generation", () => {
   it("drops deprecated operations, records per-operation servers, and shares repeated schema nodes", async () => {
     const { buildOperationIndex } = await generator();
     const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
+    expect(data.fields).toBeUndefined();
+    const { renderOpenApiModule } = await generator();
+    expect(renderOpenApiModule(data, source)).not.toContain("fields:");
     expect(data.version).toBe("2026-09-30.test");
     expect(data.servers).toEqual(["https://api.vendor.example", "https://files.vendor.example"]);
     expect(data.ops.map((row: unknown[]) => `${row[0]} ${row[1]}`)).toEqual([
@@ -615,6 +618,92 @@ describe("OpenAPI operation index generation", () => {
     ]);
     // An empty form body is no body at all.
     expect(details.o[2]).toEqual([[["thing", "path", 1, { t: "string" }]], 0]);
+    // Response metadata is independent of request depth, shared, deterministic,
+    // and consumable by the standard hatch's field search and preflight.
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const success = {
+      content: {
+        "application/json": {
+          schema: {
+            allOf: [
+              { properties: { has_more: { type: "boolean" } } },
+              { properties: { data: { type: "array", items: { $ref: "#/components/schemas/address" } } } },
+            ],
+          },
+        },
+      },
+    };
+    const withResponses = structuredClone(document) as any;
+    withResponses.paths["/v1/things"].get.responses = {
+      "400": { content: { "application/json": { schema: { properties: { failure_only: {} } } } } },
+      "200": success,
+    };
+    withResponses.paths["/v1/uploads"].post.responses = { "201": success };
+    const compiled = buildOperationIndex(withResponses, { ...source, options: { depth: 0 } });
+    const index = new OperationIndex(compiled, { vendor: "fixture", title: "Fixture" });
+    expect(index.fields(index.ops[0]!)).toEqual([
+      { in: "response", path: "data" },
+      { in: "response", path: "data[].city" },
+      { in: "response", path: "data[].line1" },
+      { in: "response", path: "has_more" },
+    ]);
+    expect([...index.responseRoots(index.ops[0]!)!]).toEqual(["data", "has_more"]);
+    expect(index.responseRoots(index.ops[1]!)).toBeUndefined();
+    const packed = JSON.parse(compiled.fields);
+    expect(packed.o[0]).toBe(packed.o[3]);
+    const reversed = structuredClone(withResponses);
+    reversed.components.schemas.address.properties = {
+      line1: { type: "string" },
+      city: { type: "string", maxLength: 5000 },
+    };
+    expect(buildOperationIndex(reversed, source).fields).toBe(compiled.fields);
+    // Root arrays, union variants, local response refs and recursive schemas.
+    withResponses.components.responses = {
+      list: {
+        content: {
+          "application/problem+json": {
+            schema: {
+              type: "array",
+              items: {
+                oneOf: [
+                  { $ref: "#/components/schemas/address" },
+                  { properties: { widget_id: {}, recursive: { $ref: "#/components/schemas/address" } } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    };
+    withResponses.paths["/v1/things"].get.responses = { "200": { $ref: "#/components/responses/list" } };
+    const arrays = new OperationIndex(buildOperationIndex(withResponses, source), {
+      vendor: "fixture",
+      title: "Fixture",
+    });
+    expect([...arrays.responseRoots(arrays.ops[0]!)!]).toEqual(["city", "line1", "recursive", "widget_id"]);
+    // Bound pathological documents without treating a partial root set as complete.
+    withResponses.components.responses.list.content["application/problem+json"].schema = {
+      properties: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`field_${i}`, {}])),
+    };
+    const bounded = new OperationIndex(buildOperationIndex(withResponses, source), {
+      vendor: "fixture",
+      title: "Fixture",
+    });
+    expect(bounded.responseRoots(bounded.ops[0]!)).toBeUndefined();
+    // Open roots (also through refs/composition or root-array items) have no
+    // exhaustive property set against which fields can safely refuse a key.
+    for (const schema of [
+      { properties: { known: {} }, additionalProperties: true },
+      { allOf: [{ properties: { known: {} } }, { additionalProperties: {} }] },
+      { type: "array", items: { properties: { known: {} }, additionalProperties: true } },
+    ]) {
+      withResponses.components.responses.list.content["application/problem+json"].schema = schema;
+      const open = new OperationIndex(buildOperationIndex(withResponses, source), {
+        vendor: "fixture",
+        title: "Fixture",
+      });
+      expect(open.responseRoots(open.ops[0]!)).toBeUndefined();
+    }
   });
 
   it("reads the API version from a named header parameter when info.version is not the sent version", async () => {

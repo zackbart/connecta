@@ -1290,6 +1290,22 @@ request-header allowlist, text bodies, and index `slashParams` that admit an
 encoded `/` in a final key segment (`test/rest-connector.test.ts`).
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
+The compiler separately records response property paths from the lowest
+declared JSON success status (then `2XX`), resolving local references and
+composition. It includes top-level and list-item properties (root arrays or
+an envelope's immediate arrays), and shares paths and rows in a lazy `OpenApiData.fields`
+JSON string. Traversal stops at 1,024 schema visits, 24 reference/composition
+levels, 256 paths or 200 characters per path; overflow or an unresolved
+reference omits that operation's whole response-field contract. Explicitly open
+roots (including root-array items) also leave fields absent. Empty,
+schemaless and non-JSON responses declare no fields. Request shrinking and
+endpoint contract digests do not depend on this metadata. Legacy REST tools
+retain their catalog and discovery behavior until each provider's step 2.
+Fields are optional additive metadata in format 4, so a previously compiled
+index without the source bytes remains usable without inventing a response
+contract. Vercel's pinned document is unavailable: its index leaves fields
+absent until its step-2 pin review. Breeze's pin declares no response
+properties. GitHub's finite REST complement has no pinned OpenAPI document.
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
@@ -2080,6 +2096,34 @@ cursor. Search ranks exact path nouns, root collections and authored
 operations first, then operations found by a field they return or take, and
 points at the authored tool that serves an operation. `_api_read` omits
 `method` only when GET is its one reviewed read method.
+The hatch's optional `pages` table declares an adapter for each indexed read
+that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
+(`has_more`, last `data` id → `starting_after`), Cloudflare
+(`result_info.page/total_pages`, falling back to `total_count/per_page/count`
+→ `page`), Vercel (`pagination.next` → `until`), and GitHub (quoted or unquoted
+Link `rel=next` → `page`). No maintained REST provider opts in
+yet. A declaration names the cursor parameter and `query` or `body`; it must
+exist in that operation's request contract. The response remains
+`{ status, data, page? }`, with `page: { hasMore, nextCursor?, param, in }`.
+Put the opaque `nextCursor` back in the named parameter. The hatch binds it
+to its tool, content-hash index revision, method, path, other arguments and selected fields,
+canonicalizing nested object key order while preserving array order and scalar types.
+It decodes the cursor before index validation and sends only the vendor value. Paging is
+read after connection safety and before field selection; result hooks must
+retain the paging metadata. Only an adapter's explicitly requested response
+headers enter its answer, already sent-secret redacted. GitHub extracts just
+the page from a Link URL with the same origin and unchanged filters, including
+GitHub's repository-ID paths; it never follows the URL or changes the original
+request path. Filter comparison uses parsed scalar parameter multisets,
+preserving duplicate counts and tolerating order and URL-encoding differences.
+Adapter continuations use the same root-store HMAC key and admitted
+connection/personal-owner binding as discovery cursors. The signed v2 token's
+claims preserve the vendor value's string/number type and pass the request-secret
+encoder. An unpaged hatch keeps its existing result schema.
+Redacted or withheld cursor values are refused both before minting a continuation
+and after restoring a decoded continuation, before dispatch. The shared
+`refuseWithheldValues` check runs on the restored query/body: paths and queries
+refuse marker containment, while bodies retain the whole-value/link rule.
 `src/http/vendor-index.ts` derives that index from a kit vendor's own
 declarations when the vendor has no pinned OpenAPI document: `form()` request
 contracts, `Summary` annotations and lenient success schemas become the
