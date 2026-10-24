@@ -686,5 +686,84 @@
         }
       }
     }
-  }
+  },
+  "additional": [
+    {
+      "label": "noncanonical integer path",
+      "tool": "cloudflare_api_read",
+      "args": {
+        "path": "/accounts/0123456789abcdef0123456789abcdef/botnet_feed/asn/0x2a/day_report"
+      },
+      "steps": [],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "invalid_args",
+          "message": "Not sent: the path does not match GET /accounts/{account_id}/botnet_feed/asn/{asn_id}/day_report in the pinned API index: /path/asn_id (type: a canonical ASCII decimal safe integer). Substitute real ids matching cloudflare_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "retryable": false,
+          "validation": {
+            "issues": [
+              {
+                "path": "/path/asn_id",
+                "code": "type",
+                "expected": "a canonical ASCII decimal safe integer"
+              }
+            ]
+          },
+          "connector": "cf",
+          "operation": "cf.cloudflare_api_read",
+          "nextAction": {
+            "tool": "search_tools",
+            "arguments": {
+              "query": "cloudflare_api_read",
+              "connector": "cf",
+              "includeSchemas": "compact"
+            },
+            "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+          },
+          "retry": "Correct the listed arguments and retry cf.cloudflare_api_read."
+        }
+      }
+    },
+    {
+      "label": "JSON write answered HTML",
+      "tool": "cloudflare_api_write",
+      "args": {
+        "method": "PATCH",
+        "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+        "body": {
+          "ttl": 300
+        }
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "PATCH",
+            "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "ttl": 300
+              }
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Cloudflare returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    }
+  ]
 }

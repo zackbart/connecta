@@ -711,5 +711,132 @@
         }
       }
     }
-  }
+  },
+  "additional": [
+    {
+      "label": "JSON write answered HTML",
+      "tool": "vercel_api_write",
+      "args": {
+        "method": "PATCH",
+        "path": "/v9/projects/web/env/env_1",
+        "body": {
+          "value": "replacement"
+        }
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "PATCH",
+            "url": "https://api.vercel.com/v9/projects/web/env/env_1?teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "value": "replacement"
+              }
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Vercel returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    },
+    {
+      "label": "named JSON update answered HTML",
+      "tool": "update_project_env_var",
+      "args": {
+        "projectId": "web",
+        "envVarId": "env_1",
+        "value": "replacement"
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "PATCH",
+            "url": "https://api.vercel.com/v9/projects/web/env/env_1?teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "value": "replacement"
+              }
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Vercel returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    },
+    {
+      "label": "partial env write with echoed identifiers",
+      "tool": "upsert_project_env_var",
+      "args": {
+        "projectId": "web",
+        "key": "TOKEN",
+        "value": "submitted-env-secret",
+        "type": "sensitive",
+        "targets": [
+          "preview"
+        ]
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "POST",
+            "url": "https://api.vercel.com/v10/projects/web/env?upsert=true&teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "key": "TOKEN",
+                "value": "submitted-env-secret",
+                "type": "sensitive",
+                "target": [
+                  "preview"
+                ]
+              }
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Vercel partially accepted the environment-variable write for sent key \"TOKEN\"; its response contains both created and failed entries (ENV_CONFLICT). Check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    }
+  ]
 }

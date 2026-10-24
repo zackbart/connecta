@@ -1,4 +1,6 @@
 // Cloudflare's pinned REST contracts, confinement, framing and failure semantics.
+import { responseMedia } from "../_shared/rest/response-media.js";
+import { RESPONSE_MEDIA } from "./lib/response-media.js";
 import { Effect, Option, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
 import {
@@ -501,10 +503,6 @@ export const graphqlQuery = post("graphqlQuery", "/graphql", {
 });
 const typed = [getUser, verifyToken, verifyAccountToken, listAccounts, listZones] as const;
 const indexed = indexedVendor("cloudflare", cloudflareIndex, typed);
-const binaryType = (type: string) =>
-  type !== "" &&
-  !/\bjson\b|\+json\b|\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type) &&
-  !/^text\/|\bxml\b|\bcsv\b/.test(type);
 export const CloudflareApi = {
   ...indexed,
   api: declareVendor("cloudflare", ...typed, graphqlQuery).api,
@@ -520,20 +518,17 @@ export const CloudflareApi = {
   },
   textBodies: {
     review:
-      "Legacy REST replies use JSON, text/XML/CSV, NDJSON or bounded binary by response media type. Errors remain JSON-only.",
-    forResponse: (status: number, _operation: OperationRef, type = "") =>
-      status >= 200 &&
-      status <= 299 &&
-      _operation.flags?.["ownership"] !== true &&
-      (!/\bjson\b|\+json\b/.test(type) || /\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type))
+      "Only operation/media pairs declared by the exact OpenAPI pin accept text, XML, CSV, SSE or NDJSON. Ownership lookups remain JSON-only (#1000).",
+    forResponse: (status: number, operation: OperationRef, type = "") =>
+      operation.flags?.["ownership"] !== true && responseMedia(RESPONSE_MEDIA, status, operation, type) === "text"
         ? ("text" as const)
         : undefined,
   },
   binaryBodies: {
     review:
-      "Cloudflare's KV/R2 downloads and other legacy binary replies retain bounded bytes with sent-secret checks before encoding.",
-    forResponse: (_status: number, operation: OperationRef, type: string) =>
-      operation.flags?.["ownership"] !== true && binaryType(type),
+      "Only operation/media pairs declared by the exact OpenAPI pin accept bounded binary replies, including KV/R2 downloads. Ownership lookups remain JSON-only (#1000).",
+    forResponse: (status: number, operation: OperationRef, type: string) =>
+      operation.flags?.["ownership"] !== true && responseMedia(RESPONSE_MEDIA, status, operation, type) === "binary",
   },
 };
 const canonical = (operation: OperationRef) => operation.template.replace(/\/:([^/]+)/g, "/{$1}");

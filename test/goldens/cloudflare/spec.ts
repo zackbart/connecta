@@ -135,6 +135,19 @@ export default defineGoldenSpec({
     replies: (text) => [envelope({ id: ZONE, name: text })],
   },
   failures: {
+    additional: [
+      {
+        label: "noncanonical integer path",
+        tool: "cloudflare_api_read",
+        args: { path: `/accounts/${ACCOUNT}/botnet_feed/asn/0x2a/day_report` },
+      },
+      {
+        label: "JSON write answered HTML",
+        tool: "cloudflare_api_write",
+        args: { method: "PATCH", path: `/zones/${ZONE}/dns_records/r1`, body: { ttl: 300 } },
+        replies: [{ text: "<html>ok</html>", headers: { "content-type": "text/html" } }],
+      },
+    ],
     read: { tool: "cloudflare_api_read", args: { path: `/zones/${ZONE}` } },
     write: {
       tool: "cloudflare_api_write",

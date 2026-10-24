@@ -32,6 +32,18 @@ const BASE = "https://connecta.example";
 const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
+  "stripe.stripe_api_write": { method: "POST", path: "/v1/refunds", body: { payment_intent: "pi_fixture" } },
+  "cloudflare.cloudflare_api_write": {
+    method: "PATCH",
+    path: "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+    body: { ttl: 300 },
+  },
+  "vercel.vercel_api_write": {
+    method: "PATCH",
+    path: "/v9/projects/web/env/env_fixture",
+    body: { value: "new-value" },
+  },
+  "vercel.update_project_env_var": { projectId: "web", envVarId: "env_fixture", value: "new-value" },
   "breeze.breeze_api_write": { method: "GET", path: "/people/add", query: { first: "Alice", last: "Example" } },
   "ccb.ccb_api_write": { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } },
   "planning-center.pco_api_write": {
@@ -365,7 +377,7 @@ describe("API provider failure sweep", () => {
                   sent.push(request.method);
                   return new Response(body, { status: 200, headers: { "content-type": type! } });
                 });
-                expect(sent).toEqual([unreadableArgs["method"]]);
+                expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
                 expect(unreadable.structuredContent).toMatchObject({
                   ok: false,
                   error: {

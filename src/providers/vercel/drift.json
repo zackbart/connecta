@@ -472,7 +472,7 @@
     ],
     "evidence": {
       "openapi.json": "sha256:8eb845c92d7077200abbae6f10dc6c8e2b458587c22a073f453cb00d734935d6",
-      "value-safety.json": "sha256:6f8dc84ccf19bf7e28f82b3bf595ec6bf5ad6cfcc765b2d5f9109098fe0bda96"
+      "value-safety.json": "sha256:75c4e63d79385bdab7b18f1b108e75fe87e9f4e0fe71a45386eb3b9813738476"
     }
   },
   "checks": [

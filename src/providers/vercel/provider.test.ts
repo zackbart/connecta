@@ -4,6 +4,10 @@ import type { Connector, ConnectorContext } from "../../types.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { classifyCallError, ConnectorCallError } from "../../errors.js";
 
+import { CredentialVault } from "../../credentials.js";
+import { createMetaTools } from "../../meta-tools.js";
+import { memoryStorage } from "../../storage/memory.js";
+import { makeRegistry } from "../../../test/helpers.js";
 import { vercel } from "./index.js";
 
 import { REDACTED } from "../_shared/rest/value-safety.js";
@@ -334,9 +338,57 @@ describe("vercel() over an access token", () => {
     sent = [];
     const namedPartial = await refusal(call(connector, "upsert_project_env_var", named));
     expect(namedPartial).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
-    expect(namedPartial.message).toMatch(/env_a.*SECOND.*ENV_CONFLICT/);
+    expect(namedPartial.message).toMatch(/sent key "TOKEN".*created and failed.*ENV_CONFLICT/);
     expect(namedPartial.message).not.toMatch(/stored-first-secret|stored-second-secret|HTTP 400/);
     expect(sent).toHaveLength(1);
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.setAll("hosting", { value: "vercel-token" }, "fixture");
+    const meta = createMetaTools(
+      makeRegistry([connector], { storage, credentialVault: vault }),
+      "https://connecta.example",
+    );
+    for (const array of [false, true]) {
+      const created = { id: body.value, key: "FIRST", type: "sensitive", value: "stored-first-secret" };
+      respond = () =>
+        Response.json(
+          {
+            created: array ? [created] : created,
+            failed: [
+              {
+                key: body.value,
+                error: {
+                  code: "ENV_CONFLICT",
+                  message: `Stored value ${body.value} / stored-second-secret was refused`,
+                  value: "stored-second-secret",
+                },
+              },
+            ],
+          },
+          { status: 201 },
+        );
+      for (const fields of [undefined, ["created", "failed.error.message", "failed.error.code"]]) {
+        sent = [];
+        const raw = await meta.callDestructiveTool({
+          address: "hosting.vercel_api_write",
+          args: { method: "POST", path: "/v10/projects/web/env", body, ...(fields ? { fields } : {}) },
+        });
+        expect(raw.isError).not.toBe(true);
+        expect(JSON.stringify(raw)).not.toMatch(/Stored value|stored-second-secret|stored-first-secret/);
+        expect(JSON.stringify(raw)).toContain("ENV_CONFLICT");
+        expect(sent).toHaveLength(1);
+      }
+      sent = [];
+      const namedEcho = await meta.callDestructiveTool({ address: "hosting.upsert_project_env_var", args: named });
+      expect(namedEcho.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "connector_call_failed", writeOutcome: "unknown", retryable: false },
+      });
+      expect(JSON.stringify(namedEcho)).toContain("sent key");
+      expect(JSON.stringify(namedEcho)).toContain("TOKEN");
+      expect(JSON.stringify(namedEcho)).not.toMatch(/s3cret|stored-second-secret|stored-first-secret/);
+      expect(sent).toHaveLength(1);
+    }
     for (const [tool, args] of [
       ["upsert_project_env_var", named],
       ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],

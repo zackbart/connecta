@@ -1047,7 +1047,7 @@ describe("cloudflare() over a key", () => {
     const result = await connector.callTool(
       "cloudflare_api_read",
       {
-        path: `/accounts/${ACCOUNT}/one/applications/app1/setup-flows`,
+        path: `/accounts/${ACCOUNT}/one/applications/OPENAI/setup-flows`,
         fields: ["result.id", "result.steps.form_fields"],
       },
       token(),

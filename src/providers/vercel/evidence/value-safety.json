@@ -1617,6 +1617,7 @@
         "created[].legacyValue",
         "created[].value",
         "created[].vsmValue",
+        "failed[].error.message",
         "failed[].error.value"
       ],
       "POST /v11/projects": [

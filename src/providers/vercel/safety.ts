@@ -520,6 +520,7 @@ const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
     "created[].vsmValue",
     "created[].legacyValue",
     "failed[].error.value",
+    "failed[].error.message",
   ]),
   "POST /v11/projects": redact(PROJECT_REASON, PROJECT, PROJECT_ALLOW),
   "PATCH /v12/deployments/{id}/cancel": redact(DEPLOYMENT_REASON, DEPLOYMENT),

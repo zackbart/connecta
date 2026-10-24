@@ -29,6 +29,23 @@ then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch
 operation details separately and keep the same query when continuing.
 
+Maintained REST hatches validate path parameters against their pinned contracts
+before dispatch. Integer ids use canonical ASCII decimal notation within the
+safe-integer range and obey the operation's declared bounds; for example,
+`/individuals/42` is valid for an unbounded integer id while `/individuals/01`
+is refused.
+
+Stripe, Cloudflare and Vercel accept non-JSON success bodies only for reviewed
+operation/media pairs from their pins. An unexpected HTML or text answer to a
+JSON write reports an unknown outcome after one send; check the target before
+repeating the write. Documented PDFs, text exports and streaming formats retain
+their reviewed handling.
+
+Vercel project-environment partial replies withhold failure prose before `fields`
+selection. Named upsert partial-write reports identify the sent key and reviewed
+failure codes, with reconciliation guidance; vendor-echoed keys and ids are not
+copied into that report.
+
 ## Planning Center
 
 `planningCenter()` connects one organization's reviewed product APIs.

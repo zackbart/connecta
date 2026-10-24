@@ -192,3 +192,16 @@ then copied back by operation key. The four earlier reviewed additions keep thei
 recorded rows; every other endpoint row is unchanged. The complete advisory run
 now matches all 466 indexed endpoints and the approved index pin, with no findings.
 No further unexplained drift was accepted.
+
+## Partial environment response hardening (#1012)
+
+POST /v10/projects/{idOrName}/env now structurally withholds
+failed[].error.message beside failed[].error.value, before fields selection,
+for both object and array created acknowledgements. This free text may quote
+sent or stored environment values. Created metadata and reviewed failure codes
+remain available for reconciliation. The named single-variable upsert partial
+report uses only the caller's sent key and a deduplicated set of reviewed codes;
+it never copies failed[].key or created[].id into the error message. It retains
+the unknown-outcome verdict, check-before-repeat guidance and one physical
+write. Regression cases use createMetaTools with a real CredentialVault.
+The existing seven-operation response-media allowlist remains unchanged.

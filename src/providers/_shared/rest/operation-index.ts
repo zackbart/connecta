@@ -414,6 +414,21 @@ export class OperationIndex {
             : encodeURIComponent(decodeURIComponent(raw).slice(prefix.length, suffix ? -suffix.length : undefined));
       }
     });
+    const issues: ArgumentValidationIssue[] = [];
+    const repair: ArgumentRepairDetails["issues"] = [];
+    for (const [name, at, , schema] of this.#row(op)?.[0] ?? []) {
+      if (at === "path") this.#check(schema, decodeURIComponent(params[name]!), `/path/${name}`, issues, repair);
+    }
+    if (issues.length) {
+      const shown = issues
+        .slice(0, 5)
+        .map((issue) => `${issue.path} (${issue.code}: ${issue.expected})`)
+        .join("; ");
+      invalid(
+        `Not sent: the path does not match ${op.method} ${op.path} in the pinned API index: ${shown}. Substitute real ids matching ${this.#vendorTool("details")}; integer ids use canonical ASCII decimal notation within the safe-integer range.`,
+        issues.slice(0, MAX_ISSUES),
+      );
+    }
     return { op, params };
   }
 
@@ -732,6 +747,30 @@ export class OperationIndex {
   ): void {
     if (issues.length >= MAX_ISSUES) return;
     const schema = this.#deref(node);
+    const path = at.startsWith("/path/");
+    const types = typesOf(schema);
+    if (path && !schema.a && !types.includes("string") && (types.includes("integer") || types.includes("number"))) {
+      const integer = types.includes("integer");
+      const numeric = typeof value === "string" ? Number(value) : NaN;
+      if (
+        typeof value !== "string" ||
+        (integer ? !/^(?:0|-?[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(numeric) : !Number.isFinite(numeric))
+      ) {
+        issues.push({
+          path: at,
+          code: "type",
+          expected: integer ? "a canonical ASCII decimal safe integer" : "a finite number",
+        });
+        return;
+      }
+      value = numeric;
+    } else if (path && types.length && !types.includes("string") && !schema.a) {
+      if (types.includes("boolean") && (value === "true" || value === "false")) value = value === "true";
+      else {
+        issues.push({ path: at, code: "type", expected: types.join(" or ") });
+        return;
+      }
+    }
     if (schema.x === 1) return;
     // Conflicting composed constraints (disjoint enums or types) admit nothing,
     // not even the null or "" that otherwise unsets a field.
@@ -776,7 +815,6 @@ export class OperationIndex {
       }
       return;
     }
-    const types = typesOf(schema);
     if (schema.e && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
       if (!schema.e.some((option) => option === value || String(option) === String(value))) {
         issues.push({ path: at, code: "enum", expected: oneOf(schema.e.map(String)) });

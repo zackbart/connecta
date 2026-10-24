@@ -34,6 +34,7 @@ describeValueSafety("Cloudflare", {
       .replace(/\{account_id\}|\{account_tag\}/g, ACCOUNT)
       .replace(/\{zone_id\}/g, ZONE)
       .replace(/\{[^}]+\}/g, "x1"),
+  streamFormat: "json",
   echo: {
     tool: "cloudflare_api_read",
     args: { path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA` },

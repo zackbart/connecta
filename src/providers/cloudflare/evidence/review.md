@@ -99,3 +99,20 @@ index/query matrix under load. A broader bare "domains" probe does not return
 a disclosed discovery limit, not a reason to fork shared ranking. The named
 list_zones tool still describes domains explicitly. Shared write-aware unreadable
 body wording is inherited from #998; no independent Cloudflare H5 change is added.
+
+## Response-media hardening (#1000)
+
+The byte-exact 843eae2fbf4fe774ef9c91021dd34017ac9c970a pin
+(sha256:128d27e93f42) declares 66 non-JSON success operation/media pairs
+across 52 operations. The complete reviewed allowlist is
+[lib/response-media.ts](../lib/response-media.ts); reproduce it with
+`node scripts/audit-provider-media.mjs cloudflare <exact-pin-document>`.
+It includes DNS/plain-text exports, CSV, XML threat feeds, NDJSON analytics,
+SSE queue metrics, PDFs, images, KV/R2 bytes, archives and Worker content.
+`image/*` retains the pin's image-family wildcard only on that image operation.
+The pin's literal `string` labels retain bounded bytes only for their three
+Worker content operations. Existing argument/scope/value-safety refusals still
+apply before dispatch, so an allowlisted format never grants an operation.
+Ownership lookups remain JSON-only. JSON-only operations no longer treat an
+unexpected text/HTML/binary page as success; dispatched writes report unknown
+outcomes with check-before-repeat guidance and no resend.

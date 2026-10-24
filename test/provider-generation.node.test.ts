@@ -649,7 +649,15 @@ describe("OpenAPI operation index generation", () => {
           for (const root of Object.keys(properties)) expect(index.responseRoots(op)?.has(root)).toBe(true);
         }
         expect(index.contract(op).parameters.map((p) => p.name)).not.toEqual(expect.arrayContaining(["access_token"]));
-        const concrete = op.path.replace(/\{[^}]+\}/g, "fixture-id");
+        const concrete = op.path.replace(/\{([^}]+)\}/g, (_whole, name) => {
+          const schema = contract.parameters.find(
+            (parameter) => parameter.in === "path" && parameter.name === name,
+          )!.schema;
+          return String(
+            (schema["enum"] as unknown[] | undefined)?.[0] ??
+              (schema["type"] === "integer" ? Math.max(1, Number(schema["minimum"] ?? 1)) : "fixture-id"),
+          );
+        });
         expect(index.resolve(op.method, concrete).op.operationId).toBe(op.operationId);
         if (operation.requestBody) {
           expect(index.contract(op).body?.schema).toHaveProperty("properties");

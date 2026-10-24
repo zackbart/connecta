@@ -566,6 +566,7 @@ export default defineGoldenSpec({
   unsent: ["clientSecret", "refreshToken"],
   echo: { tool: "get_me", replies: (text) => json({ id: 7, name: text }) },
   failures: {
+    additional: [{ label: "noncanonical integer path", tool: "ccb_api_read", args: { path: `/individuals/４２` } }],
     read: { tool: "get_group", args: { groupId: 5 } },
     write: {
       tool: "ccb_api_write",

@@ -5,9 +5,10 @@ import { Refusal } from "../../http/errors.js";
 import { restSafety, resultSafety } from "../../http/safety.js";
 import { guardedClient } from "../../http/client.js";
 import { Credentials } from "../../http/services.js";
-import { connect, get, type Connection, type ConnectOptions, type SendOptions } from "../../http/vendor.js";
+import { connect, get, type Connection, type SendOptions } from "../../http/vendor.js";
 import type { HatchBinding, HatchDeclaration } from "../../http/hatch.js";
 import { stripePage, stripeBackwardPage, stripeSearchPage, stripeV2Page } from "../../http/hatch-paging.js";
+import { responseMedia } from "../_shared/rest/response-media.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import type { RestCall, RestReadPost } from "../_shared/rest/tools.js";
@@ -16,7 +17,7 @@ import { openapi } from "./openapi.generated.js";
 import { STRIPE_VALUE_SAFETY } from "./safety.js";
 import { STRIPE_API_BASE_URL, type StripeMode } from "./lib/config.js";
 import type { StripeApiKeyOptions } from "./index.js";
-import type { VendorErrors } from "../../http/errors.js";
+import type { OperationRef, VendorErrors } from "../../http/errors.js";
 import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -316,45 +317,16 @@ export const getAccount = get("getAccount", "/v1/account", {
   success: Schema.Unknown,
 });
 export const getBalance = get("getBalance", "/v1/balance", { success: Schema.Unknown });
-const binaryType = (type: string) =>
-  type !== "" &&
-  !/\bjson\b|\+json\b|\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type) &&
-  !/^text\/|\bxml\b|\bcsv\b/.test(type);
+const RESPONSE_MEDIA = { "GET /v1/quotes/{quote}/pdf": ["application/pdf"] };
 export const StripeApi = {
   ...indexedVendor("stripe", stripeIndex, [getAccount, getBalance]),
-  textBodies: {
-    review:
-      "Legacy Stripe REST replies use their response media type: JSON, text/XML/CSV or newline-delimited JSON. Errors remain JSON-only.",
-    forResponse: (status: number, _operation: unknown, type = "") =>
-      status >= 200 &&
-      status <= 299 &&
-      (!/\bjson\b|\+json\b/.test(type) || /\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type))
-        ? ("text" as const)
-        : undefined,
-  },
   binaryBodies: {
     review:
-      "Stripe quote PDFs and legacy hatch binary replies retain bounded bytes; sent-secret checks run before base64 encoding.",
-    forResponse: (_status: number, _operation: unknown, type: string) => binaryType(type),
+      "The exact Stripe pin declares one non-JSON success: GET /v1/quotes/{quote}/pdf, application/pdf. JSON operations never accept text/HTML or arbitrary binary acknowledgements (#1000).",
+    forResponse: (status: number, operation: OperationRef, type: string) =>
+      responseMedia(RESPONSE_MEDIA, status, operation, type) === "binary",
   },
 };
-export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
-  Effect.sync(() => {
-    if (answer.bodyFormat !== "text" || typeof body !== "string") return body;
-    const type = (answer.headers.get("content-type") ?? "").toLowerCase();
-    if (/\b(?:x-ndjson|jsonl|stream\+json)\b/.test(type))
-      return body
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => {
-          try {
-            return JSON.parse(line) as unknown;
-          } catch {
-            return { line };
-          }
-        });
-    return body === "" ? null : body;
-  });
 export function stripeConnection(options: Readonly<StripeApiKeyOptions>, origin: "api" | "files" = "api"): Connection {
   return connect(
     StripeApi,
@@ -366,7 +338,7 @@ export function stripeConnection(options: Readonly<StripeApiKeyOptions>, origin:
       headers: { "Stripe-Version": stripeIndex.version },
       authenticate: authenticate(options),
     }),
-    { errors: stripeErrors, safety: resultSafety(safety()), result },
+    { errors: stripeErrors, safety: resultSafety(safety()) },
   );
 }
 

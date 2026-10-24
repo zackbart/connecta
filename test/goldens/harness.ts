@@ -172,8 +172,8 @@ export interface GoldenSpec {
    * credential would, and records the call last in `calls.json`.
    */
   echo: Omit<GoldenCall, "label" | "replies"> & { replies(text: string): Replies };
-  /** One read and one write tool driven through every failure status. */
-  failures: { read: GoldenFailureCall; write: GoldenFailureCall };
+  /** One read and one write tool driven through every failure status, plus provider-specific failure rows. */
+  failures: { read: GoldenFailureCall; write: GoldenFailureCall; additional?: readonly GoldenCall[] };
   /**
    * The vendor's error body for a failure status, carrying `message` where
    * the vendor puts its prose; defaults to a generic JSON body. The `401 echo`
@@ -1145,6 +1145,10 @@ async function failures(capture: Capture): Promise<unknown> {
       cases[failure] = await run(capture, `${kind} ${failure}`, call, answer);
     }
     out[kind] = { tool: call.tool, args: call.args ?? {}, ...(failAt ? { failAt } : {}), cases };
+  }
+  if (spec.failures.additional) {
+    out["additional"] = [];
+    for (const call of spec.failures.additional) (out["additional"] as unknown[]).push(await row(capture, call));
   }
   return out;
 }

@@ -1841,5 +1841,45 @@
         }
       }
     }
-  }
+  },
+  "additional": [
+    {
+      "label": "noncanonical integer path",
+      "tool": "sheets_api_read",
+      "args": {
+        "path": "/spreadsheets/sheet_1/developerMetadata/:id"
+      },
+      "steps": [],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "invalid_args",
+          "message": "Not sent: the path does not match GET /spreadsheets/{spreadsheetId}/developerMetadata/{metadataId} in the pinned API index: /path/metadataId (type: a canonical ASCII decimal safe integer). Substitute real ids matching sheets_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "retryable": false,
+          "validation": {
+            "issues": [
+              {
+                "path": "/path/metadataId",
+                "code": "type",
+                "expected": "a canonical ASCII decimal safe integer"
+              }
+            ]
+          },
+          "connector": "sheets",
+          "operation": "sheets.sheets_api_read",
+          "nextAction": {
+            "tool": "search_tools",
+            "arguments": {
+              "query": "sheets_api_read",
+              "connector": "sheets",
+              "includeSchemas": "compact"
+            },
+            "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+          },
+          "retry": "Correct the listed arguments and retry sheets.sheets_api_read."
+        }
+      }
+    }
+  ]
 }
