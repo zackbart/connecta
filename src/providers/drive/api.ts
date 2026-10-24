@@ -3,15 +3,14 @@ import { Effect, Schema } from "effect";
 import { guardedClient } from "../../http/client.js";
 import { bearer, Grant, refreshOnce } from "../../http/oauth.js";
 import { resultSafety } from "../../http/safety.js";
-import { connect, del, get, patch, post, vendor, type Connection, type ConnectOptions } from "../../http/vendor.js";
-import type { HttpFailure, OperationRef } from "../../http/errors.js";
+import { connect, del, get, patch, post, type Connection, type ConnectOptions } from "../../http/vendor.js";
+import type { HttpFailure, OperationRef, VendorErrors } from "../../http/errors.js";
 import type { CallServices } from "../../http/services.js";
 import {
   GOOGLE_GRANT_RENEWAL,
   googleClient,
   googleErrors,
   googleGrant,
-  googleSafety,
   workspaceOf,
   type GoogleClient,
   type GoogleProduct,
@@ -19,7 +18,10 @@ import {
   type GoogleRequestOptions,
 } from "../_shared/google/kit.js";
 import { DRIVE_API_BASE_URL, DRIVE_MAX_RESPONSE_BYTES, DRIVE_SCOPES } from "./lib/constants.js";
-import { skill } from "./skill.generated.js";
+import { indexedVendor } from "../_shared/rest/kit.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { driveIndex } from "./lib/hatch.js";
+import { DRIVE_VALUE_SAFETY, withholdDriveLinks } from "./safety.js";
 import type { DriveOptions } from "./index.js";
 
 export const DRIVE: GoogleProduct = {
@@ -57,16 +59,36 @@ const OPERATIONS = [
   get("listDrives", "/drives", { success: Schema.Unknown }),
 ] as const;
 
+const indexed = indexedVendor("Google Drive", driveIndex, OPERATIONS);
 export const DriveApi = {
-  ...vendor({ name: "Google Drive", manifestBase: "/drive/v3" }, ...OPERATIONS),
+  ...indexed,
+  manifestBase: "/drive/v3",
+  indexed: { ...indexed.indexed!, operations: driveIndex.ops.map((op) => `${op.method} /drive/v3${op.path}`).sort() },
   binaryBodies: {
     review:
       "Drive media downloads and native-file exports retain bounded bytes regardless of Content-Type, including JSON files. Only googleClient.bytes sets googleBytes; metadata and uploads still require JSON. The kit checks sent secrets before any result hook or base64 decode.",
     forResponse: (_status: number, operation: OperationRef) => operation.flags?.["googleBytes"] === true,
   },
 };
-export const errors = googleErrors(DRIVE);
-export const safety = googleSafety(DRIVE.provider, OPERATIONS);
+const google = googleErrors(DRIVE, { standard: true });
+export const errors: VendorErrors = {
+  ...google,
+  meanings: { ...google.meanings!, conflicts: ["A Drive source page changed before its local cursor resumed."] },
+};
+const values = valueSafety(DRIVE_VALUE_SAFETY, () => driveIndex);
+export const safety = {
+  reviewed: {
+    resolve: (method: string, path: string) => {
+      const op = driveIndex.resolve(method, path).op;
+      return { method: op.method, template: op.path };
+    },
+    redact: (data: unknown, op: { method: string; template: string }) =>
+      withholdDriveLinks(values.redact(data, op.method, op.template)),
+    withholdsErrors: (op: { method: string; template: string }) =>
+      values.withholdsErrors(driveIndex.ops.find((entry) => entry.method === op.method && entry.path === op.template)!),
+  },
+  sensitiveFields: { names: [], choice: "drop" },
+} as const;
 
 /** Keep only redacted content headers beside the kit's already safe binary envelope. */
 export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
@@ -146,9 +168,22 @@ export interface DriveClient {
   ) => Effect.Effect<Omit<DriveBytes, "bytes"> & { text: string }, HttpFailure, CallServices>;
 }
 
-/** Charset handling and Google's empty-file Range status are Drive-local contracts. */
+/** Named requests keep their declared endpoint even when an id collides with a literal route. */
 export function driveClient(connection: Connection): DriveClient {
-  const client = googleClient(connection, DRIVE.provider);
+  const client = googleClient(connection, DRIVE.provider, { standard: true, index: driveIndex });
+  const named = (request: GoogleRequest): GoogleRequest => ({
+    ...request,
+    template: request.path
+      .replace(/^(\/files\/)[^/]+/, "$1{fileId}")
+      .replace(/(\/permissions\/)[^/]+$/, "$1{permissionId}"),
+  });
+  return driveContentClient({
+    json: (request, options) => client.json(named(request), options),
+    bytes: (request, accept, options) => client.bytes(named(request), accept, options),
+  });
+}
+/** Charset handling and Google's empty-file Range status, over already safe bytes. */
+export function driveContentClient(client: GoogleClient): DriveClient {
   const bytes: DriveClient["bytes"] = (request, accept, options) =>
     client.bytes(request, accept, options).pipe(
       Effect.map((answer) => {
@@ -209,8 +244,3 @@ export const probe = {
   request: { params: { fileId: "-" } },
   describe: () => "Google Drive delegation has no credential to test.",
 };
-
-export function usageGuide(purpose: string, instructions: string | undefined): string {
-  const extra = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
-}

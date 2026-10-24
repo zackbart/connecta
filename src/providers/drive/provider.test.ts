@@ -6,8 +6,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { drive } from "./index.js";
+import { driveIndex, DRIVE_HATCH } from "./lib/hatch.js";
+import { DRIVE_VALUE_SAFETY } from "./safety.js";
+import { reviewProblems } from "../../../test/fixtures/value-safety.js";
+import candidates from "./evidence/value-safety.json";
+import source from "./evidence/openapi.json";
+import { accessTokens } from "../../access-tokens.js";
+import { issueAgentToken } from "../../../test/helpers/agent-tokens.js";
+import { readJsonRpc } from "../../../test/fixtures/http.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { createTestConnecta, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 // The final-size guard is the last word on every result, and every source is
@@ -22,6 +30,7 @@ vi.mock("../_shared/google/result-size.js", async (importOriginal) => {
   };
 });
 
+const ACCESS_TOKEN = "q7J4x9N2v6C8r3L5";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const keys = (await crypto.subtle.generateKey(
@@ -61,10 +70,12 @@ type Route = (call: ApiCall) => Reply | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
+let sharedStorage = memoryStorage();
 let route: Route = () => undefined;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
+  sharedStorage = memoryStorage();
   sizing.oversized = undefined;
   calls.length = 0;
   tokenCalls = 0;
@@ -73,7 +84,7 @@ beforeEach(() => {
     const url = String(input);
     if (url === TOKEN_URL) {
       tokenCalls += 1;
-      return Response.json({ access_token: "token", expires_in: 3599 });
+      return Response.json({ access_token: ACCESS_TOKEN, expires_in: 3599 });
     }
     const call: ApiCall = {
       url: new URL(url),
@@ -114,7 +125,7 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
 }
 
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage: sharedStorage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}, ctx = context()): Promise<any> {
@@ -134,7 +145,8 @@ describe("reading content", () => {
       request.url.searchParams.get("fields") ? { body: { id: "f1", name: "F", ...file } } : undefined;
   }
 
-  it("names Drive's export limit from Google's reason, never from a guess", async () => {
+  it("INV-1 INV-5 INV-9: preserves Drive error facts, guarded decisions and reviewed metadata dispatch", async () => {
+    installOwnedTransport();
     const meta = metadata({ mimeType: "application/vnd.google-apps.document", capabilities: { canDownload: true } });
     const message = "Request refused.";
     route = (request) => meta(request) ?? GOOGLE_ERROR(403, "exportSizeLimitExceeded", message);
@@ -153,6 +165,220 @@ describe("reading content", () => {
     expect(policy).toMatchObject({ code: "provider_permission_denied", retryable: false });
     expect(policy.message).toContain("domain policy");
     expect(policy.message).not.toContain("export");
+
+    for (const problems of Object.values(
+      reviewProblems({ table: DRIVE_VALUE_SAFETY, index: driveIndex, source, candidates }),
+    ))
+      expect(problems).toEqual([]);
+    expect(driveIndex.ops).toHaveLength(64);
+    expect(Object.values(DRIVE_HATCH.verdicts).filter((v) => v !== "refuse")).toHaveLength(13);
+    const connector = connection();
+    for (const args of [
+      { method: "DELETE", path: "/files/f1" },
+      { method: "POST", path: "/files", body: { parents: ["old-[redacted]"] } },
+      { method: "POST", path: "/files", body: { mimeType: "text/[redacted]" } },
+      { method: "DELETE", path: "/files/trash" },
+      { method: "POST", path: "/files/f1/watch", body: {} },
+      { method: "POST", path: "/files/f1/download", body: {} },
+      { method: "POST", path: "/files/f1/permissions", body: { type: "anyone", role: "reader" } },
+      { method: "PATCH", path: "/files/f1/permissions/p1", body: { role: "owner" } },
+      {
+        method: "PATCH",
+        path: "/files/f1/permissions/p1",
+        query: { transferOwnership: true },
+        body: { role: "writer" },
+      },
+      { method: "POST", path: "/files", query: { uploadType: "media" }, body: { name: "x" } },
+    ]) {
+      calls.length = 0;
+      const before = tokenCalls;
+      const error = await call(connector, "drive_api_write", args).catch((e) => e);
+      expect(error).toMatchObject({ code: "invalid_args" });
+      if (args.path === "/files/f1/permissions") expect(error.message).toContain("share_file");
+      expect(calls).toEqual([]);
+      expect(tokenCalls).toBe(before);
+    }
+    for (const [tool, args] of [
+      ["get_file", { fileId: "generateCseToken" }],
+      ["drive_api_read", { path: "/files/generateCseToken" }],
+      ["drive_api_read", { path: "/files/%67enerateCseToken" }],
+      ["drive_api_read", { path: "/files/f1", query: { alt: "media" } }],
+      ["get_file", { fileId: "f1", fields: ["madeUp"] }],
+      ["search_files", { fields: ["madeUp"] }],
+    ] as const) {
+      calls.length = 0;
+      await expect(call(connector, tool, args)).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toEqual([]);
+    }
+    for (const reply of [
+      GOOGLE_ERROR(500, "backendError", "Lookup failed"),
+      { network: true },
+      {
+        stream: new ReadableStream({
+          start(c) {
+            c.error(new Error("broken"));
+          },
+        }),
+      },
+    ] as Reply[]) {
+      calls.length = 0;
+      route = () => reply;
+      const error = await call(connector, "move_file", { fileId: "f1", folderId: "root" }).catch((e) => e);
+      expect(error.message).not.toMatch(/outcome is unknown|may have been applied/);
+      expect(error.writeOutcome).toBeUndefined();
+      expect(
+        calls.map((c) => c.method),
+        JSON.stringify(error),
+      ).toEqual(["GET"]);
+    }
+    for (const parents of [[], ["old-1"], ["root"], undefined]) {
+      calls.length = 0;
+      route = (r) =>
+        r.method === "GET"
+          ? { body: parents === undefined ? {} : { parents } }
+          : GOOGLE_ERROR(500, "backendError", "Move failed");
+      const error = await call(connector, "move_file", { fileId: "f1", folderId: "root" }).catch((e) => e);
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(calls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
+      expect(calls[1]!.url.searchParams.get("removeParents")).toBe(parents?.includes("old-1") ? "old-1" : null);
+    }
+    for (const parents of [["[redacted]"], [`old-${ACCESS_TOKEN}-parent`], "[redacted]", null]) {
+      calls.length = 0;
+      route = () => ({ body: { parents } });
+      const error = await call(connector, "move_file", { fileId: "f1", folderId: "root" }).catch((e) => e);
+      expect(error).toMatchObject({ code: "connector_call_failed" });
+      expect(error.writeOutcome).toBeUndefined();
+      expect(
+        calls.map((c) => c.method),
+        JSON.stringify(error),
+      ).toEqual(["GET"]);
+    }
+    for (const metadata of [
+      { mimeType: `text/${ACCESS_TOKEN}` },
+      { mimeType: "[redacted]" },
+      { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: ACCESS_TOKEN } },
+      {
+        mimeType: "application/vnd.google-apps.shortcut",
+        shortcutDetails: { targetId: "ok", targetMimeType: `text/${ACCESS_TOKEN}` },
+      },
+      { mimeType: "text/plain", capabilities: { canDownload: "[redacted]" } },
+    ]) {
+      calls.length = 0;
+      route = () => ({ body: metadata });
+      await expect(call(connector, "get_file_content", { fileId: "f1" })).rejects.toMatchObject({
+        code: "connector_call_failed",
+      });
+      expect(calls).toHaveLength(1);
+    }
+    calls.length = 0;
+    route = () => ({ body: { mimeType: "application/vnd.google-apps.folder", driveId: ACCESS_TOKEN } });
+    await expect(call(connector, "list_folder_items", { folderId: "folder1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+    expect(calls).toHaveLength(1);
+    route = () => ({
+      body: {
+        id: "f1",
+        resourceKey: "private",
+        webViewLink: "https://drive.google.com/file/d/f1/view?resourcekey=private",
+        clientEncryptionDetails: { decryptionMetadata: { jwt: "private" } },
+        description: "See https://drive.google.com/open?id=f1&%72esourcekey=private",
+        thumbnailLink: "https://example.com/private",
+        appProperties: { label: "ok" },
+      },
+    });
+    const safe = await call(connector, "drive_api_read", { path: "/files/f1" });
+    expect(JSON.stringify(safe)).not.toContain("private");
+    expect(safe.data.appProperties.label).toBe("ok");
+    route = () => ({ body: { revisions: [], nextPageToken: "more" } });
+    const first = await call(connector, "drive_api_read", {
+      path: "/files/f1/revisions",
+      query: { fields: "revisions(id)" },
+      fields: ["revisions.id"],
+    });
+    expect(first.page.hasMore).toBe(true);
+    expect(calls.at(-1)!.url.searchParams.get("fields")).toBe("revisions(id),nextPageToken");
+    route = () => ({ body: { revisions: [{ id: "v1", modifiedTime: "2026-01-01T00:00:00Z" }] } });
+    const last = await call(connector, "drive_api_read", {
+      path: "/files/f1/revisions",
+      query: { fields: "revisions(id)" },
+      fields: ["revisions.id"],
+      cursor: first.page.nextCursor,
+    });
+    expect(last.page).toMatchObject({ hasMore: false });
+    expect(last.data.revisions).toEqual([{ id: "v1" }]);
+    expect(calls.at(-1)!.url.pathname).toBe("/drive/v3/files/f1/revisions");
+    expect(calls.at(-1)!.url.searchParams.get("pageToken")).toBe("more");
+    const storage = memoryStorage();
+    const app = createTestConnecta({
+      connectors: [connector],
+      agents: ["assistant"],
+      pools: {
+        native: { tools: ["files"], members: ["agent:assistant"], surface: "native" },
+        reads: { tools: ["files"], members: ["agent:assistant"], surface: "native", readOnly: true },
+      },
+      publicUrl: "https://connecta.example",
+      logger: silentLogger,
+      storage,
+      accessTokens: accessTokens(storage),
+    });
+    const token = await issueAgentToken(storage, "assistant");
+    const rpc = async (pool: string, method: string, params: Record<string, unknown>) =>
+      readJsonRpc(
+        await app.fetch(
+          new Request(`https://connecta.example/agent/${pool}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              Authorization: `Bearer ${token}`,
+              "MCP-Protocol-Version": "2026-07-28",
+              "Mcp-Method": method,
+              ...(typeof params["name"] === "string" ? { "Mcp-Name": params["name"] } : {}),
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method,
+              params: {
+                ...params,
+                _meta: {
+                  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientCapabilities": {},
+                },
+              },
+            }),
+          }),
+        ),
+      );
+    try {
+      const catalog = await rpc("reads", "tools/list", {});
+      expect(catalog.result.tools.some((t: any) => t.name === "files__drive_api_read")).toBe(true);
+      expect(catalog.result.tools.some((t: any) => t.name === "files__drive_api_write")).toBe(false);
+      route = () => ({ body: { id: "f1", name: "Review.pdf" } });
+      calls.length = 0;
+      const read = await rpc("native", "tools/call", {
+        name: "files__drive_api_read",
+        arguments: { path: "/files/f1", fields: ["id"] },
+      });
+      expect(read.result.isError).toBeFalsy();
+      expect(calls.map((c) => c.method)).toEqual(["GET"]);
+      calls.length = 0;
+      const written = await rpc("native", "tools/call", {
+        name: "files__drive_api_write",
+        arguments: { method: "PATCH", path: "/files/f1", body: { name: "Review.pdf" } },
+      });
+      expect(written.result.isError).toBeFalsy();
+      expect(calls.map((c) => c.method)).toEqual(["PATCH"]);
+      calls.length = 0;
+      await rpc("reads", "tools/call", {
+        name: "files__drive_api_write",
+        arguments: { method: "PATCH", path: "/files/f1", body: { name: "Denied.pdf" } },
+      });
+      expect(calls).toEqual([]);
+    } finally {
+      await app.close();
+    }
   });
 
   /** The body a range-honoring server sends for this request's Range header. */
@@ -196,7 +422,7 @@ describe("reading content", () => {
     route = (request) =>
       meta(request) ?? { stream, contentType: "text/plain", headers: { "Content-Length": String(total) } };
     const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 10 });
-    expect(result.contentTruncated).toBe(true);
+    expect(result.truncated).toContain("content");
     expect(result.content.startsWith("aaaaaaaaaa\n[… truncated: 10 characters")).toBe(true);
     expect(seen.cancelled).toBe(true);
     expect(seen.pulled).toBeLessThanOrEqual(45 + CHUNK);
@@ -220,7 +446,7 @@ describe("reading content", () => {
       [{ maxBytes: 4 * 1024 * 1024 }, "more than 1048576 bytes"],
     ] as const) {
       const result = await call(connection(), "get_file_content", { fileId: "f1", ...args });
-      expect(result).toMatchObject({ format: "unavailable", contentTruncated: false });
+      expect(result).toMatchObject({ format: "unavailable" });
       expect(result.content).toBeUndefined();
       expect(result.note).toContain(said);
     }
@@ -287,8 +513,8 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
           ...(cursor ? { cursor } : {}),
         });
         expect(serialized(result)).toBeLessThanOrEqual(maxBytes ?? BUDGET);
-        expect(result.files.length).toBeGreaterThan(0);
-        seen.push(...result.files.map((file: any) => file.id));
+        expect(result.items.length).toBeGreaterThan(0);
+        seen.push(...result.items.map((file: any) => file.id));
         if (!result.page.hasMore) break;
         cursor = result.page.nextCursor;
       }
@@ -299,7 +525,7 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
     // A direct call may take the whole page at once.
     calls.length = 0;
     const whole = await call(connection(), "search_files", { limit: 100, maxBytes: 4 * 1024 * 1024 });
-    expect(whole.files).toHaveLength(100);
+    expect(whole.items).toHaveLength(100);
     expect(whole.page.hasMore).toBe(true);
   });
 });
@@ -315,8 +541,8 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
   async function firstPage(connector: Connector, args: Record<string, unknown> = {}) {
     route = () => ({ body: { files: rowsOf(ids), nextPageToken: "second" } });
     const first = await call(connector, "search_files", { ...SMALL, ...args });
-    expect(first.files.length).toBeGreaterThan(0);
-    expect(first.files.length).toBeLessThan(ids.length);
+    expect(first.items.length).toBeGreaterThan(0);
+    expect(first.items.length).toBeLessThan(ids.length);
     return first;
   }
 
@@ -353,7 +579,7 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
     ] as const) {
       const failure = await call(connector, name, args).catch((error) => error);
       expect(failure, `${name} ${JSON.stringify(args).slice(0, 60)}`).toMatchObject({ code: "invalid_args" });
-      expect(failure.message).toContain("different listing");
+      expect(failure.message).toMatch(/different (call|listing)/);
     }
     expect(calls).toEqual([]);
   });
@@ -398,8 +624,8 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
       const connector = connection();
       const first = await call(connector, "search_files", { limit: 100, maxBytes: 65_536 });
       // Malformed ids are left out of the rows and named, never cut to match.
-      expect(first.files[0].id).toBeUndefined();
-      expect(first.files[0].truncatedFields).toContain("id");
+      expect(first.items[0].id).toBeUndefined();
+      expect(first.items[0].truncated).toContain("id");
       route = () => ({ body: { files: page("y"), nextPageToken: "more" } });
       await expect(
         call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: first.page.nextCursor }),

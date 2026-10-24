@@ -64,7 +64,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "files": [
+        "items": [
           {
             "id": "f1",
             "name": "Budget 2027.xlsx",
@@ -84,7 +84,7 @@
         "incompleteSearch": true,
         "page": {
           "hasMore": true,
-          "nextCursor": "WyJuZXh0LTEiLDAsNSwiWEdGSUs5WnN5cVFTRzd4aSIsbnVsbCxudWxsXQ"
+          "nextCursor": "eyJ2IjoyLCJkIjoiYzcyYjQzM2M1MDgwYjcxYTJjN2FlYTY3YmMxODAxYjAiLCJjIjoiV3lKdVpYaDBMVEVpTERBc05Td2lXRWRHU1VzNVduTjVjVkZUUnpkNGFTSXNiblZzYkN4dWRXeHNYUSIsIm0iOiIxbWlOeXptQ2N2UXUwNDRDSUJ3eTJQUkRILTNtRnozdmgwa1BiSVNOeFJNIn0"
         }
       }
     }
@@ -163,7 +163,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "files": [
+        "items": [
           {
             "id": "folder-2",
             "name": "Archive",
@@ -183,8 +183,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -253,7 +252,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "files": [
+        "items": [
           {
             "id": "f1",
             "name": "Budget 2027.xlsx",
@@ -271,8 +270,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -417,7 +415,7 @@
         {
           "after": 1,
           "method": "GET",
-          "url": "https://www.googleapis.com/drive/v3/files/d1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "url": "https://www.googleapis.com/drive/v3/files/d1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
             "accept": "application/json",
             "authorization": "Bearer <secret:accessToken>"
@@ -446,8 +444,7 @@
         "webViewLink": "https://docs.google.com/document/d/d1/edit",
         "format": "markdown",
         "exportedAs": "text/markdown",
-        "content": "# Elders\n\nAgenda.",
-        "contentTruncated": false
+        "content": "# Elders\n\nAgenda."
       }
     }
   },
@@ -503,7 +500,7 @@
         {
           "after": 1,
           "method": "GET",
-          "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
             "accept": "application/json",
             "authorization": "Bearer <secret:accessToken>"
@@ -532,8 +529,7 @@
         "mimeType": "application/json",
         "size": 17,
         "format": "text",
-        "content": "{\"ok\":true,\"n\":1}",
-        "contentTruncated": false
+        "content": "{\"ok\":true,\"n\":1}"
       }
     }
   },
@@ -588,7 +584,7 @@
         {
           "after": 1,
           "method": "GET",
-          "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
             "accept": "application/json",
             "authorization": "Bearer <secret:accessToken>"
@@ -617,8 +613,7 @@
         "mimeType": "application/pdf",
         "size": 8,
         "format": "base64",
-        "content": "JVBERi0xLjc=",
-        "contentTruncated": false
+        "content": "JVBERi0xLjc="
       }
     }
   },
@@ -686,7 +681,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "permissions": [
+        "items": [
           {
             "id": "p1",
             "type": "user",
@@ -710,8 +705,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -779,7 +773,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "drives": [
+        "items": [
           {
             "id": "sd-1",
             "name": "Finance"
@@ -787,7 +781,7 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "WyJkMiIsMCwyNSwiSnFPNGZrWTJEMzhoMXRwVyIsbnVsbCxudWxsXQ"
+          "nextCursor": "eyJ2IjoyLCJkIjoiMjg5YWUyODk2YTE3M2ZhZjkzYWU2NzJlMDA3ZTY2NWQiLCJjIjoiV3lKa01pSXNNQ3d5TlN3aVNuRlBOR1pyV1RKRU16aG9NWFJ3VnlJc2JuVnNiQ3h1ZFd4c1hRIiwibSI6IlhKOWtkMXJHTm11MnFsTDFpTXNwdTlrRGpScDlrQkhhUnRGaWVWYWpfUFEifQ"
         }
       }
     }
@@ -1857,6 +1851,667 @@
         "fileId": "f1",
         "permissionId": "anyoneWithLink",
         "deleted": true
+      }
+    }
+  },
+  {
+    "label": "drive_api_search",
+    "tool": "drive_api_search",
+    "args": {
+      "query": "file revisions"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/files/{fileId}/revisions",
+            "operationId": "drive.revisions.list",
+            "summary": "List file revisions with revision ids and modified times.",
+            "tool": "drive_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/files/{fileId}/revisions/{revisionId}",
+            "operationId": "drive.revisions.get",
+            "summary": "Get file revision metadata without media download.",
+            "tool": "drive_api_read"
+          },
+          {
+            "method": "PATCH",
+            "path": "/files/{fileId}/revisions/{revisionId}",
+            "operationId": "drive.revisions.update",
+            "summary": "Update edit modify revisions; refused: Revision mutations can remove retained content or change publication; only revis…"
+          },
+          {
+            "method": "DELETE",
+            "path": "/files/{fileId}/revisions/{revisionId}",
+            "operationId": "drive.revisions.delete",
+            "summary": "Delete remove revisions; refused: Revision mutations can remove retained content or change publication; only revision m…"
+          },
+          {
+            "method": "GET",
+            "path": "/files",
+            "operationId": "drive.files.list",
+            "summary": "List search find files by name, folder contents, MIME type or modified time.",
+            "tool": "drive_api_read",
+            "named": "search_files"
+          },
+          {
+            "method": "POST",
+            "path": "/files",
+            "operationId": "drive.files.create",
+            "summary": "Create file or folder metadata.",
+            "tool": "drive_api_write",
+            "named": "create_file"
+          }
+        ],
+        "revision": "20261020",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiMzMzYzhmNjBmOTVmZDAxMjk3MzZjZDBiYjlmODIwYzgiLCJjIjoiNiIsIm0iOiJmc1VOWHduUEJNYWRqYUppZkZCSE9rN2JfZGZVMm9mLW9NVU0tM3N4WDJzIn0"
+        }
+      }
+    }
+  },
+  {
+    "label": "drive_api_details",
+    "tool": "drive_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/files/{fileId}/revisions"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/files/{fileId}/revisions",
+        "operationId": "drive.revisions.list",
+        "summary": "List file revisions with revision ids and modified times.",
+        "parameters": [
+          {
+            "name": "prettyPrint",
+            "in": "query",
+            "required": false,
+            "description": "Returns response with indentations and line breaks.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "description": "Selector specifying which fields to include in a partial response.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "description": "The token for continuing a previous list request on the next page.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "description": "The maximum number of revisions to return.",
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "description": "The ID of the file.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "drive_api_read",
+        "revision": "20261020"
+      }
+    }
+  },
+  {
+    "label": "drive_api_read",
+    "tool": "drive_api_read",
+    "args": {
+      "path": "/files/f1/revisions",
+      "fields": [
+        "revisions.id",
+        "revisions.modifiedTime"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-drive-api-read@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/revisions",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "revisions": [
+            {
+              "id": "v1",
+              "modifiedTime": "2026-09-30T12:00:00Z"
+            }
+          ]
+        },
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiODdkMTcxZjE1MmEyYjMxNTkwYTJiYTdiMGNiNzRmNjEiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicmV2aXNpb25zLW5leHRcIn0iLCJtIjoiNHhNVmRrWGRDaEZRT25YN3pOU2tGZTlSeXloSkNHOElnTjNHZkRHbmIwQSJ9",
+          "param": "pageToken",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "drive_api_write",
+    "tool": "drive_api_write",
+    "args": {
+      "method": "PATCH",
+      "path": "/files/f1",
+      "body": {
+        "name": "Review.pdf"
+      },
+      "fields": [
+        "id",
+        "name"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-drive-api-write@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Review.pdf"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": "f1",
+          "name": "Review.pdf"
+        }
+      }
+    }
+  },
+  {
+    "label": "hatch grants stay named",
+    "tool": "drive_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/files/f1/permissions",
+      "body": {
+        "type": "anyone",
+        "role": "reader"
+      }
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "Use share_file for every grant; it validates the grantee and defaults notification email to false. The pinned Discovery marks emailAddress and domain output-only.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "hatch permanent delete refused",
+    "tool": "drive_api_write",
+    "args": {
+      "method": "DELETE",
+      "path": "/files/f1"
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "Permanent deletion is outside this connection; use trash_file for recoverable trash.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "named token collision refused",
+    "tool": "get_file",
+    "args": {
+      "fileId": "generateCseToken"
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "This Google id resolves to a different operation; no request was sent.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "move failed auxiliary lookup",
+    "tool": "move_file",
+    "args": {
+      "fileId": "f1",
+      "folderId": "root"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-move-failed-auxiliary-lookup@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "unavailable",
+        "message": "Google Drive: Lookup failed.",
+        "retryable": true
+      }
+    }
+  },
+  {
+    "label": "move failed actual patch",
+    "tool": "move_file",
+    "args": {
+      "fileId": "f1",
+      "folderId": "root"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-move-failed-actual-patch@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29&addParents=root&removeParents=old-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {}
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "connector_call_failed",
+        "message": "Google Drive: Move failed. Whether the write took effect at Google Drive is unknown; check the target before repeating it.",
+        "retryable": false,
+        "writeOutcome": "unknown"
+      }
+    }
+  },
+  {
+    "label": "move withheld parents",
+    "tool": "move_file",
+    "args": {
+      "fileId": "f1",
+      "folderId": "root"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-move-withheld-parents@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "answered": true,
+      "error": {
+        "code": "connector_call_failed",
+        "message": "Drive decision metadata was withheld or malformed; no follow-up request was sent.",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "label": "content withheld MIME",
+    "tool": "get_file_content",
+    "args": {
+      "fileId": "f1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-content-withheld-mime@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "connector_call_failed",
+        "message": "Drive decision metadata was withheld or malformed; no follow-up request was sent.",
+        "retryable": false
       }
     }
   },

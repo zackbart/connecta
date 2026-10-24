@@ -25,7 +25,7 @@ import { skill } from "./skill.generated.js";
  * is not. Every write that overwrites content, renames, moves, trashes, or
  * changes sharing is destructive and crosses the host's approval prompt.
  *
- * Drift. `src/providers/drive/drift.json` records the eleven methods the
+ * Drift. `src/providers/drive/drift.json` records the 64 indexed methods and the reviewed subset the
  * tools call, and `pnpm run providers:check --provider drive` reports a
  * touched contract that moved or a method that stopped accepting the scope
  * below.
@@ -34,8 +34,9 @@ import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { GOOGLE_GRANT_RENEWAL, tagWorkspace } from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
-import { driveGrant, DriveApi, errors, probe, result, safety, usageGuide } from "./api.js";
+import { driveGrant, DriveApi, errors, probe, result, safety } from "./api.js";
 import { DRIVE_API_BASE_URL, DRIVE_MAX_RESPONSE_BYTES } from "./lib/constants.js";
+import { DRIVE_HATCH, driveBinding } from "./lib/hatch.js";
 import { driveTools } from "./tools.js";
 export { DRIVE_API_BASE_URL, DRIVE_SCOPES } from "./lib/constants.js";
 export type {
@@ -106,10 +107,15 @@ export const drive = defineApiProvider<DriveOptions>({
   safety: () => safety,
   result,
   probe,
+  pageSize: { default: 25, max: 100 },
+  idempotencyKey: false,
+  hatch: { ...DRIVE_HATCH, binding: ({ connection }) => driveBinding(connection) },
   guide: (options) => ({
-    content: usageGuide(options.purpose, options.instructions),
-    summary:
-      "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+    context: [
+      `Connection purpose: ${options.purpose}`,
+      "Acts as the Workspace user deployment config maps from the admitted caller or pool owner. No caller argument selects an account. An unmapped or ownerless caller has no access unless the deployment fixes a shared account.",
+    ],
+    summary: "Each caller's Drive files, bounded content, recoverable trash and quiet sharing.",
     required: true,
   }),
   tools: driveTools,

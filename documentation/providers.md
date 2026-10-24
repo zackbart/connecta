@@ -467,3 +467,67 @@ call per second, individual advanced searches one per five seconds, and
 category schedule lists one per two seconds. Override `callAdmission` to match
 shared usage, and respect the vendor's rate-limit wait. Replies are bounded
 at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.
+
+## Google Drive
+
+Import `drive` from `@zackbart/connecta/providers/drive`. Enable Google Drive API
+in a Google Cloud project, create a service account with domain-wide delegation,
+and retain its JSON private key in a deployment secret. As a Workspace super
+admin, authorize the service account's numeric client id for exactly
+`https://www.googleapis.com/auth/drive`. Delegation changes can take 24 hours.
+No Google Cloud IAM role grants access to a person's Drive.
+
+```ts
+drive("files", {
+  purpose: "Team files and shared drives",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+The subject mapping is deployment code. An agent uses its pool owner's mapped
+identity; an ownerless pool has no delegated account unless `subject` is a fixed
+Workspace address. Anonymous requests cannot invoke a subject function. The
+scope reaches everything that user can open, including shared drives. The
+provider's reviewed surface confines the available actions. Options are the
+shared Workspace `purpose`, `instructions`, `serviceAccount`, `subject` and
+optional `baseUrl`; there is no caller-selected account or sensitive-data mode.
+
+The 17 named workflows remain available. `drive_api_search` and
+`drive_api_details` discover the frozen 64-method inventory; `drive_api_read`
+and destructive `drive_api_write` execute only 13 reviewed JSON metadata methods.
+Refusals explain unreviewed methods. All grants use `share_file`, including
+`anyone` and domain grants. There is no hatch media upload/download, watch,
+permanent deletion or ownership transfer. Named content tools keep their bounded
+export/download and the separately confined upload connection.
+
+Named lists return `{ items, page }`; terminal pages omit `nextCursor`.
+Continuation is bound to the connection, caller and arguments. A local byte cap
+can end a page early, and a changed source page fails `conflict`. Named page
+limits default to 25 and allow 1–100 rows; whole-result budgets default to 192 KiB
+and allow 64 KiB–4 MiB. Large direct results use Connecta's result pager; keep
+the default for programs. Named uploads allow one million text characters or
+one MiB of decoded binary; content reads may return a whole-withheld binary
+when credential scanning changes any byte. Size reports use `truncated` paths.
+
+Hatch paging keeps Google's query parameters inside `query`. Omit `pageToken`
+on the first request; pass the signed `page.nextCursor` as top-level `cursor`
+thereafter. An empty vendor page may continue. `query.fields` is Google's wire
+mask; Connecta's `fields` narrows safe returned JSON and preserves paging.
+`incompleteSearch` describes incomplete corpus search, never an exact total.
+
+```js
+const { data: result } = await connecta.call("files.drive_api_read", {
+  path: "/files/file_123/revisions",
+  query: { pageSize: 20 },
+  fields: ["revisions.id", "revisions.modifiedTime"],
+});
+const revisions = result.data.revisions;
+const cursor = result.page?.nextCursor;
+```
+
+The outer `data` is Connecta delivery; the hatch's `result.data` is the Google
+body and `result.page` carries continuation. Resource keys, decryption JWTs and
+private download destinations remain withheld on named and hatch responses.
+A 404 does not prove absence. Auxiliary lookup failures send no move; an actual
+write failure can have an unknown outcome and requires a read before repetition.

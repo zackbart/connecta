@@ -545,3 +545,40 @@ Configured path placeholders, encoded slashes inside KV/R2 keys, closed R2
 headers and reviewed text/SQL/NDJSON/upload framing remain supported. No tool
 argument can widen pin scope or reveal a stored secret. Operator setup is in
 [Cloudflare](./providers.md#cloudflare).
+
+## Google Drive
+
+All 17 named tools retain their names and approval classes. Add
+`drive_api_search`, `drive_api_details`, `drive_api_read` and destructive
+`drive_api_write`; these discover 64 pinned operations and execute 13 reviewed
+JSON metadata methods. Permission creation `POST /files/{fileId}/permissions`
+is refused by the hatch: use `share_file` for every new grant. Permanent delete,
+ownership transfer, watches, credential minting and hatch media remain refused.
+
+- Read `items` instead of `files` from `search_files`/`list_folder_items`,
+  `permissions` from `list_permissions`, or `drives` from `list_shared_drives`.
+  Keep named `limit`/`cursor`; terminal `page.nextCursor` is omitted instead of
+  null. Old cursors must be discarded; new cursors bind the connection, owner
+  and arguments, including the source-page checks.
+- Read `truncated` dot paths instead of `truncatedFields`. A true
+  `contentTruncated` becomes `truncated: ["content"]`; false is omitted.
+  Every named read accepts `fields`; for lists these paths address each item.
+  `incompleteSearch` remains its own completeness fact.
+- For rare metadata, call `drive_api_read` with e.g.
+  `{ path: "/files/file_123/revisions", query: { pageSize: 20 } }`.
+  Hatch results are `{ status, data, page? }`. Pass `page.nextCursor` as
+  top-level `cursor`, never a raw `query.pageToken`. Google's `query.fields`
+  mask and Connecta's output `fields` are separate.
+- For a hatch rename use `drive_api_write` with
+  `{ method: "PATCH", path: "/files/file_123", body: { name: "Review.pdf" } }`.
+  Use named `create_file`/`update_file_content` for multipart/media transport
+  and `get_file_content` for content. No existing tool or argument was renamed
+  or removed, and no `raw` argument existed on Drive.
+- Standard error facts and outcome wording replace legacy Google settlement.
+  Failed auxiliary parents lookups no longer claim a move's unknown outcome.
+  The actual PATCH stays call-owned. Withheld or altered MIME, shortcut or
+  parents decision inputs fail before the next request. Whole binary
+  withholding remains conservative; private resource keys and download
+  destinations cannot be restored through `fields`.
+
+See [Google Drive setup](./providers.md#google-drive) for delegation and limits.

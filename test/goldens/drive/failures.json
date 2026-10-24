@@ -578,7 +578,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Google Drive: Golden 500 failure Google is failing upstream.",
+            "message": "Google Drive: Golden 500 failure",
             "retryable": true
           }
         }
@@ -1001,7 +1001,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Drive: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "Google Drive: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Drive rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "files",
@@ -1467,7 +1467,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Drive answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
+            "message": "Google Drive: Golden 500 failure Whether the write took effect at Google Drive is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1542,7 +1542,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Drive: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "Google Drive: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Drive rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "files",
@@ -1629,7 +1629,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Drive was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
+            "message": "Could not reach the Google Drive API. Whether the write took effect at Google Drive is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1703,10 +1703,27 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "Google Drive was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
+            "code": "write_outcome_unknown",
+            "message": "Operation \"files.create_folder\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
-            "writeOutcome": "unknown"
+            "details": {
+              "host": "https://www.googleapis.com",
+              "code": "timeout",
+              "operation": "files.create_folder",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "writeOutcome": "unknown",
+            "connector": "files",
+            "operation": "files.create_folder",
+            "uncertainCall": {
+              "address": "files.create_folder",
+              "args": {
+                "name": "Elders",
+                "parentId": "folder-1"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

@@ -23,6 +23,7 @@ import { Context, Effect, Schema } from "effect";
 import {
   GOOGLE_GRANT_RENEWAL,
   googleErrors,
+  googleClient,
   googleGrant,
   googleOutcomeOf,
   googleSafety,
@@ -31,7 +32,7 @@ import {
   type GoogleRequestOptions,
 } from "../src/providers/_shared/google/kit.js";
 import { workspaceConnection, type GoogleWorkspaceSubject } from "../src/providers/_shared/google/workspace.js";
-import { DRIVE, DriveApi, driveClient, result as driveResult } from "../src/providers/drive/api.js";
+import { DRIVE, DriveApi, driveContentClient, result as driveResult } from "../src/providers/drive/api.js";
 import { guardedClient } from "../src/http/client.js";
 import { StatusFailure, UnreadableBody, toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
 import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
@@ -340,7 +341,7 @@ function client(maxResponseBytes = 1024, subject: GoogleWorkspaceSubject = "alic
     sendItem: (...args) => authorize(connected.sendItem(...args)),
   };
   let dispatches: Dispatch[] = [];
-  const drive = driveClient(connection);
+  const drive = driveContentClient(googleClient(connection, product.provider));
   const run = <A>(request: GoogleRequest, ctx: ConnectorContext, work: Effect.Effect<A, HttpFailure, CallServices>) => {
     // Product tools already carry this verdict into their context. This direct
     // adapter fixture supplies the old direct-call method fallback explicitly.
@@ -1631,7 +1632,7 @@ describe("Workspace served classification on unauthorized requests", () => {
       const block = listing.content[0];
       expect(block?.type).toBe("text");
       expect(JSON.parse(block?.type === "text" ? block.text : "null")).toMatchObject({
-        files: [{ id: "f1", name: "F" }],
+        items: [{ id: "f1", name: "F" }],
       });
       expect(apiCalls.slice(sent).map((call) => call.method)).toEqual(["GET", "GET"]);
     },

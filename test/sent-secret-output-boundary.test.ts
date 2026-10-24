@@ -612,14 +612,16 @@ describe("review round 3", () => {
       context(TOKEN),
     )) as { page: { hasMore: boolean; nextCursor: string } };
     expect(result.page.hasMore).toBe(true);
-    const claims = JSON.parse(
+    const envelope = JSON.parse(
       new TextDecoder().decode(
         Uint8Array.from(atob(result.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) =>
           unit.charCodeAt(0),
         ),
       ),
-    ) as unknown[];
-    expect(claims[0]).toBe(`tok-${MARK}-next`);
+    ) as { c: string };
+    const claims = JSON.parse(atob(envelope.c.replace(/-/g, "+").replace(/_/g, "/"))) as unknown[];
+    expect(claims[0]).toContain(MARK);
+    expect(leakedRun(JSON.stringify(claims), TOKEN)).toBeUndefined();
     expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
   });
 

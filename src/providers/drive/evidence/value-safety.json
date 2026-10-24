@@ -1,0 +1,110 @@
+{
+  "format": 5,
+  "digest": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+  "options": {},
+  "candidates": {
+    "GET /changes": {
+      "fields": [
+        "changes[].file.appProperties",
+        "changes[].file.clientEncryptionDetails.decryptionMetadata.jwt",
+        "newStartPageToken",
+        "nextPageToken"
+      ],
+      "named": false
+    },
+    "GET /changes/startPageToken": {
+      "fields": ["startPageToken"],
+      "named": true
+    },
+    "POST /changes/watch": {
+      "fields": ["token"],
+      "named": false
+    },
+    "GET /drives": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /files": {
+      "fields": ["files[].appProperties", "files[].clientEncryptionDetails.decryptionMetadata.jwt", "nextPageToken"],
+      "named": false
+    },
+    "POST /files": {
+      "fields": ["appProperties", "clientEncryptionDetails.decryptionMetadata.jwt"],
+      "named": false
+    },
+    "GET /files/generateCseToken": {
+      "fields": ["jwt"],
+      "named": true
+    },
+    "GET /files/{fileId}": {
+      "fields": ["appProperties", "clientEncryptionDetails.decryptionMetadata.jwt"],
+      "named": false
+    },
+    "PATCH /files/{fileId}": {
+      "fields": ["appProperties", "clientEncryptionDetails.decryptionMetadata.jwt"],
+      "named": false
+    },
+    "GET /files/{fileId}/accessproposals": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /files/{fileId}/approvals": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "POST /files/{fileId}/approvals/{approvalId}:reassign": {
+      "fields": [],
+      "named": true
+    },
+    "GET /files/{fileId}/comments": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /files/{fileId}/comments/{commentId}/replies": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "POST /files/{fileId}/copy": {
+      "fields": ["appProperties", "clientEncryptionDetails.decryptionMetadata.jwt"],
+      "named": false
+    },
+    "GET /files/{fileId}/listLabels": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /files/{fileId}/permissions": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "PATCH /files/{fileId}/permissions/{permissionId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /files/{fileId}/revisions": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "POST /files/{fileId}/watch": {
+      "fields": ["token"],
+      "named": false
+    },
+    "GET /teamdrives": {
+      "fields": ["nextPageToken"],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /drives": ["nextPageToken"],
+      "GET /files": ["files[].appProperties", "nextPageToken"],
+      "POST /files": ["appProperties"],
+      "GET /files/{fileId}": ["appProperties"],
+      "PATCH /files/{fileId}": ["appProperties"],
+      "POST /files/{fileId}/copy": ["appProperties"],
+      "GET /files/{fileId}/permissions": ["nextPageToken"],
+      "GET /files/{fileId}/revisions": ["nextPageToken"]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

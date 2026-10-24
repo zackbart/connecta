@@ -1,74 +1,48 @@
 ---
-{
-  "name": "drive",
-  "instructionsHeading": "Connection instructions"
-}
+{"name":"drive","instructionsHeading":"Connection instructions"}
 ---
 
-<!-- fragment: guide_0 -->
-# Google Drive usage
+## Finding files and joining Workspace products
 
-Acts as the signed-in person's own Google Drive through Workspace delegation: what they can open, and nothing they cannot.
+Drive searches file data; operation discovery searches API capabilities.
+Use file ids from reads or Drive URLs. The same id identifies a Google Doc,
+Sheet, Slides deck or Form in its product connector. Shared-drive ids identify
+membership and the root folder; folder parents determine inherited access.
+A missing file and a file the delegated user cannot see fail alike.
 
-Connection purpose: <!-- endfragment -->
+Drive query values use single quotes: `name contains 'budget'`,
+`mimeType = 'application/pdf'`, `'folder_123' in parents`, or
+`modifiedTime > '2026-01-01T00:00:00'`. Trashed files are excluded by default.
+`incompleteSearch: true` means Google did not search every corpus; narrow the
+query or choose a single shared drive. It is never an exact count.
 
-<!-- fragment: guide_1 -->
+## Content and file decisions
 
+The content workflow exports Docs as Markdown, Sheets as CSV of the first
+sheet only, and Slides as text. Other text files retain their declared charset.
+Small binary files can be returned as base64. A drawing, unsupported native
+file, folder, shortcut or oversized binary returns an unavailable explanation.
+For a shortcut, read its target id instead. Drive exports at most 10 MB.
 
-## Whose Drive
+Content containing sent credentials is withheld as a whole binary value; there
+is no partial-content recovery around that boundary. Withheld MIME, shortcut,
+folder or parent metadata cannot decide a subsequent read or move. Re-read
+through a safe source before trying the workflow again.
 
-Every call acts as the Workspace address deployment config maps the caller
-to, and reaches exactly the files that person can open, shared drives
-included; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No
-argument names an account. A call with none mapped fails `auth_required`; only an operator can change
-that. A missing file
-and one this person cannot see fail alike — Google does not distinguish them.
+## Access and recovery
 
-## Finding files
+A file or copy inherits its destination folder's access. Read permission holders
+before moving, copying or creating in a shared folder, and read them again after
+changing access. Inherited permissions name the parent folder or shared drive
+that must be changed instead. An owner cannot be removed or replaced here.
 
-- `search_files` takes Drive query syntax: `name contains 'x'`,
-  `fullText contains 'x'`, `mimeType = '…'`, `'<folderId>' in parents`,
-  `modifiedTime > '2026-01-01T00:00:00'`. Quote values with single quotes.
-  Trashed files are left out unless `includeTrashed`. `incompleteSearch:
-  true` means Drive gave up before searching everything; narrow the query or
-  the corpus. Shared drives: `list_shared_drives`, then `corpora: "drive"`
-  with its `driveId`.
-- Page with `page.nextCursor` and the same arguments; a cursor from another
-  tool or other arguments is refused. A page can stop short of `limit` to
-  stay under `maxBytes`; the cursor resumes at the first row left out, and
-  fails `conflict` if that page changed meanwhile — start over then.
-- Ids come from these reads or a Drive URL (`/d/<id>/`, `/folders/<id>`);
-  never guess one.
+All new grants use `share_file`, which sends no notification email by default.
+Confirm intent before granting `anyone` or domain access. Permission creation
+through the hatch is refused, including public-link grants; the named workflow
+owns grantee validation and notification behavior.
 
-## Reading content
-
-- `get_file_content` exports Docs as Markdown, Sheets as CSV of the
-  **first sheet only**, and Slides as plain text; reads text files as text;
-  and returns other files as base64 when the encoded file fits the result. Anything else — a
-  larger binary, a drawing, a form, a folder, a shortcut — comes back as
-  `format: "unavailable"` with a `note`, never as an empty success.
-- Text is capped by `maxChars`; a cut ends with a truncation marker and
-  `contentTruncated: true`. Drive exports at most 10 MB.
-- Every read stays under `maxBytes` of JSON. The default is what one result
-  can carry into `execute_code`, so a program always receives it. A larger
-  `maxBytes` (up to 4 MiB — a binary of up to 1 MiB) reaches only a direct
-  `call_tool`, which pages it with `connecta.result`.
-
-## Writing
-
-- `create_folder` and `restore_file` add without losing or exposing
-  anything.
-- A new file takes its folder's sharing, not its source's: `create_file`
-  and `copy_file` into a shared folder disclose that content to everyone
-  the folder is shared with, so both are approved like any destructive write.
-  Check the destination with `list_permissions` first. `convertTo`
-  imports content as a Google Doc, Sheet, or Slides file.
-- `update_file_content` replaces the whole content; send all of it.
-  `update_file` renames; `move_file` changes the folder and with it who
-  inherits access.
-- `trash_file` is recoverable for 30 days with `restore_file`. There is no
-  permanent delete and no ownership transfer.
-- `share_file` emails no one unless `sendNotificationEmail: true`. Check
-  `list_permissions` before and after changing access, and confirm with the
-  person before sharing with `anyone` or a whole domain.
-<!-- endfragment -->
+Content updates replace the complete content. A create with an uncertain outcome
+needs a search for the intended file before another create. Recoverable trash
+can be restored for 30 days. Permanent deletion, ownership transfer, watch
+registration, credential minting and generic media transport are outside the
+hatch. Use the named content and upload workflows for bounded bytes.

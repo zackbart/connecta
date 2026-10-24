@@ -1,18 +1,21 @@
-// Google Drive's legacy catalog, projections and private cursor codec on the provider kit.
-import { Effect } from "effect";
+// Google Drive named workflows, bounded projections and bound continuation on the provider kit.
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { toConnectorCallError, type HttpFailure } from "../../http/errors.js";
 import { Classification, Dispatches, Signal, type CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
+import type { ConnectorContext } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
-import {
-  googleOutcomeOf,
-  googleFailureMessage,
-  googleTool,
-  type GoogleToolDeclaration,
-} from "../_shared/google/kit.js";
+import { googleOutcomeOf, googleFailureMessage } from "../_shared/google/kit.js";
+import { read, write } from "../../http/tools.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { catalogSchema } from "../../http/json-schema.js";
+import { Refusal } from "../../http/errors.js";
+import { Operation } from "../../runtime/call.js";
+import { boundCursor } from "../../http/paging.js";
+import { refuseWithheldValues, refuseWithheldLinks } from "../_shared/rest/value-safety.js";
+import * as contracts from "./lib/contracts.js";
 import { driveClient, driveUploadConnection, type DriveClient } from "./api.js";
 import type { DriveOptions } from "./index.js";
 import { encodeForAgent, redactBeforeCut, redactBoundedRead, redactSentSecrets } from "../../sent-secrets.js";
@@ -34,18 +37,14 @@ const BINARY_INLINE_BYTES = 1024 * 1024;
  * cannot receive that much.
  */
 const DEFAULT_RESULT_BYTES = RESULT_BUDGET_BYTES;
-/**
- * Room for the costliest row — every bounded string at its bound and both
- * capped lists full — beside the longest cursor this connection issues.
- */
-const MIN_RESULT_BYTES = 64 * 1024;
+/** Maximum whole-result budget for a direct call. */
 const MAX_RESULT_BYTES = 4 * 1024 * 1024;
 /**
  * Strings Drive does not bound for us, cut in JSON bytes so one row or one
  * file always fits under the smallest `maxBytes`: a name in a listing, a
  * write result, or a content result; a name and description in get_file; and
  * labels such as a display name. A cut string ends with "…" and its field is
- * named in the result's `truncatedFields`, so a real ellipsis is never taken
+ * named in the result's `truncated`, so a real ellipsis is never taken
  * for a cut. Identifiers are never cut: one that is not a well-formed Drive id
  * is left out and named there instead.
  */
@@ -58,16 +57,12 @@ const MAX_LISTED_IDS = 10;
 /** What a Drive id looks like; anything else is malformed, never echoed. */
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 /**
- * The longest cursor this connection issues, and the input schema accepts.
+ * The longest inner cursor; its signed outer envelope has a 32 KiB input cap.
  * Drive's page tokens are a few hundred characters; one so long that a cursor
  * carrying it would pass this is refused when Drive sends it, rather than
  * issued and then refused on replay.
  */
 const MAX_CURSOR_CHARS = 16_384;
-/** Upload ceiling for text, in characters; Drive's multipart limit is 5 MB. */
-const MAX_UPLOAD_CHARS = 1_000_000;
-/** Base64 characters for {@link BINARY_INLINE_BYTES} decoded bytes. */
-const MAX_UPLOAD_BASE64 = 4 * Math.ceil(BINARY_INLINE_BYTES / 3);
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
 const NATIVE = "application/vnd.google-apps.";
@@ -157,13 +152,13 @@ class Cuts {
   ids(field: string, value: unknown): string[] | undefined {
     const all = asArray(value).filter((entry) => typeof entry === "string");
     const kept = idsOf(all);
-    if (kept.length !== all.length || kept.length > MAX_LISTED_IDS) this.cut.add(field);
+    if (kept.length !== all.length || kept.length > MAX_LISTED_IDS) this.cut.add(`${field}[]`);
     return kept.length > 0 ? kept.slice(0, MAX_LISTED_IDS) : undefined;
   }
   /** Up to ten labels, each cut as {@link label} cuts one. */
   labels(field: string, values: unknown[]): string[] | undefined {
     const present = values.filter((value): value is string => typeof value === "string" && value !== "");
-    if (present.length > MAX_LISTED_IDS) this.cut.add(field);
+    if (present.length > MAX_LISTED_IDS) this.cut.add(`${field}[]`);
     const kept = present.slice(0, MAX_LISTED_IDS).map((value) => this.label(field, value)!);
     return kept.length > 0 ? kept : undefined;
   }
@@ -175,7 +170,7 @@ class Cuts {
 /**
  * A file as an agent reads it. `fallbackId` is the id the call already named,
  * for a response that omits it; `nameBytes` bounds the name. Fields cut or
- * left out are named in `truncatedFields`, which `extra` may add to.
+ * left out become `truncated` paths at the result boundary.
  */
 function projectFile(
   ctx: ConnectorContext,
@@ -327,6 +322,7 @@ function decodeCursor(cursor: string): Resume {
       // A cursor inside a page proves which page; one at a boundary has nothing to prove.
       ((skip as number) > 0 ? midPage : page === null && last === null)
     ) {
+      refuseWithheldValues(token, "Drive continuation", true);
       return {
         token: token as string | null,
         skip: skip as number,
@@ -383,7 +379,7 @@ function pageOf(
   fetch: (token: string | undefined, size: number) => Effect.Effect<Fetched, HttpFailure, CallServices>,
 ): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
   return Effect.gen(function* () {
-    const maxBytes: number = args["maxBytes"] ?? DEFAULT_RESULT_BYTES;
+    const maxBytes: number = (args["maxBytes"] ?? DEFAULT_RESULT_BYTES) - 8192;
     const size: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
     const scope = yield* Effect.promise(() => fingerprint({ ...binding, size }));
     const resume: Resume =
@@ -430,7 +426,11 @@ function pageOf(
           : fetched.next
             ? encodeCursor(ctx, { token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
             : null;
-      return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
+      return {
+        items: rows.slice(0, count),
+        ...fetched.extra,
+        page: { hasMore: nextCursor !== null, ...(nextCursor ? { nextCursor } : {}) },
+      };
     };
     if (jsonBytes(build(rows.length)) <= maxBytes) return build(rows.length);
     // The most rows that fit, by binary search; a result's size grows with them.
@@ -658,19 +658,21 @@ function readContent(
 ): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
   return Effect.gen(function* () {
     const filePath = `/files/${encodeURIComponent(fileId)}`;
-    const file = asRecord(
+    const file = decisionRecord(
       yield* client.json(
         {
           method: "GET",
           path: filePath,
           query: {
             ...ALL_DRIVES,
-            fields: "id,name,mimeType,size,webViewLink,capabilities(canDownload),shortcutDetails(targetId)",
+            fields:
+              "id,name,mimeType,size,webViewLink,capabilities(canDownload),shortcutDetails(targetId,targetMimeType)",
           },
         },
         { step: "metadata" },
       ),
     );
+    decisionInputs(file, ["mimeType", "shortcutDetails", "capabilities"]);
     const mimeType = String(file["mimeType"] ?? "application/octet-stream");
     const size = sizeOf(ctx, file["size"]);
     const cuts = new Cuts(ctx);
@@ -805,6 +807,7 @@ function media(args: JsonRecord):
     throw new ConnectorCallError("invalid_args", "Pass content or contentBase64, not both.");
   }
   if (hasText) {
+    refuseWithheldValues(args["content"], "Drive text upload");
     return {
       bytes: new TextEncoder().encode(args["content"]),
       type: mediaType(args["mimeType"], "text/plain"),
@@ -818,6 +821,8 @@ function media(args: JsonRecord):
         `contentBase64 decodes to ${bytes.length} bytes, past this connection's ${BINARY_INLINE_BYTES}-byte upload cap.`,
       );
     }
+    refuseWithheldValues(new TextDecoder().decode(bytes), "Drive binary upload");
+    refuseWithheldLinks(new TextDecoder().decode(bytes), "Drive binary upload");
     return { bytes, type: mediaType(args["mimeType"], "application/octet-stream") };
   }
   return undefined;
@@ -850,153 +855,6 @@ function multipart(
   body.set(tail, head.length + content.bytes.length);
   return { body, contentType: `multipart/related; boundary=${boundary}` };
 }
-// --- Schemas ----------------------------------------------------------------------
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-const ID_PATTERN = "^[A-Za-z0-9_-]+$";
-function idProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 256, pattern: ID_PATTERN, description };
-}
-const FILE_ID = idProperty("File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>.");
-const CURSOR_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: MAX_CURSOR_CHARS,
-  pattern: "^[A-Za-z0-9_-]+$",
-  description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments.",
-};
-const MAX_BYTES_PROPERTY: JsonSchema = {
-  type: "integer",
-  minimum: MIN_RESULT_BYTES,
-  maximum: MAX_RESULT_BYTES,
-  description: `Serialized bytes of the whole result; defaults to ${DEFAULT_RESULT_BYTES}, what execute_code can receive. Raise it, to ${MAX_RESULT_BYTES}, only for a direct call_tool read.`,
-};
-const LIMIT_PROPERTY: JsonSchema = {
-  type: "integer",
-  minimum: 1,
-  maximum: MAX_PAGE_SIZE,
-  description: `Rows per page, 1 to ${MAX_PAGE_SIZE}; defaults to ${DEFAULT_PAGE_SIZE}. Connecta's cap, below Drive's 1,000.`,
-};
-const ORDER_PROPERTY: JsonSchema = {
-  type: "string",
-  enum: ["modifiedTime desc", "modifiedTime", "name", "name desc", "createdTime desc", "folder,name"],
-  description: "Sort order. Drive refuses any sort on a fullText query, which comes back by relevance.",
-};
-const INCLUDE_TRASHED: JsonSchema = {
-  type: "boolean",
-  description: "Include trashed files, which are left out by default.",
-};
-const NAME_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 1_000,
-  pattern: "^[^\\r\\n]*$",
-  description: "File name as Drive shows it, extension included where it has one.",
-};
-const DESCRIPTION_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 10_000,
-  description: "Free-text description shown in Drive's details pane.",
-};
-const PARENT_PROPERTY: JsonSchema = idProperty("Folder id to place it in, or root for My Drive; defaults to My Drive.");
-const CONTENT_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: MAX_UPLOAD_CHARS,
-  description: `Text content, up to ${MAX_UPLOAD_CHARS} characters (connecta's cap). Exclusive with contentBase64.`,
-};
-const CONTENT_BASE64_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: MAX_UPLOAD_BASE64,
-  pattern: "^[A-Za-z0-9+/]*={0,2}$",
-  description: `Binary content as base64, up to ${BINARY_INLINE_BYTES} bytes decoded (connecta's cap; Drive allows 5 MB). Exclusive with content.`,
-};
-const MIME_PROPERTY: JsonSchema = {
-  type: "string",
-  maxLength: 255,
-  pattern: "^[A-Za-z0-9][\\w.+-]*/[A-Za-z0-9][\\w.+-]*$",
-  description: "Media type of the content: text/plain, text/markdown, text/csv, application/pdf. Never a Google type.",
-};
-const ROLE_PROPERTY: JsonSchema = {
-  type: "string",
-  enum: ["reader", "commenter", "writer", "fileOrganizer", "organizer"],
-  description:
-    "Access granted. fileOrganizer and organizer exist only on shared drives. Ownership is never granted here.",
-};
-const PERMISSION_ID = idProperty("Permission id from list_permissions.");
-const TRUNCATED_FIELDS: JsonSchema = {
-  type: "array",
-  items: { type: "string" },
-  description:
-    "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names.",
-};
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-const FILE_PROPERTIES: Record<string, JsonSchema> = {
-  id: { type: "string" },
-  name: { type: "string" },
-  mimeType: { type: "string" },
-  parents: { type: "array", items: { type: "string" } },
-  driveId: { type: "string" },
-  size: { type: "integer" },
-  modifiedTime: { type: "string" },
-  owners: { type: "array", items: { type: "string" } },
-  trashed: { type: "boolean" },
-  webViewLink: { type: "string" },
-  shortcutTargetId: { type: "string" },
-  shortcutTargetMimeType: { type: "string" },
-  truncatedFields: TRUNCATED_FIELDS,
-};
-// Nothing is required: Google's ProtoJSON omits an empty field, and a
-// projection says only what the response said.
-const FILE_SCHEMA: JsonSchema = { type: "object", properties: FILE_PROPERTIES };
-const FILE_DETAIL_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    ...FILE_PROPERTIES,
-    description: { type: "string" },
-    createdTime: { type: "string" },
-    modifiedBy: { type: "string" },
-    shared: { type: "boolean" },
-    starred: { type: "boolean" },
-    capabilities: {
-      type: "object",
-      properties: Object.fromEntries(CAPABILITIES.map((name) => [name, { type: "boolean" }])),
-    },
-  },
-};
-const FILE_LIST_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    files: { type: "array", items: FILE_SCHEMA },
-    incompleteSearch: { type: "boolean" },
-    page: PAGE_SCHEMA,
-  },
-  required: ["files", "page"],
-};
-const PERMISSION_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    type: { type: "string", enum: ["user", "group", "domain", "anyone"] },
-    role: { type: "string" },
-    emailAddress: { type: "string" },
-    domain: { type: "string" },
-    displayName: { type: "string" },
-    allowFileDiscovery: { type: "boolean" },
-    expirationTime: { type: "string" },
-    inherited: { type: "boolean" },
-    inheritedFrom: { type: "string" },
-    deleted: { type: "boolean" },
-    truncatedFields: TRUNCATED_FIELDS,
-  },
-};
 // --- Tools ------------------------------------------------------------------------
 export function driveTools({
   connection,
@@ -1045,7 +903,7 @@ export function driveTools({
         return {
           ids: asArray(listing["files"]).map((file) => String(asRecord(file)["id"] ?? "")),
           rows: asArray(listing["files"]).map((file) => projectFile(ctx, file)),
-          next: text(listing["nextPageToken"]),
+          next: nextToken(listing["nextPageToken"]),
           // Drive's own truncation: it stopped before searching every corpus.
           extra: listing["incompleteSearch"] === true ? { incompleteSearch: true } : undefined,
         };
@@ -1069,38 +927,13 @@ export function driveTools({
         fileId,
       );
     });
-  const declarations: GoogleToolDeclaration[] = [
+  const declarations: DriveTool[] = [
     {
       name: "search_files",
       description:
         "Search Drive files the user can open with Drive query syntax, returning name, type, folder, size, and link per file. Content needs get_file_content.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          query: {
-            type: "string",
-            maxLength: 2048,
-            description:
-              "Drive query: name contains 'budget', fullText contains 'elders', mimeType = 'application/pdf', modifiedTime > '2026-01-01T00:00:00', 'me' in owners. Omit for everything.",
-          },
-          corpora: {
-            type: "string",
-            enum: ["user", "domain", "drive", "allDrives"],
-            description:
-              "Where to look: user (default; My Drive and shared with me), drive (one shared drive, with driveId), allDrives (slower, may be incomplete), domain.",
-          },
-          driveId: idProperty(
-            "Shared drive id from list_shared_drives; required with corpora drive, refused otherwise.",
-          ),
-          orderBy: ORDER_PROPERTY,
-          includeTrashed: INCLUDE_TRASHED,
-          limit: LIMIT_PROPERTY,
-          cursor: CURSOR_PROPERTY,
-          maxBytes: MAX_BYTES_PROPERTY,
-        },
-        [],
-      ),
-      outputSchema: FILE_LIST_SCHEMA,
+      contract: contracts.search_files,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const corpora = args["corpora"] ?? "user";
@@ -1127,18 +960,7 @@ export function driveTools({
       description:
         "List the files and folders directly inside one Drive folder, in My Drive or a shared drive. Not recursive: list a subfolder by its own id.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          folderId: idProperty("Folder id, a shared drive id for its top level, or root for My Drive."),
-          orderBy: { ...ORDER_PROPERTY, description: "Sort order; defaults to folders first, then by name." },
-          includeTrashed: INCLUDE_TRASHED,
-          limit: LIMIT_PROPERTY,
-          cursor: CURSOR_PROPERTY,
-          maxBytes: MAX_BYTES_PROPERTY,
-        },
-        ["folderId"],
-      ),
-      outputSchema: FILE_LIST_SCHEMA,
+      contract: contracts.list_folder_items,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const folderId = String(args["folderId"]);
@@ -1146,7 +968,7 @@ export function driveTools({
           // searches only when asked by id; the folder itself says which.
           let driveId: string | undefined;
           if (folderId !== "root") {
-            const folder = asRecord(
+            const folder = decisionRecord(
               yield* client.json(
                 {
                   method: "GET",
@@ -1156,6 +978,7 @@ export function driveTools({
                 { step: "folder" },
               ),
             );
+            decisionInputs(folder, ["mimeType", "driveId"]);
             if (folder["mimeType"] !== FOLDER) {
               throw new ConnectorCallError(
                 "invalid_args",
@@ -1184,8 +1007,7 @@ export function driveTools({
       description:
         "Get one Drive file's metadata: name, type, folder, owners, sharing flag, description, and what this user may do with it. Never its content.",
       annotations: readOnly,
-      inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
-      outputSchema: FILE_DETAIL_SCHEMA,
+      contract: contracts.get_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return projectFileDetail(
@@ -1205,36 +1027,7 @@ export function driveTools({
       description:
         "Read a Drive file's content: Docs as Markdown, Sheets as CSV of the first sheet, Slides as text, text files as text, small binaries as base64. Never drawings or folders.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          fileId: FILE_ID,
-          maxChars: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_CONTENT_CHARS,
-            description: `Characters (code points) of text kept, 1 to ${MAX_CONTENT_CHARS}; defaults to ${DEFAULT_CONTENT_CHARS}. Longer text ends with a truncation marker. Binaries ignore it.`,
-          },
-          maxBytes: MAX_BYTES_PROPERTY,
-        },
-        ["fileId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          name: { type: "string" },
-          mimeType: { type: "string" },
-          size: { type: "integer" },
-          truncatedFields: TRUNCATED_FIELDS,
-          webViewLink: { type: "string" },
-          format: { type: "string", enum: ["markdown", "csv", "text", "base64", "unavailable"] },
-          exportedAs: { type: "string" },
-          content: { type: "string" },
-          contentTruncated: { type: "boolean" },
-          note: { type: "string" },
-        },
-        required: ["id", "format", "contentTruncated"],
-      },
+      contract: contracts.get_file_content,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* readContent(
@@ -1251,15 +1044,7 @@ export function driveTools({
       description:
         "List who a Drive file or folder is shared with: each permission's id, type, role, and address or domain. Use the ids with update_permission or delete_permission.",
       annotations: readOnly,
-      inputSchema: input(
-        { fileId: FILE_ID, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY, maxBytes: MAX_BYTES_PROPERTY },
-        ["fileId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { permissions: { type: "array", items: PERMISSION_SCHEMA }, page: PAGE_SCHEMA },
-        required: ["permissions", "page"],
-      },
+      contract: contracts.list_permissions,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* pageOf(
@@ -1284,7 +1069,7 @@ export function driveTools({
                 return {
                   ids: asArray(listing["permissions"]).map((permission) => String(asRecord(permission)["id"] ?? "")),
                   rows: asArray(listing["permissions"]).map((permission) => projectPermission(ctx, permission)),
-                  next: text(listing["nextPageToken"]),
+                  next: nextToken(listing["nextPageToken"]),
                 };
               }),
           );
@@ -1295,38 +1080,7 @@ export function driveTools({
       description:
         "List the shared drives the user is a member of, with their ids for search_files and list_folder_items. Not the files inside them.",
       annotations: readOnly,
-      inputSchema: input(
-        {
-          query: {
-            type: "string",
-            maxLength: 1024,
-            description: "Shared drive query, e.g. name contains 'Finance'. Omit for every drive.",
-          },
-          limit: LIMIT_PROPERTY,
-          cursor: CURSOR_PROPERTY,
-          maxBytes: MAX_BYTES_PROPERTY,
-        },
-        [],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          drives: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                name: { type: "string" },
-                hidden: { type: "boolean" },
-                truncatedFields: TRUNCATED_FIELDS,
-              },
-            },
-          },
-          page: PAGE_SCHEMA,
-        },
-        required: ["drives", "page"],
-      },
+      contract: contracts.list_shared_drives,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* pageOf(
@@ -1360,7 +1114,7 @@ export function driveTools({
                       truncatedFields: cuts.fields,
                     });
                   }),
-                  next: text(listing["nextPageToken"]),
+                  next: nextToken(listing["nextPageToken"]),
                 };
               }),
           );
@@ -1371,10 +1125,7 @@ export function driveTools({
       description:
         "Create a new, empty Drive folder, in My Drive or inside another folder. Shares nothing beyond what the parent folder already grants.",
       annotations: additive,
-      inputSchema: input({ name: NAME_PROPERTY, parentId: PARENT_PROPERTY, description: DESCRIPTION_PROPERTY }, [
-        "name",
-      ]),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.create_folder,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return projectFile(
@@ -1406,27 +1157,7 @@ export function driveTools({
       // folder's sharing, so content written into a shared folder is
       // disclosed to everyone it is shared with, at once.
       annotations: destructive,
-      inputSchema: input(
-        {
-          name: NAME_PROPERTY,
-          parentId: PARENT_PROPERTY,
-          content: CONTENT_PROPERTY,
-          contentBase64: CONTENT_BASE64_PROPERTY,
-          mimeType: {
-            ...MIME_PROPERTY,
-            description: `${MIME_PROPERTY.description} Defaults to text/plain or application/octet-stream.`,
-          },
-          convertTo: {
-            type: "string",
-            enum: ["document", "spreadsheet", "presentation"],
-            description:
-              "Import as a Google type: markdown, HTML, or text to document; CSV to spreadsheet. Without content, an empty one.",
-          },
-          description: DESCRIPTION_PROPERTY,
-        },
-        ["name"],
-      ),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.create_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const content = media(args);
@@ -1484,20 +1215,7 @@ export function driveTools({
       // Destructive: the whole content is overwritten. Drive keeps revisions
       // for a while, but this connection offers no way back to one.
       annotations: destructive,
-      inputSchema: input(
-        {
-          fileId: FILE_ID,
-          content: CONTENT_PROPERTY,
-          contentBase64: CONTENT_BASE64_PROPERTY,
-          mimeType: {
-            ...MIME_PROPERTY,
-            description:
-              "Media type of the new content: usually the file's own, text/markdown for a Google Doc, text/csv for a Sheet (replacing every tab).",
-          },
-        },
-        ["fileId", "mimeType"],
-      ),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.update_file_content,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const content = media(args);
@@ -1524,8 +1242,7 @@ export function driveTools({
       // Destructive: the old name or description is overwritten, and a
       // rename can break what finds the file by name.
       annotations: destructive,
-      inputSchema: input({ fileId: FILE_ID, name: NAME_PROPERTY, description: DESCRIPTION_PROPERTY }, ["fileId"]),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.update_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           if (args["name"] === undefined && args["description"] === undefined) {
@@ -1543,24 +1260,16 @@ export function driveTools({
       // revoke access granted through the old folder or grant it through the
       // new one, and moving into a shared drive hands ownership to the drive.
       annotations: destructive,
-      inputSchema: input(
-        {
-          fileId: FILE_ID,
-          folderId: idProperty("Destination folder id, a shared drive id for its top level, or root for My Drive."),
-        },
-        ["fileId", "folderId"],
-      ),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.move_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
-          const current = asRecord(
+          const current = decisionRecord(
             yield* client.json(
               { method: "GET", path: filePath(args["fileId"]), query: { ...ALL_DRIVES, fields: "parents" } },
-              // Legacy Drive records this lookup as part of the write: a
-              // later failure must retain that whole-call unknown outcome.
-              { step: "parents" },
+              { step: "parents", effect: "read" },
             ),
           );
+          decisionInputs(current, ["parents"]);
           const from = idsOf(current["parents"]).filter((id) => id !== args["folderId"]);
           return yield* patch(
             ctx,
@@ -1581,15 +1290,7 @@ export function driveTools({
       // destination folder's sharing, so a private file copied into a shared
       // folder is disclosed — the same exposure move_file carries.
       annotations: destructive,
-      inputSchema: input(
-        {
-          fileId: FILE_ID,
-          name: { ...NAME_PROPERTY, description: 'Name of the copy; defaults to Drive\'s "Copy of …".' },
-          parentId: { ...PARENT_PROPERTY, description: "Folder for the copy; defaults to the original's." },
-        },
-        ["fileId"],
-      ),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.copy_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return projectFile(
@@ -1615,8 +1316,7 @@ export function driveTools({
       // Destructive: collaborators lose the file at once, and the trash
       // empties itself.
       annotations: destructive,
-      inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.trash_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* patch(ctx, args["fileId"], { trashed: true });
@@ -1628,8 +1328,7 @@ export function driveTools({
         "Restore (untrash) a trashed Drive file or folder to where it was. Cannot recover a file already deleted from the trash.",
       // Additive: brings back exactly what was there, losing nothing.
       annotations: additive,
-      inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
-      outputSchema: FILE_SCHEMA,
+      contract: contracts.restore_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return yield* patch(ctx, args["fileId"], { trashed: false });
@@ -1640,49 +1339,7 @@ export function driveTools({
       description:
         "Share a Drive file or folder with a user, group, domain, or anyone with the link, at a role up to writer. Sends no email unless asked; never transfers ownership.",
       annotations: destructive,
-      inputSchema: input(
-        {
-          fileId: FILE_ID,
-          type: {
-            type: "string",
-            enum: ["user", "group", "domain", "anyone"],
-            description:
-              "Grantee kind: user or group needs emailAddress, domain needs domain, anyone means anyone with the link.",
-          },
-          role: ROLE_PROPERTY,
-          emailAddress: {
-            type: "string",
-            minLength: 3,
-            maxLength: 320,
-            pattern: "^[^\\s@]+@[^\\s@]+$",
-            description: "The user's or group's email address, for type user or group only.",
-          },
-          domain: {
-            type: "string",
-            minLength: 1,
-            maxLength: 253,
-            pattern: "^[A-Za-z0-9.-]+$",
-            description: "The Workspace domain, for type domain only.",
-          },
-          allowFileDiscovery: {
-            type: "boolean",
-            description:
-              "For domain or anyone: whether it appears in search rather than needing the link. Defaults to false.",
-          },
-          sendNotificationEmail: {
-            type: "boolean",
-            description:
-              "Email a user or group that it was shared. Defaults to false; Drive requires it for a non-Google address.",
-          },
-          emailMessage: {
-            type: "string",
-            maxLength: 2000,
-            description: "Message in the notification email; only with sendNotificationEmail true.",
-          },
-        },
-        ["fileId", "type", "role"],
-      ),
-      outputSchema: PERMISSION_SCHEMA,
+      contract: contracts.share_file,
       run: (args, ctx) =>
         Effect.gen(function* () {
           const type = String(args["type"]);
@@ -1734,12 +1391,7 @@ export function driveTools({
       description:
         "Change the role of one existing share on a Drive file or folder. Never makes anyone an owner; an inherited share is changed on the folder it comes from.",
       annotations: destructive,
-      inputSchema: input({ fileId: FILE_ID, permissionId: PERMISSION_ID, role: ROLE_PROPERTY }, [
-        "fileId",
-        "permissionId",
-        "role",
-      ]),
-      outputSchema: PERMISSION_SCHEMA,
+      contract: contracts.update_permission,
       run: (args, ctx) =>
         Effect.gen(function* () {
           return projectPermission(
@@ -1759,16 +1411,7 @@ export function driveTools({
       description:
         "Remove one share from a Drive file or folder, revoking that user's, group's, domain's, or link's access. Never deletes the file; an owner cannot be removed.",
       annotations: destructive,
-      inputSchema: input({ fileId: FILE_ID, permissionId: PERMISSION_ID }, ["fileId", "permissionId"]),
-      outputSchema: {
-        type: "object",
-        properties: {
-          fileId: { type: "string" },
-          permissionId: { type: "string" },
-          deleted: { type: "boolean", const: true },
-        },
-        required: ["fileId", "permissionId", "deleted"],
-      },
+      contract: contracts.delete_permission,
       run: (args) =>
         Effect.gen(function* () {
           yield* client.json({
@@ -1780,7 +1423,7 @@ export function driveTools({
         }),
     },
   ];
-  return declarations.map((declaration) => googleTool(connection, guarded(declaration)));
+  return declarations.map((declaration) => buildTool(connection, guarded(declaration)));
 }
 /**
  * The last word on size, around every tool and every way it can return:
@@ -1796,16 +1439,16 @@ export function driveTools({
  * here does this connection say so, pointing at a re-read rather than a
  * repeat.
  */
-function guarded(tool: GoogleToolDeclaration): GoogleToolDeclaration {
+function guarded(tool: DriveTool): DriveTool {
   return {
     ...tool,
     run: (args: JsonRecord, ctx: ConnectorContext) =>
       Effect.gen(function* () {
-        const result = yield* tool.run(args, ctx);
+        const result = standardResult(yield* tool.run(args, ctx));
         const budget = typeof args?.["maxBytes"] === "number" ? args["maxBytes"] : DEFAULT_RESULT_BYTES;
         const bytes = jsonBytes(result);
         if (bytes <= budget) return result;
-        const raisable = asRecord(asRecord(tool.inputSchema)["properties"])["maxBytes"] !== undefined;
+        const raisable = "maxBytes" in tool.contract.input.fields;
         throw new ConnectorCallError(
           "connector_call_failed",
           tool.annotations.readOnlyHint
@@ -1815,4 +1458,157 @@ function guarded(tool: GoogleToolDeclaration): GoogleToolDeclaration {
         );
       }),
   };
+}
+
+interface DriveTool {
+  readonly name: keyof typeof contracts;
+  readonly description: string;
+  readonly annotations: { readonly readOnlyHint: boolean; readonly destructiveHint?: boolean };
+  readonly contract: {
+    readonly input: Schema.Struct<Schema.Struct.Fields> & { readonly DecodingServices: never };
+    readonly output: Schema.Schema<any>;
+  };
+  readonly writeSteps?: Readonly<Record<string, "once">>;
+  readonly run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
+}
+function buildTool(connection: Connection, tool: DriveTool): ApiTool {
+  const isRead = tool.annotations.readOnlyHint;
+  const isList = ["search_files", "list_folder_items", "list_permissions", "list_shared_drives"].includes(tool.name);
+  const output = asRecord(catalogSchema(tool.contract.output, "output"));
+  const row = isList ? asRecord(asRecord(asRecord(output["properties"])["items"])["items"]) : output;
+  const roots = new Set(Object.keys(asRecord(row["properties"])));
+  const input = Schema.Struct({
+    ...tool.contract.input.fields,
+    ...(isRead
+      ? {
+          fields: Schema.optionalKey(
+            fieldsInput(
+              isList
+                ? "Dot paths to keep in each item; only narrows the result."
+                : "Dot paths to keep in the result; only narrows the result.",
+            ),
+          ),
+        }
+      : {}),
+  }) as typeof tool.contract.input;
+  const spec = {
+    name: tool.name,
+    description: tool.description,
+    input,
+    output: tool.contract.output,
+    ...(tool.writeSteps ? { writeSteps: tool.writeSteps } : {}),
+    run: (args: JsonRecord) =>
+      Effect.gen(function* () {
+        const fields = args["fields"] as string[] | undefined;
+        const problem = isRead ? fieldsProblem(fields, roots, isList ? "an item" : "the result") : undefined;
+        if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+        const active = yield* Effect.serviceOption(Operation);
+        const ctx = Option.isSome(active) ? active.value : undefined;
+        if (!ctx) return yield* Effect.die(new Error(`${tool.name} needs a connector context.`));
+        const supplied = args["cursor"] as string | undefined;
+        const cursor = isList && supplied ? yield* boundCursor.decode(tool.name, args, supplied) : supplied;
+        const result = asRecord(yield* tool.run({ ...args, ...(cursor ? { cursor } : {}) }, ctx));
+        const page = asRecord(result["page"]);
+        if (isList && typeof page["nextCursor"] === "string")
+          page["nextCursor"] = yield* boundCursor.encode(tool.name, args, page["nextCursor"], (json) =>
+            encodeForAgent(ctx, json, { url: true, claims: true }),
+          );
+        if (isList && jsonBytes(result) > (args["maxBytes"] ?? DEFAULT_RESULT_BYTES))
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "Drive continuation exceeded the result byte budget; narrow the listing.",
+          );
+        return isRead
+          ? isList
+            ? { ...result, items: selectFields(result["items"], fields) }
+            : selectFields(result, fields)
+          : result;
+      }).pipe(
+        Effect.catchDefect((error) =>
+          error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+        ),
+      ),
+  };
+  return isRead
+    ? read(connection, spec)
+    : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+}
+/** Convert size reports before the final byte guard and field selection. */
+function standardResult(value: unknown): any {
+  const all = new Set<string>();
+  const normalize = (value: unknown, path = ""): any => {
+    if (Array.isArray(value)) return value.map((item) => normalize(item, `${path}[]`));
+    if (!value || typeof value !== "object") return value;
+    const out: JsonRecord = {};
+    const cuts: string[] = [];
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "truncatedFields") cuts.push(...(item as string[]));
+      else if (key === "contentTruncated") {
+        if (item === true) cuts.push("content");
+      } else out[key] = normalize(item, path ? `${path}.${key}` : key);
+    }
+    for (const cut of cuts) all.add(path ? `${path}.${cut}` : cut);
+    if (cuts.length) out["truncated"] = [...new Set(cuts)];
+    return out;
+  };
+  const result = normalize(value);
+  if (all.size) result["truncated"] = [...all];
+  return result;
+}
+function nextToken(value: unknown): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (typeof value !== "string")
+    throw new ConnectorCallError("connector_call_failed", "Drive returned malformed continuation metadata.");
+  return value;
+}
+function decisionRecord(value: unknown): JsonRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) decisionFailure();
+  return value as JsonRecord;
+}
+function decisionFailure(): never {
+  throw new ConnectorCallError(
+    "connector_call_failed",
+    "Drive decision metadata was withheld or malformed; no follow-up request was sent.",
+    { retryable: false },
+  );
+}
+/** Only safe response values are inspected; never recover the original decision inputs. */
+function decisionInputs(file: JsonRecord, keys: readonly string[]): void {
+  for (const key of keys) {
+    const value = file[key];
+    try {
+      refuseWithheldValues(value, "Drive decision metadata", true);
+    } catch {
+      decisionFailure();
+    }
+    if (value === undefined) continue;
+    if (key === "mimeType" && (typeof value !== "string" || !MEDIA_TYPE.test(value))) decisionFailure();
+    if (key === "driveId" && (typeof value !== "string" || !DRIVE_ID.test(value))) decisionFailure();
+    if (
+      key === "parents" &&
+      (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !DRIVE_ID.test(id)))
+    )
+      decisionFailure();
+    if (
+      key === "capabilities" &&
+      (typeof value !== "object" ||
+        value === null ||
+        Array.isArray(value) ||
+        (asRecord(value)["canDownload"] !== undefined && typeof asRecord(value)["canDownload"] !== "boolean"))
+    )
+      decisionFailure();
+    if (key === "shortcutDetails") {
+      const shortcut = decisionRecord(value);
+      if (
+        shortcut["targetId"] !== undefined &&
+        (typeof shortcut["targetId"] !== "string" || !DRIVE_ID.test(shortcut["targetId"]))
+      )
+        decisionFailure();
+      if (
+        shortcut["targetMimeType"] !== undefined &&
+        (typeof shortcut["targetMimeType"] !== "string" || !MEDIA_TYPE.test(shortcut["targetMimeType"]))
+      )
+        decisionFailure();
+    }
+  }
 }
