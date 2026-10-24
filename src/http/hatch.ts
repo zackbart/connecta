@@ -40,6 +40,22 @@ interface CallArgs {
 }
 type OperationKey = `${RestMethod} ${string}`;
 
+const indexedOperations = new WeakMap<OperationIndex, ReadonlyMap<string, Operation>>();
+function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
+  let operations = indexedOperations.get(index);
+  if (!operations) {
+    const first = new Map<string, Operation>();
+    for (const op of index.ops) {
+      const key = `${op.method} ${op.path}`;
+      // Keep the first match, as the previous per-key Array.find did.
+      if (!first.has(key)) first.set(key, op);
+    }
+    operations = first;
+    indexedOperations.set(index, operations);
+  }
+  return operations;
+}
+
 /** 0014's starting discovery budgets, measured as serialized JSON bytes of the tool's own result. */
 export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300 } as const;
 export const DETAILS_BUDGET_BYTES = 32 * 1024;
@@ -180,7 +196,8 @@ export function hatch(
   const { name, index, connection } = options;
   const title = options.title ?? name;
   if (!name.trim()) throw new Error("A hatch needs a nonempty tool prefix.");
-  const known = (key: string) => index.ops.some((op) => `${op.method} ${op.path}` === key);
+  const operations = operationsOf(index);
+  const known = (key: string) => operations.has(key);
   // Snapshot reviews: a retained declaration cannot widen a served hatch.
   const verdicts = new Map(Object.entries(options.verdicts));
   for (const [key, verdict] of verdicts) {
@@ -206,7 +223,7 @@ export function hatch(
       ) {
         throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
       }
-      const op = index.ops.find((op) => `${op.method} ${op.path}` === key)!;
+      const op = operations.get(key)!;
       const contract = index.contract(op);
       const body = contract.body?.schema as { properties?: Record<string, unknown> } | undefined;
       if (
