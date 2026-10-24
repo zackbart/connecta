@@ -614,14 +614,41 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
             `X-Goog-Signature=${tailHex.slice(0, -7)}`,
             `X-Amz-Security-Token=${plus}`,
             `X-Goog-Security-Token=${url}`,
+            // Private values ending inside a reference or an encoded separator.
+            "X-Amz-Signature=&",
+            "X-Amz-Security-Token&",
           ]
         : [];
       const all = [short, long, ...altering, ...resources, ...signing];
+      const ordinary = "Keep this prose &amp; this query http://public.example/a?width=400&name=alice now.";
+      const references = table.embeddedUrls
+        ? {
+            ordinary,
+            diagnostics: [
+              encode("VENDOR_HELD_DECIMAL", (code) => `&#${code};`),
+              encode("VENDOR_HELD_HEX", (code) => `&#x${code.toString(16)};`),
+              "&amp;&equals;&plus;&sol;VENDOR_HELD_NAMED",
+              "mixed&#50;&#x61;&plus;VENDOR_HELD_MIXED",
+              "&amp;#50;&#38;#x61;VENDOR_HELD_NESTED",
+            ].map((value) => ({
+              separator: `diagnostic X-Amz-Security-Token&amp;#61;VENDOR_HELD_SEPARATOR_${value.length}&name=alice now`,
+              split: `diagnostic X-Amz-Security-Token&#61;VENDOR_HELD_SPLIT_${value.length}&name=alice now`,
+              greedy: `diagnostic X-Amz-Security-Token=raw&#479VENDOR_HELD_GREEDY_${value.length}&name=alice now`,
+              greedySplit: `diagnostic X-Amz-Security-Token&#619VENDOR_HELD_GREEDY_SPLIT_${value.length}&name=alice now`,
+              note: `diagnostic X-Amz-Signature=${value}&name=alice now`,
+              link: `see http://storage.example/f?X-Goog-Credential=${value}&name=alice now`,
+              ...(table.resources
+                ? { object: "charge", failure_message: `see http://storage.example/f?X-Amz-Signature=${value} now` }
+                : {}),
+            })),
+          }
+        : {};
       const pins = {
         type: "object",
         properties: { pins: { type: "array", items: { type: "string", writeOnly: true } } },
       } as const;
       const body = {
+        ...references,
         client_secret: held,
         // A credential-named key a deployment chose itself (`crm_secret`) is found by name too.
         settings: { crm_secret: `${held}2` },
@@ -677,22 +704,35 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
       // A streamed row's keys are text the kit redacted whole, then parsed, route header pairs included.
       const stream =
         '{"client_secret":"VENDOR_HELD_STREAM","note":"streamed"}\n' +
-        '{"src":"/","headers":[{"key":"X-Custom","value":"VENDOR_HELD_ROUTE"}]}\n';
+        '{"src":"/","headers":[{"key":"X-Custom","value":"VENDOR_HELD_ROUTE"}]}\n' +
+        JSON.stringify(references) + "\n";
       let streaming = false;
+      let full = true;
       const realFetch = globalThis.fetch;
-      globalThis.fetch = (async () =>
-        streaming
-          ? new Response(stream, { headers: { "content-type": "application/x-ndjson" } })
-          : Response.json({ success: true, result: body, ...body })) as typeof fetch;
-      const clean = (out: unknown) => {
+      globalThis.fetch = (async () => {
+        const data = full ? body : references;
+        return streaming
+          ? new Response(full ? stream : JSON.stringify(references) + "\n", {
+              headers: { "content-type": "application/x-ndjson" },
+            })
+          : Response.json({ success: true, result: data, ...data });
+      }) as typeof fetch;
+      const clean = (out: unknown, path: string) => {
         const text = JSON.stringify(out);
-        expect(text).toContain("echoed");
-        expect(text).toContain("streamed");
+        if (full) {
+          expect(text).toContain("echoed");
+          expect(text).toContain("streamed");
+        }
+        if (table.embeddedUrls) expect(text).toContain(ordinary);
         // What an agent can decode: percent escapes and numeric character references.
         const shown = text
           .replace(/%([0-9a-f]{2})/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
-          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
-        expect(shown.match(/VENDOR_HELD\w*/g) ?? [], text).toEqual([]);
+          .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+          .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+          .replace(/#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+          .replace(/#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+        // Collect every call path's observation even when one detects an exposure.
+        expect.soft(shown.match(/VENDOR_HELD\w*/g) ?? [], `${path}: ${text}`).toEqual([]);
         for (const held of [hex, entityHex, tailHex.slice(-7), token.slice(-7), "+/+/+/+/", "-_-_-_-_"])
           expect(shown, text).not.toContain(held);
         expect(text).not.toContain(long);
@@ -704,10 +744,12 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
         streaming = true;
         return [json, await call()];
       };
-      try {
+      const exercise = async (submitted: string[]) => {
+        full = submitted === all;
+        const mode = full ? "overlap" : submitted.length === 0 ? "no private value" : "unrelated private value";
         const ctx = { ...harness.ctx(), requestScope: {} };
-        requestSentSecrets(ctx).arguments({ pins: all }, pins);
-        clean(await both(() => harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx)));
+        requestSentSecrets(ctx).arguments({ pins: submitted }, pins);
+        clean(await both(() => harness.connector().callTool(harness.echo.tool, harness.echo.args, ctx)), `${mode}, direct`);
         const credential = (await harness.ctx().credential!.getAll())!["value"]!;
         for (const readOnly of [false, true]) {
           const connector = harness.connector();
@@ -729,7 +771,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const executor: Executor = {
             execute: async (_code, providers) => {
               const host = providers[0]!.fns;
-              await host.call!("pins.set_pins", { pins: all }).catch((error: unknown) => refusals.push(error));
+              await host.call!("pins.set_pins", { pins: submitted }).catch((error: unknown) => refusals.push(error));
               return {
                 result: await both(() => host.call!(`${connector.id}.${harness.echo.tool}`, harness.echo.args)),
                 logs: [],
@@ -743,8 +785,13 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
           const result = await run({ code: "async () => {}" });
           expect(result.isError, JSON.stringify(result)).toBeFalsy();
           expect(refusals).toEqual(readOnly ? [expect.objectContaining({ code: "read_only_endpoint" })] : []);
-          clean(result);
+          clean(result, `${mode}, execute_code, ${readOnly ? "read-only" : "writable"}`);
         }
+      };
+      try {
+        // The same references must be withheld without private values, beside an unrelated one,
+        // and when sent values overlap signing names and prefixes. All three call paths run each.
+        for (const submitted of table.embeddedUrls ? [all, [], ["unrelated-private"]] : [all]) await exercise(submitted);
       } finally {
         globalThis.fetch = realFetch;
       }

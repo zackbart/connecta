@@ -1357,8 +1357,19 @@ every vendor ships one reviewed table through one mechanism
    Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
    parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
    Credential and Security-Token values are withheld across all decoded string
-   values. Generic credential names (`code`, `key`, `token`, `signature`, `sig`,
-   etc.) and credential-looking fragments apply only to reviewed diagnostic
+   values, including values written with decimal, hexadecimal or named HTML
+   character references. References are read whole as value data; decoding
+   only finds nested-reference boundaries and classifies a placeholder's
+   remainder. No decoded replacement is returned. Possible named references
+   are read fail-closed with their required semicolon and bounded HTML name
+   length. Numeric references also accept an omitted semicolon, and `amp`
+   may omit its semicolon immediately before `#`. Signing separators accept
+   nested ampersand references around decimal, hexadecimal or named `=`
+   references.
+   A literal query separator such as `&name=alice` still ends the signing
+   value. Ordinary query strings and prose retain their original spelling.
+   Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
+   and credential-looking fragments apply only to reviewed diagnostic
    paths and vendor error text. Matching destinations lose their entire query
    and fragment. The tables list exact operations/resource paths with evidence:
    Stripe charge failure/outcome messages, Vercel deployment failures and
@@ -1446,17 +1457,26 @@ every vendor ships one reviewed table through one mechanism
    signing parameters are scanned, a placeholder followed by any of a value's
    base64 or base64url characters (letters, digits, `+`, `/`, `=`, `-`, `_`)
    or `%` escapes is withheld with them through the end of the value
-   (`splitRemainder`), so a tail of `+/` alone goes too, and a value's end
-   never splits a placeholder. In reviewed links, a query component that
-   carries the placeholder and has no readable name withholds the query. What
+   (`splitRemainder`), so a tail of `+/` alone goes too. A reference in an
+   inferred remainder counts when it decodes to credential characters or an
+   ampersand. Without a semicolon, numeric digits may run into the following
+   value: a credential character spelled by the first 1–3 decimal or 1–2 hex
+   digits after leading zeros also counts. Other references end that
+   remainder, preserving text after spacing or punctuation references.
+   Known signing values read references whole regardless of the character
+   they spell. A value's end never splits
+   a placeholder. In reviewed links, a query component that carries the
+   placeholder and has no readable name withholds the query. What
    stays visible cannot complete a credential: other punctuation alone after a
    placeholder (`.`, `,`, `;`, `!`), which no base64 value contains, and text
    past a value's end (whitespace, a quote, an angle bracket, `&`, `#`, `)`,
-   `]`, a backtick or a backslash), which belongs to another parameter decided
-   by its own name. A signing value written as numeric character references
-   outside a reviewed link is withheld by no rule, collision or not, since the
-   signing scan ends a value at `&`; that is a separate gap in the signing
-   scan, unchanged here. Value safety's own
+   `]`, a backtick or a backslash), except where that syntax is part of a
+   character reference read whole. A bare numeric reference body (`#50;`,
+   `#x32;`, with optional semicolons and nested ampersand continuations) can
+   remain when redaction removes part of a reference. It is read as value
+   data, so `#` ends a signing value only when it does not open such a body.
+   Numeric fragments directly after a signing value are withheld too.
+   A following parameter is decided by its own name. Value safety's own
    placeholders are not alterations: `@keys` map keys, a withheld value right
    after `=`, and a withheld `#[redacted]` fragment. More is withheld only
    when a private value occurs in a decision input, and then deliberately:
