@@ -262,3 +262,78 @@ S6; temporary `Image.contentUri` destinations are permanently withheld across
 named and hatch result shapes. H5 is folded in; H9 is characterized without a
 deadline change. Loaded-host cold/warm timing samples are retained in the scratch
 artifacts and are not an SLA.
+
+## Main reconciliation and final review
+
+Merged Docs main `f9bf5afb` into the reviewed Forms head `7ce696af` using merge
+commit `568fc36a`; no rebase or stash. Both products' migration/setup sections,
+pending removals, bundle declarations, failure fixtures and scripted reference
+entries are retained. Docs source and its eval notes/JSON remain byte-identical
+to main. Every non-Forms stored golden is byte-identical to main; the unrelated
+Drive/Gmail failure-argument rows remain unchanged.
+
+R2-B1 uses the reviewer's exact 115-character batchUpdate summary:
+
+> Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.
+
+The evidence document, generated index and Forms call golden were regenerated.
+“quiz settings” and “update item” are additional rows inside the existing
+natural-query test, both ranking batchUpdate first. All **59** queries from
+`reviews/1014-r2/probes/search-compare.txt` rank batchUpdate at least as well as
+the best recorded rank across round 1, the reviewed head and the proposed
+candidate. Queries absent from all three references remain absent; this is a
+ranking non-regression check, not a claim that all 59 find the operation.
+The JSON includes each comparison row. No test case was added.
+
+Fresh same-toolchain measurements against merged main `f9bf5afb`, using Node
+26.12.0 and `scripts/measure-google-index.mjs`, are Forms **353,598 → 372,120 B
+gzip (+18,522 B)**; Docs **370,091 → 370,091 B**; and all-six deployment
+**434,446 → 448,515 B (+14,069 B)**. The final Forms bundle is 1,218,225 B
+minified text; its actual generated module is 30,274 B text / 5,600 B gzip.
+Forms' regenerated bundle note records the refreshed 372,120 B snapshot; the
+post-note measurement is also 372,120 B. Docs' recorded 369,878 B entry remains
+the explicitly labeled Node 22 evaluated snapshot, rather than being rewritten
+as a Node 26 measurement. Standalone entries include shared code and are not
+additive. The earlier bundle rows above describe their original snapshots.
+
+No paid trials were rerun or regraded. The merged task-directory hash is
+`fb62ac966deb1f06c592f9bb8f9e26067fd6ac191f9d3fa465a484bf4917b058`;
+the harness hash remains
+`6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca`.
+Its difference from the historical review hash is the merged Docs reference and
+surface-control adapter. The Forms reference-only change remains at
+`eval/tasks/google.ts:853`; the Forms empty-result adapter remains at
+`eval/tasks/google-controls.ts:250` (terminal/mixed-envelope checks at 253).
+The paid-arm task hashes, file audit, raw hashes and outcomes are preserved.
+
+The first merged selftest exposed double unwrapping in the Forms F4 reference:
+Docs main already unwraps every `*_api_read` in the shared `read` helper. The
+reference-only follow-up `aef6c6cb` changes only Forms' line 853 to consume that
+Form directly, keeping `forms_api_read`. The shared helper and Docs reference
+are retained unchanged. This explains the final task hash above and changes no
+prompt, grader, fake or paid trial. The failed deterministic attempt is retained
+in scratch `r2-google-selftest.log`; subsequent verification uses the corrected
+reference.
+
+Post-merge targeted suites pass **809/809** (13 files); the post-R2 targeted
+run passes **662/662** (11 files), including the Forms suite and both standards
+checkers. All-provider Node deterministic goldens pass **16/16**, and workerd
+goldens pass **16/16**. Final `check:static` passes. The exact F4 selftest passes
+on both surfaces and both grading modes without any preload. Full Node
+collection against `f9bf5afb` is **4,205 → 4,205**, with identical per-file counts
+and **test delta 0**. Node 24 Eve checks pass **5/5**, with packed-consumer smoke.
+
+The full Google selftest passes for all **42 tasks × two surfaces × two grading
+modes (168 reference checks)**, including the shared identity, transport and
+boundary controls. Drive F4's known BEFORE capability gap remains an unsuccessful
+outcome, correctly recognized by the selftest; it is not scored as a capability
+success. All seven Forms references pass in every mode. The corrected full log
+is `r2-google-selftest-final.log`; no prompt, grader, fake or paid outcome changes.
+
+Final `check:build` passes, including emitted declarations and root/Worker/UI
+bundle caps. Its published `dist` entry measurement is **372,171 B gzip for
+Forms**, **370,111 B for Docs** (root 371,362 B, UI 344,549 B, Worker 76,747 B).
+The paired `scripts/measure-google-index.mjs` comparison above measures source
+entries, so its Forms figure is 372,120 B; these are distinct inputs, not a
+changed paid measurement. All required checks use `VITEST_MAX_WORKERS=2`.
+No full local check, paid rerun or regrading was performed.

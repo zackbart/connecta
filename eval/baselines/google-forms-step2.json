@@ -10209,5 +10209,725 @@
    "fullCheckRun": false,
    "paidTrialsRun": false
   }
+ },
+ "mergeAndFinalReview": {
+  "reviewedHead": "7ce696afdb2f95a3d055348fdce8177a0bdcae42",
+  "main": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+  "mergeCommit": "568fc36a1ed4bfd2ea1e3119e5bbf0bf8e0cf86e",
+  "productionSnapshot": {
+   "meta": {
+    "createdAt": "2026-10-24T18:15:51.484Z",
+    "git": {
+     "commit": "6208a4010eca",
+     "branch": "t3/google-forms-step2",
+     "dirty": false,
+     "srcTree": "a65261007d8f",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "pairId": "google-forms-step2-2026-10-24",
+    "taskDefinitionsHash": "203642e647d0ed68f1d8d07190a2550fc8f8409dfa7b98874bf6226d719a19d9",
+    "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+   }
+  },
+  "audit": {
+   "main": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+   "mergeCommit": "568fc36a1ed4bfd2ea1e3119e5bbf0bf8e0cf86e",
+   "docsSourceByteIdenticalToMain": true,
+   "docsEvalNotesAndJsonByteIdenticalToMain": true,
+   "nonFormsGoldensByteIdenticalToMain": true,
+   "changedStoredGoldenFiles": [
+    "test/goldens/forms/calls.json",
+    "test/goldens/forms/catalog.json",
+    "test/goldens/forms/failures.json",
+    "test/goldens/forms/spec.ts"
+   ],
+   "failureArgumentsMatchMainExceptForms": true,
+   "formsFailureArgumentsMatchReviewedHead": true,
+   "currentTaskFiles": [
+    {
+     "path": "eval/tasks/google.ts",
+     "sha256": "c8f1fa3fdf84848166a05c9be558f2542d6652b5bc5a7f890ee8669c02b7a1c4",
+     "mainSha256": "b4a48c9df7212d532132eba5f3df555f750520f2d5f4319eb6c65cca06e9fd3b"
+    },
+    {
+     "path": "eval/tasks/google-controls.ts",
+     "sha256": "649a3d26c88a3e1435df1f35d08d9177fa1ff306642749db36ccca2cb58a6826",
+     "mainSha256": "2ea8482cdfc620ba81966b3d328829021ae4be724ae52ce03ec022c416daa812"
+    }
+   ]
+  },
+  "summary": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
+  "summaryCharacters": 115,
+  "queryProbe": {
+   "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/reviews/1014-r2/probes/search-compare.txt",
+   "sha256": "946c934310bc5cbc2ee3e94aa317405799c21d20947470832b726a0c79cfe1a1",
+   "comparison": "Current rank is no worse than the best rank among round 1, reviewed head and reviewer candidate. An operation absent in every reference may remain absent.",
+   "queries": 59,
+   "passed": 59,
+   "rows": [
+    {
+     "query": "quiz settings",
+     "round1": 1,
+     "reviewedHead": null,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "edit quiz settings",
+     "round1": 1,
+     "reviewedHead": null,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "update quiz settings",
+     "round1": 1,
+     "reviewedHead": null,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "update settings",
+     "round1": 1,
+     "reviewedHead": null,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "change settings",
+     "round1": 1,
+     "reviewedHead": null,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "make it a quiz",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "turn on quiz",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "email collection",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "update item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "update an item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "edit item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "updateItem",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "update form item",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "move item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "delete item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "create item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "add item",
+     "round1": 1,
+     "reviewedHead": 3,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "add a section",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "add page break",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "form description",
+     "round1": 3,
+     "reviewedHead": 3,
+     "reviewerCandidate": 3,
+     "rank": 3,
+     "pass": true
+    },
+    {
+     "query": "update description",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "change description",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "grading",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "points",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "answer key",
+     "round1": null,
+     "reviewedHead": 2,
+     "reviewerCandidate": 2,
+     "rank": 2,
+     "pass": true
+    },
+    {
+     "query": "correct answer",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "set points",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "feedback",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "update grading",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "rename option",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "rename form",
+     "round1": 3,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "change form name",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "change option",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "publish form",
+     "round1": 4,
+     "reviewedHead": 4,
+     "reviewerCandidate": 4,
+     "rank": 4,
+     "pass": true
+    },
+    {
+     "query": "watch form responses",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "form title",
+     "round1": 2,
+     "reviewedHead": 2,
+     "reviewerCandidate": 2,
+     "rank": 2,
+     "pass": true
+    },
+    {
+     "query": "update form title",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "edit form",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "add question",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "delete question",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "move question",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "delete form item",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "change form title",
+     "round1": 1,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "create form",
+     "round1": 2,
+     "reviewedHead": 2,
+     "reviewerCandidate": 2,
+     "rank": 2,
+     "pass": true
+    },
+    {
+     "query": "form question options",
+     "round1": 2,
+     "reviewedHead": 2,
+     "reviewerCandidate": 2,
+     "rank": 2,
+     "pass": true
+    },
+    {
+     "query": "quiz answer key",
+     "round1": null,
+     "reviewedHead": 2,
+     "reviewerCandidate": 2,
+     "rank": 2,
+     "pass": true
+    },
+    {
+     "query": "form grading",
+     "round1": 3,
+     "reviewedHead": 3,
+     "reviewerCandidate": 3,
+     "rank": 3,
+     "pass": true
+    },
+    {
+     "query": "responses",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "list responses",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "read one response",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "responses since yesterday",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "section navigation",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "rename a choice",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "update a choice option",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "edit an option",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "set correct answer",
+     "round1": null,
+     "reviewedHead": 1,
+     "reviewerCandidate": 1,
+     "rank": 1,
+     "pass": true
+    },
+    {
+     "query": "stop accepting responses",
+     "round1": null,
+     "reviewedHead": null,
+     "reviewerCandidate": null,
+     "rank": null,
+     "pass": true
+    },
+    {
+     "query": "unpublish form",
+     "round1": 3,
+     "reviewedHead": 3,
+     "reviewerCandidate": 3,
+     "rank": 3,
+     "pass": true
+    },
+    {
+     "query": "make form public",
+     "round1": 3,
+     "reviewedHead": 3,
+     "reviewerCandidate": 3,
+     "rank": 3,
+     "pass": true
+    }
+   ],
+   "improvedVsReviewedHead": 13
+  },
+  "bundle": [
+   {
+    "product": "gmail",
+    "before": {
+     "bytes": 1174916,
+     "gzip9": 358123
+    },
+    "after": {
+     "bytes": 1174916,
+     "gzip9": 358123
+    }
+   },
+   {
+    "product": "drive",
+    "before": {
+     "bytes": 1172972,
+     "gzip9": 357094
+    },
+    "after": {
+     "bytes": 1172972,
+     "gzip9": 357094
+    }
+   },
+   {
+    "product": "docs",
+    "before": {
+     "bytes": 1234809,
+     "gzip9": 370091
+    },
+    "after": {
+     "bytes": 1234809,
+     "gzip9": 370091
+    }
+   },
+   {
+    "product": "sheets",
+    "before": {
+     "bytes": 1160324,
+     "gzip9": 353191
+    },
+    "after": {
+     "bytes": 1160324,
+     "gzip9": 353191
+    }
+   },
+   {
+    "product": "slides",
+    "before": {
+     "bytes": 1194156,
+     "gzip9": 362793
+    },
+    "after": {
+     "bytes": 1194156,
+     "gzip9": 362793
+    }
+   },
+   {
+    "product": "forms",
+    "before": {
+     "bytes": 1159863,
+     "gzip9": 353598
+    },
+    "after": {
+     "bytes": 1218225,
+     "gzip9": 372120
+    }
+   },
+   {
+    "product": "all-six",
+    "before": {
+     "bytes": 1455599,
+     "gzip9": 434446
+    },
+    "after": {
+     "bytes": 1501312,
+     "gzip9": 448515
+    },
+    "syntheticWithIndexes": {
+     "bytes": 2044787,
+     "gzip9": 534110
+    }
+   }
+  ],
+  "bundleToolchain": {
+   "node": "v26.12.0",
+   "script": "scripts/measure-google-index.mjs",
+   "gzipLevel": 9,
+   "base": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+   "note": "Actual merged deployment. Docs historical Node 22 evaluated declaration is preserved; syntheticWithIndexes is a contributor benchmark, not the deployed bundle."
+  },
+  "generatedModule": {
+   "moduleBytes": 30274,
+   "moduleGzip9": 5600,
+   "sha256": "aac4cd04b3c651a8af30ac441e2011ecf33965e09d8e46895c38468a3dc0781c",
+   "node": "v26.12.0"
+  },
+  "paidReruns": 0,
+  "paidRegrades": 0,
+  "paidOutcomesChanged": false,
+  "promptGraderFakeChanges": false,
+  "verification": {
+   "postMergeTargeted": {
+    "passed": 809,
+    "files": 13
+   },
+   "postR2Targeted": {
+    "passed": 662,
+    "files": 11
+   },
+   "searchNonRegressions": 59,
+   "newTestCases": 0,
+   "eveNode24": {
+    "passed": 5,
+    "packedConsumerPassed": true
+   },
+   "vitestMaxWorkers": 2,
+   "fullCheckRun": false,
+   "nodeGoldens": {
+    "passed": 16,
+    "determinism": true
+   },
+   "workerdGoldens": {
+    "passed": 16
+   },
+   "staticPassed": true,
+   "exactF4SelftestPassed": true,
+   "otherStoredGoldensByteIdenticalToMain": true,
+   "normalGoogleSelftests": {
+    "tasks": 42,
+    "surfaceModeChecks": 168,
+    "surfaces": [
+     "six",
+     "code"
+    ],
+    "grading": [
+     "route",
+     "outcome"
+    ],
+    "passed": true,
+    "expectedBeforeCapabilityGaps": [
+     "google-drive-4"
+    ],
+    "note": "Expected Drive revision-list capability gap remains an unsuccessful outcome; the selftest verifies that it is not falsely passed. Google identity, transport and boundary controls also run before task selection."
+   },
+   "selftestLogSha256": "c0cb963e10ba7d9cbdae083d89b455cb4d2fd05e35551a94a899101cda9547f8",
+   "buildAndCapsPassed": true,
+   "buildLogSha256": "9a776951069c97f296fdc9732bdb90a69a6346c8ec5a528de7a518ca225c403a"
+  },
+  "protocol": {
+   "version": 1,
+   "pairId": "google-forms-step2-2026-10-24",
+   "taskDefinitionsHash": "fb62ac966deb1f06c592f9bb8f9e26067fd6ac191f9d3fa465a484bf4917b058",
+   "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+  },
+  "referenceMergeFix": {
+   "commit": "aef6c6cb5922b557e1e1d6042097cee609f6a0be",
+   "path": "eval/tasks/google.ts",
+   "line": 853,
+   "change": "Consume the already-unwrapped Form from the merged Docs read helper; retain forms_api_read.",
+   "referenceOnly": true,
+   "sharedReadHelperChanged": false,
+   "initialMergedSelftest": "Stopped at Forms F4 because the existing destructuring unwrapped data twice. See scratch r2-google-selftest.log.",
+   "paidOutcomesChanged": false
+  },
+  "testCollection": {
+   "main": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+   "before": 4205,
+   "after": 4205,
+   "delta": 0,
+   "perFileCountsIdentical": true,
+   "changedFileCounts": {}
+  },
+  "publishedDistBundleReport": {
+   "script": "scripts/bundle-size.mjs (check:build)",
+   "node": "v26.12.0",
+   "formsGzip": 372171,
+   "docsGzip": 370111,
+   "rootGzip": 371362,
+   "uiGzip": 344549,
+   "workerGzip": 76747,
+   "allRequiredCapsPassed": true,
+   "note": "Uses built dist entries. The paired source-entry comparison above uses scripts/measure-google-index.mjs and measures Forms at 372120 B, Docs 370091 B. These are distinct measurement inputs; the declared Forms snapshot is explicitly the latter."
+  }
  }
 }
