@@ -361,6 +361,30 @@ describe("API provider failure sweep", () => {
               expect(outcomes.classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error })).toBe(
                 "unknown",
               );
+            if (address === "gmail.update_draft") {
+              const sent: string[] = [];
+              const lookup = await sweepCall(
+                provider,
+                tool.name,
+                address,
+                args,
+                "write",
+                (request) => {
+                  sent.push(request.method);
+                  return Response.json({ error: { code: 401, message: "Unauthorized" } }, { status: 401 });
+                },
+                HANDOFFS,
+                { failAuxiliary: true },
+              );
+              expect(sent).toEqual(["GET"]);
+              const auxiliary = (lookup.structuredContent as { error: CallErrorDetails }).error;
+              expect(auxiliary).toMatchObject({
+                code: "auth_required",
+                retry: `Retry ${address} after the operator completes recovery.`,
+              });
+              expect(auxiliary).not.toHaveProperty("writeOutcome");
+              expect(auxiliary).not.toHaveProperty("reconciliationRequired");
+            }
           });
         }
       }
