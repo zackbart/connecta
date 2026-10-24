@@ -25,8 +25,8 @@ export const github = defineProvider<GitHubOptions>({
   skill,
   kit,
   bundle: {
-    baselineGzip: 450413,
-    note: "./providers/github measures 450,413 B gzip standalone in step 2 (#703), Node 26.12.0 with zlib-ng 1.3.1, scripts/bundle-size.mjs. The complete immutable 1,204-operation index is retained. The same-toolchain pre-change probe was 335,233 B; growth is approximately 115 KB, below the approved 300 KB gate. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 451137,
+    note: "./providers/github merged step-2 snapshot measures 451,137 B gzip standalone before recording these bundle facts (#703), Node 26.12.0 with zlib-ng 1.3.1, scripts/bundle-size.mjs. The complete immutable 1,204-operation index is retained. The same-toolchain pre-change probe was 335,233 B; growth is approximately 115 KB, below the approved 300 KB gate. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,

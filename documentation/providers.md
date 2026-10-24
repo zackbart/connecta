@@ -356,6 +356,54 @@ credentials remain withheld. fields narrows safe output and does not reduce the
 bytes the vendor sends. Directory listings and search also have vendor caps;
 missing content/patches do not establish completeness.
 
+## Cloudflare
+
+`cloudflare()` connects the reviewed v4 API with an operator-managed credential.
+
+```ts
+import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
+
+const edge = cloudflare("edge", {
+  purpose: "Domain DNS, Workers and storage administration",
+  auth: { type: "apiToken" },
+  pin: { accountIds: ["0123456789abcdef0123456789abcdef"] },
+});
+```
+
+**Credential.** Prefer a scoped user or account API token with only the required
+permissions and resources. Enter it in the operator UI. Verification first tests
+a user token; with `accountId`, it can test an account-owned token too. A legacy
+`auth: { type: "globalApiKey" }` uses the key owner's email and API key fields;
+it requires `pin` unless `unpinned: true` explicitly accepts the whole estate.
+R2 accepts API tokens only. `authScope: "personal"` partitions human credentials;
+agents use the shared credential.
+
+**Options and boundaries.** `pin.accountIds` includes zones owned by those
+accounts; `pin.zoneIds` admits those zones directly. Every call checks its named
+account/zone ids, and scoped lists filter their results. Unscoped operations
+are refused except reviewed public and identity/list routes. `accountId` and
+`zoneId` fill existing path placeholders and do not impose a boundary; use `pin`
+for that. Account pins may spend an extra zone-ownership read. `readOnly: true`
+omits and refuses writes. No argument or sensitive-data option returns secrets;
+credential values and private destinations remain unavailable. `baseUrl` is an
+HTTPS proxy override (HTTP is allowed on loopback for tests).
+
+**Vendor prerequisites.** Grant the token the required DNS, Workers, KV, R2 or
+Analytics permissions for the pinned resources. Connector pins narrow the token;
+they grant no additional Cloudflare permission. Global API Keys cannot change
+user settings or memberships through this connector.
+
+**Limits.** Cloudflare's global limit is 1,200 requests per five minutes per
+user across the dashboard and all tokens. Connecta approximates that window
+per runtime and defaults to six simultaneous requests (`maxConcurrency`). Zone
+ownership checks are capped at three per call and 60 per five minutes per
+connection. Responses are bounded to 8 MiB and calls to 60 seconds. Named
+account/zone lists default to 20 rows, accept `limit` from 5 to 50, and return
+signed `cursor` continuations. Hatch limits retain each operation's pinned
+bounds; put its signed `page.nextCursor` into the parameter named by `page.param`
+and `page.in`. Keep the other arguments unchanged. Discovery is bounded to eight
+hits/16 KiB per search and 32 KiB per details page, with explicit continuation.
+
 ## Church Community Builder
 
 ```ts

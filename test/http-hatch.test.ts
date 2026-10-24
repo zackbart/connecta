@@ -156,8 +156,11 @@ function setup(
     revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
-    pageCursor?: "argument";
+    pageCursor?: "argument" | "parameter";
     binding?: Parameters<typeof hatch>[0]["binding"];
+    headers?: Parameters<typeof hatch>[0]["headers"];
+    textBodies?: true;
+    fieldsRoot?: string;
     data?: OpenApiData;
     context?: ReturnType<typeof connectorContext>;
   } = {},
@@ -199,6 +202,9 @@ function setup(
     ...(options.pages ? { pages: options.pages } : {}),
     ...(options.pageCursor ? { pageCursor: options.pageCursor } : {}),
     ...(options.binding ? { binding: options.binding } : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.textBodies ? { textBodies: options.textBodies } : {}),
+    ...(options.fieldsRoot ? { fieldsRoot: options.fieldsRoot } : {}),
     ...(options.writeEnabled === undefined ? {} : { writeEnabled: options.writeEnabled }),
     connection,
   });
@@ -1414,7 +1420,24 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     links.call("read", { path: "/items", query: { tag: ["duplicate", "duplicate"] } }),
   ).rejects.toMatchObject({ code: "connector_call_failed" });
   response = () => Response.json({ result_info: { cursor: "opaque" } });
-  const cursorStyle = setup({ data: pageData("page"), pages: { "GET /items": cloudflarePage } });
+  const cursorStyle = setup({
+    data: pageData("page"),
+    pages: {
+      "GET /items": {
+        ...cloudflarePage,
+        cursorInputMessage: "Omit page on the first call; pass page.nextCursor as cursor in query.page.",
+      },
+    },
+    pageCursor: "parameter",
+  });
+  for (const page of [1, "1", "vendor-next"]) {
+    await expect(cursorStyle.call("read", { path: "/items", query: { page } })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("Omit page on the first call"),
+    });
+  }
+  expect(cursorStyle.sendPath).not.toHaveBeenCalled();
+  expect(cursorStyle.authenticate).not.toHaveBeenCalled();
   expect(await cursorStyle.call("read", { path: "/items" })).not.toHaveProperty("page");
   expect(() =>
     githubPage("https://api.example").next([], {
@@ -1423,6 +1446,50 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       headers: { link: "<https://api.example/items?page=2&nested=%5Bobject+Object%5D>; rel=next" },
     }),
   ).toThrow();
+  // Optional vendor framing keeps resolution, fields and closed-header checks before dispatch.
+  const framedCalls: unknown[] = [];
+  const framedDetails = JSON.parse(DATA.details);
+  framedDetails.o[4] = [[], ["text/plain", { t: "string" }]];
+  const framed = setup({
+    data: {
+      ...DATA,
+      details: JSON.stringify(framedDetails),
+      fields: DATA.ops.map(() => [{ in: "response" as const, path: "result[].id" }]),
+    },
+    fieldsRoot: "result",
+    textBodies: true,
+    headers: { "x-region": { description: "Reviewed region.", values: ["eu", "us"] } },
+    binding: {
+      review: "Test deployment defaults and text framing.",
+      allowOtherBodyTypes: true,
+      path: (path) => path.replace("{item}", "i1"),
+      prepareBody: (body) => (Array.isArray(body) ? body.map((row) => JSON.stringify(row)).join("\n") : body),
+      send: (call) => {
+        framedCalls.push(call);
+        return Effect.succeed({ status: 200, data: { result: [{ id: "i1", email: "safe" }] } });
+      },
+    },
+  });
+  await expect(framed.call("write", { method: "DELETE", path: "/items/{item}", fields: ["id"] })).rejects.toThrow(
+    "result[].id",
+  );
+  await expect(framed.call("read", { path: "/items", headers: { "x-region": "elsewhere" } })).rejects.toThrow();
+  expect(framedCalls).toHaveLength(0);
+  expect(
+    await framed.call("write", {
+      method: "DELETE",
+      path: "/items/{item}",
+      headers: { "x-region": "eu" },
+      fields: ["result[].id"],
+    }),
+  ).toEqual({ status: 200, data: { result: [{ id: "i1" }] } });
+  expect(framedCalls).toMatchObject([{ path: "/items/i1", headers: { "x-region": "eu" } }]);
+  for (const body of ["SELECT 1", [{ id: "i1" }]]) await framed.call("read", { method: "POST", path: "/query", body });
+  expect(framedCalls.slice(1)).toMatchObject([{ body: "SELECT 1" }, { body: '{"id":"i1"}' }]);
+  await expect(framed.call("read", { method: "POST", path: "/query", body: [{ id: "[redacted]" }] })).rejects.toThrow(
+    "withheld",
+  );
+  expect(framedCalls).toHaveLength(3);
 });
 
 it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and one write attempt", NODE, async () => {

@@ -8,6 +8,8 @@ export interface HatchPageAdapter {
   readonly headers?: readonly string[];
   /** A raw vendor record-id anchor is allowed only on the first request without cursor. */
   readonly initialAnchor?: boolean;
+  /** Opt-in repair guidance for unsigned first-page/raw vendor continuations. */
+  readonly cursorInputMessage?: string;
   /** Validate and restore a decoded cursor's vendor type before index.check. */
   readonly decode: (cursor: string | number) => string | number;
   /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor;

@@ -17,8 +17,7 @@
             "method": "PATCH",
             "path": "/zones/{zone_id}/dns_records/{dns_record_id}",
             "operationId": "",
-            "summary": "Update DNS Record",
-            "tag": "DNS Records for a Zone",
+            "summary": "Update DNS record: set DNS TTL, content, name or proxy status (Update DNS Record)",
             "tool": "cloudflare_api_write"
           },
           {
@@ -26,11 +25,14 @@
             "path": "/zones/{zone_id}/email/routing/dns",
             "operationId": "",
             "summary": "Unlock Email Routing DNS records",
-            "tag": "Email Routing settings",
             "tool": "cloudflare_api_write"
           }
         ],
-        "revision": "843eae2fbf4fe774ef9c91021dd34017ac9c970a"
+        "revision": "843eae2fbf4fe774ef9c91021dd34017ac9c970a",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiOTc3YmRhYmM1MDRjNzk2ZjNlOGE0YWFhNmFmNmNiMTkiLCJjIjoiMiIsIm0iOiJ2OFUtc1FQcFlGTi0wQlBoYXRJT0c0RlRRTFdCRnJwQS1hU01OT0pPcjJBIn0"
+        }
       }
     }
   },
@@ -84,6 +86,7 @@
             }
           }
         ],
+        "verdict": "read",
         "tool": "cloudflare_api_read",
         "revision": "843eae2fbf4fe774ef9c91021dd34017ac9c970a"
       }
@@ -98,9 +101,9 @@
         "type": "A",
         "per_page": 2
       },
-      "select": [
-        "id",
-        "ttl"
+      "fields": [
+        "result.id",
+        "result.ttl"
       ]
     },
     "steps": [
@@ -120,20 +123,23 @@
       "format": "json",
       "value": {
         "status": 200,
-        "data": [
-          {
-            "id": "r1",
-            "ttl": 1
-          },
-          {
-            "id": "r2",
-            "ttl": 300
-          }
-        ],
+        "data": {
+          "result": [
+            {
+              "id": "r1",
+              "ttl": 1
+            },
+            {
+              "id": "r2",
+              "ttl": 300
+            }
+          ]
+        },
         "page": {
           "hasMore": true,
-          "next": "2",
-          "param": "page"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZjk0OTRhYWVhMjIzYzJlYjdjYjRkMWExOGMyMmI3OGMiLCJjIjoiMiIsIm0iOiI0X0ltVDU2SVByVzVzWm9fdEZQWkhyWHdwaTF1QkNHVUh4U0EyUndLU3g4In0",
+          "param": "page",
+          "in": "query"
         }
       }
     }
@@ -172,11 +178,16 @@
       "value": {
         "status": 200,
         "data": {
-          "id": "r1",
-          "name": "a.example.com",
-          "type": "A",
-          "ttl": 300,
-          "content": "192.0.2.1"
+          "success": true,
+          "errors": [],
+          "messages": [],
+          "result": {
+            "id": "r1",
+            "name": "a.example.com",
+            "type": "A",
+            "ttl": 300,
+            "content": "192.0.2.1"
+          }
         }
       }
     }
@@ -213,7 +224,7 @@
     "label": "list_accounts",
     "tool": "list_accounts",
     "args": {
-      "perPage": 5
+      "limit": 5
     },
     "steps": [
       [
@@ -231,7 +242,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "accounts": [
+        "items": [
           {
             "id": "0123456789abcdef0123456789abcdef",
             "name": "Alice's Account",
@@ -239,7 +250,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -268,7 +280,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "zones": [
+        "items": [
           {
             "id": "023e105f4ecef8ad9ca31a8372d0c353",
             "name": "example.com",
@@ -285,7 +297,8 @@
           }
         ],
         "page": {
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -406,9 +419,14 @@
       "value": {
         "status": 200,
         "data": {
-          "id": "hello",
-          "etag": "etag-1",
-          "modified_on": "2026-01-02T03:04:05Z"
+          "success": true,
+          "errors": [],
+          "messages": [],
+          "result": {
+            "id": "hello",
+            "etag": "etag-1",
+            "modified_on": "2026-01-02T03:04:05Z"
+          }
         }
       }
     }
@@ -446,9 +464,14 @@
       "value": {
         "status": 200,
         "data": {
-          "key": "logs/2026/a.txt",
-          "size": 5,
-          "etag": "5d41402abc4b2a76b9719d911017c592"
+          "success": true,
+          "errors": [],
+          "messages": [],
+          "result": {
+            "key": "logs/2026/a.txt",
+            "size": 5,
+            "etag": "5d41402abc4b2a76b9719d911017c592"
+          }
         }
       }
     }
@@ -477,8 +500,13 @@
       "value": {
         "status": 200,
         "data": {
-          "id": "023e105f4ecef8ad9ca31a8372d0c353",
-          "name": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+          "success": true,
+          "errors": [],
+          "messages": [],
+          "result": {
+            "id": "023e105f4ecef8ad9ca31a8372d0c353",
+            "name": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+          }
         }
       }
     }
