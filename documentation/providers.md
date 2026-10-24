@@ -605,8 +605,8 @@ hatches discover all three pinned methods and expose JSON reads and writes.
 Batch hatch writes require `writeControl.requiredRevisionId`, 1–100 requests,
 and exactly one supported generally available request kind each. Preview
 comment and suggestion writes are refused. All hatch writes are destructive.
-The named create/append/insert catalog entries now omit the previous explicit
-`destructiveHint:false`; approval routing is unchanged. Writes
+The additive named create/append/insert catalog entries retain
+`destructiveHint:false` and remain writes. Writes
 are never replayed and take no idempotency key. A named create with text uses
 two explicit steps: one create POST and at most one initial-text batch POST.
 

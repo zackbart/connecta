@@ -563,15 +563,17 @@ export class InvocationService {
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
               recovery: recoveryMode(this.registry, target.connector, this.catalog.baseUrl),
-              ...(mayHaveWritten ? { reconciliationRequired: true as const, retryable: false } : {}),
+              ...(unknownWrite ? { reconciliationRequired: true as const, retryable: false } : {}),
               nextAction: {
                 tool: "authorize_connector" as const,
                 arguments: { connector: target.connector.id },
                 operatorHandoff: "Give the URL and instructions it returns to the operator.",
               },
-              retry: mayHaveWritten
+              retry: unknownWrite
                 ? "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
-                : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
+                : enteredWrite && logicalCall?.sent.some((request) => request.dispatched)
+                  ? `Fix the credentials, then retry ${target.connector.id}.${target.toolName}.`
+                  : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };
           case "provider_permission_denied":
             // A write whose outcome is unknown is never told to retry.

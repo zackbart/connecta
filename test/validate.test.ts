@@ -150,6 +150,37 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { mode: "token", apiKey: "secret" }, OPTS)).toBeNull();
     expect(validateToolInput(schema, { mode: "basic", apiKey: "wrong-mode" }, OPTS)?.code).toBe("invalid_args");
     expect(validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)?.code).toBe("invalid_args");
+    // Optional in-process properties behave like omitted JSON properties,
+    // including inside arrays. A bad instance must not disable this schema.
+    const optional: JsonSchema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string" },
+        cursor: { type: "string" },
+        rows: { type: "array", items: schema },
+      },
+      required: ["title"],
+    };
+    const valid = Object.freeze({
+      title: "Minutes",
+      cursor: undefined,
+      extra: undefined,
+      rows: [Object.freeze({ mode: "basic", apiKey: undefined, surprise: undefined })],
+    });
+    for (const [input, accepted] of [
+      [valid, true],
+      [{ title: undefined }, false],
+      [{ title: 1n }, false],
+      [valid, true],
+      [{ title: 42 }, false],
+      [valid, true],
+    ] as const) {
+      const result = validateToolInput(optional, input, { ...OPTS, failClosed: true });
+      if (accepted) expect(result).toBeNull();
+      else expect(result?.code).toBe("invalid_args");
+    }
+    expect(Object.hasOwn(valid, "cursor")).toBe(true);
   });
 });
 

@@ -3,7 +3,7 @@ import { ContinuationBinding, serviceFor, setViewService, settleOnClose } from "
 import { registerCallEntry } from "../runtime/call-entry.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
-import { compileValidator, validateCatalogToolInput } from "../validate.js";
+import { compileValidator, normalizeToolInput, validateCatalogToolInput } from "../validate.js";
 import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
@@ -395,7 +395,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       if (!tool) {
         throw knownProviderFailure(new Error(`Unknown tool "${name}" on connector "${id}"`));
       }
-      const input = args ?? {};
+      const input = normalizeToolInput(args ?? {});
       if (validateArgs && tool.inputSchema) {
         const invalid = validateCatalogToolInput(
           tool.inputSchema,

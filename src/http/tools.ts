@@ -436,13 +436,22 @@ interface Idempotency<A> {
 /** A write: approval-gated, dispatched once, and its failures reported by the write-outcome rule. */
 export function write<I extends Input, O extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: ToolSpec<I, O> & { readonly destructive: boolean; readonly idempotency?: Idempotency<I["Type"]> },
+  spec: ToolSpec<I, O> & {
+    readonly destructive: boolean;
+    /** Reviewed repeatability of the operation; independent of an optional transport key. */
+    readonly idempotent?: boolean;
+    readonly idempotency?: Idempotency<I["Type"]>;
+  },
 ): ApiTool {
   return build(
     connection,
     spec,
     "write",
-    spec.destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: false },
+    {
+      readOnlyHint: false,
+      destructiveHint: spec.destructive,
+      ...(spec.idempotent === undefined ? {} : { idempotentHint: spec.idempotent }),
+    },
     spec.idempotency,
   );
 }
