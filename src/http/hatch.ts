@@ -67,6 +67,8 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Optional construction-time identity binding for a reviewed operation index. */
+  readonly index?: OperationIndex;
   /** Explicitly replace the default other-server guard with the binding's confined routing. */
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
@@ -249,6 +251,8 @@ export function hatch(
   },
 ): ApiTool[] {
   const { name, index, connection } = options;
+  if (options.binding?.index !== undefined && options.binding.index !== index)
+    throw new Error("This hatch binding requires its reviewed operation index.");
   const title = options.title ?? name;
   if (options.textBodies !== undefined && options.textBodies !== true)
     throw new Error("Hatch textBodies must opt in with true.");

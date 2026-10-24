@@ -6,6 +6,10 @@ import type { Connection } from "../../../http/vendor.js";
 import type { RestCall } from "../rest/tools.js";
 import type { OperationIndex } from "../rest/operation-index.js";
 
+export function requireGoogleIndex(index: OperationIndex): void {
+  if (index.pathMatching !== "uri-template") throw new Error('Google indexes require pathMatching: "uri-template".');
+}
+
 /** Independent of compact schema depth: only reviewed batch kinds can execute. */
 export function googleBatchGuard(
   body: unknown,
@@ -38,6 +42,7 @@ export function googleBatchGuard(
 
 /** Ensure a substituted named id still reaches the endpoint the tool declared. */
 export function googleNamedOperation(index: OperationIndex, method: string, path: string, template: string): void {
+  requireGoogleIndex(index);
   if (index.resolve(method, path).op.path !== template)
     throw new ConnectorCallError(
       "invalid_args",
@@ -48,14 +53,20 @@ export function googleNamedOperation(index: OperationIndex, method: string, path
 export function googleHatchBinding(
   connection: Connection,
   options: {
+    readonly index: OperationIndex;
     readonly review: string;
     readonly refuse?: (call: RestCall) => string | undefined;
     readonly revisionGuarded?: (call: RestCall) => boolean;
   },
 ): HatchBinding {
+  requireGoogleIndex(options.index);
   return {
+    index: options.index,
     review: options.review,
     refuse: (call) => {
+      for (const match of call.path.matchAll(/%([a-f0-9]{2})/gi))
+        if (/^[-A-Za-z0-9._~:]$/.test(String.fromCharCode(parseInt(match[1]!, 16))))
+          return "Google paths must spell unreserved characters and action separators literally.";
       if (call.headers && Object.keys(call.headers).length) return "Google hatches do not accept caller headers.";
       for (const key of Object.keys(call.query))
         if (

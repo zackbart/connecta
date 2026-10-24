@@ -589,10 +589,14 @@ describe("OpenAPI operation index generation", () => {
   it("drops deprecated operations, records per-operation servers, and shares repeated schema nodes", async () => {
     const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
     const { buildOperationIndex } = await generator();
-    const { normalizeDiscovery } = await import(new URL("../scripts/google-discovery.mjs", import.meta.url).href);
+    const { normalizeDiscovery, discoveryMethods } = await import(
+      new URL("../scripts/google-discovery.mjs", import.meta.url).href
+    );
     const pins = JSON.parse(
       readFileSync(new URL("./fixtures/google-discovery/manifest.json", import.meta.url), "utf8"),
     );
+    let operations = 0,
+      requiredAnnotations = 0;
     for (const pin of pins) {
       const bytes = readFileSync(new URL(`./fixtures/google-discovery/${pin.provider}.json`, import.meta.url));
       expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(pin.digest);
@@ -600,7 +604,7 @@ describe("OpenAPI operation index generation", () => {
       const normalized = normalizeDiscovery(original);
       const compiled = buildOperationIndex(normalized, {
         ...pin,
-        options: { depth: 5, numericBounds: true, formats: true, requestGraph: true },
+        options: { depth: 5, numericBounds: true, formats: true, requestGraph: true, deprecations: true },
       });
       expect(compiled.ops).toHaveLength(pin.methods);
       expect(new Set(compiled.ops.map((row: string[]) => `${row[0]} ${row[1]}`)).size).toBe(pin.methods);
@@ -609,9 +613,26 @@ describe("OpenAPI operation index generation", () => {
       const index = new OperationIndex(compiled, { ...names, pathMatching: "uri-template" });
       expect(await index.cursorRevision()).not.toBe(await legacyIndex.cursorRevision());
       for (const row of normalized["x-google-discovery"].mapping) {
+        operations++;
         const op = index.ops.find((op) => op.operationId === row.id)!;
         expect(`${op.method} ${op.path}`).toBe(row.operation);
         const operation = normalized.paths[op.path][op.method.toLowerCase()];
+        const contract = index.contract(op);
+        const variables = [...op.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).sort();
+        expect(
+          operation.parameters
+            .filter((p: any) => p.in === "path")
+            .map((p: any) => p.name)
+            .sort(),
+        ).toEqual(variables);
+        expect(
+          contract.parameters
+            .filter((p) => p.in === "path")
+            .map((p) => p.name)
+            .sort(),
+        ).toEqual(variables);
+        for (const parameter of operation.parameters.filter((p: any) => p.deprecated))
+          expect(contract.parameters.find((p) => p.name === parameter.name)?.schema).toHaveProperty("deprecated", true);
         const ref = operation.responses[200].content?.["application/json"]?.schema?.$ref;
         if (ref) {
           const properties = normalized.components.schemas[ref.split("/").at(-1)].properties ?? {};
@@ -623,6 +644,27 @@ describe("OpenAPI operation index generation", () => {
         if (operation.requestBody) {
           expect(index.contract(op).body?.schema).toHaveProperty("properties");
           expect(JSON.stringify(index.contract(op).body?.schema)).not.toContain('"truncated":true');
+          const method = discoveryMethods(original).find((method: any) => method.id === op.operationId);
+          const full = contract.body!.schema as any;
+          const verify = (raw: any, node: any, seen = new Set<string>()) => {
+            if (raw?.$ref) {
+              if (seen.has(raw.$ref)) return;
+              seen = new Set([...seen, raw.$ref]);
+              raw = original.schemas[raw.$ref];
+            }
+            while (node?.$ref) node = full.$defs[node.$ref.split("/").at(-1)];
+            for (const [name, value] of Object.entries(raw?.properties ?? {}) as [string, any][]) {
+              if (value.annotations?.required?.includes(op.operationId)) {
+                requiredAnnotations++;
+                expect(node?.required, `${op.operationId}.${name}`).toContain(name);
+              }
+              if (node?.properties?.[name]) verify(value, node.properties[name], seen);
+            }
+            if (raw?.items) verify(raw.items, node?.items, seen);
+            if (raw?.additionalProperties && typeof raw.additionalProperties === "object")
+              verify(raw.additionalProperties, node?.additionalProperties, seen);
+          };
+          verify(method.request, full);
         }
       }
       if (pin.provider === "drive") {
@@ -635,12 +677,21 @@ describe("OpenAPI operation index generation", () => {
         expect(normalized.components.schemas.Document.properties.headers.additionalProperties).toHaveProperty("$ref");
         expect(() => index.resolve("POST", "/documents/id")).toThrow();
       }
-      if (pin.provider === "forms")
+      if (pin.provider === "forms") {
+        expect(legacyIndex.resolve("POST", "/forms/f:setPublishSettings").op.operationId).toBe(
+          "forms.forms.batchUpdate",
+        );
+        expect(index.resolve("POST", "/forms/f:setPublishSettings").op.operationId).toBe(
+          "forms.forms.setPublishSettings",
+        );
         expect(normalized.components.schemas.FormResponse.properties.answers.additionalProperties).toHaveProperty(
           "$ref",
         );
+      }
       expect(JSON.stringify(normalized)).toBe(JSON.stringify(normalizeDiscovery(JSON.parse(JSON.stringify(original)))));
     }
+    expect(operations).toBe(178);
+    expect(requiredAnnotations).toBeGreaterThan(10);
     const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
     expect(data.fields).toBeUndefined();
     const { renderOpenApiModule } = await generator();
@@ -710,6 +761,16 @@ describe("OpenAPI operation index generation", () => {
       city: { type: "string", maxLength: 5000 },
     };
     expect(buildOperationIndex(reversed, source).fields).toBe(compiled.fields);
+    const successes = structuredClone(withResponses);
+    successes.paths["/v1/things"].get.responses["202"] = {
+      content: { "application/json": { schema: { properties: { accepted_only: {} } } } },
+    };
+    expect(buildOperationIndex(successes, source).fields).toBe(compiled.fields);
+    const union = new OperationIndex(
+      buildOperationIndex(successes, { ...source, options: { allSuccessResponses: true } }),
+      { vendor: "fixture", title: "Fixture" },
+    );
+    expect(union.responseRoots(union.ops[0]!)?.has("accepted_only")).toBe(true);
     // Root arrays, union variants, local response refs and recursive schemas.
     withResponses.components.responses = {
       list: {

@@ -72,10 +72,11 @@ export const googlePageToken: HatchPageAdapter = {
       );
     const tokens = mask.match(/[A-Za-z_][A-Za-z0-9_]*|\*|[/(),]/g) ?? [];
     let depth = 0,
+      hasToken = false,
       name = true,
       child = false,
       valid = tokens.join("") === mask;
-    for (const token of tokens) {
+    for (const [position, token] of tokens.entries()) {
       if (token === "(") {
         if (name || !child) valid = false;
         depth++;
@@ -95,6 +96,8 @@ export const googlePageToken: HatchPageAdapter = {
         name = true;
         child = false;
       } else {
+        if (depth === 0 && (position === 0 || tokens[position - 1] === ",") && token === "nextPageToken")
+          hasToken = true;
         if (!name) valid = false;
         name = false;
         child = true;
@@ -102,7 +105,7 @@ export const googlePageToken: HatchPageAdapter = {
     }
     if (!valid || name || depth !== 0)
       throw new ConnectorCallError("invalid_args", "query.fields has invalid selectors.");
-    return { ...query, fields: `${mask},nextPageToken` };
+    return hasToken ? query : { ...query, fields: `${mask},nextPageToken` };
   },
   next(data) {
     const token = record(data)["nextPageToken"];

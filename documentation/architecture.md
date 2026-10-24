@@ -2340,6 +2340,11 @@ module records its independent document digest. Full source method inventory
 and canonical source-to-relative-path mappings survive normalization. Gmail's
 source `userId` becomes deployment-owned `me`; runtime paths are relative to
 the existing connection root. Reserved Slides ids remain one encoded segment.
+Flat-path aliases are reconciled with the declared path parameters. Method-
+specific required annotations specialize only affected reachable input schemas,
+including nested and recursive references. Deprecation metadata is retained;
+compact details opt in with `deprecations: true`. Live Discovery drift compares
+sorted-key JSON and revision, independently of archived-byte integrity.
 Only safe JSON query globals enter the contract. Source bytes are contributor
 evidence and never runtime imports.
 
@@ -2357,6 +2362,14 @@ discovery cursors. An indexed `googleClient` requires each named request's decla
 template and refuses a substituted id resolving to another operation before
 grant evaluation. Products opt in with `googleClient(connection, title,
 { standard: true, index })`; their requests carry `template`.
+Both the client and `googleHatchBinding(connection, { index, review })` require
+the explicit URI-template mode at construction. The hatch requires the binding's
+exact index identity. The Google binding additionally refuses percent-encoded
+unreserved characters and colons before dispatch.
+
+The generator's `allSuccessResponses: true` option unions JSON response fields
+from every 2xx. Existing providers keep the first JSON success contract until
+their own reviewed regeneration; no committed provider index changes here.
 
 `src/providers/_shared/google/hatch.ts` supplies JSON framing over the existing
 confined `Connection.sendPath`. It retains the hatch's origin/media guards,

@@ -12,7 +12,15 @@ const start = performance.now();
 const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.ts");
 const importMs = performance.now() - start;
 const pins = JSON.parse(await readFile(new URL("../test/fixtures/google-discovery/manifest.json", import.meta.url)));
-const options = { depth: 5, numericBounds: true, formats: true, maxEnum: 200, requestGraph: true };
+const options = {
+  depth: 5,
+  numericBounds: true,
+  formats: true,
+  maxEnum: 200,
+  requestGraph: true,
+  deprecations: true,
+  allSuccessResponses: true,
+};
 const measurements = [];
 const indexes = [];
 for (const pin of pins) {

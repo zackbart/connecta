@@ -217,12 +217,12 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
             ? [/^\/drafts\/draft1$/]
             : task === 7
               ? [/^\/drafts\/draft-inline$/]
-              : [/^\/threads$/, /^\/threads\/t2$/]
+              : [/^\/(?:threads|messages)(?:\/[^/]+)?$/]
       : product === "drive"
         ? task === 1 || task === 3
           ? [/^\/files$/]
           : task === 2
-            ? [/^\/drives$/, /^\/files\/folder1$/, /^\/files\/pdf1\/permissions$/]
+            ? [/^\/files\/folder1$/, /^\/files\/pdf1\/permissions$/]
             : task === 4
               ? [/^\/files\/pdf1\/revisions$/]
               : task === 6
@@ -242,12 +242,12 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
                   : [/\/values/]
             : product === "slides"
               ? task === 4 || task === 7
-                ? [/^\/presentations\/slides1\/pages\/slide1$/]
+                ? [/^\/presentations\/slides1(?:\/pages\/slide1)?$/]
                 : [/^\/presentations\/slides1$/]
               : task === 1 || task === 3
                 ? [/^\/forms\/forms1\/responses$/]
                 : task === 2
-                  ? [/^\/forms\/forms1$/, /responses\/response1$/, /responses\/response2$/]
+                  ? [/^\/forms\/forms1$/, /^\/forms\/forms1\/responses(?:\/response[12])?$/]
                   : [/^\/forms\/forms1$/];
   add(
     "correct-destination",
@@ -256,6 +256,12 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
       observed.some((address) => address.startsWith(`${product}.`)) &&
       calls.every((c) => c.args.subject === ALICE),
   );
+  if (product === "forms" && task === 2) {
+    const returned = JSON.stringify(reads.map((call) => call.args.returned));
+    const destination = out.find((item) => item.id === "correct-destination")!;
+    destination.pass =
+      destination.pass && ["response1", "response2"].every((id) => returned.includes(JSON.stringify(id)));
+  }
   const readOnly =
     task < 4 ||
     (task === 4 && ["gmail", "drive"].includes(product)) ||
@@ -418,7 +424,11 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
             (c) =>
               c.seq > write.seq &&
               c.kind === "read" &&
-              c.args.path === write.args.path.replace(/:batchUpdate$/, "").replace(/\/values\/.*$/, "/values:batchGet"),
+              c.outcome === "ok" &&
+              (product === "sheets"
+                ? /^\/spreadsheets\/sheets1(?:\/|:|$)/.test(c.args.path) &&
+                  JSON.stringify(c.args.returned).includes('"recover1"')
+                : c.args.path === write.args.path.replace(/:batchUpdate$/, "")),
           ),
       );
     }

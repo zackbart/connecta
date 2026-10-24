@@ -423,6 +423,7 @@ function compactSchema(document, schema, shape, level) {
   const values = allowedValues(node);
   if (values && values.length <= shape.maxEnum) out.e = values;
   if (node.format === "binary" || (shape.formats && typeof node.format === "string")) out.f = node.format;
+  if (shape.deprecations && node.deprecated === true) out.deprecated = true;
   if (node.nullable === true) out.n = 1;
   if (shape.numericBounds && ["integer", "number"].includes(node.type)) {
     if (Number.isFinite(node.minimum)) out.l = node.minimum;
@@ -570,7 +571,7 @@ function share(rows) {
  * refs and composition are bounded; overflow drops the whole response contract
  * so fields validation never mistakes an incomplete set for a complete one.
  */
-function responseFields(document, operation, additionalMediaTypes = []) {
+function responseFields(document, operation, additionalMediaTypes = [], allSuccessResponses = false) {
   const paths = new Set();
   let remaining = 1024;
   let overflow = false;
@@ -619,8 +620,8 @@ function responseFields(document, operation, additionalMediaTypes = []) {
       if (!prefix) visit(raw.properties[name], path, level + 1, refs, true);
     }
   };
-  // Every documented JSON success contributes roots. Error and default
-  // schemas do not establish a success contract.
+  // Unioning every JSON success is opt-in; existing indexes retain their
+  // first successful JSON contract until a separately reviewed regeneration.
   for (const status of Object.keys(operation.responses ?? {})
     .filter((code) => /^2(?:\d\d|XX)$/i.test(code))
     .sort()) {
@@ -632,6 +633,7 @@ function responseFields(document, operation, additionalMediaTypes = []) {
         .sort()[0] ?? additionalMediaTypes.find((type) => content[type]?.schema);
     if (!type || !content[type]?.schema) continue;
     visit(content[type].schema);
+    if (!allSuccessResponses) break;
   }
   return overflow ? [] : [...paths].sort();
 }
@@ -698,6 +700,7 @@ export function buildOperationIndex(document, source) {
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
     numericBounds: source.options?.numericBounds === true,
     formats: source.options?.formats === true,
+    deprecations: source.options?.deprecations === true,
     emptyObjectsOpen: source.options?.emptyObjectsOpen === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
@@ -736,7 +739,14 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
-      fields.push(responseFields(document, operation, source.options?.additionalResponseMediaTypes));
+      fields.push(
+        responseFields(
+          document,
+          operation,
+          source.options?.additionalResponseMediaTypes,
+          source.options?.allSuccessResponses === true,
+        ),
+      );
       const body = resolveRef(document, operation.requestBody);
       requestBodies.push(Object.values(body.content ?? {})[0]?.schema);
     }

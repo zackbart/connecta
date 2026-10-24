@@ -1,6 +1,6 @@
 /** Frozen Workspace universe. Only owned in-memory routes; never a real Google account. */
 import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { configureGuardedTransport } from "../../src/guarded-transport.js";
 import type { ConnectorSpec } from "./world.js";
 import type { Ledger, CallRecord } from "./service.js";
@@ -478,11 +478,21 @@ export class FakeGoogle {
       clientEmail: `${randomBytes(12).toString("hex")}@fixture.iam.gserviceaccount.com`,
       privateKey: key.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
     };
-    this.catalogBytes = GOOGLE_PRODUCTS.map((p) =>
-      ["SKILL.md", "tools.ts", "api.ts"]
-        .map((file) => readFileSync(new URL(`../../src/providers/${p}/${file}`, import.meta.url), "utf8"))
-        .join("\n"),
-    ).join("\n");
+    const corpus = (directory: URL): string =>
+      readdirSync(directory, { withFileTypes: true })
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((entry) => {
+          const file = new URL(entry.name + (entry.isDirectory() ? "/" : ""), directory);
+          return entry.isDirectory()
+            ? corpus(file)
+            : /\.(?:ts|mjs|md)$/i.test(entry.name)
+              ? readFileSync(file, "utf8")
+              : "";
+        })
+        .join("\n");
+    this.catalogBytes = [...GOOGLE_PRODUCTS, "_shared/google"]
+      .map((p) => corpus(new URL(`../../src/providers/${p}/`, import.meta.url)))
+      .join("\n");
     issuers.set(this.serviceAccount.clientEmail, this);
     if (!originalFetch) {
       originalFetch = globalThis.fetch;
@@ -802,6 +812,7 @@ export class FakeGoogle {
     if (product === "drive") {
       if (method === "GET") {
         if (path === "/drives") return { drives: [{ id: "shared1", name: "Review shared drive" }] };
+        if (path === "/drives/shared1") return { id: "shared1", name: "Review shared drive" };
         if (path === "/files") {
           const name = /name\s*=\s*'([^']+)'/.exec(query.q ?? "")?.[1];
           return page(
@@ -895,7 +906,34 @@ export class FakeGoogle {
       }
     }
     if (product === "sheets") {
-      if (method === "GET" && path === "/spreadsheets/sheets1") return a.spreadsheet;
+      const spreadsheet = (includeGrid: boolean) =>
+        !includeGrid
+          ? a.spreadsheet
+          : {
+              ...a.spreadsheet,
+              sheets: a.spreadsheet.sheets.map((sheet: Row, i: number) =>
+                i !== 0
+                  ? sheet
+                  : {
+                      ...sheet,
+                      data: [
+                        {
+                          startRow: 0,
+                          startColumn: 0,
+                          rowData: a.values.map((row, rowIndex) => ({
+                            values: row.map((value, columnIndex) => ({
+                              ...sheet.data?.[0]?.rowData?.[rowIndex]?.values?.[columnIndex],
+                              userEnteredValue:
+                                typeof value === "number" ? { numberValue: value } : { stringValue: value },
+                            })),
+                          })),
+                        },
+                      ],
+                    },
+              ),
+            };
+      if (method === "GET" && path === "/spreadsheets/sheets1")
+        return spreadsheet(query.includeGridData === "true" || /data/.test(query.fields ?? ""));
       if ((method === "GET" && path.includes("/values")) || path.endsWith(":batchGetByDataFilter")) {
         const ranges =
           body.dataFilters?.map((d: Row) => d.a1Range) ??
@@ -929,7 +967,7 @@ export class FakeGoogle {
             ? { spreadsheetId: "sheets1", valueRanges: values }
             : values[0];
       }
-      if (path.endsWith(":getByDataFilter")) return a.spreadsheet;
+      if (path.endsWith(":getByDataFilter")) return spreadsheet(body.includeGridData === true);
       if (path.endsWith("/developerMetadata:search"))
         return {
           matchedDeveloperMetadata: a.spreadsheet.developerMetadata.map((developerMetadata: Row) => ({

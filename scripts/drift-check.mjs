@@ -1,4 +1,4 @@
-import { discoveryRefs, discoveryMethods } from "./google-discovery.mjs";
+import { canonicalDiscovery, discoveryRefs, discoveryMethods } from "./google-discovery.mjs";
 import { contractDigest } from "./drift-contract.mjs";
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
@@ -471,6 +471,31 @@ async function checkOpenApiIndex(provider, check, options) {
   }
   const live = options.specSources.get(provider) ?? source.latest ?? source.url;
   const text = await loadPublished(provider, "published specification", live);
+  if (source.discovery) {
+    let published;
+    try {
+      published = JSON.parse(text);
+    } catch {
+      throw new ParserError(`${provider}'s Discovery specification at ${live} is not JSON`);
+    }
+    const archived = JSON.parse(await readFile(resolvePath(directory, "evidence/discovery.document.json"), "utf8"));
+    const digest = sha256(JSON.stringify(canonicalDiscovery(published)));
+    const pinned = sha256(JSON.stringify(canonicalDiscovery(archived)));
+    return {
+      provider,
+      specification: live,
+      revision: source.revision,
+      findings:
+        digest === pinned && String(published.revision) === source.revision
+          ? []
+          : [
+              {
+                kind: "spec-drift",
+                detail: `Discovery canonical digest/revision changed: pinned ${source.revision} (${pinned}), published ${published.revision} (${digest}). Review the original bytes and conversion together; ${check.source}.`,
+              },
+            ],
+    };
+  }
   let version;
   // A vendored pin (decision 0011, E) digests a document only published in
   // another format; the reviewed JSON conversion lives beside it.

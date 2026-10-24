@@ -31,7 +31,7 @@ import { providerFailureMessage, unsentAfterUnauthorized } from "../../../write-
 import { delegatedToken, forgetDelegatedToken, type DelegatedTokenRequest } from "./service-account.js";
 import { subjectFor, workspaceConnection, type GoogleWorkspaceOptions, type WorkspaceConnection } from "./workspace.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
-import { googleNamedOperation } from "./hatch.js";
+import { googleNamedOperation, requireGoogleIndex } from "./hatch.js";
 import type { OperationIndex } from "../rest/operation-index.js";
 
 type Json = Record<string, unknown>;
@@ -532,6 +532,7 @@ export function googleClient(
   provider: string,
   configuration: { readonly standard?: boolean; readonly index?: OperationIndex } = {},
 ): GoogleClient {
+  if (configuration.index) requireGoogleIndex(configuration.index);
   const send = (
     request: GoogleRequest,
     accept: string,

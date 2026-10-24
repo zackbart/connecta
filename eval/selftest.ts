@@ -542,7 +542,9 @@ async function play(
         ...(typeof use.input.code === "string"
           ? {
               code: use.input.code.replace(
-                /tracker|ci|assets|oauth|supabase|revenuecat|github|gmail|drive|docs|sheets|slides|forms/gi,
+                task.id.startsWith("google-")
+                  ? /gmail|drive|docs|sheets|slides|forms/gi
+                  : /tracker|ci|assets|oauth|supabase|revenuecat|github/gi,
                 "wrong_destination",
               ),
             }

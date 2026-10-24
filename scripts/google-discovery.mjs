@@ -61,48 +61,79 @@ const ACTIONS = {
   getThumbnail: "Get generate thumbnail",
 };
 
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
+export function canonicalDiscovery(value) {
+  if (Array.isArray(value)) return value.map(canonicalDiscovery);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.keys(value)
       .sort()
-      .map((key) => [key, canonical(value[key])]),
+      .map((key) => [key, canonicalDiscovery(value[key])]),
   );
 }
 
-function schemaOf(raw, request = false) {
+function schemaOf(raw, request = false, method, reference = (name) => `Input_${name}`) {
   if (!raw || typeof raw !== "object") return {};
-  if (raw.$ref) return { $ref: `#/components/schemas/${request ? "Input_" : ""}${raw.$ref}` };
+  if (raw.$ref) return { $ref: `#/components/schemas/${request ? reference(raw.$ref) : raw.$ref}` };
   const out = {};
-  for (const key of ["type", "format", "description", "enum", "pattern", "default", "readOnly"])
+  for (const key of ["type", "format", "description", "enum", "pattern", "default", "readOnly", "deprecated"])
     if (raw[key] !== undefined) out[key] = raw[key];
   for (const key of ["minimum", "maximum"])
     if (raw[key] !== undefined && Number.isFinite(Number(raw[key]))) out[key] = Number(raw[key]);
-  if (raw.items) out.items = schemaOf(raw.items, request);
+  if (raw.items) out.items = schemaOf(raw.items, request, method, reference);
   if (raw.properties) {
     out.properties = Object.fromEntries(
       Object.entries(raw.properties)
         .filter(
           ([, value]) => !request || !(value.readOnly === true || /^Output only\./i.test(value.description ?? "")),
         )
-        .map(([key, value]) => [key, schemaOf(value, request)]),
+        .map(([key, value]) => [key, schemaOf(value, request, method, reference)]),
     );
   }
   if (raw.additionalProperties !== undefined)
     out.additionalProperties =
       typeof raw.additionalProperties === "boolean"
         ? raw.additionalProperties
-        : schemaOf(raw.additionalProperties, request);
+        : schemaOf(raw.additionalProperties, request, method, reference);
   else if (raw.type === "object" && !Object.keys(raw.properties ?? {}).length) out.additionalProperties = true;
   if (Array.isArray(raw.required)) out.required = raw.required;
   if (request && raw.properties) {
     const required = Object.entries(raw.properties)
-      .filter(([, value]) => value.required === true)
+      .filter(
+        ([key, value]) =>
+          out.properties[key] && (value.required === true || value.annotations?.required?.includes(method)),
+      )
       .map(([key]) => key);
     if (required.length) out.required = [...new Set([...(out.required ?? []), ...required])];
   }
   return out;
+}
+
+/** Specialize only the affected reachable input graph, including recursive parents. */
+function methodInput(discovery, method, schemas) {
+  const reachable = new Map();
+  const scan = (value, refs, required) => {
+    if (!value || typeof value !== "object") return;
+    if (value.$ref) refs.add(value.$ref);
+    if (value.annotations?.required?.includes(method.id)) required.value = true;
+    for (const child of Object.values(value)) scan(child, refs, required);
+  };
+  const visit = (name) => {
+    if (reachable.has(name)) return;
+    const refs = new Set(),
+      required = { value: false };
+    scan(discovery.schemas[name], refs, required);
+    reachable.set(name, { refs, required });
+    for (const ref of refs) visit(ref);
+  };
+  visit(method.request.$ref);
+  const changed = new Set([...reachable].filter(([, node]) => node.required.value).map(([name]) => name));
+  for (let previous = -1; previous !== changed.size;) {
+    previous = changed.size;
+    for (const [name, node] of reachable) if ([...node.refs].some((ref) => changed.has(ref))) changed.add(name);
+  }
+  const reference = (name) => (changed.has(name) ? `Input_${method.id.replaceAll(".", "_")}_${name}` : `Input_${name}`);
+  for (const name of changed) schemas[reference(name)] = schemaOf(discovery.schemas[name], true, method.id, reference);
+  return reference(method.request.$ref);
 }
 
 /** Complete inventory, no execution verdicts. Products own literal admission tables. */
@@ -110,6 +141,12 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
   if (discovery?.kind !== "discovery#restDescription" || !ROOTS[discovery.name])
     throw new Error("Expected a supported Google Workspace Discovery document.");
   const root = ROOTS[discovery.name];
+  const schemas = Object.fromEntries(
+    Object.entries(discovery.schemas ?? {}).flatMap(([name, schema]) => [
+      [name, schemaOf(schema)],
+      [`Input_${name}`, schemaOf(schema, true)],
+    ]),
+  );
   const paths = {},
     mapping = [];
   for (const method of discoveryMethods(discovery)) {
@@ -121,6 +158,17 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
     const path = fixed.startsWith(`${root}/`) ? fixed.slice(root.length) : fixed;
     if (!path.startsWith("/")) throw new Error(`Invalid Discovery path: ${path}`);
     const verb = String(method.httpMethod).toLowerCase();
+    const variables = (text) => [...text.matchAll(/\{\+?([^}]+)\}/g)].map((match) => match[1]);
+    const originalVariables = variables(method.path);
+    const flatVariables = variables(method.flatPath ?? method.path);
+    const pathVariables = variables(path);
+    const pathName = (name) => {
+      if (pathVariables.includes(name)) return name;
+      const at = originalVariables.indexOf(name);
+      if (originalVariables.length === flatVariables.length && at >= 0 && pathVariables.includes(flatVariables[at]))
+        return flatVariables[at];
+      throw new Error(`Cannot reconcile ${method.id} path parameter ${name} with ${path}`);
+    };
     paths[path] ??= {};
     if (paths[path][verb]) throw new Error(`Duplicate normalized operation: ${verb.toUpperCase()} ${path}`);
     const globals = Object.fromEntries(Object.entries(discovery.parameters ?? {}).filter(([key]) => GLOBALS.has(key)));
@@ -131,13 +179,18 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
           !["access_token", "oauth_token", "key", "callback", "upload_protocol", "uploadType", "alt"].includes(name),
       )
       .map(([name, parameter]) => ({
-        name,
+        name: parameter.location === "path" ? pathName(name) : name,
         in: parameter.location,
         required: parameter.required === true,
+        ...(parameter.deprecated === true ? { deprecated: true } : {}),
         ...(parameter.description ? { description: parameter.description } : {}),
         ...(parameter.repeated ? { style: "form", explode: true } : {}),
         schema: parameter.repeated ? { type: "array", items: schemaOf(parameter) } : schemaOf(parameter),
       }));
+    const declared = parameters.filter((parameter) => parameter.in === "path").map((parameter) => parameter.name);
+    if (JSON.stringify([...declared].sort()) !== JSON.stringify([...pathVariables].sort()))
+      throw new Error(`Discovery path parameters do not match ${method.id}: ${path}`);
+    const input = method.request?.$ref ? methodInput(discovery, method, schemas) : undefined;
     const parts = method.id.split(".").slice(1);
     const action = parts.pop();
     const words = `${ACTIONS[action] ?? action} ${parts.join(" ")}`.replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -155,7 +208,7 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
             requestBody: {
               required: true,
               content: {
-                "application/json": { schema: { $ref: `#/components/schemas/Input_${method.request.$ref}` } },
+                "application/json": { schema: { $ref: `#/components/schemas/${input}` } },
               },
             },
           }
@@ -177,18 +230,13 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
       operation: `${method.httpMethod} ${path}`,
     });
   }
-  return canonical({
+  return canonicalDiscovery({
     openapi: "3.1.0",
     info: { title: discovery.title, version: discovery.version },
     servers: [{ url: `${new URL(discovery.rootUrl).origin}${root}` }],
     paths,
     components: {
-      schemas: Object.fromEntries(
-        Object.entries(discovery.schemas ?? {}).flatMap(([name, schema]) => [
-          [name, schemaOf(schema)],
-          [`Input_${name}`, schemaOf(schema, true)],
-        ]),
-      ),
+      schemas,
     },
     "x-google-discovery": {
       format: GOOGLE_DISCOVERY_FORMAT,

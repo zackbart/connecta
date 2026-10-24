@@ -36,6 +36,7 @@ export interface SchemaNode {
   readonly $?: number;
   readonly l?: number;
   readonly u?: number;
+  readonly deprecated?: true;
 }
 
 /** `[method, path template, operationId, summary, tag index, server index?]` */
@@ -233,6 +234,9 @@ export class OperationIndex {
   readonly #segments: readonly (readonly string[])[];
   readonly #slashParams: ReadonlySet<string>;
   readonly #uriTemplates: boolean;
+  get pathMatching(): "segments" | "uri-template" {
+    return this.#uriTemplates ? "uri-template" : "segments";
+  }
   #details: { d: readonly SchemaNode[]; o: readonly (0 | DetailsRow)[] } | undefined;
   #fields: readonly (readonly OperationField[])[] | undefined;
   #requestSchemas: { definitions: Record<string, JsonSchema>; roots: (JsonSchema | null)[] } | undefined;
@@ -705,6 +709,7 @@ export class OperationIndex {
     if (resolved.n === 1) out["nullable"] = true;
     if (resolved.l !== undefined) out["minimum"] = resolved.l;
     if (resolved.u !== undefined) out["maximum"] = resolved.u;
+    if (resolved.deprecated === true) out["deprecated"] = true;
     if (resolved.a) out["anyOf"] = resolved.a.map((branch) => this.#schema(branch));
     if (resolved.p) {
       out["properties"] = Object.fromEntries(
