@@ -47,7 +47,7 @@ const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
   "planning-center.pco_api_details",
-  ...["breeze", "ccb", "cloudflare", "github", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "ccb", "cloudflare", "forms", "github", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -131,6 +131,35 @@ describe("API provider failure sweep", () => {
         `${provider.name}: cover tools from every API mode`,
       ).toEqual(tools);
       expect(Object.keys(argumentsTable[provider.name]!).sort(), provider.name).toEqual(tools);
+      // Forms hatches share the existing admission/transport boundary; fold
+      // their cases here without multiplying the exhaustive status matrix.
+      if (provider.name === "forms")
+        for (const name of ["forms_api_search", "forms_api_details", "forms_api_read", "forms_api_write"]) {
+          const remote = name === "forms_api_read" || name === "forms_api_write";
+          const requests: string[] = [];
+          const result = await sweepCall(
+            provider,
+            name,
+            `forms.${name}`,
+            argumentsTable.forms![name],
+            name === "forms_api_write" ? "write" : "read",
+            (request) => {
+              requests.push(request.url);
+              return Response.json({ error: { code: 503 } }, { status: 503 });
+            },
+          );
+          expect(requests).toHaveLength(remote ? 1 : 0);
+          if (remote) expect(result.isError).toBe(true);
+          else expect(result.isError).toBeFalsy();
+          if (remote)
+            expect(result.structuredContent).toMatchObject({
+              ok: false,
+              error:
+                name === "forms_api_write"
+                  ? { retryable: false, writeOutcome: "unknown" }
+                  : { code: "unavailable", retryable: true },
+            });
+        }
       // Fold GitHub's two new offline hatches here: injected remote failures
       // cannot affect metadata that sends no request.
       if (provider.name === "github")
@@ -148,7 +177,9 @@ describe("API provider failure sweep", () => {
     describe(provider.name, () => {
       const examples = provider.catalog
         .filter(
-          (tool) => !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)),
+          (tool) =>
+            !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)) &&
+            !(provider.name === "forms" && tool.name.startsWith("forms_api_")),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
@@ -166,7 +197,9 @@ describe("API provider failure sweep", () => {
           it.each(
             provider.catalog.find(
               (candidate) =>
-                !LOCAL.has(`${provider.name}.${candidate.name}`) && classifyTool(candidate) === classification,
+                !LOCAL.has(`${provider.name}.${candidate.name}`) &&
+                !(provider.name === "forms" && candidate.name.startsWith("forms_api_")) &&
+                classifyTool(candidate) === classification,
             )?.name === tool.name
               ? (["503", "network-after-send"] as const)
               : (["503"] as const),
@@ -812,14 +845,32 @@ describe("round-5 whole-call failure sweep", () => {
 
     it(`INV-9: Forms cursor conflict after HTTP 200 served ${classification}`, async () => {
       const requests = googleFetch(() => Response.json({ formId: "form-1", revisionId: "new", items: [] }));
+      const connector = provider("forms");
+      const registry = makeRegistry([connector], { classification: { forms: { get_form: classification } } });
+      const ctx = registry.contextFor("forms", BASE);
+      const { boundCursor } = await import("../src/http/paging.js");
+      const { runEdge } = await import("../src/runtime/run.js");
+      const { fromConnectorContext } = await import("../src/http/services.js");
+      const { Effect } = await import("effect");
       const bytes = new Uint8Array(
         await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(["get_form", "form-1"]))),
       );
       const b64url = (value: string) => btoa(value).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-      const cursor = b64url(
-        JSON.stringify({ d: b64url(String.fromCharCode(...bytes.subarray(0, 16))), i: 0, q: 0, r: "old" }),
+      const lease = fromConnectorContext(ctx, classification);
+      const cursor = await runEdge(
+        boundCursor
+          .encode(
+            "get_form",
+            { formId: "form-1" },
+            JSON.stringify({ d: b64url(String.fromCharCode(...bytes.subarray(0, 16))), i: 0, q: 0, r: "old" }),
+          )
+          .pipe(Effect.provideContext(lease.services)),
       );
-      const result = await invoke(provider("forms"), "get_form", classification, { formId: "form-1", cursor });
+      const result = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "forms.get_form",
+        { formId: "form-1", cursor },
+        { source: classification === "write" ? "call_destructive_tool" : "call_tool" },
+      );
       expect(requests).toHaveLength(1);
       expect(result).toMatchObject({
         ok: false,

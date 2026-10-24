@@ -1697,6 +1697,67 @@ describe("Workspace served classification on unauthorized requests", () => {
       expect(apiCalls).toHaveLength(1);
       expect(tokenCalls).toHaveLength(1);
       await connecta.close();
+      if (_name === "forms") {
+        // The product's indexed methods cross native and program boundaries
+        // with the same delegated subject, admission and write-once verdict.
+        const storage = memoryStorage();
+        const native = createTestConnecta({
+          connectors: [
+            forms("workspace", { purpose: "Forms", serviceAccount: account(), subject: "alice@example.com" }),
+          ],
+          agents: ["assistant"],
+          storage,
+          accessTokens: accessTokens(storage),
+          logger: silentLogger,
+          pools: {
+            native: { tools: ["workspace"], members: ["agent:assistant"], surface: "native" },
+            reads: { tools: ["workspace"], members: ["agent:assistant"], surface: "native", readOnly: true },
+          },
+          executor: scriptedExecutor(async (fns) => fns.call!("workspace.forms_api_read", { path: "/forms/f" })),
+        });
+        const token = await issueAgentToken(storage, "assistant");
+        const rpc = async (pool: string, name: string, args: object) =>
+          (
+            await readJsonRpc(
+              await native.fetch(mcpRpc("tools/call", { name, arguments: args }, { token, agentPool: pool })),
+            )
+          ).result;
+        try {
+          apiReplies.push(() => Response.json({ formId: "f", info: { title: "Native form" } }));
+          const read = await rpc("native", "workspace__forms_api_read", { path: "/forms/f" });
+          expect(read.isError, JSON.stringify(read)).toBeFalsy();
+          expect(JSON.stringify(read)).toContain("Native form");
+          const before = apiCalls.length;
+          const denied = await rpc("reads", "workspace__forms_api_write", {
+            path: "/forms",
+            method: "POST",
+            body: { info: { title: "Denied" } },
+          });
+          expect(denied.isError).toBe(true);
+          const refused = await rpc("native", "workspace__forms_api_write", {
+            path: "/forms/f/watches",
+            method: "POST",
+            body: {},
+          });
+          expect(refused.isError).toBe(true);
+          expect(apiCalls).toHaveLength(before);
+          apiReplies.push(() => Response.json({ error: { code: 500 } }, { status: 500 }));
+          const unknown = await rpc("native", "workspace__forms_api_write", {
+            path: "/forms",
+            method: "POST",
+            body: { info: { title: "Once" } },
+          });
+          expect(unknown.isError).toBe(true);
+          expect(JSON.stringify(unknown)).toContain('"writeOutcome":"unknown"');
+          expect(apiCalls).toHaveLength(before + 1);
+          apiReplies.push(() => Response.json({ formId: "f", info: { title: "Program form" } }));
+          const program = await rpc("native", "execute_code", { code: "async () => null" });
+          expect(program.isError, JSON.stringify(program)).toBeFalsy();
+          expect(JSON.stringify(program)).toContain("Program form");
+        } finally {
+          await native.close();
+        }
+      }
       if (_name === "drive") {
         // INV-5/9: the primary and upload connections share one delegated
         // cache. A late upload refusal must discard only its exact token,

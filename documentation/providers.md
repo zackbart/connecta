@@ -467,3 +467,47 @@ call per second, individual advanced searches one per five seconds, and
 category schedule lists one per two seconds. Override `callAdmission` to match
 shared usage, and respect the vendor's rate-limit wait. Replies are bounded
 at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.
+
+## Google Forms
+
+```ts
+import { forms } from "@zackbart/connecta/providers/forms";
+
+forms("forms", {
+  purpose: "Registration forms and response summaries",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+Enable the Google Forms API in a Google Cloud project. Create a service
+account without project IAM roles, enable domain-wide delegation, and store
+its JSON key as a deployment secret. A Workspace super administrator must
+add the key's numeric `client_id` to Admin console → Security → Access and
+data control → API controls → Manage Domain Wide Delegation, with exactly
+`https://www.googleapis.com/auth/forms.body,https://www.googleapis.com/auth/forms.responses.readonly`.
+A grant can take up to 24 hours to apply. If key creation is disabled by
+`iam.disableServiceAccountKeyCreation`, an organization policy administrator
+must permit it for the project.
+
+Configure inbound authentication. `subject` may be one fixed Workspace
+address or a function mapping the admitted identity to an address. Calls
+without a mapped account fail `auth_required`; tool arguments cannot select
+an account. A fixed subject gives every admitted caller that account's view.
+Each logical call resolves its subject once, including form/answer joins.
+A missing form and one the account cannot open are indistinguishable.
+
+`readOnly: true` omits and refuses writes. There is no configurable sensitive
+field set: answers, respondent email and quiz answer keys are requested data
+on both named tools and the hatch. Vendor-minted temporary image URLs and
+credentials remain permanently withheld. Listing forms, sharing and deleting
+files require a separate Drive connection and scopes. Publish-settings
+mutation and every watch operation remain refused even though discoverable.
+
+Named responses default to 25 items, at most 100, and may end earlier for
+size. Results target 240 KiB; vendor responses are bounded at 8 MiB.
+`list_responses` and `get_response` each read both the form and its answers.
+Batches allow 1–100 reviewed request objects and require a current revision
+on the batch wrapper and hatch. Google supplies no idempotency key. Set
+`callAdmission` for the deployment's shared quota; the connector does not
+reserve a Workspace-wide quota.

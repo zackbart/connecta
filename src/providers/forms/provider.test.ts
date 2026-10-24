@@ -4,6 +4,8 @@
 // reaches: refusals, cuts, declared keys, result bounds, and cursors.
 import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMetaTools } from "../../meta-tools.js";
+import { makeRegistry } from "../../../test/helpers.js";
 import { forms } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
@@ -67,8 +69,12 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
   } as Parameters<typeof forms>[1]);
 }
 
+let storage = memoryStorage();
+beforeEach(() => {
+  storage = memoryStorage();
+});
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
@@ -150,11 +156,41 @@ describe("writing forms", () => {
         })),
       });
       expect(jsonBytes(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-      expect(result).toMatchObject({ formId: "form-1", revisionId: "00000050", truncated: true });
+      expect(result).toMatchObject({ formId: "form-1", revisionId: "00000050", truncated: expect.any(Array) });
       expect(result.note).toMatch(/^The batch applied\./);
       expect(result.note).not.toMatch(/nothing|not applied|failed/i);
       check(result);
       await conforms(connector, "batch_update_form", result);
+      route = () => ({
+        body: {
+          form: { formId: "f", items: [{ imageItem: { image: { contentUri: "https://images.example/private" } } }] },
+          replies: [{}],
+          writeControl: { requiredRevisionId: "next" },
+        },
+      });
+      const full = await call(connector, "forms_api_write", {
+        method: "POST",
+        path: "/forms/f:batchUpdate",
+        body: {
+          requests: [{ deleteItem: { location: { index: 0 } } }],
+          writeControl: { requiredRevisionId: "now" },
+          includeFormInResponse: true,
+        },
+      });
+      expect(full.data.form.items[0].imageItem.image.contentUri).toBe("[redacted]");
+      const sent = calls.length;
+      await expect(call(connector, "create_form", { title: "[redacted]" })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      await expect(
+        call(connector, "forms_api_write", {
+          method: "POST",
+          path: "/forms",
+          body: { info: { title: "A" } },
+          fields: ["missing"],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(sent);
     },
   );
 });
@@ -233,14 +269,62 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     expect(rowsOf(pages, "grid")).toEqual(Array.from({ length: 2_000 }, (_, index) => `row${index}`));
     const parts = pages.flatMap((page) => page.items.filter((item: any) => item.itemId === "grid"));
     expect(parts.length).toBeGreaterThan(1);
-    expect(parts[0].moreQuestions).toBe(2_000 - parts[0].questions.length);
+    expect(pages.some((page) => page.truncated?.includes("items[].questions[]"))).toBe(true);
+    expect(parts[0]).not.toHaveProperty("moreQuestions");
     expect(parts[1].questionsFrom).toBe(parts[0].questions.length);
     expect(parts.at(-1).moreQuestions).toBeUndefined();
 
-    // The same form whole is more than one result: raw refuses with guidance.
+    // The retired raw argument is refused before dispatch.
     const raw = await call(connection(), "get_form", { formId: "huge", raw: true }).catch((error) => error);
-    expect(raw).toMatchObject({ code: "invalid_args", message: expect.stringContaining("pages its items") });
+    expect(raw).toMatchObject({ code: "invalid_args" });
 
+    const connector = connection();
+    const sent = calls.length;
+    for (const args of [{ formId: "huge", fields: ["missing"] }])
+      await expect(call(connector, "get_form", args)).rejects.toMatchObject({ code: "invalid_args" });
+    for (const [method, path] of [
+      ["POST", "/forms/huge:setPublishSettings"],
+      ["POST", "/forms/huge/watches"],
+      ["GET", "/forms/huge/watches"],
+      ["DELETE", "/forms/huge/watches/w"],
+      ["POST", "/forms/huge/watches/w:renew"],
+    ]) {
+      await expect(
+        call(connector, method === "GET" ? "forms_api_read" : "forms_api_write", { method, path }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    for (const body of [
+      { requests: [{ createItem: {} }] },
+      { requests: [{ createItem: {}, deleteItem: {} }], writeControl: { requiredRevisionId: "r" } },
+      { requests: [{ invented: {} }], writeControl: { requiredRevisionId: "r" } },
+    ]) {
+      await expect(
+        call(connector, "forms_api_write", { method: "POST", path: "/forms/huge:batchUpdate", body }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(sent);
+    for (const [query, path] of [
+      ["quiz answer key", "/forms/{formId}"],
+      ["change form title", "/forms/{formId}:batchUpdate"],
+      ["add question", "/forms/{formId}:batchUpdate"],
+      ["delete form item", "/forms/{formId}:batchUpdate"],
+    ]) {
+      const discovery = await call(connector, "forms_api_search", { query });
+      expect(discovery.operations.slice(0, 2).map((op: any) => op.path)).toContain(path);
+    }
+    const readOnly = connection({ readOnly: true });
+    const meta = createMetaTools(makeRegistry([readOnly]), "https://connecta.example");
+    const visible = await meta.searchTools({ connector: "forms" });
+    expect(JSON.stringify(visible.structuredContent)).not.toContain('"name":"forms_api_write"');
+    const denied = await meta.callDestructiveTool({
+      address: "forms.forms_api_write",
+      args: { path: "/forms", method: "POST", body: { info: { title: "Refused" } } },
+    });
+    expect(denied.isError).toBe(true);
+    expect(calls).toHaveLength(sent);
+    const selected = await call(connector, "get_form", { formId: "huge", fields: ["title"] });
+    expect(selected).toMatchObject({ title: "Huge", page: { hasMore: true } });
+    expect(selected).not.toHaveProperty("items");
     // Items are addressed by index; a page of a changed form would skip some.
     const first = await call(connection(), "get_form", { formId: "huge" });
     route = () => ({ body: { ...form, revisionId: "00000010" } });
@@ -250,6 +334,71 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     await expect(
       call(connection(), "get_form", { formId: "other", cursor: first.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
+    route = () => ({
+      body: {
+        formId: "f",
+        info: { title: "Quiz" },
+        items: [
+          {
+            imageItem: {
+              image: { contentUri: "https://images.example/private", sourceUri: "https://example.com/source" },
+            },
+          },
+        ],
+        settings: { quizSettings: { isQuiz: true } },
+      },
+    });
+    const full = await call(connector, "forms_api_read", { path: "/forms/f" });
+    expect(full.data.items[0].imageItem.image).toEqual({
+      contentUri: "[redacted]",
+      sourceUri: "https://example.com/source",
+    });
+    expect(full.data.settings.quizSettings.isQuiz).toBe(true);
+    const hatchSent = calls.length;
+    await expect(call(connector, "forms_api_read", { path: "/forms/f", fields: ["missing"] })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(
+      call(connector, "forms_api_read", { path: "/forms/f/responses", query: { pageToken: "raw" } }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(hatchSent);
+    route = (request) => ({
+      body: request.url.searchParams.has("pageToken")
+        ? {
+            responses: [
+              {
+                responseId: "r1",
+                respondentEmail: "alice@example.com",
+                answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: "Yes" }] } } },
+              },
+            ],
+          }
+        : { responses: [], nextPageToken: "p2" },
+    });
+    const empty = await call(connector, "forms_api_read", {
+      path: "/forms/f/responses",
+      query: { fields: "responses(responseId,respondentEmail,answers)" },
+      fields: ["responses"],
+    });
+    expect(empty.page.hasMore).toBe(true);
+    expect(calls.at(-1)!.url.searchParams.get("fields")).toContain("nextPageToken");
+    const last = await call(connector, "forms_api_read", {
+      path: "/forms/f/responses",
+      query: { fields: "responses(responseId,respondentEmail,answers)" },
+      fields: ["responses"],
+      cursor: empty.page.nextCursor,
+    });
+    expect(last.page).toMatchObject({ hasMore: false });
+    expect(last.page).not.toHaveProperty("nextCursor");
+    expect(last.data.responses[0]).toMatchObject({
+      respondentEmail: "alice@example.com",
+      answers: { q1: { textAnswers: { answers: [{ value: "Yes" }] } } },
+    });
+    const pageSent = calls.length;
+    await expect(
+      call(connector, "forms_api_read", { path: "/forms/other/responses", cursor: empty.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(pageSent);
   });
 });
 

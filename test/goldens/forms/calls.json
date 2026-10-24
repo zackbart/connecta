@@ -1,5 +1,1292 @@
 [
   {
+    "label": "indexed form grading",
+    "tool": "forms_api_search",
+    "args": {
+      "query": "quiz answer key"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/forms/{formId}",
+            "operationId": "forms.forms.get",
+            "summary": "Get read form question options, quiz grading answer key, images and section navigation.",
+            "tool": "forms_api_read",
+            "named": "get_form"
+          },
+          {
+            "method": "GET",
+            "path": "/forms/{formId}/responses/{responseId}",
+            "operationId": "forms.forms.responses.get",
+            "summary": "Get read one form response with answers, quiz grades and feedback.",
+            "tool": "forms_api_read",
+            "matched": "response field answers"
+          },
+          {
+            "method": "GET",
+            "path": "/forms/{formId}/responses",
+            "operationId": "forms.forms.responses.list",
+            "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+            "tool": "forms_api_read",
+            "matched": "response field responses[].answers"
+          }
+        ],
+        "revision": "20261022",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "forms_api_details",
+    "tool": "forms_api_details",
+    "args": {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "POST",
+        "path": "/forms/{formId}:batchUpdate",
+        "operationId": "forms.forms.batchUpdate",
+        "summary": "Batch update edit form: change form title, add question, delete form item, move item or edit quiz settings.",
+        "parameters": [
+          {
+            "name": "prettyPrint",
+            "in": "query",
+            "required": false,
+            "description": "Returns response with indentations and line breaks.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "description": "Selector specifying which fields to include in a partial response.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "formId",
+            "in": "path",
+            "required": true,
+            "description": "Required.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "body": {
+          "contentType": "application/json",
+          "required": true,
+          "schema": {
+            "description": "A batch of updates to perform on a form.",
+            "properties": {
+              "includeFormInResponse": {
+                "description": "Whether to return an updated version of the model in the response.",
+                "type": "boolean"
+              },
+              "requests": {
+                "description": "Required.",
+                "items": {
+                  "$ref": "#/$defs/Input_Request"
+                },
+                "type": "array"
+              },
+              "writeControl": {
+                "description": "Provides control over how write requests are executed.",
+                "$ref": "#/$defs/Input_WriteControl"
+              }
+            },
+            "type": "object",
+            "$defs": {
+              "Input_BatchUpdateFormRequest": {
+                "description": "A batch of updates to perform on a form.",
+                "properties": {
+                  "includeFormInResponse": {
+                    "description": "Whether to return an updated version of the model in the response.",
+                    "type": "boolean"
+                  },
+                  "requests": {
+                    "description": "Required.",
+                    "items": {
+                      "$ref": "#/$defs/Input_Request"
+                    },
+                    "type": "array"
+                  },
+                  "writeControl": {
+                    "description": "Provides control over how write requests are executed.",
+                    "$ref": "#/$defs/Input_WriteControl"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Request": {
+                "description": "The kinds of update requests that can be made.",
+                "properties": {
+                  "createItem": {
+                    "description": "Create a new item.",
+                    "$ref": "#/$defs/Input_CreateItemRequest"
+                  },
+                  "deleteItem": {
+                    "description": "Delete an item.",
+                    "$ref": "#/$defs/Input_DeleteItemRequest"
+                  },
+                  "moveItem": {
+                    "description": "Move an item to a specified location.",
+                    "$ref": "#/$defs/Input_MoveItemRequest"
+                  },
+                  "updateFormInfo": {
+                    "description": "Update Form's Info.",
+                    "$ref": "#/$defs/Input_UpdateFormInfoRequest"
+                  },
+                  "updateItem": {
+                    "description": "Update an item.",
+                    "$ref": "#/$defs/Input_UpdateItemRequest"
+                  },
+                  "updateSettings": {
+                    "description": "Updates the Form's settings.",
+                    "$ref": "#/$defs/Input_UpdateSettingsRequest"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_CreateItemRequest": {
+                "description": "Create an item in a form.",
+                "properties": {
+                  "item": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Item"
+                  },
+                  "location": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Location"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Item": {
+                "description": "A single item of the form.",
+                "properties": {
+                  "description": {
+                    "description": "The description of the item.",
+                    "type": "string"
+                  },
+                  "imageItem": {
+                    "description": "Displays an image on the page.",
+                    "$ref": "#/$defs/Input_ImageItem"
+                  },
+                  "itemId": {
+                    "description": "The item ID.",
+                    "type": "string"
+                  },
+                  "pageBreakItem": {
+                    "description": "Starts a new page with a title.",
+                    "$ref": "#/$defs/Input_PageBreakItem"
+                  },
+                  "questionGroupItem": {
+                    "description": "Poses one or more questions to the user with a single major prompt.",
+                    "$ref": "#/$defs/Input_QuestionGroupItem"
+                  },
+                  "questionItem": {
+                    "description": "Poses a question to the user.",
+                    "$ref": "#/$defs/Input_QuestionItem"
+                  },
+                  "textItem": {
+                    "description": "Displays a title and description on the page.",
+                    "$ref": "#/$defs/Input_TextItem"
+                  },
+                  "title": {
+                    "description": "The title of the item.",
+                    "type": "string"
+                  },
+                  "videoItem": {
+                    "description": "Displays a video on the page.",
+                    "$ref": "#/$defs/Input_VideoItem"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_ImageItem": {
+                "description": "An item containing an image.",
+                "properties": {
+                  "image": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Image"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Image": {
+                "description": "Data representing an image.",
+                "properties": {
+                  "altText": {
+                    "description": "A description of the image that is shown on hover and read by screenreaders.",
+                    "type": "string"
+                  },
+                  "properties": {
+                    "description": "Properties of an image.",
+                    "$ref": "#/$defs/Input_MediaProperties"
+                  },
+                  "sourceUri": {
+                    "description": "Input only.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_MediaProperties": {
+                "description": "Properties of the media.",
+                "properties": {
+                  "alignment": {
+                    "description": "Position of the media.",
+                    "enum": [
+                      "ALIGNMENT_UNSPECIFIED",
+                      "LEFT",
+                      "RIGHT",
+                      "CENTER"
+                    ],
+                    "type": "string"
+                  },
+                  "width": {
+                    "description": "The width of the media in pixels.",
+                    "format": "int32",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_PageBreakItem": {
+                "additionalProperties": true,
+                "description": "A page break.",
+                "properties": {},
+                "type": "object"
+              },
+              "Input_QuestionGroupItem": {
+                "description": "Defines a question that comprises multiple questions grouped together.",
+                "properties": {
+                  "grid": {
+                    "description": "The question group is a grid with rows of multiple choice questions that share the same options.",
+                    "$ref": "#/$defs/Input_Grid"
+                  },
+                  "image": {
+                    "description": "The image displayed within the question group above the specific questions.",
+                    "$ref": "#/$defs/Input_Image"
+                  },
+                  "questions": {
+                    "description": "Required.",
+                    "items": {
+                      "$ref": "#/$defs/Input_Question"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Grid": {
+                "description": "A grid of choices (radio or check boxes) with each row constituting a separate question.",
+                "properties": {
+                  "columns": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_ChoiceQuestion"
+                  },
+                  "shuffleQuestions": {
+                    "description": "If `true`, the questions are randomly ordered.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_ChoiceQuestion": {
+                "description": "A radio/checkbox/dropdown question.",
+                "properties": {
+                  "options": {
+                    "description": "Required.",
+                    "items": {
+                      "$ref": "#/$defs/Input_Option"
+                    },
+                    "type": "array"
+                  },
+                  "shuffle": {
+                    "description": "Whether the options should be displayed in random order for different instances of the quiz.",
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "description": "Required.",
+                    "enum": [
+                      "CHOICE_TYPE_UNSPECIFIED",
+                      "RADIO",
+                      "CHECKBOX",
+                      "DROP_DOWN"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Option": {
+                "description": "An option for a Choice question.",
+                "properties": {
+                  "goToAction": {
+                    "description": "Section navigation type.",
+                    "enum": [
+                      "GO_TO_ACTION_UNSPECIFIED",
+                      "NEXT_SECTION",
+                      "RESTART_FORM",
+                      "SUBMIT_FORM"
+                    ],
+                    "type": "string"
+                  },
+                  "goToSectionId": {
+                    "description": "Item ID of section header to go to.",
+                    "type": "string"
+                  },
+                  "image": {
+                    "description": "Display image as an option.",
+                    "$ref": "#/$defs/Input_Image"
+                  },
+                  "isOther": {
+                    "description": "Whether the option is \"other\".",
+                    "type": "boolean"
+                  },
+                  "value": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Question": {
+                "description": "Any question.",
+                "properties": {
+                  "choiceQuestion": {
+                    "description": "A respondent can choose from a pre-defined set of options.",
+                    "$ref": "#/$defs/Input_ChoiceQuestion"
+                  },
+                  "dateQuestion": {
+                    "description": "A respondent can enter a date.",
+                    "$ref": "#/$defs/Input_DateQuestion"
+                  },
+                  "fileUploadQuestion": {
+                    "description": "A respondent can upload one or more files.",
+                    "$ref": "#/$defs/Input_FileUploadQuestion"
+                  },
+                  "grading": {
+                    "description": "Grading setup for the question.",
+                    "$ref": "#/$defs/Input_Grading"
+                  },
+                  "questionId": {
+                    "description": "Read only.",
+                    "type": "string"
+                  },
+                  "ratingQuestion": {
+                    "description": "A respondent can choose a rating from a pre-defined set of icons.",
+                    "$ref": "#/$defs/Input_RatingQuestion"
+                  },
+                  "required": {
+                    "description": "Whether the question must be answered in order for a respondent to submit their response.",
+                    "type": "boolean"
+                  },
+                  "rowQuestion": {
+                    "description": "A row of a QuestionGroupItem.",
+                    "$ref": "#/$defs/Input_RowQuestion"
+                  },
+                  "scaleQuestion": {
+                    "description": "A respondent can choose a number from a range.",
+                    "$ref": "#/$defs/Input_ScaleQuestion"
+                  },
+                  "textQuestion": {
+                    "description": "A respondent can enter a free text response.",
+                    "$ref": "#/$defs/Input_TextQuestion"
+                  },
+                  "timeQuestion": {
+                    "description": "A respondent can enter a time.",
+                    "$ref": "#/$defs/Input_TimeQuestion"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_DateQuestion": {
+                "description": "A date question.",
+                "properties": {
+                  "includeTime": {
+                    "description": "Whether to include the time as part of the question.",
+                    "type": "boolean"
+                  },
+                  "includeYear": {
+                    "description": "Whether to include the year as part of the question.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_FileUploadQuestion": {
+                "description": "A file upload question.",
+                "properties": {
+                  "folderId": {
+                    "description": "Required.",
+                    "type": "string"
+                  },
+                  "maxFileSize": {
+                    "description": "Maximum number of bytes allowed for any single file uploaded to this question.",
+                    "format": "int64",
+                    "type": "string"
+                  },
+                  "maxFiles": {
+                    "description": "Maximum number of files that can be uploaded for this question in a single response.",
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "types": {
+                    "description": "File types accepted by this question.",
+                    "items": {
+                      "enum": [
+                        "FILE_TYPE_UNSPECIFIED",
+                        "ANY",
+                        "DOCUMENT",
+                        "PRESENTATION",
+                        "SPREADSHEET",
+                        "DRAWING",
+                        "PDF",
+                        "IMAGE",
+                        "VIDEO",
+                        "AUDIO"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Grading": {
+                "description": "Grading for a single question",
+                "properties": {
+                  "correctAnswers": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_CorrectAnswers"
+                  },
+                  "generalFeedback": {
+                    "description": "The feedback displayed for all answers.",
+                    "$ref": "#/$defs/Input_Feedback"
+                  },
+                  "pointValue": {
+                    "description": "Required.",
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "whenRight": {
+                    "description": "The feedback displayed for correct responses.",
+                    "$ref": "#/$defs/Input_Feedback"
+                  },
+                  "whenWrong": {
+                    "description": "The feedback displayed for incorrect responses.",
+                    "$ref": "#/$defs/Input_Feedback"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_CorrectAnswers": {
+                "description": "The answer key for a question.",
+                "properties": {
+                  "answers": {
+                    "description": "A list of correct answers.",
+                    "items": {
+                      "$ref": "#/$defs/Input_CorrectAnswer"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_CorrectAnswer": {
+                "description": "A single correct answer for a question.",
+                "properties": {
+                  "value": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Feedback": {
+                "description": "Feedback for a respondent about their response to a question.",
+                "properties": {
+                  "material": {
+                    "description": "Additional information provided as part of the feedback, often used to point the respondent to more reading and resources.",
+                    "items": {
+                      "$ref": "#/$defs/Input_ExtraMaterial"
+                    },
+                    "type": "array"
+                  },
+                  "text": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_ExtraMaterial": {
+                "description": "Supplementary material to the feedback.",
+                "properties": {
+                  "link": {
+                    "description": "Text feedback.",
+                    "$ref": "#/$defs/Input_TextLink"
+                  },
+                  "video": {
+                    "description": "Video feedback.",
+                    "$ref": "#/$defs/Input_VideoLink"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_TextLink": {
+                "description": "Link for text.",
+                "properties": {
+                  "displayText": {
+                    "description": "Required.",
+                    "type": "string"
+                  },
+                  "uri": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_VideoLink": {
+                "description": "Link to a video.",
+                "properties": {
+                  "displayText": {
+                    "description": "Required.",
+                    "type": "string"
+                  },
+                  "youtubeUri": {
+                    "description": "The URI of a YouTube video.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_RatingQuestion": {
+                "description": "A rating question.",
+                "properties": {
+                  "iconType": {
+                    "description": "Required.",
+                    "enum": [
+                      "RATING_ICON_TYPE_UNSPECIFIED",
+                      "STAR",
+                      "HEART",
+                      "THUMB_UP"
+                    ],
+                    "type": "string"
+                  },
+                  "ratingScaleLevel": {
+                    "description": "Required.",
+                    "format": "int32",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_RowQuestion": {
+                "description": "Configuration for a question that is part of a question group.",
+                "properties": {
+                  "title": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_ScaleQuestion": {
+                "description": "A scale question.",
+                "properties": {
+                  "high": {
+                    "description": "Required.",
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "highLabel": {
+                    "description": "The label to display describing the highest point on the scale.",
+                    "type": "string"
+                  },
+                  "low": {
+                    "description": "Required.",
+                    "format": "int32",
+                    "type": "integer"
+                  },
+                  "lowLabel": {
+                    "description": "The label to display describing the lowest point on the scale.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_TextQuestion": {
+                "description": "A text-based question.",
+                "properties": {
+                  "paragraph": {
+                    "description": "Whether the question is a paragraph question or not.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_TimeQuestion": {
+                "description": "A time question.",
+                "properties": {
+                  "duration": {
+                    "description": "`true` if the question is about an elapsed time.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_QuestionItem": {
+                "description": "A form item containing a single question.",
+                "properties": {
+                  "image": {
+                    "description": "The image displayed within the question.",
+                    "$ref": "#/$defs/Input_Image"
+                  },
+                  "question": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Question"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_TextItem": {
+                "additionalProperties": true,
+                "description": "A text item.",
+                "properties": {},
+                "type": "object"
+              },
+              "Input_VideoItem": {
+                "description": "An item containing a video.",
+                "properties": {
+                  "caption": {
+                    "description": "The text displayed below the video.",
+                    "type": "string"
+                  },
+                  "video": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Video"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Video": {
+                "description": "Data representing a video.",
+                "properties": {
+                  "properties": {
+                    "description": "Properties of a video.",
+                    "$ref": "#/$defs/Input_MediaProperties"
+                  },
+                  "youtubeUri": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Location": {
+                "description": "A specific location in a form.",
+                "properties": {
+                  "index": {
+                    "description": "The index of an item in the form.",
+                    "format": "int32",
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_DeleteItemRequest": {
+                "description": "Delete an item in a form.",
+                "properties": {
+                  "location": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Location"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_MoveItemRequest": {
+                "description": "Move an item in a form.",
+                "properties": {
+                  "newLocation": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Location"
+                  },
+                  "originalLocation": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Location"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_UpdateFormInfoRequest": {
+                "description": "Update Form's Info.",
+                "properties": {
+                  "info": {
+                    "description": "The info to update.",
+                    "$ref": "#/$defs/Input_Info"
+                  },
+                  "updateMask": {
+                    "description": "Required.",
+                    "format": "google-fieldmask",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_Info": {
+                "description": "The general information for a form.",
+                "properties": {
+                  "description": {
+                    "description": "The description of the form.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "Required.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_UpdateItemRequest": {
+                "description": "Update an item in a form.",
+                "properties": {
+                  "item": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Item"
+                  },
+                  "location": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_Location"
+                  },
+                  "updateMask": {
+                    "description": "Required.",
+                    "format": "google-fieldmask",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_UpdateSettingsRequest": {
+                "description": "Update Form's FormSettings.",
+                "properties": {
+                  "settings": {
+                    "description": "Required.",
+                    "$ref": "#/$defs/Input_FormSettings"
+                  },
+                  "updateMask": {
+                    "description": "Required.",
+                    "format": "google-fieldmask",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_FormSettings": {
+                "description": "A form's settings.",
+                "properties": {
+                  "emailCollectionType": {
+                    "description": "Optional.",
+                    "enum": [
+                      "EMAIL_COLLECTION_TYPE_UNSPECIFIED",
+                      "DO_NOT_COLLECT",
+                      "VERIFIED",
+                      "RESPONDER_INPUT"
+                    ],
+                    "type": "string"
+                  },
+                  "quizSettings": {
+                    "description": "Settings related to quiz forms and grading.",
+                    "$ref": "#/$defs/Input_QuizSettings"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_QuizSettings": {
+                "description": "Settings related to quiz forms and grading.",
+                "properties": {
+                  "isQuiz": {
+                    "description": "Whether this form is a quiz or not.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "Input_WriteControl": {
+                "description": "Provides control over how write requests are executed.",
+                "properties": {
+                  "requiredRevisionId": {
+                    "description": "The revision ID of the form that the write request is applied to.",
+                    "type": "string"
+                  },
+                  "targetRevisionId": {
+                    "description": "The target revision ID of the form that the write request is applied to.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "verdict": "destructive",
+        "tool": "forms_api_write",
+        "named": "batch_update_form",
+        "revision": "20261022"
+      }
+    }
+  },
+  {
+    "label": "full form with fields",
+    "tool": "forms_api_read",
+    "args": {
+      "path": "/forms/form-1",
+      "fields": [
+        "formId",
+        "items",
+        "settings"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-full-form-with-fields@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "formId": "form-1",
+          "items": [
+            {
+              "itemId": "i1",
+              "title": "Which session?",
+              "questionItem": {
+                "question": {
+                  "questionId": "q1",
+                  "required": true,
+                  "choiceQuestion": {
+                    "type": "RADIO",
+                    "shuffle": true,
+                    "options": [
+                      {
+                        "value": "Morning"
+                      },
+                      {
+                        "value": "Evening",
+                        "goToAction": "SUBMIT_FORM"
+                      },
+                      {
+                        "isOther": true
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "itemId": "i2",
+              "title": "Dietary needs",
+              "description": "Anything we should know.",
+              "questionItem": {
+                "question": {
+                  "questionId": "q2",
+                  "textQuestion": {
+                    "paragraph": true
+                  }
+                }
+              }
+            },
+            {
+              "itemId": "i3",
+              "title": "Logistics",
+              "pageBreakItem": {}
+            },
+            {
+              "itemId": "i5",
+              "title": "Availability",
+              "questionGroupItem": {
+                "grid": {
+                  "columns": {
+                    "type": "CHECKBOX",
+                    "options": [
+                      {
+                        "value": "Fri"
+                      },
+                      {
+                        "value": "Sat"
+                      }
+                    ]
+                  }
+                },
+                "questions": [
+                  {
+                    "questionId": "q4",
+                    "required": true,
+                    "rowQuestion": {
+                      "title": "Adults"
+                    }
+                  },
+                  {
+                    "questionId": "q5",
+                    "rowQuestion": {
+                      "title": "Children"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "itemId": "i7",
+              "title": "Arrival date",
+              "questionItem": {
+                "question": {
+                  "questionId": "q6",
+                  "dateQuestion": {
+                    "includeYear": true
+                  }
+                }
+              }
+            }
+          ],
+          "settings": {
+            "quizSettings": {
+              "isQuiz": false
+            },
+            "emailCollectionType": "VERIFIED"
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "paged response envelope",
+    "tool": "forms_api_read",
+    "args": {
+      "path": "/forms/form-1/responses",
+      "query": {
+        "pageSize": 5
+      },
+      "fields": [
+        "responses"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-paged-response-envelope@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1/responses?pageSize=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "responses": [
+            {
+              "responseId": "r1",
+              "createTime": "2026-10-01T12:00:00.000Z",
+              "lastSubmittedTime": "2026-10-01T12:05:00.000Z",
+              "respondentEmail": "bob@example.com",
+              "answers": {
+                "q2": {
+                  "questionId": "q2",
+                  "textAnswers": {
+                    "answers": [
+                      {
+                        "value": "No nuts, please."
+                      }
+                    ]
+                  },
+                  "grade": {
+                    "score": 0,
+                    "correct": false,
+                    "feedback": {
+                      "text": "See the allergy guide.",
+                      "material": [
+                        {
+                          "link": {
+                            "uri": "https://example.com/allergies",
+                            "displayText": "Allergy guide"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "q1": {
+                  "questionId": "q1",
+                  "textAnswers": {
+                    "answers": [
+                      {
+                        "value": "Evening"
+                      }
+                    ]
+                  }
+                },
+                "q5": {
+                  "questionId": "q5",
+                  "textAnswers": {
+                    "answers": [
+                      {
+                        "value": "Fri"
+                      },
+                      {
+                        "value": "Sat"
+                      }
+                    ]
+                  }
+                },
+                "q9": {
+                  "questionId": "q9",
+                  "fileUploadAnswers": {
+                    "answers": [
+                      {
+                        "fileId": "f1",
+                        "fileName": "waiver.pdf",
+                        "mimeType": "application/pdf"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiMTBjOGJmM2QxMGRmNTg1Y2QyOTJiYjZhYzMwMTIzMmIiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicGFnZS0yXCJ9IiwibSI6IjZIQ21QRUgtSTljVE1FNU5GR25uQXR3ZERjUkJ1S1M3TUJ3OGozMjNoRG8ifQ",
+          "param": "pageToken",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "revision-guarded hatch edit",
+    "tool": "forms_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/forms/form-1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "deleteItem": {
+              "location": {
+                "index": 4
+              }
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "00000042"
+        }
+      },
+      "fields": [
+        "writeControl"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-revision-guarded-hatch-edit@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "deleteItem": {
+                    "location": {
+                      "index": 4
+                    }
+                  }
+                }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "00000042"
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "writeControl": {
+            "requiredRevisionId": "00000043"
+          }
+        }
+      }
+    }
+  },
+  {
     "label": "get_form",
     "tool": "get_form",
     "args": {
@@ -77,8 +1364,7 @@
         "itemCount": 5,
         "questionCount": 5,
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         },
         "items": [
           {
@@ -395,8 +1681,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "formId": "form-1",
-        "responses": [
+        "items": [
           {
             "responseId": "r1",
             "createTime": "2026-10-01T12:00:00.000Z",
@@ -451,7 +1736,7 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJkIjoiMUxZY0ZId1pHYjFMd1d5Z0xhS0gtZyIsInQiOiJwYWdlLTIiLCJhIjpudWxsLCJoIjpudWxsLCJuIjo1fQ"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZWJhNzAxMTU5NjQyYjlhNTA2ZjM2ODA3M2M5MDliNmIiLCJjIjoie1wiZFwiOlwiMUxZY0ZId1pHYjFMd1d5Z0xhS0gtZ1wiLFwidFwiOlwicGFnZS0yXCIsXCJhXCI6bnVsbCxcImhcIjpudWxsLFwiblwiOjV9IiwibSI6IlpUZEFNandxcEJOOE1BNDVhZ3g4OWN0MmhhdHE1a25COHFwTUFKS3dzd2MifQ"
         }
       }
     }
@@ -909,8 +2194,7 @@
         "itemCount": 5,
         "questionCount": 5,
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         },
         "items": [
           {
