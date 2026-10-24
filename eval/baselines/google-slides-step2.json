@@ -49,7 +49,7 @@
    "cli": "codex-cli 0.163.0",
    "fullCommit": "ff3f7c3b9cbf0e8958599834850876c24ab64d7e",
    "fullSrcTree": "d5e26d1d940edb701274b996753418971dcf7bf2",
-   "currentReferenceTaskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983"
+   "currentReferenceTaskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589"
   },
   {
    "arm": "before",
@@ -98,7 +98,7 @@
    "cli": "2.1.309 (Claude Code)",
    "fullCommit": "ff3f7c3b9cbf0e8958599834850876c24ab64d7e",
    "fullSrcTree": "d5e26d1d940edb701274b996753418971dcf7bf2",
-   "currentReferenceTaskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983"
+   "currentReferenceTaskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589"
   },
   {
    "arm": "after",
@@ -147,7 +147,7 @@
    "cli": "codex-cli 0.163.0",
    "fullCommit": "68a5b8582401a3493ba0a54190ccb3fe2d92dbda",
    "fullSrcTree": "8db28afd2f3300673d601bf9c99ca500f482b74a",
-   "currentReferenceTaskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983"
+   "currentReferenceTaskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589"
   },
   {
    "arm": "after",
@@ -196,7 +196,7 @@
    "cli": "2.1.309 (Claude Code)",
    "fullCommit": "68a5b8582401a3493ba0a54190ccb3fe2d92dbda",
    "fullSrcTree": "8db28afd2f3300673d601bf9c99ca500f482b74a",
-   "currentReferenceTaskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983"
+   "currentReferenceTaskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589"
   }
  ],
  "aggregates": [
@@ -534,7 +534,8 @@
     "slides.batch_update_presentation": 6,
     "slides.replace_all_text": 2,
     "slides.list_comments": 5,
-    "slides.create_comment": 2
+    "slides.create_comment": 2,
+    "decks.slides_api_read": 1
    },
    "successfulWorkflowNamedTools": {
     "slides.get_presentation": 20,
@@ -10302,7 +10303,8 @@
     "slides.list_comments": 2,
     "slides.batch_update_presentation": 1,
     "slides.create_comment": 1,
-    "slides.slides_api_read": 1
+    "slides.slides_api_read": 1,
+    "decks.slides_api_read": 1
    },
    "discoveryBytes": 21549,
    "maxDiscoveryReplyBytes": 13689,
@@ -11683,20 +11685,24 @@
  "sourceContracts": {
   "eval/fakes/google.ts": {
    "before": "4891b752d39e03543e3deb29e8dfb49162e7bb6416dabe54ca52cd8be2cc7ce5",
-   "after": "4891b752d39e03543e3deb29e8dfb49162e7bb6416dabe54ca52cd8be2cc7ce5"
+   "after": "4891b752d39e03543e3deb29e8dfb49162e7bb6416dabe54ca52cd8be2cc7ce5",
+   "current": "4891b752d39e03543e3deb29e8dfb49162e7bb6416dabe54ca52cd8be2cc7ce5"
   },
   "eval/tasks/grading.ts": {
    "before": "07384fc95f2957c8bf60225b5bfeae7c8ec5c82c38c6b5004522d5dda535b5f1",
-   "after": "07384fc95f2957c8bf60225b5bfeae7c8ec5c82c38c6b5004522d5dda535b5f1"
+   "after": "07384fc95f2957c8bf60225b5bfeae7c8ec5c82c38c6b5004522d5dda535b5f1",
+   "current": "07384fc95f2957c8bf60225b5bfeae7c8ec5c82c38c6b5004522d5dda535b5f1"
   },
   "eval/tasks/google-controls.ts": {
    "before": "cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75",
-   "after": "cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75"
+   "after": "cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75",
+   "current": "2ea8482cdfc620ba81966b3d328829021ae4be724ae52ce03ec022c416daa812"
   },
   "eval/tasks/google.ts": {
    "before": "fcdf659aaf51e3dd66750ede493f2c5a71ab37abeeba3cde12bfcdcbf1c12a9f",
    "after": "97336dfa6267f4ca390f532f077abe0114738b1f4151b8835a4045b05ab7dacc",
-   "current": "5f022d07932cd1b7218813c8c562eb0913937df117c8fff74e3b7b14e1f40862"
+   "current": "bec9b3fb19be0bad30994149df1bfdaa861fa930ec1912c08aa4e80c0b688234",
+   "preMergeCurrent": "5f022d07932cd1b7218813c8c562eb0913937df117c8fff74e3b7b14e1f40862"
   },
   "googleTaskContractExcludingReference": {
    "before": "77920015877a4ccb76c919b8c26d7f90f86d3c02e42fa92b89fb089de9ddeacb",
@@ -11738,10 +11744,18 @@
   "runtime": "Node 26.12.0, zlib-ng 1.3.1",
   "beforeCommit": "ff3f7c3b9cbf",
   "afterCommit": "68a5b8582401",
-  "finalGzipBytes": 385795,
-  "finalDeltaGzipBytes": 22997,
-  "finalCommit": "3d22236c4c3bfe61d4b21a335188375d2301b5ed",
-  "finalSrcTree": "392353f5ff97ac0c0ae3d2230bd0b7acd5f7d321"
+  "finalGzipBytes": 386289,
+  "finalDeltaGzipBytes": 23491,
+  "finalCommit": "696a2cb0197cb59279cdd85760e6468120dd3dd4",
+  "finalSrcTree": "3b3260bdc7f9a99b695176f76f80da0561fe2863",
+  "preRound1Production": {
+   "finalGzipBytes": 385795,
+   "finalDeltaGzipBytes": 22997,
+   "finalCommit": "3d22236c4c3bfe61d4b21a335188375d2301b5ed",
+   "finalSrcTree": "392353f5ff97ac0c0ae3d2230bd0b7acd5f7d321"
+  },
+  "mergedMainCommit": "f9bf5afb",
+  "mergedMainGzipBytes": 362798
  },
  "testDelta": {
   "providerBefore": 24,
@@ -11779,12 +11793,13 @@
  "sharedEdit": {
   "commits": [
    "24f9ecf5",
-   "f547c561"
+   "f547c561",
+   "a617b12e"
   ],
   "file": "src/providers/_shared/google/hatch.ts",
   "option": "wrapSend",
   "authorization": "Explicit orchestrator ruling in this task; preserve strict checker identity and single admitted send.",
-  "controls": "unadmitted route never enters wrapper; detached inspection cannot redirect; repeated inner send refused",
+  "controls": "Unadmitted route never enters wrapper; detached inspection cannot redirect; repeated inner send is an internal defect, one dispatch, unknown write outcome; opt-in warnings survive fields.",
   "otherProductGoldenBytes": "unchanged"
  },
  "h9": {
@@ -11823,7 +11838,7 @@
   "protocol": {
    "version": 1,
    "pairId": "google-slides-step2-2026-10-24",
-   "taskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983",
+   "taskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589",
    "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
   },
   "sourceArtifacts": [
@@ -12370,13 +12385,7 @@
     "unavailable": []
    }
   ],
-  "allOutcomesUnchanged": true,
-  "referenceCommit": "d16bff55950b94cc834d7b93ba819dc38837d564",
-  "productionCommit": "3d22236c4c3bfe61d4b21a335188375d2301b5ed",
-  "productionSrcTree": "392353f5ff97ac0c0ae3d2230bd0b7acd5f7d321",
-  "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/slides/reference-refresh.json",
-  "rawSha256": "c52869bd0edc8e37768165100b462d3f5fa5fbd997325564a2d9f712b904cd94",
-  "execution": "Offline saved-input grading only; no model, program or HTTP execution."
+  "allOutcomesUnchanged": true
  },
  "h9MeasuredPaidSource": {
   "product": "slides",
@@ -12398,5 +12407,69 @@
    }
   ],
   "commit": "68a5b8582401a3493ba0a54190ccb3fe2d92dbda"
+ },
+ "reviewRound1": {
+  "mergedMain": "f9bf5afb",
+  "protocol": {
+   "version": 1,
+   "taskDefinitionsHash": "4d4e5c8f2a02ab6aea3dd8cef789255ef6be967d93b278c697a4ecfc4d3b2589",
+   "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+  },
+  "paidOutcomesChanged": false,
+  "hatchReadAttempts": {
+   "successful": 10,
+   "failedWrongConnectorPrefix": 1
+  },
+  "l7": {
+   "namedReferenceMixedBatch": true,
+   "hatchWarningsVerifiedBy": "provider tests only; no paid write-hatch calls",
+   "answerFormat": "All eight observed answers fail literal save-state values independently of routing; AFTER Luna repeat 2 also omits source.",
+   "guideFixMeasuredByModels": false
+  },
+  "sharedSeam": "Opt-in envelope warnings survive fields; a second send is an internal defect with unknown write outcome.",
+  "fixtureNoiseReverted": true,
+  "sharedCommit": "a617b12e",
+  "referenceAudit": "56/56 saved statuses and check verdicts unchanged; no unavailable evidence",
+  "productionCommit": "696a2cb0197cb59279cdd85760e6468120dd3dd4",
+  "productionSrcTree": "3b3260bdc7f9a99b695176f76f80da0561fe2863",
+  "bundle": {
+   "slidesMainGzipBytes": 362798,
+   "slidesHeadGzipBytes": 386289,
+   "slidesDeltaGzipBytes": 23491,
+   "docsMainGzipBytes": 370111,
+   "docsHeadGzipBytes": 370248,
+   "docsDeltaFromSharedSeamGzipBytes": 137,
+   "runtime": "Node 26.12.0, zlib-ng 1.3.1; gzip level 9"
+  },
+  "otherGoldenFilesByteIdenticalToMergedMain": 65,
+  "verification": {
+   "focusedNodeDistinctCasesAfterGoldenRefresh": 1017,
+   "finalSlidesStandardsConventionsNodePassed": 104,
+   "finalSlidesInventorySkip": 1,
+   "allProviderNodeGoldensDeterminism": "pass after refreshing the Slides guide golden",
+   "nodeGoldenHarnessPassed": 69,
+   "workersAllProviderGoldensPassed": 16,
+   "static": "pass",
+   "buildDeclarationsBundle": "pass",
+   "browserPassed": 20,
+   "eveNode24Passed": 5,
+   "evePackedConsumer": "pass",
+   "bothReferenceSelftests": "All seven Slides tasks on six/code surfaces and route/outcome modes, including frozen controls.",
+   "offlineSavedOutcomeAudit": "56/56 unchanged; no unavailable evidence",
+   "fullCheck": "Not run, per the common brief and fix-round instruction.",
+   "vitestMaxWorkers": 2,
+   "workersPassed": 100,
+   "workersRuntimeTagSkips": 184
+  }
+ },
+ "referenceRefreshPreMerge": {
+  "protocol": {
+   "version": 1,
+   "pairId": "google-slides-step2-2026-10-24",
+   "taskDefinitionsHash": "1bebef8c5f3b2d8268006244cf919bd2e1544c83c1be51bf9ddac6c574957983",
+   "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+  },
+  "allOutcomesUnchanged": true,
+  "trialCount": 56
  }
 }
