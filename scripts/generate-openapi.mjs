@@ -423,7 +423,17 @@ function compactSchema(document, schema, shape, level) {
   }
   if (Array.isArray(node.required) && node.required.length > 0) out.r = node.required;
   if (node.items !== undefined) out.i = compactSchema(document, node.items, shape, level + 1);
-  if (node.additionalProperties === true) out.m = {};
+  // Some reviewed documents use an explicitly empty properties map for a
+  // vendor-defined filter bag. Preserve the default typo guard elsewhere.
+  if (
+    node.additionalProperties === true ||
+    (shape.emptyObjectsOpen &&
+      node.type === "object" &&
+      node.properties &&
+      Object.keys(node.properties).length === 0 &&
+      node.additionalProperties === undefined)
+  )
+    out.m = {};
   else if (node.additionalProperties && typeof node.additionalProperties === "object") {
     out.m = compactSchema(document, node.additionalProperties, shape, level + 1);
   }
@@ -634,6 +644,7 @@ export function buildOperationIndex(document, source) {
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
     numericBounds: source.options?.numericBounds === true,
+    emptyObjectsOpen: source.options?.emptyObjectsOpen === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
   // `operationIds: false` drops ids that only restate the summary,

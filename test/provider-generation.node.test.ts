@@ -691,6 +691,39 @@ describe("OpenAPI operation index generation", () => {
     expect(wildcardIndex().responseRoots(wildcardIndex().ops[0]!)).toBeUndefined();
     const admitted = wildcardIndex({ additionalResponseMediaTypes: ["*/*"] });
     expect([...admitted.responseRoots(admitted.ops[0]!)!]).toEqual(["reviewed_name"]);
+    // Only the provider opt-in opens an explicitly empty, implicitly open object.
+    const emptyRequests = structuredClone(document) as any;
+    emptyRequests.paths["/v1/uploads"].post.requestBody = {
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              implicit: { type: "object", properties: {} },
+              closed: { type: "object", properties: {}, additionalProperties: false },
+              named: { type: "object", properties: { known: { type: "string" } } },
+            },
+          },
+        },
+      },
+    };
+    const emptyIndex = (options = {}) =>
+      new OperationIndex(buildOperationIndex(emptyRequests, { ...source, options: { depth: 3, ...options } }), {
+        vendor: "fixture",
+        title: "Fixture",
+      });
+    const closed = emptyIndex();
+    const open = emptyIndex({ emptyObjectsOpen: true });
+    expect(() =>
+      closed.check(closed.operation("POST", "/v1/uploads")!, {}, { implicit: { vendor_filter: 1 } }),
+    ).toThrow(/vendor_filter/);
+    expect(() =>
+      open.check(open.operation("POST", "/v1/uploads")!, {}, { implicit: { vendor_filter: 1 } }),
+    ).not.toThrow();
+    for (const key of ["closed", "named"])
+      expect(() => open.check(open.operation("POST", "/v1/uploads")!, {}, { [key]: { vendor_filter: 1 } })).toThrow(
+        /vendor_filter/,
+      );
     // Bound pathological documents without treating a partial root set as complete.
     withResponses.components.responses.list.content["application/problem+json"].schema = {
       properties: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`field_${i}`, {}])),
