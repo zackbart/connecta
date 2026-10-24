@@ -11,6 +11,7 @@
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
+import { redactionAltered } from "../redaction-marker.js";
 import {
   type Operation,
   type OperationContract,
@@ -86,6 +87,22 @@ function checked<A>(run: () => A) {
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Object order is not an argument change; array order and scalar types are. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  return record(value)
+    ? Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, canonical(value[key])]),
+      )
+    : value;
+}
+
+function withheldCursor(value: string | number): boolean {
+  return redactionAltered(value) || (typeof value === "string" && /%5bredacted%5d/i.test(value));
 }
 
 /** A method enum; a single method renders as a plain enum, not a one-branch anyOf. */
@@ -653,39 +670,56 @@ export function hatch(
     Effect.gen(function* () {
       const method = args.method ?? defaultRead;
       const { op } = yield* checked(() => index.resolve(method, args.path));
-      const adapter = pages.get(`${method} ${op.path}`);
-      let query = args.query ?? {};
-      let body = args.body;
-      const withoutCursor = (values: Readonly<Record<string, unknown>>) =>
-        Object.fromEntries(Object.entries(values).filter(([key]) => key !== adapter?.param));
-      const scope = {
-        revision: index.revision,
-        method,
-        path: args.path,
-        query: adapter?.in === "query" ? withoutCursor(query) : query,
-        ...(adapter?.in === "body"
-          ? { body: withoutCursor(record(body) ? body : {}) }
-          : body === undefined
-            ? {}
-            : { body }),
-        ...(args.fields ? { fields: args.fields } : {}),
-      };
-      if (adapter) {
-        const value = adapter.in === "query" ? query[adapter.param] : record(body) ? body[adapter.param] : undefined;
-        if (value !== undefined) {
-          if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
-          const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
-          const decoded = yield* checked(() => adapter.decode(cursor));
-          if (adapter.in === "query") query = { ...query, [adapter.param]: decoded };
-          else body = { ...(record(body) ? body : {}), [adapter.param]: decoded };
-        }
-      }
-      const request = yield* checked((): WriteRequest => {
+      yield* checked(() => {
         const verdict = verdictOf(op);
         if (verdict === "refuse") invalid(`Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`);
         if ((verdict === "read") !== (kind === "read")) {
           invalid(`${method} ${op.path} must be called with ${tool(verdict === "read" ? "read" : "write")}.`);
         }
+      });
+      const adapter = pages.get(`${method} ${op.path}`);
+      let query = args.query ?? {};
+      let body = args.body;
+      const withoutCursor = (values: Readonly<Record<string, unknown>>) =>
+        Object.fromEntries(Object.entries(values).filter(([key]) => key !== adapter?.param));
+      const scope = adapter
+        ? {
+            revision: index.revision,
+            method,
+            path: args.path,
+            query: canonical(adapter?.in === "query" ? withoutCursor(query) : query),
+            ...(adapter?.in === "body"
+              ? { body: canonical(withoutCursor(record(body) ? body : {})) }
+              : body === undefined
+                ? {}
+                : { body: canonical(body) }),
+            ...(args.fields ? { fields: args.fields } : {}),
+          }
+        : {};
+      if (adapter) {
+        const value = adapter.in === "query" ? query[adapter.param] : record(body) ? body[adapter.param] : undefined;
+        if (value !== undefined) {
+          if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
+          const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
+          const decoded = yield* checked(() => {
+            let token: unknown;
+            try {
+              token = JSON.parse(cursor);
+            } catch {
+              invalid("This paging cursor contains no valid vendor value.");
+            }
+            if ((typeof token !== "string" && typeof token !== "number") || withheldCursor(token)) {
+              invalid("This paging cursor contains no usable vendor value; withheld values cannot be sent.");
+            }
+            const decoded = adapter.decode(token);
+            if (withheldCursor(decoded)) invalid("This paging cursor contains a withheld vendor value.");
+            return decoded;
+          });
+          if (adapter.in === "query") query = { ...query, [adapter.param]: decoded };
+          else body = { ...(record(body) ? body : {}), [adapter.param]: decoded };
+        }
+      }
+      const request = yield* checked((): WriteRequest => {
         // The current path binding has one origin and JSON/form bodies. Do not
         // silently send another server's operation or reinterpret an upload.
         if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
@@ -734,12 +768,19 @@ export function hatch(
       let page;
       if (adapter && next !== undefined) {
         const secrets = yield* RequestSecrets;
+        if (next !== null && (withheldCursor(next) || secrets.redact(String(next)) !== String(next))) {
+          yield* checked(() => {
+            throw new ConnectorCallError("connector_call_failed", "The vendor returned a withheld paging cursor.", {
+              retryable: false,
+            });
+          });
+        }
         page = {
           hasMore: next !== null,
           ...(next === null
             ? {}
             : {
-                nextCursor: yield* boundCursor.encode(tool(kind), scope, secrets.redact(String(next)), (json) =>
+                nextCursor: yield* boundCursor.encode(tool(kind), scope, JSON.stringify(next), (json) =>
                   secrets.encode(new TextEncoder().encode(json), { url: true, claims: true }),
                 ),
               }),

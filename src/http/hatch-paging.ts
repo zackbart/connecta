@@ -7,7 +7,7 @@ export interface HatchPageAdapter {
   readonly in: "query" | "body";
   readonly headers?: readonly string[];
   /** Validate and restore a decoded cursor's vendor type before index.check. */
-  readonly decode: (cursor: string) => string | number;
+  readonly decode: (cursor: string | number) => string | number;
   /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor. */
   readonly next: (
     data: unknown,
@@ -29,9 +29,9 @@ function bad(): never {
   });
 }
 
-function integer(cursor: string): number {
+function integer(cursor: string | number): number {
   const value = Number(cursor);
-  if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(value) || value < 1) {
+  if (!/^\d+$/.test(String(cursor)) || !Number.isSafeInteger(value) || value < 1) {
     throw new ConnectorCallError("invalid_args", "This paging cursor contains no valid page number.");
   }
   return value;
@@ -41,7 +41,12 @@ function integer(cursor: string): number {
 export const stripePage: HatchPageAdapter = {
   param: "starting_after",
   in: "query",
-  decode: (cursor) => cursor,
+  decode: (cursor) => {
+    if (typeof cursor !== "string" || !cursor) {
+      throw new ConnectorCallError("invalid_args", "This paging cursor contains no valid item id.");
+    }
+    return cursor;
+  },
   next(data) {
     const body = record(data);
     if (body["has_more"] === undefined) return undefined;
@@ -62,9 +67,22 @@ export const cloudflarePage: HatchPageAdapter = {
     if (Object.keys(info).length === 0) return undefined;
     const page = info["page"];
     const total = info["total_pages"];
-    if (!Number.isSafeInteger(page) || !Number.isSafeInteger(total) || (page as number) < 1 || (total as number) < 0)
-      return bad();
-    return (page as number) < (total as number) ? (page as number) + 1 : null;
+    // Cursor-style result_info belongs to a separately declared token adapter.
+    if (page === undefined) return undefined;
+    if (!Number.isSafeInteger(page) || (page as number) < 1) return bad();
+    const perPage = info["per_page"] ?? 0;
+    const totalCount = info["total_count"];
+    const count = info["count"] ?? 0;
+    for (const value of [total, totalCount, perPage, count]) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0)) return bad();
+    }
+    const hasMore =
+      total !== undefined
+        ? (page as number) < (total as number)
+        : totalCount !== undefined
+          ? (page as number) * (perPage as number) < (totalCount as number)
+          : (perPage as number) > 0 && (count as number) >= (perPage as number);
+    return hasMore ? (page as number) + 1 : null;
   },
 };
 
@@ -73,12 +91,10 @@ export const vercelPage: HatchPageAdapter = {
   param: "until",
   in: "query",
   decode: (cursor) => {
-    if (!/^\d+$/.test(cursor)) return cursor;
-    const value = Number(cursor);
-    if (!Number.isSafeInteger(value)) {
+    if ((typeof cursor === "number" && (!Number.isSafeInteger(cursor) || cursor < 0)) || cursor === "") {
       throw new ConnectorCallError("invalid_args", "This paging cursor contains no valid timestamp.");
     }
-    return value;
+    return cursor;
   },
   next(data) {
     const pagination = record(record(data)["pagination"]);
@@ -86,11 +102,11 @@ export const vercelPage: HatchPageAdapter = {
     const next = pagination["next"];
     if (next === null) return null;
     if (typeof next === "number" && Number.isSafeInteger(next) && next >= 0) return next;
-    return typeof next === "string" && next ? next : bad();
+    return typeof next === "string" && next && !/^[a-z][a-z0-9+.-]*:\/\//i.test(next) ? next : bad();
   },
 };
 
-/** GitHub Link: extract only page, from the same endpoint and unchanged filters. */
+/** GitHub Link: extract only page, from the same origin and unchanged filters. */
 export function githubPage(baseUrl: string): HatchPageAdapter {
   const base = new URL(baseUrl.replace(/\/+$/, "") + "/");
   if (!/^https?:$/.test(base.protocol) || base.username || base.password || base.search || base.hash) {
@@ -104,9 +120,10 @@ export function githubPage(baseUrl: string): HatchPageAdapter {
     next(_data, call) {
       const header = call.headers["link"];
       if (!header) return null;
-      const links = [...header.matchAll(/<([^<>]+)>([^<>]*)/g)].filter((match) =>
-        /;\s*rel\s*=\s*"([^"]*)"/i.exec(match[2]!)?.[1]?.split(/\s+/).includes("next"),
-      );
+      const links = [...header.matchAll(/<([^<>]+)>([^<>]*)/g)].filter((match) => {
+        const rel = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,]+))/i.exec(match[2]!);
+        return (rel?.[1] ?? rel?.[2])?.split(/\s+/).includes("next");
+      });
       if (links.length === 0) return null;
       if (links.length !== 1) return bad();
       const target = new URL(call.path.replace(/^\//, ""), base);
@@ -116,26 +133,32 @@ export function githubPage(baseUrl: string): HatchPageAdapter {
       } catch {
         return bad();
       }
-      if (
-        next.origin !== target.origin ||
-        next.pathname !== target.pathname ||
-        next.username ||
-        next.password ||
-        next.hash
-      )
-        return bad();
-      // The link cannot silently change a filter or add another parameter.
+      if (next.origin !== target.origin || next.username || next.password || next.hash) return bad();
+      // GitHub can replace /repos/owner/name with /repositories/id. Only the
+      // page is extracted; the next request always keeps its original path.
+      // Compare parsed wire values as multisets, preserving duplicate counts
+      // while tolerating parameter order and equivalent URL encodings.
       const expected = new URLSearchParams();
       for (const [name, value] of Object.entries(call.query)) {
         if (name === "page" || value === undefined) continue;
-        for (const item of Array.isArray(value) ? value : [value]) expected.append(name, String(item));
+        for (const item of Array.isArray(value) ? value : [value]) {
+          if (
+            typeof item !== "string" &&
+            typeof item !== "boolean" &&
+            !(typeof item === "number" && Number.isFinite(item))
+          )
+            return bad();
+          expected.append(name, String(item));
+        }
       }
       const actual = new URLSearchParams(next.search);
       const pages = actual.getAll("page");
       actual.delete("page");
-      expected.sort();
-      actual.sort();
-      if (expected.toString() !== actual.toString() || pages.length !== 1) return bad();
+      const ordered = (params: URLSearchParams) =>
+        JSON.stringify(
+          [...params].sort(([ak, av], [bk, bv]) => (ak < bk ? -1 : ak > bk ? 1 : av < bv ? -1 : av > bv ? 1 : 0)),
+        );
+      if (ordered(expected) !== ordered(actual) || pages.length !== 1) return bad();
       try {
         return integer(pages[0]!);
       } catch {

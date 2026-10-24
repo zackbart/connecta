@@ -406,6 +406,8 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    Preserve paging metadata through the result hook; adapters read safe data
    before `fields` selection. The hatch returns bound `nextCursor` bytes in
    `{ hasMore, nextCursor?, param, in }` and decodes them before dispatch.
+   Preserve the cursor value's scalar type, canonicalize nested argument key
+   order, and refuse redacted cursor values before minting and after decoding.
    Request only required protocol headers. Link adapters extract a cursor
    from a confined URL without following it. Cover last pages, malformed
    metadata, binding to the original call and credential echoes with fixture

@@ -429,6 +429,17 @@ function responseFields(document, operation) {
       }
       return visit(target, prefix, level + 1, new Set([...refs, raw.$ref]), arraysOnly);
     }
+    // Explicitly open response roots cannot establish an exhaustive set for
+    // first-segment validation (including root-array item properties).
+    if (
+      !arraysOnly &&
+      (prefix === "" || prefix === "[]") &&
+      raw.additionalProperties !== undefined &&
+      raw.additionalProperties !== false
+    ) {
+      overflow = true;
+      return;
+    }
     for (const branch of [...(raw.allOf ?? []), ...(raw.anyOf ?? []), ...(raw.oneOf ?? [])]) {
       visit(branch, prefix, level + 1, refs, arraysOnly);
     }

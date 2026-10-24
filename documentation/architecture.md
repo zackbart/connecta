@@ -1296,7 +1296,8 @@ composition. It includes top-level and list-item properties (root arrays or
 an envelope's immediate arrays), and shares paths and rows in a lazy `OpenApiData.fields`
 JSON string. Traversal stops at 1,024 schema visits, 24 reference/composition
 levels, 256 paths or 200 characters per path; overflow or an unresolved
-reference omits that operation's whole response-field contract. Empty,
+reference omits that operation's whole response-field contract. Explicitly open
+roots (including root-array items) also leave fields absent. Empty,
 schemaless and non-JSON responses declare no fields. Request shrinking and
 endpoint contract digests do not depend on this metadata. Legacy REST tools
 retain their catalog and discovery behavior until each provider's step 2.
@@ -2095,20 +2096,27 @@ points at the authored tool that serves an operation. `_api_read` omits
 The hatch's optional `pages` table declares an adapter for each indexed read
 that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
 (`has_more`, last `data` id → `starting_after`), Cloudflare
-(`result_info.page/total_pages` → `page`), Vercel (`pagination.next` → `until`),
-and GitHub (Link `rel="next"` → `page`). No maintained REST provider opts in
+(`result_info.page/total_pages`, falling back to `total_count/per_page/count`
+→ `page`), Vercel (`pagination.next` → `until`), and GitHub (quoted or unquoted
+Link `rel=next` → `page`). No maintained REST provider opts in
 yet. A declaration names the cursor parameter and `query` or `body`; it must
 exist in that operation's request contract. The response remains
 `{ status, data, page? }`, with `page: { hasMore, nextCursor?, param, in }`.
 Put the opaque `nextCursor` back in the named parameter. The hatch binds it
 to its tool, index revision, method, path, other arguments and selected fields,
-decodes it before index validation and sends only the vendor value. Paging is
+canonicalizing nested object key order while preserving array order and scalar types.
+It decodes the cursor before index validation and sends only the vendor value. Paging is
 read after connection safety and before field selection; result hooks must
 retain the paging metadata. Only an adapter's explicitly requested response
 headers enter its answer, already sent-secret redacted. GitHub extracts just
-the page from a Link URL with the same origin, exact endpoint and unchanged
-filters; it never follows the URL. Cursor claims pass the request-secret
+the page from a Link URL with the same origin and unchanged filters, including
+GitHub's repository-ID paths; it never follows the URL or changes the original
+request path. Filter comparison uses parsed scalar parameter multisets,
+preserving duplicate counts and tolerating order and URL-encoding differences.
+Cursor claims preserve the vendor value's string/number type and pass the request-secret
 encoder. An unpaged hatch keeps its existing result schema.
+Redacted or withheld cursor values are refused both before minting a continuation
+and after restoring a decoded continuation, before dispatch.
 `src/http/vendor-index.ts` derives that index from a kit vendor's own
 declarations when the vendor has no pinned OpenAPI document: `form()` request
 contracts, `Summary` annotations and lenient success schemas become the

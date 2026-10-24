@@ -690,6 +690,20 @@ describe("OpenAPI operation index generation", () => {
       title: "Fixture",
     });
     expect(bounded.responseRoots(bounded.ops[0]!)).toBeUndefined();
+    // Open roots (also through refs/composition or root-array items) have no
+    // exhaustive property set against which fields can safely refuse a key.
+    for (const schema of [
+      { properties: { known: {} }, additionalProperties: true },
+      { allOf: [{ properties: { known: {} } }, { additionalProperties: {} }] },
+      { type: "array", items: { properties: { known: {} }, additionalProperties: true } },
+    ]) {
+      withResponses.components.responses.list.content["application/problem+json"].schema = schema;
+      const open = new OperationIndex(buildOperationIndex(withResponses, source), {
+        vendor: "fixture",
+        title: "Fixture",
+      });
+      expect(open.responseRoots(open.ops[0]!)).toBeUndefined();
+    }
   });
 
   it("reads the API version from a named header parameter when info.version is not the sent version", async () => {
