@@ -212,8 +212,8 @@ const details = JSON.parse(openapi.details) as {
   d: unknown[];
   o: Array<0 | [Array<[string, string, number, unknown, string?]>, 0 | [string, unknown, number?]]>;
 };
-// These ten wildcard-labelled request schemas describe JSON objects, not
-// uploads. Their exact, byte-pinned contracts were reviewed for JSON dispatch.
+// These thirteen wildcard-labelled schemas describe twelve JSON objects and
+// one JSON array. Their byte-pinned contracts were reviewed for JSON dispatch.
 const jsonBodies = new Set([
   "POST /forms/{id}/responses",
   "PUT /individuals/{id}/groups/{group_id}",
@@ -225,6 +225,9 @@ const jsonBodies = new Set([
   "POST /scheduling/categories/{id}/notifications",
   "PUT /individuals/{id}/assignments",
   "PUT /scheduling/families/{id}/assignments",
+  "PUT /individuals/{id}/groups/bulk",
+  "POST /search/save",
+  "PUT /search/save/{id}",
 ]);
 for (const [i, row] of details.o.entries()) {
   const op = openapi.ops[i]!;

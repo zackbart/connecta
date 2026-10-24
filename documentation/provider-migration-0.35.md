@@ -238,8 +238,12 @@ Paths must be canonical API paths with concrete ids. Absolute URLs, OAuth paths,
 query strings embedded in a path, percent encodings, semicolons and traversal
 segments are refused. For example delete group members with
 `DELETE /groups/5/members` and JSON `{ ids: [42] }`, rather than an invented
-`/groups/5/members/42` path. JSON-only transport refuses multipart, form and
-unmodeled wildcard request bodies. The ten reviewed wildcard-labelled JSON-object writes, including form-response creation, remain admitted as JSON. Optional wildcard GET bodies may be omitted.
+`/groups/5/members/42` path. JSON-only transport refuses multipart and form request
+bodies. Thirteen reviewed wildcard-labelled JSON writes remain admitted:
+twelve object bodies and the bulk group-removal array. These include
+form-response creation and saved-search creation/update. OAuth exchange and
+password reset remain outside the agent surface. Optional wildcard GET bodies
+may be omitted.
 
 Use `ccb_api_write` for writes; the host may ask the user to confirm. Writes
 are sent once. Configured read-only

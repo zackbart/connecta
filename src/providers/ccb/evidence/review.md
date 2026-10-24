@@ -22,13 +22,15 @@ The shipped index contains **385 operations**, each with a literal reviewed
 verdict: 197 reads (182 resource GETs and 15 advanced-search result POSTs),
 174 destructive actions and 14 refusals. No future operation becomes a read
 by method inference. OAuth exchange and password reset remain outside the
-agent surface. Multipart, form and unmodeled wildcard request bodies are
-unsupported. Ten
-wildcard-labelled modeled JSON-object writes are explicitly admitted in
-`api.ts` as `application/json`, including form responses, membership SMS,
-privacy settings/defaults, messages/comments, scheduling notifications and
-individual/family assignments. Their modeled request validation, configured
-write-scope boundary, single send and response privacy still apply.
+agent surface. Multipart and form request bodies are unsupported. Thirteen
+wildcard-labelled modeled JSON writes are explicitly admitted in `api.ts` as
+`application/json`: twelve object bodies and one array body. They include form
+responses, membership SMS and bulk removal, privacy settings/defaults,
+messages/comments, scheduling notifications, individual/family assignments,
+and saved-search creation/update. Their modeled request validation, configured
+write-scope boundary, single send and response privacy still apply. The verdict
+counts remain 197 reads, 174 destructive actions and 14 refusals; the three
+additional bodies already had destructive verdicts.
 Optional wildcard GET bodies can be omitted; their body filters cannot be
 misrepresented as query parameters. The JSON Accept header, fixed environment
 origin and JSON-only response parser remain enforced.

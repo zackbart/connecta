@@ -57,7 +57,7 @@
         "revision": "sha256:2f532bfdcd2c",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiZmMxNjU1ZTJiM2YxYmJlMTdlODFhMDQ0NzA5OTk5NjgiLCJjIjoiNiIsIm0iOiJzNVlhX1dUY3pkUTdobkRIYldjaENNbUplWDhPbWt5NTlWM2FPeWdBUEpzIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiZGQxZGQwMDY1NDAxM2FkZGQxMGNjZTEyZDZkMDk3MGQiLCJjIjoiNiIsIm0iOiItbWF0dF82dS1lV3l0SHIxS2JTSTFZMVJkSXFnMThCblhHQW1CYi1jcUpVIn0"
         }
       }
     }
@@ -1629,6 +1629,157 @@
           "id": 501,
           "payment_status": "NONE"
         }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write bulk group removal JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "PUT",
+      "path": "/individuals/42/groups/bulk",
+      "body": [
+        {
+          "groupId": 5,
+          "action": "REMOVE"
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "PUT",
+          "url": "https://api.ccbchurch.com/individuals/42/groups/bulk",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": [
+              {
+                "groupId": 5,
+                "action": "REMOVE"
+              }
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 204,
+        "data": null
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write create saved search JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/search/save",
+      "body": {
+        "name": "Active adults",
+        "domain": "individuals"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/search/save",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Active adults",
+              "domain": "individuals"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 2,
+          "name": "Active adults",
+          "domain": "individuals"
+        }
+      }
+    }
+  },
+  {
+    "label": "ccb_api_write update saved search JSON",
+    "tool": "ccb_api_write",
+    "args": {
+      "method": "PUT",
+      "path": "/search/save/2",
+      "body": {
+        "name": "Renamed search"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "PUT",
+          "url": "https://api.ccbchurch.com/search/save/2",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Renamed search"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": 2,
+          "name": "Renamed search"
+        }
+      }
+    }
+  },
+  {
+    "label": "search_records refuses withheld filter",
+    "tool": "search_records",
+    "args": {
+      "domain": "individuals",
+      "body": {
+        "filters": {
+          "name": "[redacted]"
+        }
+      }
+    },
+    "steps": [],
+    "result": {
+      "ok": false,
+      "dispatched": true,
+      "error": {
+        "code": "invalid_args",
+        "message": "Not sent: search_records arguments contain a whole withheld value ([redacted]) or a withheld link. Supply the original value/link or omit the field. Longer prose may mention the marker.",
+        "retryable": false
       }
     }
   },

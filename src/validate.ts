@@ -610,9 +610,10 @@ export function validateCatalogToolInput(
       limit.length <= 8 &&
       limit.every((size) => Number.isSafeInteger(size) && Number(size) > 0) &&
       !limit.includes(supplied);
-    const otherIssues = units.some((unit) => unit.instanceLocation !== "#/limit");
+    const otherUnits = units.filter((unit) => unit.instanceLocation !== "#/limit");
+    const otherIssues = otherUnits.length > 0;
     const shown = discreteLimit
-      ? validation
+      ? validationDetails(schema, otherUnits)
       : nestedUnits.length > 0
         ? validationDetails(schema, nestedUnits)
         : validation;

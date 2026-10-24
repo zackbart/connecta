@@ -480,6 +480,9 @@ describe("ccb() reads", () => {
       ["POST", "/scheduling/categories/2/notifications", { schedule_ids: [3], message: "Reminder", dry_run: true }],
       ["PUT", "/individuals/42/assignments", { status: "ACCEPTED" }],
       ["PUT", "/scheduling/families/9/assignments", { status: "DECLINED" }],
+      ["PUT", "/individuals/42/groups/bulk", [{ groupId: 5, action: "REMOVE" }]],
+      ["POST", "/search/save", { name: "Active adults", domain: "individuals" }],
+      ["PUT", "/search/save/2", { name: "Renamed search" }],
     ] as const) {
       dropped.fake.route(on(method, path, () => json(response)));
       const before = dropped.fake.requests.length;
@@ -489,7 +492,32 @@ describe("ccb() reads", () => {
       expect(dropped.fake.requests.at(-1)!.body, path).toEqual(body);
       expect(dropped.fake.requests.at(-1)!.headers.get("content-type"), path).toContain("application/json");
       expect(JSON.stringify(result), path).not.toContain("CREDIT_CARD");
+      const unknownBody = Array.isArray(body)
+        ? body.map((row) => ({ ...row, unknown_key: true }))
+        : { ...body, unknown_key: true };
+      const after = dropped.fake.requests.length;
+      await expect(dropped.call("ccb_api_write", { method, path, body: unknownBody })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      expect(dropped.fake.requests, path).toHaveLength(after);
     }
+    const beforeRefusal = dropped.fake.requests.length;
+    await expect(
+      dropped.call("ccb_api_write", {
+        method: "PUT",
+        path: "/individuals/42/groups/bulk",
+        body: [{ groupId: 5, action: "ADD" }],
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    for (const body of [
+      { filters: { name: "[redacted]" } },
+      { configuration: { columns: { name: "https://example.org/a?[redacted]" } } },
+    ])
+      await expect(dropped.call("search_records", { domain: "individuals", body })).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("withheld"),
+      });
+    expect(dropped.fake.requests).toHaveLength(beforeRefusal);
     const beforeUpload = dropped.fake.requests.length;
     await expect(dropped.call("ccb_api_write", { method: "POST", path: "/files", body: {} })).rejects.toMatchObject({
       code: "invalid_args",

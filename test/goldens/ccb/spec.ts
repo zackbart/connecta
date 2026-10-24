@@ -522,6 +522,30 @@ export default defineGoldenSpec({
       replies: json({ id: 501, payment_status: "NONE", payment: { card_last4: "4242" } }),
     },
     {
+      label: "ccb_api_write bulk group removal JSON",
+      tool: "ccb_api_write",
+      args: { method: "PUT", path: "/individuals/42/groups/bulk", body: [{ groupId: 5, action: "REMOVE" }] },
+      replies: [{ status: 204 }],
+    },
+    {
+      label: "ccb_api_write create saved search JSON",
+      tool: "ccb_api_write",
+      args: { method: "POST", path: "/search/save", body: { name: "Active adults", domain: "individuals" } },
+      replies: json({ id: 2, name: "Active adults", domain: "individuals" }),
+    },
+    {
+      label: "ccb_api_write update saved search JSON",
+      tool: "ccb_api_write",
+      args: { method: "PUT", path: "/search/save/2", body: { name: "Renamed search" } },
+      replies: json({ id: 2, name: "Renamed search" }),
+    },
+    {
+      label: "search_records refuses withheld filter",
+      tool: "search_records",
+      args: { domain: "individuals", body: { filters: { name: "[redacted]" } } },
+      replies: [],
+    },
+    {
       label: "ccb_api_write refuses binary upload",
       tool: "ccb_api_write",
       args: { method: "POST", path: "/files", body: {} },

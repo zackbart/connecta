@@ -231,7 +231,8 @@ notes and caps compare identically with the automatic merge.
 
 The generator's CCB-only `emptyObjectsOpen` option admits vendor-defined search
 filter keys, with dispatch assertions for both `search_records` and POST
-`ccb_api_read`. All ten reviewed modeled-object wildcard writes are admitted
+`ccb_api_read`. All thirteen reviewed modeled JSON wildcard writes (twelve objects and one
+array, including bulk group removal and saved-search creation/update) are admitted
 as JSON; real multipart uploads remain refused before dispatch. Named output
 schemas now include every emitted individual/group key. Natural operation and
 catalog queries cover attendance, group membership/roles, phone edits, new
@@ -262,3 +263,29 @@ cases**. Workerd canonical goldens plus the native hatch pass **17 cases**,
 with two intentional Node-only skips. This round adds/removes no test cases
 (delta 0); the PR's overall affected-case delta remains **−8**. Round-1 logs
 and the byte audit use the `r1-` prefix in the scratch evidence directory.
+
+
+## Final-review corrections
+
+Three additional wildcard-labelled request bodies now use JSON: bulk group
+removal (`PUT /individuals/{id}/groups/bulk`, an array) and saved-search
+creation/update (`POST /search/save`, `PUT /search/save/{id}`, objects).
+There are thirteen reviewed wildcard JSON writes, twelve objects and one array.
+The verdict counts remain 197 read / 174 destructive / 14 refuse because these
+three already had destructive verdicts. Every body sends once as JSON; unknown
+keys and the unsupported bulk action `ADD` remain refused before dispatch.
+`search_records` now refuses whole withheld markers and withheld links in its
+body before sending, matching POST-search hatch behavior. A mixed validation
+message describes invalid `limit` once and retains the other argument issues.
+No test cases or model trials are added or removed. Main is not merged in this
+fix; shared wording regeneration remains pending the orchestrator's request.
+
+Fresh final-fix verification passes 651 targeted cases in nine files, including
+the 443-case failure sweep. All-provider deterministic Node goldens/harness
+pass 85 cases; workerd canonical goldens/native hatch pass 17 with two
+intentional Node-only skips. Static/generated checks, strict CCB drift checking
+and build/declarations/all bundle caps pass. The local Node 26.12.0/zlib-ng
+CCB bundle is **389,282 B gzip**; the cited CI baseline remains 389,649 B.
+Other providers' 42 golden JSON files and five operation indexes remain
+byte-identical to `93ba5381` and merged main `ce0c7492`. Evidence uses the
+`r2-` prefix in the same scratch directory. No full local check was run.

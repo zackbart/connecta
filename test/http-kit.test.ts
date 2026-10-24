@@ -1478,6 +1478,7 @@ describe("kit construction (decision 0010, B.4)", () => {
       );
       expect(mixedError?.message).toContain("other");
       expect(mixedError?.message).toContain("limit");
+      expect(mixedError?.message).not.toContain("/limit:");
       expect(selected.outputSchema).toEqual(sparse);
       expect((rows.outputSchema as { properties: { items: { items: unknown } } }).properties.items.items).toEqual(
         sparse,

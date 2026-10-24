@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 import { type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { checked } from "../_shared/rest/kit.js";
+import { refuseWithheldValues } from "../_shared/rest/value-safety.js";
 import { Refusal } from "../../http/errors.js";
 import { Integer, isMinChars, isMaxChars } from "../../http/json-schema.js";
 import { read, list } from "../../http/tools.js";
@@ -1054,38 +1055,42 @@ export function ccbTools({
       total: true,
       cursor: "bound",
       page: (args, cursor) =>
-        fetchPage(
-          "/search/" + args.domain + "/results",
-          args,
-          (value) => {
-            const row = asRecord(value);
-            return compact({
-              id: row.id,
-              name: row.name ?? row.title,
-              individualId: row.individual_id,
-              groupId: row.group_id,
-              status: row.status,
-              active: row.active,
-              campusId: row.campus_id,
-              familyId: row.family_id,
-              membershipTypeId: row.membership_type_id,
-              email: row.email,
-              counts:
-                args.domain === "schedules_totals"
-                  ? compact({
-                      stillNeeded: row.still_needed,
-                      needed: row.needed,
-                      accepted: row.accepted,
-                      checkedIn: row.checked_in,
-                      declined: row.declined,
-                      pending: row.pending,
-                    })
-                  : undefined,
-            });
-          },
-          {},
-          cursor,
-          args.body,
+        checked(() => refuseWithheldValues(args.body, "search_records")).pipe(
+          Effect.andThen(
+            fetchPage(
+              "/search/" + args.domain + "/results",
+              args,
+              (value) => {
+                const row = asRecord(value);
+                return compact({
+                  id: row.id,
+                  name: row.name ?? row.title,
+                  individualId: row.individual_id,
+                  groupId: row.group_id,
+                  status: row.status,
+                  active: row.active,
+                  campusId: row.campus_id,
+                  familyId: row.family_id,
+                  membershipTypeId: row.membership_type_id,
+                  email: row.email,
+                  counts:
+                    args.domain === "schedules_totals"
+                      ? compact({
+                          stillNeeded: row.still_needed,
+                          needed: row.needed,
+                          accepted: row.accepted,
+                          checkedIn: row.checked_in,
+                          declined: row.declined,
+                          pending: row.pending,
+                        })
+                      : undefined,
+                });
+              },
+              {},
+              cursor,
+              args.body,
+            ),
+          ),
         ),
     }),
   ];
