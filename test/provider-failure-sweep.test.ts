@@ -101,7 +101,7 @@ async function sweepSheetsHatch(provider: (typeof providers)[number], named: str
     },
     HANDOFFS,
   );
-  expect(sent).toHaveLength(1);
+  expect(sent).toHaveLength(classification === "read" && failure === "401" ? 2 : 1);
   expect(result.structuredContent).toMatchObject({
     ok: false,
     error: {

@@ -64,7 +64,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "Google Sheets returned HTTP 400.",
+            "message": "Google Sheets: Golden 400 failure",
             "retryable": false
           }
         }
@@ -179,7 +179,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Sheets returned HTTP 401. Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "Google Sheets: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
             "connector": "sheets",
             "operation": "sheets.get_spreadsheet",
@@ -254,7 +254,7 @@
           "dispatched": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "Google Sheets returned HTTP 403. The account may lack access, or a Workspace policy may block this request.",
+            "message": "Google Sheets: Golden 403 failure The account may lack access, or a Workspace policy may block this request.",
             "retryable": false,
             "connector": "sheets",
             "operation": "sheets.get_spreadsheet",
@@ -321,7 +321,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Sheets returned HTTP 404. The id is unknown or not visible to this account; Google does not distinguish them.",
+            "message": "Google Sheets: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
             "retryable": false
           }
         }
@@ -385,7 +385,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Sheets returned HTTP 409.",
+            "message": "Google Sheets: Golden 409 failure",
             "retryable": false
           }
         }
@@ -449,7 +449,7 @@
           "dispatched": true,
           "error": {
             "code": "invalid_args",
-            "message": "Google Sheets returned HTTP 422.",
+            "message": "Google Sheets: Golden 422 failure",
             "retryable": false
           }
         }
@@ -513,7 +513,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Google Sheets returned HTTP 429.",
+            "message": "Google Sheets: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -578,7 +578,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Google Sheets returned HTTP 500.",
+            "message": "Google Sheets: Golden 500 failure",
             "retryable": true
           }
         }
@@ -693,7 +693,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Sheets returned HTTP 401. Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "Google Sheets: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
             "connector": "sheets",
             "operation": "sheets.get_spreadsheet",
