@@ -1,3 +1,5 @@
+import { googleBoundaryControls, googleTransportControls } from "./tasks/google-controls.js";
+import { GOOGLE_COVERAGE_GAPS } from "./tasks/google.js";
 /**
  * `pnpm run eval:selftest` — the harness checking itself, with no LLM.
  *
@@ -36,6 +38,9 @@ import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 import { restTransportControls } from "./tasks/rest-controls.js";
 
+await googleTransportControls();
+await googleBoundaryControls();
+console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools, read-only and native reads");
 await restTransportControls();
 console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
 
@@ -108,6 +113,7 @@ async function play(
   grading: Grading = "route",
 ): Promise<{
   correct: Check[];
+  capabilityGap: boolean;
   wrongDestination: Check[];
   missingEvidence: Check[];
   regressions: ReturnType<typeof counterexamples>;
@@ -404,6 +410,26 @@ async function play(
       }
     }
     if (mode === "reference") {
+      if (task.id.startsWith("google-") && surface === "six" && grading === "route") {
+        const saved = structuredClone(saveGradeInputs(world, trace));
+        const restored = restoreGradeInputs(saved);
+        const again = gradeTask(original, restored, surface, grading);
+        const current = gradeTask(original, { world, trace }, surface, grading);
+        if (JSON.stringify(again.map((c) => [c.id, c.pass])) !== JSON.stringify(current.map((c) => [c.id, c.pass])))
+          throw new Error(`Google saved grades changed: ${task.id}`);
+        if (
+          saved.world.calls.some((c) => ["gmail", "drive", "docs", "sheets", "slides", "forms"].includes(c.service))
+        ) {
+          delete saved.world.google;
+          let rejected = false;
+          try {
+            restoreGradeInputs(saved);
+          } catch {
+            rejected = true;
+          }
+          if (!rejected) throw new Error("Google missing snapshot was accepted");
+        }
+      }
       if (task.id.startsWith("801-")) {
         const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, trace)));
         const savedChecks = gradeTask(original, restored, surface, grading);
@@ -515,13 +541,23 @@ async function play(
         ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
         ...(typeof use.input.code === "string"
           ? {
-              code: use.input.code.replace(/tracker|ci|assets|oauth|supabase|revenuecat|github/gi, "wrong_destination"),
+              code: use.input.code.replace(
+                /tracker|ci|assets|oauth|supabase|revenuecat|github|gmail|drive|docs|sheets|slides|forms/gi,
+                "wrong_destination",
+              ),
             }
           : {}),
       },
     }));
     const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
-    return { correct, missingEvidence, wrongDestination, regressions, positives };
+    const capabilityGap =
+      (GOOGLE_COVERAGE_GAPS as readonly string[]).includes(task.id) &&
+      trace.finalAnswer?.includes('"unavailable":true') === true &&
+      trace.toolUses.some(
+        (use) =>
+          use.isError && /unknown_tool|tool_not_found|not_found|Unknown tool|not found/i.test(use.resultText ?? ""),
+      );
+    return { correct, capabilityGap, missingEvidence, wrongDestination, regressions, positives };
   } finally {
     await session.close();
     await host?.close();
@@ -544,6 +580,18 @@ for (const task of selected) {
     continue;
   }
   const played = await play(task, "reference");
+  if (task.world?.google?.task === 6)
+    for (const fault of ["network", "body"] as const) {
+      const variant = await play(
+        { ...task, world: { ...task.world, google: { ...task.world.google, fault } } },
+        "reference",
+      );
+      if (required(variant.correct).some((check) => !check.pass))
+        throw new Error(
+          `Google ${fault} recovery failed: ${task.id}: ${JSON.stringify(variant.correct.filter((check) => !check.advisory && !check.pass))}`,
+        );
+      console.log(`ok   ${task.id}: committed ${fault} failure reconciled without replay`);
+    }
   if (task.id === "801-vercel-env-value-safety") {
     const upsert = await play(
       {
@@ -590,6 +638,15 @@ for (const task of selected) {
       console.log(`FAIL ${task.id}: replay of the real caught-refusal program against fresh fakes`);
     } else console.log(`ok   ${task.id}: real caught-refusal program against fresh fakes`);
   }
+  if (played.capabilityGap) {
+    if (
+      required(played.correct).every((c) => c.pass) ||
+      required((await play(task, "noop")).correct).every((c) => c.pass)
+    )
+      throw new Error(`Capability gap incorrectly passed: ${task.id}`);
+    console.log(`ok   ${task.id}: expected BEFORE capability gap; outcome grader still fails unavailable data`);
+    continue;
+  }
   const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
   const noop = (await play(task, "noop")).correct;
@@ -623,12 +680,22 @@ for (const task of selected) {
     console.log("       right-destination answer without facts did not fail evidence independently");
   if (noopPassed) console.log("       a no-op agent passed the grader");
 }
-for (const surface of ["six", "code"] as const)
+if (args.has("primary-only"))
+  console.log(
+    "Primary-only: verified six/route references, saved grades and negative controls; additional surface/mode repeats omitted.",
+  );
+for (const surface of args.has("primary-only") ? [] : (["six", "code"] as const))
   for (const grading of ["route", "outcome"] as const) {
     if (surface === "six" && grading === "route") continue;
     for (const task of selected) {
       const played = await play(task, "reference", surface, grading);
       const noop = await play(task, "noop", surface, grading);
+      if (played.capabilityGap) {
+        if (required(played.correct).every((c) => c.pass) || required(noop.correct).every((c) => c.pass))
+          throw new Error(`Capability gap incorrectly passed: ${task.id}`);
+        console.log(`ok   ${surface}/${grading} ${task.id}: expected BEFORE capability gap; outcome remains failed`);
+        continue;
+      }
       const ok =
         required(played.correct).every((c) => c.pass) &&
         !required(noop.correct).every((c) => c.pass) &&

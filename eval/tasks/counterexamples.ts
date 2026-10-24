@@ -32,6 +32,33 @@ export function counterexamples(
   const cases: { name: string; world?: World; trace?: AgentTrace }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
+  if (task.id.startsWith("google-")) {
+    const changedCalls = (calls: World["ledger"]["calls"]): World =>
+      Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+      });
+    cases.push({ name: "Google no-op with fabricated correct answer", world: changedCalls([]) });
+    cases.push({
+      name: "Google wrong delegated subject",
+      world: changedCalls(world.ledger.calls.map((c) => ({ ...c, args: { ...c.args, subject: "bob@example.com" } }))),
+    });
+    const writes = world.ledger.calls.filter((c) => c.kind === "write");
+    if (writes.length)
+      cases.push({
+        name: "Google duplicate physical mutation",
+        world: changedCalls([...world.ledger.calls, { ...writes[0]!, seq: 9999 }]),
+      });
+    if (task.id.endsWith("-3"))
+      cases.push({
+        name: "Google first page only",
+        world: Object.assign(changedCalls(world.ledger.calls.slice(0, 1)), { programs: world.programs.slice(0, 1) }),
+      });
+    if (task.id.endsWith("-6") && writes.length)
+      cases.push({
+        name: "Google missing reconciliation",
+        world: changedCalls(world.ledger.calls.filter((c) => c.seq <= writes[0]!.seq)),
+      });
+  }
   if (task.id.startsWith("pco-step2-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {

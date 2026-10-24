@@ -1,0 +1,119 @@
+{
+  "node": "v22.23.3",
+  "rows": [
+    {
+      "product": "gmail",
+      "importMs": 2386.5155210000003,
+      "factoryMs": 50.582102000000305,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 199.57111600000007,
+          "totalMs": 262.3738400000002,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 7.852617999999893,
+          "totalMs": 17.47070799999983,
+          "tokenMints": 0
+        }
+      ]
+    },
+    {
+      "product": "drive",
+      "importMs": 2432.466985,
+      "factoryMs": 67.35637399999996,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 256.22077399999944,
+          "totalMs": 304.1403529999998,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 9.226700000000164,
+          "totalMs": 18.705135000000155,
+          "tokenMints": 0
+        }
+      ]
+    },
+    {
+      "product": "docs",
+      "importMs": 2503.89755,
+      "factoryMs": 34.1715720000002,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 257.33904299999995,
+          "totalMs": 559.0977389999998,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 14.962067000000388,
+          "totalMs": 240.11654400000043,
+          "tokenMints": 0
+        }
+      ]
+    },
+    {
+      "product": "sheets",
+      "importMs": 2207.6223229999996,
+      "factoryMs": 32.567737999999736,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 230.863789,
+          "totalMs": 282.79237900000044,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 9.815811999999823,
+          "totalMs": 22.99547100000018,
+          "tokenMints": 0
+        }
+      ]
+    },
+    {
+      "product": "slides",
+      "importMs": 1996.9415189999997,
+      "factoryMs": 34.82717300000013,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 231.74769100000003,
+          "totalMs": 317.07734200000004,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 17.86546300000009,
+          "totalMs": 36.69469500000014,
+          "tokenMints": 0
+        }
+      ]
+    },
+    {
+      "product": "forms",
+      "importMs": 2053.8499229999998,
+      "factoryMs": 27.1323739999998,
+      "calls": [
+        {
+          "temperature": "cold",
+          "callToFirstSendMs": 210.55374900000015,
+          "totalMs": 280.19852500000025,
+          "tokenMints": 1
+        },
+        {
+          "temperature": "warm",
+          "callToFirstSendMs": 14.685578999999962,
+          "totalMs": 23.742834000000585,
+          "tokenMints": 0
+        }
+      ]
+    }
+  ]
+}

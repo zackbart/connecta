@@ -1,0 +1,168 @@
+{
+  "node": "v22.23.3",
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "maxEnum": 200,
+    "requestGraph": true
+  },
+  "importMs": 229.196052,
+  "measurements": [
+    {
+      "provider": "gmail",
+      "operations": 79,
+      "sourceDigest": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
+      "normalizedDigest": "sha256:0c26f116524846daacc87e3afab5fd2715757de921cbb2970eae78161a6d430b",
+      "indexBytes": 78370,
+      "indexGzip9": 10949,
+      "factoryMs": 1.989417000000003,
+      "firstSearchMs": 9.29101999999989,
+      "allDetailsMs": 30.8959440000001,
+      "heapDeltaBytes": 2370136
+    },
+    {
+      "provider": "drive",
+      "operations": 64,
+      "sourceDigest": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+      "normalizedDigest": "sha256:f03c6665150bf9064e5bb3c92738989c4bc5291a87563ab19616a07707746e88",
+      "indexBytes": 101678,
+      "indexGzip9": 15171,
+      "factoryMs": 0.19772299999999632,
+      "firstSearchMs": 2.0697999999999865,
+      "allDetailsMs": 24.797812999999906,
+      "heapDeltaBytes": 3424416
+    },
+    {
+      "provider": "docs",
+      "operations": 3,
+      "sourceDigest": "sha256:9f7c1120a3156c723bc1fc0b65332d00a22ae30dc516af131dbbb6b82b42e780",
+      "normalizedDigest": "sha256:0cb1f3f086baa5ad172b6ffbf9b8a151e34985242dc47f09cf769cd03be450d3",
+      "indexBytes": 68300,
+      "indexGzip9": 10755,
+      "factoryMs": 0.05413199999998142,
+      "firstSearchMs": 0.2114169999999831,
+      "allDetailsMs": 15.551236000000017,
+      "heapDeltaBytes": 2184224
+    },
+    {
+      "provider": "sheets",
+      "operations": 17,
+      "sourceDigest": "sha256:94799a4eedbb5115c6a656bb96c9d6af73167b9980b91586ce3e45cfd2c630f3",
+      "normalizedDigest": "sha256:217c11fe94d4446bde3821a08ff110438501fe60214c1ce8ba151538a39b4503",
+      "indexBytes": 165125,
+      "indexGzip9": 25701,
+      "factoryMs": 0.08158799999978328,
+      "firstSearchMs": 0.7772989999998572,
+      "allDetailsMs": 35.228812999999946,
+      "heapDeltaBytes": 4043640
+    },
+    {
+      "provider": "slides",
+      "operations": 5,
+      "sourceDigest": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+      "normalizedDigest": "sha256:7f87150c55b1869b5ff8ea25b5378fc21c4b2ba618d5f2ea3680e2b00e1ba8c8",
+      "indexBytes": 101675,
+      "indexGzip9": 16228,
+      "factoryMs": 0.1020210000001498,
+      "firstSearchMs": 0.5551120000000083,
+      "allDetailsMs": 22.074163,
+      "heapDeltaBytes": 1274504
+    },
+    {
+      "provider": "forms",
+      "operations": 10,
+      "sourceDigest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+      "normalizedDigest": "sha256:43fb638195f21a22184fdaa54c532b887ce2cacb8193a11288b090fb60bf605c",
+      "indexBytes": 26971,
+      "indexGzip9": 4959,
+      "factoryMs": 0.10595100000000457,
+      "firstSearchMs": 0.5053929999999127,
+      "allDetailsMs": 4.453687999999829,
+      "heapDeltaBytes": 546560
+    }
+  ],
+  "bundles": [
+    {
+      "product": "gmail",
+      "before": {
+        "bytes": 1172060,
+        "gzip9": 357361
+      },
+      "after": {
+        "bytes": 1173692,
+        "gzip9": 357802
+      }
+    },
+    {
+      "product": "drive",
+      "before": {
+        "bytes": 1170116,
+        "gzip9": 356273
+      },
+      "after": {
+        "bytes": 1171748,
+        "gzip9": 356732
+      }
+    },
+    {
+      "product": "docs",
+      "before": {
+        "bytes": 1159731,
+        "gzip9": 353468
+      },
+      "after": {
+        "bytes": 1161363,
+        "gzip9": 353956
+      }
+    },
+    {
+      "product": "sheets",
+      "before": {
+        "bytes": 1157468,
+        "gzip9": 352482
+      },
+      "after": {
+        "bytes": 1159100,
+        "gzip9": 352913
+      }
+    },
+    {
+      "product": "slides",
+      "before": {
+        "bytes": 1191300,
+        "gzip9": 361965
+      },
+      "after": {
+        "bytes": 1192932,
+        "gzip9": 362476
+      }
+    },
+    {
+      "product": "forms",
+      "before": {
+        "bytes": 1157007,
+        "gzip9": 352806
+      },
+      "after": {
+        "bytes": 1158639,
+        "gzip9": 353263
+      }
+    },
+    {
+      "product": "all-six",
+      "before": {
+        "bytes": 1379879,
+        "gzip9": 416805
+      },
+      "after": {
+        "bytes": 1381531,
+        "gzip9": 417284
+      },
+      "syntheticWithIndexes": {
+        "bytes": 1864633,
+        "gzip9": 494998
+      }
+    }
+  ]
+}

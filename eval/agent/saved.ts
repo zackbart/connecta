@@ -10,6 +10,7 @@ export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
   world: {
+    google?: World["google"]["state"];
     rest?: World["rest"];
     breeze?: World["breeze"];
     ccb?: World["ccb"];
@@ -31,6 +32,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     version: 1,
     trace,
     world: {
+      ...(world.options.google ? { google: world.google.state } : {}),
       rest: world.rest,
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
@@ -116,6 +118,25 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       ).length === 1,
       `ci.${run.runId}`,
     );
+  if (state.google) {
+    requireEvidence(state.google.accounts && Array.isArray(state.google.mints), "google");
+    for (const subject of ["alice@example.com", "bob@example.com"]) {
+      const account = state.google.accounts[subject as keyof typeof state.google.accounts];
+      requireEvidence(
+        account &&
+          (
+            ["files", "permissions", "messages", "drafts", "responses", "created", "mutations", "values"] as const
+          ).every((key) => Array.isArray(account[key])),
+        `google.${subject}`,
+      );
+      requireEvidence(
+        account?.document && account?.spreadsheet && account?.presentation && account?.form,
+        `google.${subject}.resources`,
+      );
+    }
+    Object.assign(world.google.state, structuredClone(state.google));
+  } else if (state.calls.some((c) => ["gmail", "drive", "docs", "sheets", "slides", "forms"].includes(c.service)))
+    throw new Error("Incomplete saved grading evidence: google");
   if (state.rest) {
     for (const key of ["refunds", "dns", "purges", "envs"] as const)
       requireEvidence(Array.isArray(state.rest[key]), `rest.${key}`);

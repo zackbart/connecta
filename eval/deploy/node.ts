@@ -1,3 +1,10 @@
+import { gmail } from "@zackbart/connecta/providers/gmail";
+import { drive } from "@zackbart/connecta/providers/drive";
+import { docs } from "@zackbart/connecta/providers/docs";
+import { sheets } from "@zackbart/connecta/providers/sheets";
+import { slides } from "@zackbart/connecta/providers/slides";
+import { forms } from "@zackbart/connecta/providers/forms";
+import { ALICE, installGoogleKitTransport } from "../fakes/google.js";
 /**
  * The Node deployment the agent evals run against uses the template's stored
  * access-token auth, SQLite storage, QuickJS executor, operator UI, and
@@ -81,7 +88,11 @@ export async function startNodeDeployment(
     accessTokens: accessTokens(storage),
     ...(oauth ? { auth: oauth.inbound(), maintainers: ["eval-human"] } : {}),
     pools: {
-      eval: { tools: ids, members: ["agent:eval-machine"] },
+      eval: {
+        tools: ids,
+        members: ["agent:eval-machine"],
+        ...(connectors.some((s) => s.google) ? { owner: ALICE } : {}),
+      },
       ...(taskPools as Record<string, { tools: string[]; members: string[]; readOnly?: boolean }> | undefined),
     },
     publicUrl: origin,
@@ -93,6 +104,14 @@ export async function startNodeDeployment(
       ...(oauth ? [oauth.connector()] : []),
       ...connectors.map((spec) => {
         const options = { purpose: spec.description };
+        if (spec.google) {
+          const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
+          return factory(spec.id, {
+            ...options,
+            serviceAccount: spec.google.serviceAccount,
+            subject: spec.google.subject === "fixed" ? ALICE : () => ALICE,
+          });
+        }
         if (spec.rest === "ccb")
           return ccb(spec.id, {
             ...options,
@@ -154,6 +173,7 @@ export async function startNodeDeployment(
   });
   await once(server, "listening");
   if (connectors.some((spec) => spec.rest)) installRestKitTransport();
+  if (connectors.some((spec) => spec.google)) installGoogleKitTransport();
   for (const spec of connectors.filter((entry) => entry.rest === "ccb")) {
     const connector = connecta.registry.getConnector(spec.id)!;
     const ctx = connecta.registry.contextFor(spec.id, origin);
