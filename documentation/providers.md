@@ -570,3 +570,9 @@ and `reply.data.sheets` accesses the vendor sheets. Paths are relative to
 `/v4`. Range colons can be literal or `%3A`; action suffixes such as `:append`
 must be literal. Prefer `append_values` for pinned `INSERT_ROWS`; generic
 append's explicit `OVERWRITE` can overwrite cells.
+
+Named-read field selection keeps `truncated` metadata, and value reads keep
+`page` for continuation. `get_values` cursors are signed and bind the connection
+and read arguments through the shared deployment store. Mapped Workspace
+subjects also bind the admitted caller. Restart an old unsigned continuation
+after upgrading; changing mapped callers requires a new read.

@@ -84,3 +84,37 @@ net zero. Wide-row assertions were folded into the existing row/hatch case;
 a safety-review case now checks all generated candidates. New hatch failure
 routes share the existing representative named failure cases, while offline
 search/details are checked in the inventory. No boundary assertion was removed.
+
+## Forms review follow-up before paid trials
+
+Merged #1011 and #1013. The legacy `get_values` positional cursor now uses the
+shared signed codec, with read arguments plus deployment/connection/caller
+binding. The existing row asserts caller B cannot use A's cursor, with neither
+an API dispatch nor token mint, while A continues; modified MAC/payload and
+legacy unsigned cursors also fail before sending. This is content paging, not
+a Google vendor page token, and does not add a revision guarantee.
+
+Both named reads validate fields before sending, select projected values, then
+restore `truncated`; cell reads additionally retain their content page. All
+17 indexed summary first sentences fit within 120 characters. Formatting and
+append summaries carry the eval action words, and the conditional batch-kind
+refusal is visible in the first sentence. Natural-query rows cover bold cell
+formatting, literal row append and spreadsheet creation without adding cases.
+
+Sheets reference task S4 already used the metadata hatch. After merging the
+shared follow-up, S7's legacy raw metadata reference was replaced by the
+reviewed developer-metadata read POST. This changes reference call shape only:
+prompts, world state and outcome graders are unchanged. Fresh protocol hashes
+and deterministic selftest results are recorded in the product's pre-eval note.
+
+Follow-up validation: the standards/conventions and Sheets suites pass 78/78,
+including both former checker failures. All seven deterministic references
+pass across both surfaces and grading modes. The shared envelope control did
+not trip, so no shared control fix was applied. Signed-cursor and selected
+metadata changes pass deterministic Node and all-provider workerd goldens;
+only Sheets fixture bytes differ from main. Case count remains unchanged.
+
+Refreshed Node 22.23.3 esbuild/gzip-9 measurements against main ff3f7c3b:
+standalone Sheets 353,251 → 394,761 bytes (+41,510); all six Google providers
+418,022 → 461,176 (+43,154). These supersede the earlier bundle sample for
+this updated head and remain below the product's +60 KB threshold.

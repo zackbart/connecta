@@ -14,3 +14,9 @@ POSTs) and ten writes, with bounded values and batches; refuse preview comment
 and external data-source batch mutations. Use standard kit errors and preserve
 ambiguous unknown-id and once-only write outcomes. See the 0.35 provider
 migration guide for argument, envelope and path mappings.
+
+Sign named cell-content continuations and bind them to the admitted delegated
+caller for mapped subjects; restart existing unsigned `get_values` cursors after upgrading. Preserve
+`truncated` on every named read after field selection and preserve value-read
+continuation metadata. Keep operation action words and conditional refusal
+reasons in the first summary sentence used by discovery.

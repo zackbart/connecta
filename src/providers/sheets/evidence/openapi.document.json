@@ -13730,7 +13730,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get read spreadsheet metadata, named ranges, conditional formatting and protected ranges; optionally read cell grid data.",
+        "summary": "Get read spreadsheet metadata, named ranges, conditional formats, protections and optional cell grid data.",
         "tags": [
           "spreadsheets"
         ],
@@ -14356,7 +14356,7 @@
             "description": "Success"
           }
         },
-        "summary": "Append rows after a table; INSERT_ROWS inserts, OVERWRITE can overwrite cells below it.",
+        "summary": "Append rows as RAW literals or parsed USER_ENTERED values; INSERT_ROWS inserts, OVERWRITE can overwrite cells.",
         "tags": [
           "spreadsheets.values"
         ],
@@ -14985,7 +14985,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch update format cells bold, conditional formatting, protections, sheets, rows and columns; structural edits can delete data.",
+        "summary": "Batch update sheet structure and make cells bold; format cells; Refused: preview comments or external data source kinds.",
         "tags": [
           "spreadsheets"
         ],

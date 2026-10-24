@@ -1,5 +1,5 @@
 // Google Sheets named projections, bounded cell reads and guarded writes.
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure } from "../../http/errors.js";
@@ -11,6 +11,8 @@ import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/res
 import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 import { SHEETS } from "./api.js";
 import { read, write } from "../../http/tools.js";
+import { boundCursor } from "../../http/paging.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
 import { Operation } from "../../runtime/call.js";
 import { sheetsIndex } from "./lib/hatch.js";
 import { SHEETS_ADMITTED_KINDS, sheetsExternalDataProblem } from "./lib/requests.js";
@@ -108,70 +110,52 @@ function gridRangeA1(range: JsonRecord, title: string | undefined): string | und
 
 // --- Reading values ---------------------------------------------------------------
 
-/**
- * Where a values read resumes: an index into the caller's own `ranges` and
- * the rows of that range already returned, bound by digest to the call's
- * spreadsheet, ranges, and render options. It carries no range of its own, so
- * a cursor can only ever continue what the arguments name.
- */
+/** Signed positions within the caller's ranges; the shared codec binds deployment, caller and read arguments. */
 interface ValuesCursor {
-  d: string;
   i: number;
   s: number;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function valuesCursorArgs(args: JsonRecord): JsonRecord {
+  return {
+    spreadsheetId: args["spreadsheetId"],
+    ranges: args["ranges"],
+    valueRenderOption: args["valueRenderOption"] ?? null,
+    dateTimeRenderOption: args["dateTimeRenderOption"] ?? null,
+  };
 }
 
-/** What a cursor is bound to: everything that decides which cells a page reads. */
-async function readDigest(args: JsonRecord): Promise<string> {
-  const bound = JSON.stringify([
-    args["spreadsheetId"],
-    args["ranges"],
-    args["valueRenderOption"] ?? null,
-    args["dateTimeRenderOption"] ?? null,
-  ]);
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bound)));
-  return base64Url(hash.subarray(0, 16));
+function encodeCursor(ctx: ConnectorContext, args: JsonRecord, cursor: ValuesCursor) {
+  return boundCursor.encode("get_values", valuesCursorArgs(args), JSON.stringify(cursor), (json) =>
+    encodeForAgent(ctx, json, { url: true, claims: true }),
+  );
 }
 
-/** A cursor of connecta's own digest and counts, encoded as every cursor an agent decodes is. */
-function encodeCursor(ctx: ConnectorContext, cursor: ValuesCursor): string {
-  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
-}
-
-function decodeCursor(value: string, ranges: readonly string[], digest: string): ValuesCursor {
-  const refuse = () =>
-    new ConnectorCallError(
-      "invalid_args",
-      "cursor is not one get_values returned for this call. Pass page.nextCursor back unchanged, with the same spreadsheetId, ranges, and render options.",
-    );
+function decodeCursor(value: string, ranges: readonly string[]): ValuesCursor {
   let parsed: unknown;
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-    parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0))));
+    parsed = JSON.parse(value);
   } catch {
-    throw refuse();
+    parsed = undefined;
   }
-  const cursor = asRecord(parsed);
-  const index = integer(cursor["i"]);
-  const skip = integer(cursor["s"]);
+  const cursor = asRecord(parsed),
+    index = integer(cursor["i"]),
+    skip = integer(cursor["s"]);
   if (
-    Object.keys(cursor).length !== 3 ||
-    cursor["d"] !== digest ||
+    Object.keys(cursor).length !== 2 ||
     index === undefined ||
     index < 0 ||
     index >= ranges.length ||
     skip === undefined ||
-    skip < 0
+    skip < 0 ||
+    !Number.isSafeInteger(skip)
   ) {
-    throw refuse();
+    throw new ConnectorCallError(
+      "invalid_args",
+      "Pass the get_values page.nextCursor back unchanged with the same spreadsheet, ranges and render options.",
+    );
   }
-  return { d: digest, i: index, s: skip };
+  return { i: index, s: skip };
 }
 
 /**
@@ -480,11 +464,10 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
           const budget: number = args["maxCells"] ?? DEFAULT_PAGE_CELLS;
           const byteBudget: number = args["maxBytes"] ?? DEFAULT_PAGE_BYTES;
           const cellChars: number = args["maxCellChars"] ?? DEFAULT_CELL_CHARS;
-          const digest = yield* Effect.promise(() => readDigest(args));
           const resume =
             typeof args["cursor"] === "string"
-              ? decodeCursor(args["cursor"], ranges, digest)
-              : { d: digest, i: 0, s: 0 };
+              ? decodeCursor(yield* boundCursor.decode("get_values", valuesCursorArgs(args), args["cursor"]), ranges)
+              : { i: 0, s: 0 };
           // Every range sent is the caller's own, or the caller's own rewritten
           // to start further down; nothing in the cursor names a range.
           const rewritten = rangeAfter(ranges[resume.i]!, resume.s);
@@ -517,7 +500,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             truncated: ["valueRanges[].values"],
             page: {
               hasMore: false,
-              nextCursor: encodeCursor(ctx, { d: digest, i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
+              nextCursor: yield* encodeCursor(ctx, args, { i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
             },
           });
           let next: ValuesCursor | undefined;
@@ -550,7 +533,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               ) + 1;
             if (bytes + fields > byteBudget) {
               if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget);
-              next = { d: digest, i: resume.i + index, s: before };
+              next = { i: resume.i + index, s: before };
               break;
             }
             bytes += fields;
@@ -577,7 +560,7 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
               kept.push(capped);
             }
             if (kept.length < rows.length) {
-              next = { d: digest, i: resume.i + index, s: before + kept.length };
+              next = { i: resume.i + index, s: before + kept.length };
               // A range this page never reached is not reported half-read; the
               // next page starts it.
               if (kept.length > 0) valueRanges.push(entry(kept));
@@ -585,10 +568,10 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
             }
             valueRanges.push(entry(kept));
             if (cells >= budget && index + 1 < returned.length) {
-              next = { d: digest, i: resume.i + index + 1, s: 0 };
+              next = { i: resume.i + index + 1, s: 0 };
             }
           }
-          const nextCursor = next ? encodeCursor(ctx, next) : null;
+          const nextCursor = next ? yield* encodeCursor(ctx, args, next) : null;
           return compact({
             spreadsheetId,
             valueRanges,
@@ -841,8 +824,28 @@ export function sheetsTools({ connection }: { connection: Connection }): ApiTool
           ),
         ),
     };
-    return declaration.annotations.readOnlyHint
-      ? read(connection, { ...spec, fields: true })
-      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint });
+    if (!declaration.annotations.readOnlyHint)
+      return write(connection, { ...spec, destructive: declaration.annotations.destructiveHint });
+    return read(connection, {
+      ...spec,
+      input: Schema.Struct({
+        ...declaration.input.fields,
+        fields: Schema.optionalKey(
+          fieldsInput("Dot paths to keep; truncation and content continuation metadata remain available."),
+        ),
+      }),
+      run: (args: JsonRecord) =>
+        Effect.gen(function* () {
+          const { fields, ...rest } = args;
+          const problem = fieldsProblem(fields, new Set(Object.keys(declaration.output.fields)), "the Sheets result");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
+          const result: JsonRecord = yield* spec.run(rest);
+          return {
+            ...(selectFields(result, fields) as JsonRecord),
+            ...(result["truncated"] ? { truncated: result["truncated"] } : {}),
+            ...(declaration.name === "get_values" ? { page: result["page"] } : {}),
+          };
+        }),
+    });
   });
 }

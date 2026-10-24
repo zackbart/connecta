@@ -15,7 +15,7 @@ import { SHEETS_HATCH, sheetsIndex } from "./lib/hatch.js";
 import { SHEETS_ADMITTED_KINDS, SHEETS_REQUEST_KINDS, SHEETS_REFUSED_KINDS } from "./lib/requests.js";
 
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -41,8 +41,10 @@ const calls: ApiCall[] = [];
 let tokenRequests = 0;
 let route: Route = () => undefined;
 const realFetch = globalThis.fetch;
+let storage = memoryStorage();
 
 beforeEach(() => {
+  storage = memoryStorage();
   calls.length = 0;
   tokenRequests = 0;
   route = () => undefined;
@@ -80,7 +82,7 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
 }
 
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
@@ -134,8 +136,39 @@ describe("reading values (H9, H10)", () => {
       { range: "Other!A1:A2", values: [["x"], ["y"]], rowCount: 2 },
     ]);
     expect(second.page).toEqual({ hasMore: false });
+    route = () => ({ body: { valueRanges: [{ range: "Data!A1:A2", values: [["long cell"], ["other"]] }] } });
+    const selected = await call(connector, "get_values", {
+      spreadsheetId: ID,
+      ranges: ["Data!A1:A2"],
+      maxCells: 1,
+      maxCellChars: 1,
+      fields: ["valueRanges.values"],
+    });
+    expect(selected.truncated).toEqual(["valueRanges[].values"]);
+    expect(selected.page.hasMore).toBe(true);
+    expect(selected.page.nextCursor).toBeTypeOf("string");
+    expect(selected).not.toHaveProperty("cellCount");
+    route = () => ({
+      body: {
+        spreadsheetId: ID,
+        properties: { title: "Review" },
+        namedRanges: Array.from({ length: 201 }, (_, i) => ({
+          name: `Range${i}`,
+          range: { sheetId: 0, startRowIndex: i, endRowIndex: i + 1, startColumnIndex: 0, endColumnIndex: 1 },
+        })),
+      },
+    });
+    expect(await call(connector, "get_spreadsheet", { spreadsheetId: ID, fields: ["title"] })).toEqual({
+      title: "Review",
+      truncated: ["namedRanges[]"],
+    });
+
     expect(sheetsIndex.pathMatching).toBe("uri-template");
     expect(sheetsIndex.ops).toHaveLength(17);
+    for (const op of sheetsIndex.ops) {
+      expect(op.summary.length).toBeLessThanOrEqual(120);
+      expect(op.summary).not.toContain("…");
+    }
     expect(Object.keys(SHEETS_HATCH.verdicts).sort()).toEqual(
       sheetsIndex.ops.map((op) => `${op.method} ${op.path}`).sort(),
     );
@@ -143,6 +176,9 @@ describe("reading values (H9, H10)", () => {
       ["append rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
       ["write cell values", "/spreadsheets/{spreadsheetId}/values:batchUpdate"],
       ["format cells", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["make cells bold", "/spreadsheets/{spreadsheetId}:batchUpdate"],
+      ["append literal rows", "/spreadsheets/{spreadsheetId}/values/{range}:append"],
+      ["create spreadsheet", "/spreadsheets"],
       ["find developer metadata", "/spreadsheets/{spreadsheetId}/developerMetadata:search"],
     ]) {
       const result = await call(connector, "sheets_api_search", { query });
@@ -239,34 +275,70 @@ describe("reading values (H9, H10)", () => {
     }
   });
 
-  it("binds a cursor to its spreadsheet, ranges, and render options, and refuses one forged", async () => {
-    route = () => ({ body: { valueRanges: [{ range: "S!A1:A3", values: [[1], [2], [3]] }] } });
+  it("INV-4 INV-5: signed value cursors refuse tampering and delegated caller changes without sending", async () => {
+    route = (request) => {
+      const range = request.url.searchParams.get("ranges") ?? "S!A1:A3";
+      const start = Number(/S!A(\d+)/.exec(range)?.[1] ?? 1);
+      return { body: { valueRanges: [{ range, values: [1, 2, 3].slice(start - 1).map((value) => [value]) }] } };
+    };
     const args = { spreadsheetId: ID, ranges: ["S!A1:A3"], valueRenderOption: "FORMULA" };
-    const first = await call(connection(), "get_values", { ...args, maxCells: 1 });
+    const connector = connection();
+    const first = await call(connector, "get_values", { ...args, maxCells: 1 });
     const cursor = first.page.nextCursor;
     const forge = (value: unknown) =>
-      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, " ").trim();
     const decoded = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
     calls.length = 0;
+    const mints = tokenRequests;
     for (const attempt of [
-      // Replayed against other arguments of the same shape.
       { ...args, ranges: ["Private!Z1:Z3"], cursor },
       { ...args, spreadsheetId: "another-spreadsheet", cursor },
       { ...args, valueRenderOption: "FORMATTED_VALUE", cursor },
-      // Forged: a range of its own, an index past the ranges, a wrong digest.
-      { ...args, cursor: forge({ n: 1, i: 0, r: "Private!Z1:Z2", s: 0 }) },
-      { ...args, cursor: forge({ ...decoded, r: "Private!Z1:Z2" }) },
-      { ...args, cursor: forge({ ...decoded, i: 1 }) },
+      { ...args, cursor: forge({ d: "legacy", i: 0, s: 2 }) },
+      { ...args, cursor: forge({ ...decoded, c: JSON.stringify({ i: 0, s: 2 }) }) },
       { ...args, cursor: forge({ ...decoded, d: "AAAAAAAAAAAAAAAAAAAAAA" }) },
       { ...args, cursor: "not-a-cursor" },
-    ]) {
-      await expect(call(connection(), "get_values", attempt)).rejects.toMatchObject({ code: "invalid_args" });
-    }
+    ])
+      await expect(call(connector, "get_values", attempt)).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toEqual([]);
+    expect(tokenRequests).toBe(mints);
+    await call(connector, "get_values", { ...args, cursor });
+    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A2:A3"]);
 
-    // Whatever row offset a cursor claims, only the caller's own range is read.
-    await call(connection(), "get_values", { ...args, cursor: forge({ ...decoded, s: 2 }) });
-    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A3:A3"]);
+    const mapped = connection({
+      subject: (identity: { principal?: { id: string } }) => `${identity.principal?.id}@example.com`,
+    });
+    const registry = makeRegistry([mapped], { storage: memoryStorage() });
+    const callerContext = (id: string) =>
+      registry
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: {
+              actor: { kind: "test-users", namespace: "https://identity.test", id },
+              subject: { namespace: "https://identity.test", id },
+              principal: { namespace: "https://identity.test", id },
+              interactive: true,
+            },
+          },
+        })
+        .contextFor("sheets", "https://connecta.example");
+    const issued = (await mapped.callTool("get_values", { ...args, maxCells: 1 }, callerContext("alice"))) as any;
+    const before = { api: calls.length, tokens: tokenRequests };
+    await expect(
+      mapped.callTool("get_values", { ...args, cursor: issued.page.nextCursor }, callerContext("bob")),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(before.api);
+    expect(tokenRequests).toBe(before.tokens);
+    const continued = (await mapped.callTool(
+      "get_values",
+      { ...args, cursor: issued.page.nextCursor },
+      callerContext("alice"),
+    )) as any;
+    expect(continued.valueRanges[0].values).toEqual([[2], [3]]);
+    expect(continued.page).toEqual({ hasMore: false });
+    expect(calls).toHaveLength(before.api + 1);
   });
 });
 

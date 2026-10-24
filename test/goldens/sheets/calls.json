@@ -73,7 +73,7 @@
         "method": "POST",
         "path": "/spreadsheets/{spreadsheetId}:batchUpdate",
         "operationId": "sheets.spreadsheets.batchUpdate",
-        "summary": "Batch update format cells bold, conditional formatting, protections, sheets, rows and columns; structural edits can del…",
+        "summary": "Batch update sheet structure and make cells bold; format cells; Refused: preview comments or external data source kinds.",
         "parameters": [
           {
             "name": "prettyPrint",
@@ -116,7 +116,7 @@
         "revision": "20261019",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiYWIxMmY0YjQxMjgxNzhkY2NlY2E0OTZmY2IzNjg0OWYiLCJjIjoie1wiaVwiOjMsXCJvXCI6MH0iLCJtIjoiVHZzWEhmLVB2UW90WmxuWEdnR3d4c3VETkZDRGlRdUVGRGE2cGJNN2Z1RSJ9"
+          "nextCursor": "eyJ2IjoyLCJkIjoiMTQ4YWQ4MzEyN2IyN2U2YjljYzhlNjViYzU1NmI2NzAiLCJjIjoie1wiaVwiOjMsXCJvXCI6MH0iLCJtIjoiLURUN04wbVJDZzB3cVB4XzRhaFZDbWlQMDZlNHpYRHAxTEZ5bTVfTHZzVSJ9"
         }
       }
     }
@@ -694,7 +694,7 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJkIjoiSHJPVHFsN2lIaURQeXEwSUQxeEdLdyIsImkiOjAsInMiOjN9"
+          "nextCursor": "eyJ2IjoyLCJkIjoiNzVkY2U0MGI3ZGQ0OGFjOTAyZTU2ODA1ZWE1YzJiZjkiLCJjIjoie1wiaVwiOjAsXCJzXCI6M30iLCJtIjoieXZ6RzBtVVAwZTk4Wm4tQ1g3LXJFTjFWT1IzRDhMRWZhQi1VSEZwWnZUZyJ9"
         }
       }
     }

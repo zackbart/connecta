@@ -24,7 +24,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"spreadsheetId\"]. It only narrows the result.",
+            "description": "Dot paths to keep; truncation and content continuation metadata remain available.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -189,7 +189,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"spreadsheetId\"]. It only narrows the result.",
+            "description": "Dot paths to keep; truncation and content continuation metadata remain available.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -253,7 +253,10 @@
               "nextCursor": {
                 "type": "string"
               }
-            }
+            },
+            "required": [
+              "hasMore"
+            ]
           },
           "truncated": {
             "type": "array",

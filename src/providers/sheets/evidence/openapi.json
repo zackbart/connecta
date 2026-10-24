@@ -8,10 +8,10 @@
     "pin": "discovery.json",
     "format": "google-discovery-v1",
     "summaries": {
-      "sheets.spreadsheets.get": "Get read spreadsheet metadata, named ranges, conditional formatting and protected ranges; optionally read cell grid data.",
+      "sheets.spreadsheets.get": "Get read spreadsheet metadata, named ranges, conditional formats, protections and optional cell grid data.",
       "sheets.spreadsheets.getByDataFilter": "Get read spreadsheet cell grid data by data filter without changing the spreadsheet.",
       "sheets.spreadsheets.create": "Create a new spreadsheet workbook with properties and initial sheets.",
-      "sheets.spreadsheets.batchUpdate": "Batch update format cells bold, conditional formatting, protections, sheets, rows and columns; structural edits can delete data.",
+      "sheets.spreadsheets.batchUpdate": "Batch update sheet structure and make cells bold; format cells; Refused: preview comments or external data source kinds.",
       "sheets.spreadsheets.sheets.copyTo": "Copy duplicate a sheet tab into another spreadsheet.",
       "sheets.spreadsheets.developerMetadata.get": "Get read developer metadata by metadata id.",
       "sheets.spreadsheets.developerMetadata.search": "Search find developer metadata by data filter key, value or location; read only.",
@@ -21,7 +21,7 @@
       "sheets.spreadsheets.values.update": "Update write cell values into one range, overwriting existing cells.",
       "sheets.spreadsheets.values.batchUpdate": "Batch update write cell values across ranges, overwriting existing cells.",
       "sheets.spreadsheets.values.batchUpdateByDataFilter": "Batch update write cell values by data filter, overwriting matched cells.",
-      "sheets.spreadsheets.values.append": "Append rows after a table; INSERT_ROWS inserts, OVERWRITE can overwrite cells below it.",
+      "sheets.spreadsheets.values.append": "Append rows as RAW literals or parsed USER_ENTERED values; INSERT_ROWS inserts, OVERWRITE can overwrite cells.",
       "sheets.spreadsheets.values.clear": "Clear empty cell values in one range, preserving formatting and validation.",
       "sheets.spreadsheets.values.batchClear": "Batch clear empty cell values across ranges, preserving formatting.",
       "sheets.spreadsheets.values.batchClearByDataFilter": "Batch clear empty cell values by data filter, preserving formatting."

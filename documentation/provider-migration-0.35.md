@@ -636,3 +636,12 @@ No scope expansion, revision guarantee, idempotency key or write replay is added
 Standard kit errors now distinguish incomplete reads from malformed complete
 responses and use its shared status fallbacks. An inaccessible or unknown id
 remains ambiguous (`connector_call_failed`); a 404 does not prove absence.
+
+Existing `get_values` continuations must restart at the first page after this
+upgrade. New cursors are signed and bound to the deployment store, connection,
+spreadsheet, ranges and render options. Mapped Workspace subjects also bind
+the admitted caller. A cursor from another mapped caller or with edited
+positions is refused before authentication or dispatch. Keep the same caller
+and read arguments when continuing.
+Named-read `fields` selection always retains `truncated`; `get_values` also
+retains its content `page`, so narrowed pages remain complete and resumable.
