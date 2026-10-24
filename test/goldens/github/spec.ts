@@ -104,6 +104,37 @@ export default defineGoldenSpec({
     },
   ],
   calls: [
+    { tool: "github_api_search", args: { query: "issues" }, replies: [] },
+    { tool: "github_api_details", args: { method: "GET", path: "/repos/{owner}/{repo}/issues" }, replies: [] },
+    {
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/issues", fields: ["id", "title"] },
+      replies: [{ body: [{ id: 9001, title: "Golden issue", state: "open" }] }],
+    },
+    {
+      label: "nested contents",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/contents/src/index.ts", query: { ref: "feature/x" } },
+      replies: [{ body: { name: "index.ts", path: "src/index.ts", encoding: "base64", content: "ZXhwb3J0IHt9" } }],
+    },
+    {
+      label: "PR head filter",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/pulls", query: { head: "alice:feature/x" }, fields: ["number", "head.label"] },
+      replies: [{ body: [{ number: 7, head: { label: "alice:feature/x" } }] }],
+    },
+    {
+      label: "root contents",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/contents", fields: ["name", "path", "type", "download_url"] },
+      replies: [{ body: [{ name: "src", path: "src", type: "dir", download_url: "https://example.com/private" }] }],
+    },
+    ...["/repos/acme/one/commits/feature%2Fx", "/repos/acme/one/compare/main...feature%2Fx"].map((path) => ({
+      label: path.includes("/compare/") ? "compare slash ref" : "commit slash ref",
+      tool: "github_api_read",
+      args: { path },
+      replies: [{ body: { sha: "a".repeat(40), files: [] } }],
+    })),
     { label: "list_scopes configuration", tool: "list_scopes" },
     {
       tool: "list_scopes",
@@ -121,7 +152,7 @@ export default defineGoldenSpec({
     {
       label: "search_scoped issues",
       tool: "search_scoped",
-      args: { terms: "crash", kind: "issues", scopes: [{ repo: "other/one" }], per_page: 1 },
+      args: { terms: "crash", kind: "issues", scopes: [{ repo: "other/one" }], limit: 1 },
       replies: (request) =>
         request.url.pathname === "/repos/other/one"
           ? { body: REPOSITORIES["22"]![0] }
@@ -143,18 +174,25 @@ export default defineGoldenSpec({
             },
     },
     {
-      tool: "create_release",
-      args: { owner: "other", repo: "one", tag_name: "v1.2.0", name: "Release v1.2.0", draft: true },
+      label: "create release",
+      tool: "github_api_write",
+      args: {
+        method: "POST",
+        path: "/repos/other/one/releases",
+        body: { tag_name: "v1.2.0", name: "Release v1.2.0", draft: true },
+      },
       replies: [{ status: 201, body: release(501, "v1.2.0", true) }],
     },
     {
-      tool: "update_release",
-      args: { owner: "acme", repo: "one", release_id: 501, draft: false },
+      label: "publish release",
+      tool: "github_api_write",
+      args: { method: "PATCH", path: "/repos/acme/one/releases/501", body: { draft: false } },
       replies: [{ body: release(501, "v1.2.0", false) }],
     },
     {
-      tool: "delete_release",
-      args: { owner: "other", repo: "one", release_id: 501 },
+      label: "delete release",
+      tool: "github_api_write",
+      args: { method: "DELETE", path: "/repos/other/one/releases/501" },
       replies: [{ status: 204 }],
     },
     {
@@ -190,7 +228,10 @@ export default defineGoldenSpec({
   },
   failures: {
     read: { tool: "search_scoped", args: { terms: "widget", kind: "repositories", scopes: [{ repo: "other/one" }] } },
-    write: { tool: "create_release", args: { owner: "other", repo: "one", tag_name: "v1.2.0" } },
+    write: {
+      tool: "github_api_write",
+      args: { method: "POST", path: "/repos/other/one/releases", body: { tag_name: "v1.2.0" } },
+    },
   },
   failureReply: (status, message) => ({
     status,

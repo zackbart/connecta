@@ -9,6 +9,7 @@ import { PLANNING_CENTER_TASKS } from "./planning-center.js";
 import { OVERFLOW_TASKS } from "./overflow.js";
 import { BREEZE_TASKS } from "./breeze.js";
 import { TITHELY_TASKS } from "./tithely.js";
+import { GITHUB_TASKS } from "./github.js";
 import { CLOUDFLARE_TASKS } from "./cloudflare.js";
 import { STRIPE_TASKS } from "./stripe.js";
 
@@ -27,5 +28,6 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...CLOUDFLARE_TASKS,
   ...CCB_TASKS,
   ...PLANNING_CENTER_TASKS,
+  ...GITHUB_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

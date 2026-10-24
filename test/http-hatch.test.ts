@@ -1241,6 +1241,26 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       }
     }
   }
+  // Size-cut metadata is opt-in, for both result and catalog compatibility.
+  for (const enabled of [false, true]) {
+    const bound = setup({
+      binding: {
+        review: "Fixture supplies reviewed size-cut paths after safe content framing.",
+        ...(enabled ? { truncated: true as const } : {}),
+        send: () => Effect.succeed({ status: 200, data: { id: "safe" }, truncated: ["data.id"] }),
+      },
+    });
+    for (const [kind, args] of [
+      ["read", { path: "/items" }],
+      ["write", { method: "POST", path: "/items", body: { name: "alice" } }],
+    ] as const) {
+      expect(await bound.call(kind, args)).toEqual({
+        status: 200,
+        data: { id: "safe" },
+        ...(enabled ? { truncated: ["data.id"] } : {}),
+      });
+    }
+  }
   // A separate cursor preserves raw first-request record anchors and keeps
   // every returned continuation signed, including reverse/search/v2 paging.
   for (const row of [

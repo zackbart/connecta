@@ -298,9 +298,9 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
       const vault = new CredentialVault(storage, btoa("k".repeat(32)));
       await vault.set("tickets", "cf_7z9ob83m4p6x2q0l", "fixture");
       const registry = makeRegistry([connector], { storage, credentialVault: vault });
-      const address = githubLookup ? "tickets.create_release" : "tickets.cloudflare_api_write";
+      const address = githubLookup ? "tickets.github_api_write" : "tickets.cloudflare_api_write";
       const args = githubLookup
-        ? { owner: "acme", repo: "one", tag_name: "v1.2.0" }
+        ? { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1.2.0" } }
         : { method: "PATCH", path: `/zones/${zone}/dns_records/r1`, body: { ttl: 300 } };
       const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(address, args, {
         source: "call_destructive_tool",

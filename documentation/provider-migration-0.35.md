@@ -412,6 +412,99 @@ settlement rules remain, while messages become complete standalone sentences.
 Writes take no idempotency key and are sent once; reconcile an unknown outcome
 with a read. Setup is in [Maintained provider setup](./providers.md#overflow).
 
+## GitHub
+
+GitHub now exposes seven tools: four `github_api_search`, `github_api_details`,
+`github_api_read`, `github_api_write` hatches plus `list_scopes`, `search_scoped`
+and `merge_pull_request`. Update deployment instructions and programs using
+removed names. The hatch indexes an immutable official API description, with
+reviewed repository reads and the existing release writes. Every operation outside
+that allowlist is refused. The generic hosted MCP connection is still separate.
+[GitHub setup](./providers.md#github) owns App credentials and permissions.
+
+| Removed tool     | Replacement through `github_api_write`               | Argument mapping                                                                                 |
+| ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `create_release` | POST `/repos/{owner}/{repo}/releases`                | owner/repo into the path; tag_name, target_commitish, name, body, draft and prerelease into body |
+| `update_release` | PATCH `/repos/{owner}/{repo}/releases/{release_id}`  | owner/repo/release_id into the path; tag_name, name, body, draft and prerelease into body        |
+| `delete_release` | DELETE `/repos/{owner}/{repo}/releases/{release_id}` | owner/repo/release_id into the path; no body                                                     |
+
+For example, a draft creation is
+`{method:"POST",path:"/repos/alice/widget/releases",body:{tag_name:"v2.3.0",draft:true}}`.
+Release creation previously used a non-destructive write tool; every write hatch
+call is destructive, and the host may ask for confirmation. It is still sent
+once. Release hatch results are `{status,data}`; an empty delete has data:null.
+The `merge_pull_request` name and expected-SHA/same-repository/workflow-write guard
+remain. Its raw PUT route is refused by the write hatch's method schema;
+operation search/details and the write-tool description name `merge_pull_request`. Its PR
+lookup is auxiliary: a failed lookup sends no merge and reports no unknown write
+outcome. A `merged:false` answer now fails instead of returning successful data.
+
+`list_scopes` and `search_scoped` replace top-level per_page with limit, and
+page/pages with opaque cursor from page.nextCursor. Supply the same filters and
+limit on continuation. Omission uses 30 and is accepted when the cursor was issued
+with limit 30; repeat other limits explicitly. Mismatches name the expected limit.
+Scopes defaults change from 100 to 30; search stays at 30;
+both cap limit at 100. Old numeric page values and partition-to-page maps are
+refused. Configure the same persistent deployment storage across requests so signed
+cursors can be checked.
+
+For list_scopes without owner, the old scopes array becomes items of configured
+grants and remains offline. With owner, old repository strings become item records
+with id, full_name, owner, repo and effective access/workflows. next_page becomes
+page.hasMore/page.nextCursor; an unavailable exact filtered total is omitted.
+Acting identity and configured access are in the connection context.
+
+search_scoped changes from partitions containing nested items/next_page/total_count
+to flat `{items,page,incomplete_results}`. Each item is
+`{scope,repository,item}`, where item holds the safe vendor record. One call visits
+one partition page and returns at most limit rows; keep following the single cursor
+across partitions. It no longer fetches up to twenty partitions in one call. The
+twenty-partition and ten-page-per-partition bounds remain, with cumulative
+incomplete_results across continuation. No inexact summed total is reported.
+
+Named reads accept fields into each item: `fields:["full_name","id"]` for an
+owner's repositories or `fields:["repository","item.title"]` for search. Hatch
+fields select the vendor response inside data, for example `fields:["id","title"]`
+on an issue list or `fields:["files.filename","files.patch"]` on a commit.
+Unknown roots fail before dispatch, including on writes. Fields only narrow safe
+results; they cannot recover withheld secrets or reduce vendor response bytes.
+
+Paged hatch reads return page.hasMore and an opaque page.nextCursor. Pass that
+value as top-level cursor; page.param/page.in describe the restored vendor page
+parameter. Raw query.page is refused on paged hatch operations. Vendor query names
+such as per_page remain inside query, bounded by their documented contract.
+Owner/repo path segments must be canonical GitHub names; URL spellings, escaped
+separators and traversal are refused. Contents paths are canonical relative Git
+paths: `/repos/alice/widget/contents/src/index.ts` reads a nested file, while
+`/repos/alice/widget/contents` lists the root. Empty/dot segments, control
+characters, backslashes and encoded traversal are refused. In `commits/{ref}`
+and `compare/{basehead}`, encode branch-name slashes as `%2F`, for example
+`commits/feature%2Fx` or `compare/main...feature%2Fx`. Owner-prefixed object refs and
+cross-repository compares are refused before authentication. PR-list head filters
+require `login:branch`, for example `head:"alice:feature/x"`; this only filters the
+selected repository's PRs. Bare head branches are refused because GitHub silently
+ignores them. The base filter stays a branch name. No Link or redirect
+URL is followed. Echoes of the configured App private key are withheld too.
+
+Inline UTF-8 contents keep GitHub's base64 encoding. Decoded file text and patch
+values are redacted before cuts at 32,768 characters, with paths such as
+`data.content`, `data[].patch` or `data.files[].patch` in top-level truncated.
+Record identifiers remain available. The 4 MiB transport ceiling remains; an
+oversized JSON response fails rather than returning partial JSON. GitHub's own
+missing content/patches and directory/search caps do not establish completeness.
+Raw diff media, binary files, signed download/log/archive routes, uploads,
+Actions secrets/variables, deploy keys, token minting and admin operations are
+refused. Download URLs and permanent secret values remain withheld on every reply.
+
+An inaccessible or absent target remains connector_call_failed, since GitHub 404
+cannot prove absence. The shared kit now supplies 400/422 invalid_args, 429 rate_limited
+and read-5xx unavailable fallbacks. GitHub's numeric rate-limit headers retain their
+reviewed meanings; errors never quote vendor bodies. Failed success-body reads
+say the body could not be read completely; malformed JSON retains its own diagnostic.
+Dispatched ambiguous writes remain nonretryable, with write-aware reconciliation
+wording. The guide no longer contains operator setup or hand-written shared
+conventions; construction context and generated Conventions supply those facts.
+
 ## Cloudflare
 
 All nine tool names remain: `cloudflare_api_search`, `cloudflare_api_details`,
