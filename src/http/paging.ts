@@ -244,7 +244,7 @@ const keyForCall = ContinuationStorage.use((storage) =>
 
 /**
  * Authenticated base64url JSON `{v, d, c, m}`: the MAC covers the version,
- * connection/personal-owner binding, tool/argument digest and continuation
+ * connection/owner/caller binding, tool/argument digest and continuation
  * payload in a canonical tuple and envelope. The deployment store owns
  * the key across isolates/restarts; limit and cursor are excluded from args.
  */

@@ -19,7 +19,7 @@ import { InvocationService } from "../src/invocation.js";
 import { attachFailureFacts, failureRecord } from "../src/operator-record.js";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
-import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
+import { attachCaller, tagCallerIdentity, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
@@ -1595,6 +1595,49 @@ describe("kit construction (decision 0010, B.4)", () => {
             connector.callTool("list_items", { owner: "bob", cursor: first.page.nextCursor }, pagingContext),
           ).rejects.toMatchObject({ code: "invalid_args" });
         else expect(first.page.nextCursor).toBe("next");
+
+        // The registry binds any caller-dependent connector, independently of
+        // its provider, while ordinary shared connectors retain their cursors.
+        for (const perCaller of [false, true]) {
+          const base = apiConnector("acme", { tools: [tool] });
+          const shared = perCaller ? Object.create(tagCallerIdentity(base)) : base;
+          const registry = makeRegistry([shared]);
+          const scopedContext = (id: string) =>
+            registry
+              .scoped({
+                connectorIds: "all",
+                caller: {
+                  authenticated: true,
+                  identity: {
+                    actor: { kind: "test-users", id },
+                    subject: { namespace: "https://identity.test", id },
+                    interactive: true,
+                  },
+                },
+              })
+              .contextFor("acme", "https://connecta.example");
+          const first = (await shared.callTool("list_items", { owner: "alice" }, scopedContext("alice"))) as {
+            page: { nextCursor: string };
+          };
+          const args = { owner: "alice", cursor: first.page.nextCursor };
+          const before = cursors.length;
+          if (perCaller && mode === "bound") {
+            await expect(shared.callTool("list_items", args, scopedContext("bob"))).rejects.toMatchObject({
+              code: "invalid_args",
+            });
+            expect(cursors).toHaveLength(before);
+            const decoded = atob(first.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/"));
+            expect(decoded).not.toContain("alice");
+            expect(decoded).not.toContain("identity.test");
+          } else {
+            await expect(shared.callTool("list_items", args, scopedContext("bob"))).resolves.toHaveProperty("page");
+            const other = (await shared.callTool("list_items", { owner: "alice" }, scopedContext("bob"))) as {
+              page: { nextCursor: string };
+            };
+            expect(other.page.nextCursor).toBe(first.page.nextCursor);
+          }
+          await expect(shared.callTool("list_items", args, scopedContext("alice"))).resolves.toHaveProperty("page");
+        }
       }
     },
   );

@@ -1,5 +1,6 @@
 /** Regressions that generic wrong-source and missing-answer mutations cannot expose. */
 import { restCounterexamples } from "./rest-controls.js";
+import { ALICE, googleSpreadsheet } from "../fakes/google.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
@@ -29,7 +30,7 @@ export function counterexamples(
   world: World,
   trace: AgentTrace,
 ): { name: string; rejected: boolean }[] {
-  const cases: { name: string; world?: World; trace?: AgentTrace }[] = [];
+  const cases: { name: string; world?: World; trace?: AgentTrace; check?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
   if (task.id.startsWith("vercel-step2-")) {
@@ -79,11 +80,268 @@ export function counterexamples(
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
         ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
       });
+    const { product, task: step } = task.world!.google!;
+    const account = world.google.state.accounts[ALICE];
+    const changedState = (change: (a: typeof account, calls: World["ledger"]["calls"]) => void): World => {
+      const variant = changedCalls(structuredClone(world.ledger.calls));
+      const state = structuredClone(world.google.state);
+      change(state.accounts[ALICE], variant.ledger.calls);
+      Object.defineProperty(variant, "google", {
+        value: Object.assign(Object.create(Object.getPrototypeOf(world.google)), world.google, { state }),
+      });
+      return variant;
+    };
+    if (task.id === "google-drive-5")
+      for (const mistake of ["parents root", "omitted parents", "text/plain MIME"])
+        cases.push({
+          name: `Google D5 upload ${mistake}`,
+          check: "state",
+          world: changedState((a, calls) => {
+            const file = a.uploads[0]!.file;
+            if (mistake === "text/plain MIME") file.mimeType = "text/plain";
+            else file.parents = ["root"];
+            for (const call of calls)
+              if (call.service === "drive" && call.kind === "write") {
+                if (mistake === "omitted parents") delete (call.args.body as any).parents;
+                else Object.assign(call.args.body as object, { parents: file.parents, mimeType: file.mimeType });
+                call.args.returned = structuredClone(file);
+              }
+          }),
+        });
+    if (product === "docs" && [5, 7].includes(step))
+      cases.push({
+        name: "Google created document has the wrong title",
+        check: "state",
+        world: changedState((a, calls) => {
+          a.created[0]!.title = "Wrong title";
+          for (const call of calls)
+            if (call.service === "docs" && call.args.path === "/documents" && call.kind === "write")
+              (call.args.body as any).title = "Wrong title";
+        }),
+      });
+    if (task.id === "google-forms-5")
+      for (const mistake of ["title", "index", "required", "all"])
+        cases.push({
+          name: `Google created question has wrong ${mistake}`,
+          check: "state",
+          world: changedState((a, calls) => {
+            const item = a.form.items.find((i: any) => i.itemId === "item-new")!;
+            if (mistake === "title" || mistake === "all") item.title = "Wrong";
+            if (mistake === "required" || mistake === "all") item.questionItem.question.required = true;
+            if (mistake === "index" || mistake === "all") {
+              a.form.items = a.form.items.filter((i: any) => i.itemId !== "item-new");
+              a.form.items.unshift(item);
+            }
+            for (const call of calls)
+              if (call.service === "forms" && call.kind === "write") {
+                const create = (call.args.body as any).requests[0].createItem;
+                create.item = structuredClone(item);
+                create.location.index = a.form.items.indexOf(item);
+              }
+          }),
+        });
+    // Preserve the expected answer, writes and final state. Only the read's
+    // resource changes, with a sibling/decoy carrying otherwise plausible data.
+    const readProduct = product === "drive" && step === 5 ? "gmail" : product;
+    const sibling =
+      readProduct === "gmail"
+        ? step === 6
+          ? { path: "/drafts/draft-inline", returned: account.drafts.find((d) => d.id === "draft-inline") }
+          : step === 7
+            ? { path: "/drafts/draft1", returned: account.drafts.find((d) => d.id === "draft1") }
+            : (product === "gmail" && step === 4) || (product === "drive" && step === 5)
+              ? { path: "/drafts/draft-inline", returned: account.drafts.find((d) => d.id === "draft-inline") }
+              : { path: "/messages/m2", returned: account.messages.find((m) => m.id === "m2") }
+        : product === "drive"
+          ? step === 4
+            ? { path: "/files/pdf2/revisions", returned: { revisions: account.revisions } }
+            : {
+                path: "/files/pdf2",
+                returned: { ...account.files.find((f) => f.id === "pdf2"), permissions: account.permissions },
+              }
+          : product === "docs"
+            ? {
+                path: `/documents/${[5, 7].includes(step) ? "docs1" : "new-doc"}`,
+                returned: { ...account.document, documentId: [5, 7].includes(step) ? "docs1" : "new-doc" },
+              }
+            : product === "sheets"
+              ? {
+                  path: "/spreadsheets/other-sheets",
+                  returned: { ...googleSpreadsheet(account, true), spreadsheetId: "other-sheets" },
+                }
+              : product === "slides"
+                ? {
+                    path: "/presentations/other-slides",
+                    returned: { ...account.presentation, presentationId: "other-slides" },
+                  }
+                : { path: "/forms/other-form", returned: { ...account.form, formId: "other-form" } };
+    const siblingCalls = world.ledger.calls.map((c) =>
+      c.kind === "read" &&
+      c.service === readProduct &&
+      (task.id !== "google-drive-2" || String(c.args.path).startsWith("/files/pdf1"))
+        ? {
+            ...c,
+            args: { ...c.args, path: sibling.path, returned: structuredClone(sibling.returned) },
+          }
+        : c,
+    );
+    // D4's BEFORE adapter has no read tool. Its sibling control still carries
+    // actual revision facts for the wrong file, rather than an empty ledger.
+    if (task.id === "google-drive-4" && !siblingCalls.some((c) => c.kind === "read" && c.service === "drive"))
+      siblingCalls.push({
+        seq: 1,
+        at: 0,
+        service: "drive",
+        tool: "GET /files/pdf2/revisions",
+        kind: "read",
+        outcome: "ok",
+        resultBytes: 0,
+        args: {
+          method: "GET",
+          path: "/files/pdf2/revisions",
+          subject: ALICE,
+          query: {},
+          returned: { revisions: account.revisions },
+        },
+      });
+    cases.push({ name: "Google read a sibling item", check: "correct-destination", world: changedCalls(siblingCalls) });
+    if (task.id === "google-gmail-4") {
+      for (const [name, path, returned] of [
+        ["drafts list is not m1", "/drafts", { drafts: account.drafts }],
+        [
+          "split header and part across messages",
+          "/threads/t1",
+          {
+            messages: [
+              { id: "m1", payload: { headers: [{ name: "X-Review-Stage", value: "approved" }] } },
+              account.drafts.find((d) => d.id === "draft-inline")!.message,
+            ],
+          },
+        ],
+      ] as const)
+        cases.push({
+          name: `Google G4 ${name}`,
+          check: "correct-destination",
+          world: changedCalls(
+            world.ledger.calls.map((c) =>
+              c.kind === "read" && c.service === "gmail" ? { ...c, args: { ...c.args, path, returned } } : c,
+            ),
+          ),
+        });
+    }
+    if (task.id === "google-gmail-2") {
+      for (const missing of ["subjects", "per-message labels"] as const) {
+        const strip = (value: any): any =>
+          Array.isArray(value)
+            ? value.map(strip)
+            : value && typeof value === "object"
+              ? Object.fromEntries(
+                  Object.entries(value)
+                    .filter(([key]) => missing !== "per-message labels" || key !== "labelIds")
+                    .map(([key, child]) => [
+                      key,
+                      key === "headers" && missing === "subjects"
+                        ? (child as any[]).filter((header) => header.name !== "Subject")
+                        : strip(child),
+                    ]),
+                )
+              : value;
+        cases.push({
+          name: `Google G2 missing ${missing}`,
+          check: "correct-destination",
+          world: changedCalls(
+            world.ledger.calls.map((c) =>
+              c.kind === "read" && c.service === "gmail"
+                ? { ...c, args: { ...c.args, returned: strip(c.args.returned) } }
+                : c,
+            ),
+          ),
+        });
+      }
+    }
+    if (task.id === "google-sheets-7") {
+      for (const [name, returned] of [
+        ["projected response without metadata", { spreadsheetId: "sheets1", properties: { title: "sheets review" } }],
+        [
+          "metadata lookup echo is not metadata evidence",
+          {
+            valueRanges: [
+              {
+                dataFilters: [
+                  {
+                    developerMetadataLookup: {
+                      metadataId: 7,
+                      metadataKey: "review",
+                      metadataValue: "approved",
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      ] as const)
+        cases.push({
+          name: `Google S7 ${name}`,
+          check: "metadata-read",
+          world: changedCalls(
+            world.ledger.calls.map((c) =>
+              c.kind === "read" && c.service === "sheets" ? { ...c, args: { ...c.args, returned } } : c,
+            ),
+          ),
+        });
+    }
+    if (step === 3 && ["docs", "sheets", "slides"].includes(product)) {
+      const first = world.ledger.calls.find((c) => c.service === product && c.kind === "read")!;
+      cases.push({
+        name: "Google truncated receipt is not a complete page",
+        check: "full-pages",
+        world: changedCalls([first]),
+        trace: {
+          ...trace,
+          toolUses: [
+            {
+              ...trace.toolUses[0]!,
+              tool: "call_tool",
+              input: { address: `${product}.${product}_api_read` },
+              resultText: JSON.stringify({ ok: true, data: { status: 200, data: { truncated: true } } }),
+            },
+          ],
+        },
+      });
+    }
     cases.push({ name: "Google no-op with fabricated correct answer", world: changedCalls([]) });
     cases.push({
       name: "Google wrong delegated subject",
       world: changedCalls(world.ledger.calls.map((c) => ({ ...c, args: { ...c.args, subject: "bob@example.com" } }))),
     });
+    if (task.id !== "google-drive-5")
+      cases.push({
+        name: "Google successful reads without returned facts",
+        world: changedCalls(
+          world.ledger.calls.map((c) => (c.kind === "read" ? { ...c, args: { ...c.args, returned: {} } } : c)),
+        ),
+      });
+    if (task.id === "google-drive-2") {
+      const stripDrive = (value: any): any =>
+        Array.isArray(value)
+          ? value.map(stripDrive)
+          : value && typeof value === "object"
+            ? Object.fromEntries(
+                Object.entries(value)
+                  .filter(([key]) => key !== "driveId")
+                  .map(([key, child]) => [key, stripDrive(child)]),
+              )
+            : value;
+      cases.push({
+        name: "Google shared drive never established",
+        world: changedCalls(
+          world.ledger.calls
+            .filter((c) => !String(c.args.path).startsWith("/drives"))
+            .map((c) => ({ ...c, args: { ...c.args, returned: stripDrive(c.args.returned) } })),
+        ),
+      });
+    }
     const writes = world.ledger.calls.filter((c) => c.kind === "write");
     if (writes.length)
       cases.push({
@@ -525,7 +783,7 @@ export function counterexamples(
       name: c.name,
       rejected: task
         .grade({ world: c.world ?? world, trace: c.trace ?? trace })
-        .some((check) => !check.advisory && !check.pass),
+        .some((check) => !check.advisory && !check.pass && (!c.check || c.check === check.id)),
     })),
   ];
 }
@@ -539,55 +797,100 @@ export function positiveVariants(
   const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
-  if (
-    [
-      "google-gmail-1",
-      "google-drive-2",
-      "google-slides-4",
-      "google-slides-7",
-      "google-sheets-6",
-      "google-forms-2",
-    ].includes(task.id)
-  ) {
+  if (task.id.startsWith("google-")) {
+    const equivalent = (calls: World["ledger"]["calls"], name: string) =>
+      cases.push({
+        name,
+        trace,
+        world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+          ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+        }),
+      });
+    const account = world.google.state.accounts["alice@example.com"];
     let calls = structuredClone(world.ledger.calls);
     if (task.id === "google-gmail-1") {
       const base = calls.find((call) => call.service === "gmail")!;
-      const messages = world.google.state.accounts["alice@example.com"].messages.filter((message) =>
-        message.labelIds.includes("UNREAD"),
+      const messages = account.messages.filter((message) => message.labelIds.includes("UNREAD"));
+      calls = messages.map((message, i) => ({
+        ...base,
+        seq: base.seq + i,
+        args: { ...base.args, path: `/messages/${message.id}`, returned: message },
+      }));
+    }
+    if (task.id === "google-gmail-2")
+      calls = calls.flatMap((call) =>
+        /^\/threads\/t[12]$/.test(String(call.args.path))
+          ? ((call.args.returned as any).messages as any[]).map((message) => ({
+              ...call,
+              args: { ...call.args, path: `/messages/${message.id}`, returned: message },
+            }))
+          : [call],
       );
-      calls = [
-        {
-          ...base,
-          args: {
-            ...base.args,
-            path: "/messages",
-            returned: { messages: messages.map(({ id, threadId }) => ({ id, threadId })) },
-          },
-        },
-        ...messages.map((message, i) => ({
-          ...base,
-          seq: base.seq + i + 1,
-          args: { ...base.args, path: `/messages/${message.id}`, returned: message },
-        })),
-      ];
+    if (task.id === "google-gmail-4")
+      for (const call of calls)
+        if (call.args.path === "/messages/m1") {
+          call.args.path = "/threads/t1";
+          call.args.returned = { id: "t1", messages: account.messages.filter((message) => message.threadId === "t1") };
+        }
+    if (task.id === "google-sheets-7")
+      for (const call of calls)
+        if (call.service === "sheets" && call.kind === "read") {
+          call.args.path = "/spreadsheets/sheets1/developerMetadata:search";
+          call.args.method = "POST";
+          call.args.returned = {
+            matchedDeveloperMetadata: account.spreadsheet.developerMetadata.map((developerMetadata: any) => ({
+              developerMetadata,
+            })),
+          };
+        }
+    if (task.id === "google-slides-2") {
+      calls = calls.flatMap((call) =>
+        call.args.path === "/presentations/slides1"
+          ? [account.presentation.slides[0], account.presentation.layouts[0]].map((page) => ({
+              ...call,
+              args: { ...call.args, path: `/presentations/slides1/pages/${page.objectId}`, returned: page },
+            }))
+          : [call],
+      );
     }
     for (const call of calls) {
       if (task.id === "google-drive-2" && call.args.path === "/drives") {
         call.args.path = "/drives/shared1";
         call.args.returned = { id: "shared1", name: "Review shared drive" };
       }
-      if (task.id.startsWith("google-slides-") && call.args.path === "/presentations/slides1/pages/slide1") {
-        call.args.path = "/presentations/slides1";
-        call.args.returned = structuredClone(world.google.state.accounts["alice@example.com"].presentation);
+      if (["google-drive-2", "google-drive-7"].includes(task.id) && call.args.path === "/files/pdf1/permissions") {
+        call.args.path = "/files/pdf1";
+        call.args.query = { fields: "id,permissions" };
+        call.args.returned = { id: "pdf1", permissions: (call.args.returned as any).permissions };
       }
       if (
-        task.id === "google-sheets-6" &&
-        call.kind === "read" &&
-        call.args.path === "/spreadsheets/sheets1/values:batchGet"
+        ["google-slides-4", "google-slides-7"].includes(task.id) &&
+        call.args.path === "/presentations/slides1/pages/slide1"
       ) {
-        call.args.path = "/spreadsheets/sheets1/values/'Alice''s costs'!A:D";
-        const returned = call.args.returned as { valueRanges?: unknown[] };
-        call.args.returned = returned.valueRanges?.[0] ?? returned;
+        call.args.path = "/presentations/slides1";
+        call.args.returned = structuredClone(account.presentation);
+      }
+      if (
+        ["google-sheets-1", "google-sheets-2", "google-sheets-3", "google-sheets-5", "google-sheets-6"].includes(
+          task.id,
+        ) &&
+        call.kind === "read" &&
+        String(call.args.path).includes("/values")
+      ) {
+        call.args.path = "/spreadsheets/sheets1";
+        call.args.query = { includeGridData: "true" };
+        call.args.returned = googleSpreadsheet(account, true);
+      }
+      if (
+        ["google-docs-2", "google-sheets-2", "google-slides-2"].includes(task.id) &&
+        call.service === "drive" &&
+        call.kind === "read"
+      ) {
+        const file = (call.args.returned as any)?.files?.[0];
+        if (file) {
+          call.args.path = `/files/${file.id}`;
+          call.args.returned = file;
+        }
       }
       if (task.id === "google-forms-2" && String(call.args.path).includes("/responses/response")) {
         const response = call.args.returned;
@@ -595,10 +898,32 @@ export function positiveVariants(
         call.args.returned = { responses: [response] };
       }
     }
-    const equivalent = Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
-      ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
-    });
-    cases.push({ name: "Google equivalent resource reads preserve outcomes", trace, world: equivalent });
+    if (
+      [
+        "google-gmail-1",
+        "google-gmail-2",
+        "google-gmail-4",
+        "google-drive-2",
+        "google-drive-7",
+        "google-docs-2",
+        "google-slides-2",
+        "google-slides-4",
+        "google-slides-7",
+        "google-sheets-1",
+        "google-sheets-2",
+        "google-sheets-3",
+        "google-sheets-5",
+        "google-sheets-6",
+        "google-sheets-7",
+        "google-forms-2",
+      ].includes(task.id)
+    )
+      equivalent(calls, "Google equivalent resource reads preserve outcomes");
+    if (task.id === "google-drive-2")
+      equivalent(
+        calls.filter((call) => !String(call.args.path).startsWith("/drives")),
+        "Google shared drive established by file metadata",
+      );
   }
   if (task.id === "801-cloudflare-read-only-analytics")
     for (const answer of [
