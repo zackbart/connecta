@@ -20,7 +20,7 @@
       "slides.presentations.create": "Create a presentation deck.",
       "slides.presentations.batchUpdate": "Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",
       "slides.presentations.pages.get": "Get a slide, layout, master or notes page with elements, text styles, placeholders and transforms.",
-      "slides.presentations.pages.getThumbnail": "Get a slide thumbnail preview link. Refused in the generic hatch; use get_slide_thumbnail."
+      "slides.presentations.pages.getThumbnail": "Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail."
     }
   }
 }

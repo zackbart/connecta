@@ -8045,7 +8045,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get a slide thumbnail preview link. Refused in the generic hatch; use get_slide_thumbnail.",
+        "summary": "Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail.",
         "tags": [
           "presentations.pages"
         ],

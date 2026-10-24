@@ -12,8 +12,8 @@
     "evidence": {
       "discovery.document.json": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
       "discovery.json": "sha256:c0f579b8a691b76e19e850937897412d9ab940164155fdf9be7df54ad0148c9f",
-      "openapi.document.json": "sha256:213713ce951dfe8d12ac63b1515df4ce2d99c547c8e2b76540e8ad38e446478b",
-      "openapi.json": "sha256:8d67644643cd0472be2a78d66ac189a3d9e979994c7960fa8b416adfdea49284"
+      "openapi.document.json": "sha256:58efb5df5247c157d7f099afa6e251c69b88147daed3147e75db5d5486d89510",
+      "openapi.json": "sha256:630f45cc101ba9c48f5cdbf3e6eb73c220639e685c9beb0be38d03b067c1ddcf"
     }
   },
   "checks": [

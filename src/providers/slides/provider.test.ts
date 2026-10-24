@@ -349,6 +349,10 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     expect(JSON.stringify(detail)).toContain("presentationsId");
     expect(calls).toEqual([]);
     expect(tokenCalls).toBe(0);
+    const thumbnail = await call(c, "slides_api_search", { query: "thumbnail" });
+    expect(thumbnail.operations[0]).toMatchObject({ named: "get_slide_thumbnail" });
+    expect(thumbnail.operations[0].tool).toBeUndefined();
+    expect(thumbnail.operations[0].summary).toContain("use get_slide_thumbnail");
     for (const args of [
       { presentationId: "deck1", raw: true },
       { presentationId: "deck1", fields: ["bogus"] },

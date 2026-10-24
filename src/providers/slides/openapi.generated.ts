@@ -2,7 +2,7 @@
 // source: https://slides.googleapis.com/$discovery/rest?version=v1
 // revision: 20261019
 // digest: sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea
-// document: sha256:213713ce951dfe8d12ac63b1515df4ce2d99c547c8e2b76540e8ad38e446478b
+// document: sha256:58efb5df5247c157d7f099afa6e251c69b88147daed3147e75db5d5486d89510
 // options: {"depth":5,"numericBounds":true,"formats":true,"requestGraph":true,"deprecations":true,"allSuccessResponses":true}
 // format: 4
 import type { OpenApiData } from "../_shared/rest/operation-index.js";
@@ -17,7 +17,7 @@ export const openapi: OpenApiData = {
   ops: [
     ["POST","/presentations","slides.presentations.create","Create a presentation deck.",0],
     ["GET","/presentations/{presentationId}/pages/{pageObjectId}","slides.presentations.pages.get","Get a slide, layout, master or notes page with elements, text styles, placeholders and transforms.",1],
-    ["GET","/presentations/{presentationId}/pages/{pageObjectId}/thumbnail","slides.presentations.pages.getThumbnail","Get a slide thumbnail preview link.",1],
+    ["GET","/presentations/{presentationId}/pages/{pageObjectId}/thumbnail","slides.presentations.pages.getThumbnail","Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail.",1],
     ["POST","/presentations/{presentationId}:batchUpdate","slides.presentations.batchUpdate","Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",0],
     ["GET","/presentations/{presentationsId}","slides.presentations.get","Get a presentation deck with slides, speaker notes, layouts, masters, elements, text styles and comments.",0],
   ],

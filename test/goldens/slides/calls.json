@@ -39,7 +39,7 @@
             "method": "GET",
             "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
             "operationId": "slides.presentations.pages.getThumbnail",
-            "summary": "Get a slide thumbnail preview link.",
+            "summary": "Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail.",
             "named": "get_slide_thumbnail"
           },
           {
