@@ -15,6 +15,7 @@ Drive file; finding one does not grant permission to open it.
 placeholder ids. `get_page` opens groups and reads a slide, layout, master or
 notes page. A slide's `index` is zero-based. Resolve a layout's placeholders
 with `list_layouts` and `get_page` before filling a new slide.
+Named-read `fields` narrows data while preserving `truncated` cut disclosures.
 
 Text and notes have independent continuation. Pass an element's `textCursor`
 or a slide's `elementsCursor` to `get_page` with that slide's id; pass a

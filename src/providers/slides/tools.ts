@@ -2309,24 +2309,36 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
     },
   ];
   return declarations.map((declaration) => {
+    const isRead = declaration.annotations.readOnlyHint === true;
     const isList = declaration.name.startsWith("list_");
     const rowNames = new Set(
       Object.keys(declaration.name === "list_layouts" ? contracts.LayoutRow.fields : contracts.CommentRow.fields),
     );
+    const names = isList
+      ? rowNames
+      : new Set(Object.keys((declaration.output as Schema.Struct<Schema.Struct.Fields>).fields));
     const spec = {
       name: declaration.name,
       description: declaration.description,
-      input: isList
+      input: isRead
         ? (Schema.Struct({
             ...declaration.input.fields,
-            fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each item; only narrows the result.")),
+            fields: Schema.optionalKey(
+              fieldsInput(
+                isList
+                  ? "Dot paths to keep in each item; truncation metadata is preserved."
+                  : "Dot paths to keep in the result; truncation metadata is preserved.",
+              ),
+            ),
           }) as typeof declaration.input)
         : declaration.input,
       output: declaration.output,
       ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
       run: (args: Record<string, any>) =>
         Effect.gen(function* () {
-          const problem = isList ? fieldsProblem(args["fields"], rowNames, "a Slides list item") : undefined;
+          const problem = isRead
+            ? fieldsProblem(args["fields"], names, isList ? "a Slides list item" : "the result")
+            : undefined;
           if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const current = yield* Effect.serviceOption(Operation);
           if (Option.isNone(current) || !current.value)
@@ -2340,16 +2352,20 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
             ctx,
           );
           const normalized = normalizeResult(result, declaration.name);
-          if (isList) normalized["items"] = selectFields(normalized["items"], args["fields"]);
-          return yield* signContinuations(normalized, ctx);
+          const selected = isList
+            ? { ...normalized, items: selectNamedFields(normalized["items"], args["fields"]) }
+            : isRead
+              ? selectNamedFields(normalized, args["fields"])
+              : normalized;
+          return yield* signContinuations(selected, ctx);
         }).pipe(
           Effect.catchDefect((defect) =>
             defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
           ),
         ),
     };
-    return declaration.annotations.readOnlyHint === true
-      ? read(connection, { ...spec, ...(isList ? {} : { fields: true as const }) })
+    return isRead
+      ? read(connection, spec)
       : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
   });
 }
@@ -2362,6 +2378,20 @@ interface SlidesToolDeclaration {
   readonly output: Schema.Schema<any>;
   readonly writeSteps?: Readonly<Record<string, "once">>;
   readonly run: (args: Record<string, any>, ctx: ConnectorContext) => Effect.Effect<any, HttpFailure, CallServices>;
+}
+
+/** Field selection narrows data while retaining every selected object's cut disclosure. */
+function selectNamedFields(value: unknown, fields: readonly string[] | undefined): unknown {
+  const restore = (source: unknown, selected: unknown): unknown => {
+    if (Array.isArray(source) && Array.isArray(selected))
+      return selected.map((item, index) => restore(source[index], item));
+    if (!source || !selected || typeof source !== "object" || typeof selected !== "object") return selected;
+    const original = asRecord(source);
+    const out = Object.fromEntries(Object.entries(selected).map(([key, item]) => [key, restore(original[key], item)]));
+    if (Array.isArray(original["truncated"])) out["truncated"] = original["truncated"];
+    return out;
+  };
+  return restore(value, selectFields(value, fields));
 }
 
 /** Size reports name the cut paths; content cursors retain their independent offsets. */

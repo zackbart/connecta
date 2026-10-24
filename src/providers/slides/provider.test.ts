@@ -339,6 +339,63 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     // The layout list is bounded and counts what it left out.
     expect(result.truncated).toContain("layouts[]");
     expect(result.layouts.length).toBeLessThan(2_000);
+    const connector = connection();
+    for (const [tool, args, body, hasCuts] of [
+      [
+        "get_presentation",
+        { presentationId: "deck1", maxCharsPerSlide: 1, fields: ["slides.elements.text"] },
+        {
+          presentationId: "deck1",
+          slides: [
+            { objectId: "p", pageElements: [{ objectId: "shape1", shape: { text: textContent("long text") } }] },
+          ],
+        },
+        true,
+      ],
+      [
+        "get_page",
+        { presentationId: "deck1", pageObjectId: "p", fields: ["elements.text"] },
+        {
+          objectId: "p",
+          pageElements: [{ objectId: "shape1", shape: { text: textContent("x".repeat(300000)) } }],
+        },
+        true,
+      ],
+      [
+        "list_layouts",
+        { presentationId: "deck1", fields: ["objectId"] },
+        {
+          presentationId: "deck1",
+          layouts: [{ objectId: "layout1", layoutProperties: { name: "x".repeat(10000) } }],
+        },
+        true,
+      ],
+      [
+        "list_comments",
+        { presentationId: "deck1", fields: ["commentId"] },
+        {
+          ...COMMENT_DECK,
+          comments: [{ commentId: "c1", headPost: slidesPost("post1", "x".repeat(300000)) }],
+        },
+        true,
+      ],
+      [
+        "get_slide_thumbnail",
+        { presentationId: "deck1", slideObjectId: "p", fields: ["width"] },
+        {
+          contentUrl: "https://slides.example/preview",
+          width: 800,
+          height: 450,
+        },
+        false,
+      ],
+    ] as const) {
+      route = () => ({ body });
+      const selected = await call(connector, tool, args);
+      if (hasCuts) expect(selected.truncated?.length, tool).toBeGreaterThan(0);
+      else expect(selected).toEqual({ width: 800 });
+      if (tool === "get_page") expect(selected.elements[0].truncated).toContain("text");
+    }
   });
 
   it("INV-3 INV-4 INV-10: indexes exactly five methods with plural presentationsId and refuses invalid fields before minting", async () => {
@@ -363,16 +420,31 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     );
     expect(calls).toEqual([]);
     expect(tokenCalls).toBe(0);
-    for (const query of [
-      "format slide text",
-      "add a slide",
-      "create comment",
-      "reply to comment",
-      "resolve comment thread",
-      "replace slide text",
+    for (const [query, path] of [
+      ["format slide text", "/presentations/{presentationId}:batchUpdate"],
+      ["make text bold", "/presentations/{presentationId}:batchUpdate"],
+      ["add a slide", "/presentations/{presentationId}:batchUpdate"],
+      ["create a presentation", "/presentations"],
+      ["create comment", "/presentations/{presentationId}:batchUpdate"],
+      ["add comment", "/presentations/{presentationId}:batchUpdate"],
+      ["reply to comment", "/presentations/{presentationId}:batchUpdate"],
+      ["resolve comment thread", "/presentations/{presentationId}:batchUpdate"],
+      ["replace slide text", "/presentations/{presentationId}:batchUpdate"],
+      ["replace literal phrase", "/presentations/{presentationId}:batchUpdate"],
     ]) {
+      for (const method of [undefined, "POST"]) {
+        const result = await call(c, "slides_api_search", { query, ...(method ? { method } : {}) });
+        expect(
+          result.operations.slice(0, 2).some((op: any) => op.path === path),
+          query,
+        ).toBe(true);
+      }
+    }
+    for (const query of ["thumbnail", "get slide preview", "thumbnail link"]) {
       const result = await call(c, "slides_api_search", { query });
-      expect(result.operations.slice(0, 2).some((op: any) => op.path.endsWith(":batchUpdate"))).toBe(true);
+      const refused = result.operations.find((op: any) => op.path.endsWith("/thumbnail"));
+      expect(refused.summary, query).toMatch(/^Refused:.*temporary access/);
+      expect(refused.tool).toBeUndefined();
     }
   });
 });

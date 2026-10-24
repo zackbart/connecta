@@ -35,7 +35,7 @@ export const get_presentation = {
     ),
   }),
   output: Schema.Struct({
-    "presentationId": Schema.String,
+    "presentationId": Schema.optionalKey(Schema.String),
     "title": Schema.optionalKey(Schema.String),
     "revisionId": Schema.optionalKey(Schema.String),
     "url": Schema.optionalKey(Schema.String),
@@ -60,43 +60,48 @@ export const get_presentation = {
           "name": Schema.optionalKey(Schema.String),
           "displayName": Schema.optionalKey(Schema.String),
           "masterId": Schema.optionalKey(Schema.String),
+          "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
         }),
       ),
     ),
     "layoutsCursor": Schema.optionalKey(Schema.String),
-    "slides": Schema.Array(
-      Schema.Struct({
-        "objectId": Schema.optionalKey(Schema.String),
-        "index": Schema.optionalKey(Integer),
-        "layout": Schema.optionalKey(Schema.String),
-        "layoutId": Schema.optionalKey(Schema.String),
-        "skipped": Schema.optionalKey(Schema.Boolean),
-        "title": Schema.optionalKey(Schema.String),
-        "elements": Schema.optionalKey(
-          Schema.Array(
-            Schema.Struct({
-              "objectId": Schema.optionalKey(Schema.String),
-              "kind": Schema.optionalKey(
-                Schema.Literals(["shape", "table", "wordArt", "image", "video", "chart", "line", "other"]),
-              ),
-              "placeholder": Schema.optionalKey(Schema.String),
-              "text": Schema.optionalKey(Schema.String),
-              "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
-              "textCursor": Schema.optionalKey(Schema.String),
-              "altText": Schema.optionalKey(Schema.String),
-              "spreadsheetId": Schema.optionalKey(Schema.String),
-            }),
+    "slides": Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          "objectId": Schema.optionalKey(Schema.String),
+          "index": Schema.optionalKey(Integer),
+          "layout": Schema.optionalKey(Schema.String),
+          "layoutId": Schema.optionalKey(Schema.String),
+          "skipped": Schema.optionalKey(Schema.Boolean),
+          "title": Schema.optionalKey(Schema.String),
+          "elements": Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                "objectId": Schema.optionalKey(Schema.String),
+                "kind": Schema.optionalKey(
+                  Schema.Literals(["shape", "table", "wordArt", "image", "video", "chart", "line", "other"]),
+                ),
+                "placeholder": Schema.optionalKey(Schema.String),
+                "text": Schema.optionalKey(Schema.String),
+                "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
+                "textCursor": Schema.optionalKey(Schema.String),
+                "altText": Schema.optionalKey(Schema.String),
+                "spreadsheetId": Schema.optionalKey(Schema.String),
+              }),
+            ),
           ),
-        ),
-        "omittedElements": Schema.optionalKey(Integer),
-        "elementsCursor": Schema.optionalKey(Schema.String),
-        "notesPageId": Schema.optionalKey(Schema.String),
-        "notes": Schema.optionalKey(Schema.String),
-        "notesCursor": Schema.optionalKey(Schema.String),
-        "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
-      }),
+          "omittedElements": Schema.optionalKey(Integer),
+          "elementsCursor": Schema.optionalKey(Schema.String),
+          "notesPageId": Schema.optionalKey(Schema.String),
+          "notes": Schema.optionalKey(Schema.String),
+          "notesCursor": Schema.optionalKey(Schema.String),
+          "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
+        }),
+      ),
     ),
-    "page": Schema.Struct({ "hasMore": Schema.Boolean, "nextCursor": Schema.optionalKey(Schema.String) }),
+    "page": Schema.optionalKey(
+      Schema.Struct({ "hasMore": Schema.optionalKey(Schema.Boolean), "nextCursor": Schema.optionalKey(Schema.String) }),
+    ),
     "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
   }),
 };
@@ -127,8 +132,8 @@ export const get_page = {
     ),
   }),
   output: Schema.Struct({
-    "presentationId": Schema.String,
-    "pageObjectId": Schema.String,
+    "presentationId": Schema.optionalKey(Schema.String),
+    "pageObjectId": Schema.optionalKey(Schema.String),
     "revisionId": Schema.optionalKey(Schema.String),
     "pageType": Schema.optionalKey(Schema.String),
     "layoutId": Schema.optionalKey(Schema.String),
@@ -140,25 +145,29 @@ export const get_page = {
     "displayName": Schema.optionalKey(Schema.String),
     "elementCount": Schema.optionalKey(Integer),
     "properties": Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    "elements": Schema.Array(
-      Schema.Struct({
-        "objectId": Schema.optionalKey(Schema.String),
-        "kind": Schema.optionalKey(
-          Schema.Literals(["shape", "table", "wordArt", "image", "video", "chart", "line", "other"]),
-        ),
-        "groupId": Schema.optionalKey(Schema.String),
-        "placeholder": Schema.optionalKey(Schema.String),
-        "placeholderIndex": Schema.optionalKey(Integer),
-        "placeholderParentId": Schema.optionalKey(Schema.String),
-        "text": Schema.optionalKey(Schema.String),
-        "textOffset": Schema.optionalKey(Integer),
-        "textLength": Schema.optionalKey(Integer),
-        "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
-        "altText": Schema.optionalKey(Schema.String),
-        "spreadsheetId": Schema.optionalKey(Schema.String),
-      }),
+    "elements": Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          "objectId": Schema.optionalKey(Schema.String),
+          "kind": Schema.optionalKey(
+            Schema.Literals(["shape", "table", "wordArt", "image", "video", "chart", "line", "other"]),
+          ),
+          "groupId": Schema.optionalKey(Schema.String),
+          "placeholder": Schema.optionalKey(Schema.String),
+          "placeholderIndex": Schema.optionalKey(Integer),
+          "placeholderParentId": Schema.optionalKey(Schema.String),
+          "text": Schema.optionalKey(Schema.String),
+          "textOffset": Schema.optionalKey(Integer),
+          "textLength": Schema.optionalKey(Integer),
+          "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
+          "altText": Schema.optionalKey(Schema.String),
+          "spreadsheetId": Schema.optionalKey(Schema.String),
+        }),
+      ),
     ),
-    "page": Schema.Struct({ "hasMore": Schema.Boolean, "nextCursor": Schema.optionalKey(Schema.String) }),
+    "page": Schema.optionalKey(
+      Schema.Struct({ "hasMore": Schema.optionalKey(Schema.Boolean), "nextCursor": Schema.optionalKey(Schema.String) }),
+    ),
     "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
   }),
 };
@@ -199,6 +208,7 @@ export const list_layouts = {
         "name": Schema.optionalKey(Schema.String),
         "displayName": Schema.optionalKey(Schema.String),
         "masterId": Schema.optionalKey(Schema.String),
+        "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
       }),
     ),
     "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
@@ -255,10 +265,12 @@ export const list_comments = {
         "headPost": Schema.optionalKey(
           Schema.Struct({
             "postId": Schema.optionalKey(Schema.String),
+            "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
             "author": Schema.optionalKey(
               Schema.Struct({
                 "user": Schema.optionalKey(Schema.String),
                 "displayName": Schema.optionalKey(Schema.String),
+                "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
                 "me": Schema.optionalKey(Schema.Boolean),
                 "anonymous": Schema.optionalKey(Schema.Boolean),
               }),
@@ -278,10 +290,12 @@ export const list_comments = {
           Schema.Array(
             Schema.Struct({
               "postId": Schema.optionalKey(Schema.String),
+              "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
               "author": Schema.optionalKey(
                 Schema.Struct({
                   "user": Schema.optionalKey(Schema.String),
                   "displayName": Schema.optionalKey(Schema.String),
+                  "truncated": Schema.optionalKey(Schema.Array(Schema.String)),
                   "me": Schema.optionalKey(Schema.Boolean),
                   "anonymous": Schema.optionalKey(Schema.Boolean),
                 }),
@@ -328,7 +342,7 @@ export const get_slide_thumbnail = {
     ),
   }),
   output: Schema.Struct({
-    "contentUrl": Schema.String,
+    "contentUrl": Schema.optionalKey(Schema.String),
     "width": Schema.optionalKey(Integer),
     "height": Schema.optionalKey(Integer),
     "truncated": Schema.optionalKey(Schema.Array(Schema.String)),

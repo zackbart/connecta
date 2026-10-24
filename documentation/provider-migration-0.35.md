@@ -621,7 +621,8 @@ once; a revision precondition does not make a replay safe.
 | Projected `get_presentation.pageSize`                                                                            | `canvasSize` describes slide width and height; structural hatch JSON retains vendor `data.pageSize`         |
 | List `total`                                                                                                     | `page.total` retains the exact count of returned vendor content                                             |
 
-Every named read gains `fields`; it can only narrow the safe result. Hatch
+Every named read gains `fields`; it narrows the safe result while retaining
+`truncated` metadata on the result and selected nested records. Hatch
 `fields` narrows `data`, while `query.fields` is Google's own wire mask. Named
 text and speaker-note cursors continue through `get_page`; they are separate
 from Connecta's large-result delivery handles. Reuse the deployment storage

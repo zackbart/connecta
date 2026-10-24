@@ -52,4 +52,8 @@ lists preserve joins and anchors; thumbnail retrieval is a reviewed exception;
 creation/replacement helpers preserve workflow semantics; six comment writes
 preserve thread/post identity and independent save outcomes. The batch wrapper
 stays until BEFORE evidence and a later orchestrator ruling authorize any
-retirement. Paid evals are scheduled separately; no result is claimed here.
+retirement. Paid eval results are recorded in `eval/baselines/notes-google-slides-step2.md`.
+Reviewed first sentences retain all eval-write action words within the compiler’s
+120-character limit. Refused thumbnail discovery carries its reason in that
+first sentence. Natural-query rows check writes with and without a method
+filter, and named-read field selection retains truncation disclosures.

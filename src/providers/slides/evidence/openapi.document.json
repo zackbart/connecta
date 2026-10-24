@@ -8045,7 +8045,7 @@
             "description": "Success"
           }
         },
-        "summary": "Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail.",
+        "summary": "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
         "tags": [
           "presentations.pages"
         ],
@@ -8118,7 +8118,7 @@
             "description": "Success"
           }
         },
-        "summary": "Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",
+        "summary": "Make text bold; format styles; add/create slide; replace literal text/phrase; create/reply/resolve comment threads.",
         "tags": [
           "presentations"
         ],

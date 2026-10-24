@@ -15,7 +15,7 @@
             "method": "POST",
             "path": "/presentations/{presentationId}:batchUpdate",
             "operationId": "slides.presentations.batchUpdate",
-            "summary": "Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",
+            "summary": "Make text bold; format styles; add/create slide; replace literal text/phrase; create/reply/resolve comment threads.",
             "tool": "slides_api_write",
             "named": "batch_update_presentation"
           },
@@ -39,7 +39,7 @@
             "method": "GET",
             "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
             "operationId": "slides.presentations.pages.getThumbnail",
-            "summary": "Get slide thumbnail preview link; refused because it grants temporary access; use get_slide_thumbnail.",
+            "summary": "Refused: get slide thumbnail preview link grants temporary access; use get_slide_thumbnail.",
             "named": "get_slide_thumbnail"
           },
           {
