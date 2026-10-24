@@ -260,15 +260,38 @@ it(
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
       expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
     }
-    for (const query of [
-      "Show All",
-      "please show all",
-      "delete dns record",
-      "please list all of the dns records for the zone by name",
-    ]) {
-      const found = await fixtures.get("planning-center")!.callTool("pco_api_search", { query }, connectorContext());
-      expect(found, query).toMatchObject({ operations: [], page: { hasMore: false } });
+    for (const [provider, query] of [
+      ["planning-center", "Show All"],
+      ["planning-center", "please show all"],
+      ["planning-center", "delete dns record"],
+      ["planning-center", "please list all of the dns records for the zone by name"],
+      ["overflow", "delete dns record"],
+      ["tithely", "list zones"],
+      ["breeze", "create a dns zone"],
+      ["planning-center", "xyzzy"],
+      ["planning-center", "list xyzzy"],
+      ["stripe", "create xyzzy"],
+      ["stripe", "get xyzzy details"],
+      ["stripe", "the"],
+      ["stripe", "show me"],
+      ["stripe", "constructor"],
+      ["stripe", "delete toString"],
+      ["stripe", "__proto__"],
+    ] as const) {
+      const prefix = provider === "planning-center" ? "pco" : provider;
+      const found = await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext());
+      expect(found, `${provider}: ${query}`).toMatchObject({ operations: [], page: { hasMore: false } });
     }
+    // Verb-less noun phrases keep their broader eligibility rule.
+    const broad = (await fixtures
+      .get("planning-center")!
+      .callTool(
+        "pco_api_search",
+        { query: "account member roles permissions groups tokens policies settings", limit: 8 },
+        connectorContext(),
+      )) as { operations: unknown[]; page: { hasMore: boolean } };
+    expect(broad.operations).toHaveLength(8);
+    expect(broad.page.hasMore).toBe(true);
     // Nouns survive verb ambiguity; common inflections share one root key.
     const nounOps: OpenApiData["ops"] = [
       ["GET", "/issues", "ListIssues", "List issues", 0],
