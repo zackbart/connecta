@@ -35,5 +35,6 @@ loop of individual gets. Other deployments sharing the client spend from the
 same vendor allowance.
 
 For a profile edit, resolve the individual first and preserve fields outside
-the requested change. After an ambiguous update, read that profile to determine
+the requested change. Use `ccb_api_write` for the edit; the host may ask the
+user to confirm. After an ambiguous update, read that profile to determine
 what actually changed before deciding whether another write is needed.

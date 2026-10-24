@@ -196,7 +196,7 @@ Update saved programs, pool grants, classification entries and instructions:
 | Before                                                       | After                                                                                                                                                |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ccb_api_get`                                                | `ccb_api_read` with the same canonical absolute API path, query object and optional response `fields`                                                |
-| `ccb_api_mutate`                                             | Approval-gated `ccb_api_write` with explicit method, canonical path and JSON body                                                                    |
+| `ccb_api_mutate`                                             | `ccb_api_write` with explicit method, canonical path and JSON body; the host may ask the user to confirm                                             |
 | `ccb_api_search({ domain, body, page, perPage })`            | `search_records({ domain, body, limit, cursor, fields })` for advanced data searches                                                                 |
 | —                                                            | `ccb_api_search({ query, method?, limit?, cursor? })` searches the offline operation index; `ccb_api_details({ method, path, ... })` reads contracts |
 | `page` and `perPage` on named lists and advanced searches    | `limit` is exactly 25, 50, 75 or 100 (default 25, or configured `defaultPerPage`); continue with signed `cursor`                                     |
@@ -234,7 +234,8 @@ segments are refused. For example delete group members with
 `/groups/5/members/42` path. JSON-only transport refuses multipart, form and
 wildcard request bodies. Optional wildcard GET bodies may be omitted.
 
-Writes retain approval requirements and are sent once. Configured read-only
+Use `ccb_api_write` for writes; the host may ask the user to confirm. Writes
+are sent once. Configured read-only
 OAuth scopes omit the write hatch and refuse writes before dispatch; configure
 authorized write scopes in deployment code when required. The `readOnly` option
 continues to enforce read-only endpoints. `sensitiveFields: "return"` permits

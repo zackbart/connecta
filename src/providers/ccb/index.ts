@@ -73,8 +73,8 @@ export interface CcbOptions {
   clientSecret: string;
   /**
    * `"read"` (default) requests {@link CCB_READ_SCOPES} and ships no write
-   * tool; `"read-write"` adds {@link CCB_WRITE_SCOPES} and the approval-gated
-   * `ccb_api_write`. Exclusive with `scopes`.
+   * tool; `"read-write"` adds {@link CCB_WRITE_SCOPES} and `ccb_api_write`.
+   * The host may ask the user to confirm a write. Exclusive with `scopes`.
    */
   access?: "read" | "read-write";
   /**
@@ -166,8 +166,8 @@ export const ccb = defineApiProvider<CcbOptions>({
   title: "Church Community Builder",
   readme: "Church Community Builder",
   bundle: {
-    baselineGzip: 328952,
-    note: "./providers/ccb measures 328,952 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 388923,
+    note: "./providers/ccb step-2 standalone gzip snapshot from check:build on Node 26.12.0 with zlib-ng 1.3.1, after merging Planning Center #992. Includes the reviewed 385-operation request/response index. Shared Effect is paid once per deployment; provider entries are reported, uncapped and non-additive (#703) (#899).",
   },
   skill,
   options: CCB_OPTIONS,
@@ -219,7 +219,7 @@ export const ccb = defineApiProvider<CcbOptions>({
     notes: () => ({
       read: "Read people and individual profiles, households and families, groups and memberships, events and attendance, campuses, forms and responses, processes and queues, schedules and assignments, notes, pledges and giving metrics. Discover the exact operation with ccb_api_search, then inspect ccb_api_details.",
       write:
-        "Update, edit or change a person's email or phone; create people and individual profiles, pastoral notes, group memberships and events. Discover the exact operation with ccb_api_search, then inspect ccb_api_details. Writes require authorized configured scopes.",
+        "Update, edit or change a person's email or phone; create people and individual profiles, pastoral notes, group memberships and events. Discover the exact operation with ccb_api_search, then inspect ccb_api_details. Use ccb_api_write for the requested change; the host may ask the user to confirm. Writes require authorized configured scopes.",
     }),
   },
   tools: ccbTools,

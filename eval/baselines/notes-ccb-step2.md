@@ -167,3 +167,42 @@ for the verified 385-operation request/response index and its explicit safety
 review. The recorded historical CI baseline is 328,952 B, a different toolchain
 snapshot; its printed delta is +59,710 B. Provider entries are uncapped and
 non-additive because Effect is paid once; composite caps pass without changes.
+
+
+## Planning Center merge and confirmation wording follow-up
+
+Merge commit `05c0f5016a684ece9883371bf5d281ec23b5fd55` combines the prior
+CCB head `6e4addc5` with main `ce0c7492` (Planning Center #992). Compared with
+Git's preserved `AUTO_MERGE` tree
+`51e22744553bfb1bc753103014ddf892b3664d11`, the merge changes exactly the nine
+conflicted files: migration notes, saved eval state, eval deployment and tool
+wiring, fake worlds, task inventory, failure sweep, pending baseline and
+provider-standard pending set. Both providers' tasks/state/wiring remain;
+both providers are absent from `PENDING.step2`. Planning Center's bundle
+entry, provider and golden bytes are retained from main.
+
+The subsequent CCB-only wording change replaces the local “approval-gated”
+label with “reads and writes.” The source guide and write-tool note name
+`ccb_api_write` and say the host may ask the user to confirm. The shared
+generated Conventions sentence belongs to still-unmerged #998; this change
+does not copy that PR's shared changes or assert that it has merged.
+No model trials were rerun for this follow-up; the complete original 56-trial
+record and its frozen source stamps above remain unchanged.
+
+The post-merge CCB/safety/failure-sweep/standards/conventions/generation/hatch
+run passes 558 cases, including the current 443-case failure sweep. No case
+is added or removed by this follow-up. The generated CCB bundle baseline is
+refreshed from the post-merge `check:build` output (388,923 B gzip); Planning
+Center's 635,569 B baseline and all caps remain intact. The baseline is a
+measured snapshot; changing the declaration's own metadata can slightly
+change its standalone compressed size.
+
+Merge audit, requested golden reruns, static/build logs and final build
+measurements are under the same scratch directory with `wording-` prefixes.
+
+The final post-merge build reports CCB at **388,892 B gzip**. Static/build
+and the all-provider deterministic Node golden/harness run (85 cases) pass.
+Workerd canonical goldens and the native hatch case also pass: 17 passing,
+2 intentional Node-case skips.
+Only CCB's generated bundle entry/note changes; all other bundle entries,
+notes and caps compare identically with the automatic merge.

@@ -100,7 +100,8 @@ chunked JSON because CCB does not admit NDJSON.
 Configured read-only OAuth scopes omit the write hatch, discovery write-tool
 pointers and all write dispatch. The separate generic `writeEnabled` hook is
 opt-in; other providers keep the existing output. Endpoint `readOnly` remains
-an independent enforcement boundary. Writes are approval gated and sent once.
+an independent enforcement boundary. Writes keep their reviewed write classification and are sent once. The host
+may ask the user to confirm.
 No CCB auth-before-execution exception is claimed.
 
 Declare 404 as `not_found` proving absence: this provider already documents

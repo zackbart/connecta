@@ -5,6 +5,6 @@ export function routingLine(environment: CcbEnvironment, mode: CcbMode, writable
     mode === "identity"
       ? "acting as each signed-in person with their own CCB permissions (Identity Auth)"
       : "church-wide under one administrator-approved grant (System Auth)",
-    writable ? "reads plus approval-gated writes" : "read-only",
+    writable ? "reads and writes" : "read-only",
   ].join(", ");
 }
