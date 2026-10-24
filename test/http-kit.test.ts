@@ -316,6 +316,17 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
           toConnectorCallError(new UnreadableBody(), { ...VENDOR, unreadableWrite }, { classification, dispatches: [] })
             .message,
         ).toBe(classification === "write" ? unreadableWrite : VENDOR.unreadable);
+        for (const readFailed of [undefined, true] as const) {
+          const message = toConnectorCallError(new UnreadableBody(readFailed ? { readFailed } : {}), VENDOR, {
+            classification,
+            dispatches: [],
+          }).message;
+          expect(message).toBe(
+            classification === "write"
+              ? `${VENDOR.unreadable} Whether the write took effect is unknown; check the target before repeating it.`
+              : VENDOR.unreadable,
+          );
+        }
       }
 
       // Only this failure's recorded answer supplies an oversized verdict's

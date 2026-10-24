@@ -2442,12 +2442,12 @@ type routes a body around ResultSafety as one string or as bytes; a body that
 is not JSON is then unreadable. Value safety's own decisions on values fail
 closed the same way (see "Value safety for REST vendors").
 
-`VendorErrors.unreadableWrite` optionally supplies write-specific wording for
-an unexpected successful body. The shared mapper selects it from the served
-classification, including writes transported with GET. Overflow's unreviewed
-text responses use that path: a read keeps its read message; a write reports
-an unknown outcome and says to check the target before repeating. Its reviewed
-health text and refund acknowledgement remain accepted.
+For an unreadable successful body, the shared mapper appends an unknown-outcome
+and check-before-repeating sentence to every served write's message, including
+writes transported with GET. `VendorErrors.unreadableWrite` can override that
+complete write message. Reads keep their existing wording. Overflow's
+unreviewed text responses use its write override; its reviewed health text and
+refund acknowledgement remain accepted.
 
 A vendor may declare `encodedFields`: exact dotted JSON paths with whole
 array segments (`payload.parts[*].body.data`), `encoding: "base64url"`, an

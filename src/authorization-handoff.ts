@@ -1,7 +1,6 @@
 import type { AuthorizationHandoff, CallErrorDetails } from "./errors.js";
 import { boundedEchoText } from "./errors.js";
 import type { RegistryView } from "./registry.js";
-import { hasAuthFailure } from "./invocation-auth.js";
 
 interface HandoffOptions {
   canManageAuth?: ((id: string) => boolean) | undefined;
@@ -50,28 +49,6 @@ export async function authorizationHandoff(
       }));
     }
     const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
-    // Presence is local evidence, not a live validation. An observed auth
-    // failure in this request still gets recovery even when the slot exists.
-    if (
-      ctx.credential &&
-      !hasAuthFailure(requestScope, connector.id) &&
-      !requests.get(requestScope)?.failures.has(connector.id)
-    ) {
-      try {
-        const values = await ctx.credential.getAll();
-        const fields = connector.credential.fields?.map((field) => field.name) ?? ["value"];
-        if (values && fields.every((field) => typeof values[field] === "string" && values[field]!.length > 0)) {
-          return {
-            connector: connector.id,
-            recovery: "ready",
-            message:
-              "The connector credential is already configured. No setup is needed; proceed with the requested call.",
-          };
-        }
-      } catch {
-        // An unreadable or declaration-mismatched slot needs operator repair.
-      }
-    }
     if (!ctx.credential || !opts.credentialHandoffUrl) {
       return {
         connector: connector.id,
@@ -132,17 +109,49 @@ export async function authorizationHandoff(
   }));
 }
 
+/** Explicit authorization can report presence; an error's recovery never does. */
+export type AuthorizeConnectorResult = Omit<AuthorizationHandoff, "recovery"> & {
+  recovery: AuthorizationHandoff["recovery"] | "ready";
+};
+
+export async function authorizeConnector(
+  ...args: Parameters<typeof authorizationHandoff>
+): Promise<AuthorizeConnectorResult> {
+  const [registry, baseUrl, requestScope, , input] = args;
+  const handoff = await authorizationHandoff(...args);
+  const connector = registry.getConnector(input.connector)!;
+  if (connector.startAuth || !connector.credential) return handoff;
+  const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
+  try {
+    const values = await ctx.credential?.getAll();
+    const fields = connector.credential.fields?.map((field) => field.name) ?? ["value"];
+    if (values && fields.every((field) => typeof values[field] === "string" && values[field]!.length > 0)) {
+      // A later HTTP request cannot know whether a previous call rejected this
+      // key. Keep its recovery fields and state the condition, without probing.
+      return {
+        ...handoff,
+        recovery: "ready",
+        message:
+          "This connector's credential is configured. If a call to it just failed with an authentication or operator-configuration error, give this handoff to the operator; otherwise proceed with the call." +
+          (handoff.message ? ` If recovery is needed: ${handoff.message}` : ""),
+      };
+    }
+  } catch {
+    // An unreadable or declaration-mismatched slot needs operator repair.
+  }
+  return handoff;
+}
+
 interface RequestHandoffs {
   create: (connector: string) => Promise<AuthorizationHandoff>;
   enabled: boolean;
   handoffs: Map<string, Promise<AuthorizationHandoff>>;
-  failures: Set<string>;
 }
 const requests = new WeakMap<object, RequestHandoffs>();
 
 /** Retain the admitted route's factory when program utilities share its scope. */
 export function bindAuthorizationHandoffs(scope: object, create: RequestHandoffs["create"]): void {
-  if (!requests.has(scope)) requests.set(scope, { create, enabled: true, handoffs: new Map(), failures: new Set() });
+  if (!requests.has(scope)) requests.set(scope, { create, enabled: true, handoffs: new Map() });
 }
 
 export function enableAuthorizationHandoffs(scope: object, enabled: boolean): void {
@@ -156,7 +165,6 @@ export async function withAuthorizationHandoff<T extends CallErrorDetails>(scope
   if (!request || !error.nextAction || !("tool" in error.nextAction) || error.nextAction.tool !== "authorize_connector")
     return error;
   const connector = error.nextAction.arguments.connector;
-  request.failures.add(connector);
   if (!request.enabled) return error;
   let handoff = request.handoffs.get(connector);
   if (!handoff) {

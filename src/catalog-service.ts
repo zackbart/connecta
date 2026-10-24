@@ -458,7 +458,7 @@ const catalogFailureProperties = {
   retryable: { type: "boolean" },
   retryAfterMs: { type: "integer", minimum: 0 },
   connector: { type: "string" },
-  recovery: { enum: ["ready", "oauth", "operator_config", "unavailable"] },
+  recovery: { enum: ["oauth", "operator_config", "unavailable"] },
   status: { const: "auth_required" },
   authorizationUrl: { type: "string" },
   operatorUrl: { type: "string" },
@@ -1317,9 +1317,9 @@ export class CatalogService {
     // The caller's safety filter is not a visibility boundary: a read search
     // tool is also how one discovers indexed writes for approvalRequired.
     const apiSearchPointers =
-      matches.length === 0 && !isBrowse && !unsearchableQuery
+      matches.length === 0 && !isBrowse && !unsearchableQuery && !(this.readOnly && safety === "approvalRequired")
         ? catalogs.flatMap((catalog, index) =>
-            Result.isSuccess(catalog)
+            Result.isSuccess(catalog) && !(safety === "approvalRequired" && connectors[index]!.readOnly === true)
               ? apiSearchTools(catalog.success).map((tool) => ({ connector: connectors[index]!.id, tool: tool.name }))
               : [],
           )
@@ -1395,8 +1395,8 @@ export class CatalogService {
             ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
             : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`;
         }
-        if (apiSearchGuidance) return apiSearchGuidance;
-        if (identityGuidance) return identityGuidance;
+        if (identityGuidance || apiSearchGuidance)
+          return [identityGuidance, apiSearchGuidance].filter(Boolean).join(" ");
         return unavailableCatalogs === 0
           ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
           : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;

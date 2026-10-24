@@ -167,10 +167,14 @@ search tools in connector order and reports the omitted count; indexes have
 not been searched. For example, call `crm.crm_api_search` with the original
 query before concluding that the operation is unavailable. Browse with an
 empty query and follow every page, or search for `_api_search`, to list all API
-search tools. The pointer respects endpoint and tool visibility; a read search
-tool can discover indexed writes even when the catalog query selected
-`safety: "approvalRequired"`. Required connector guides and catalog failures
-still apply. Catalog search itself performs no API index lookup.
+search tools. If the query names a configured connector, its identity and
+scoped-browse guidance comes first, followed by the API-search pointer.
+The pointer respects endpoint and tool visibility; a read search tool can
+discover indexed writes when the catalog query selected
+`safety: "approvalRequired"`, provided the endpoint and connector allow writes.
+That filter suppresses pointers on read-only endpoints and for read-only
+connectors. Required connector guides and catalog failures still apply.
+Catalog search itself performs no API index lookup.
 
 `includeSchemas: "compact"` adds each match's input and any provider-declared
 output shape, plus `inputKeys`, `requiredInputKeys`, and `outputKeys` for
@@ -761,14 +765,16 @@ slot uses the authenticated operator UI. `authorize_connector` uses the same
 flow for explicit connect and restart. There is no legacy shim.
 
 For an operator-managed credential, an explicit `authorize_connector` returns
-`recovery: "ready"` when the declared credential fields are configured and no
-authentication failure has been observed in this request. Its message says no
-setup is needed and to proceed with the call. This is a local presence check,
-not a live credential test, and needs no operator UI. A missing, unreadable or
-mismatched slot, or a recorded auth failure in the request, retains the
-operator handoff. OAuth sign-in and restart behavior is unchanged. For example,
-if `crm` returns `ready`, call the requested `crm` operation; use recovery only
-if that call actually reports an authentication problem.
+`recovery: "ready"` when the declared credential fields are configured. This
+reports local presence, without testing the key or remembering earlier requests.
+The message is conditional: if a call just failed with an authentication or
+operator-configuration error, give the retained `operatorUrl`, `credential` and
+`instructions` to the operator; otherwise proceed with the requested call.
+Without the optional UI, the message retains the deployment configuration
+needed for recovery. A missing, unreadable or mismatched slot returns the
+operator handoff or `unavailable`. The explicit authorization result has its own
+type; authentication errors never carry `ready`. OAuth sign-in and restart
+behavior is unchanged.
 
 The host echoes `requestState` and its bare `inputResponses.connecta_auth`
 response on the original `tools/call`. Accept re-runs the original call; it

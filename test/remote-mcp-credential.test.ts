@@ -536,7 +536,9 @@ describe("remoteMcp() credential auth — through the deployment", () => {
     expect(JSON.parse(required(ready.content[0]).text)).toMatchObject({
       connector: "down",
       recovery: "ready",
-      message: expect.stringContaining("proceed with the requested call"),
+      message: expect.stringContaining("otherwise proceed with the call"),
+      operatorUrl: `${BASE}/`,
+      instructions: expect.stringContaining("Have the operator"),
     });
     expect(JSON.stringify(ready)).not.toContain("do-not-return-this-secret");
     await vault.delete("down");

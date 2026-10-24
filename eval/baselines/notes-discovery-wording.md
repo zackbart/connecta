@@ -10,8 +10,11 @@ and sent no Overflow refund. These small samples establish no accuracy gain.
 
 This batch isolates wording/recovery from operation ranking. BEFORE uses
 PR A's clean commit `dc419a296f13` (source tree `33403b4e86d5`); AFTER uses
-PR B's clean commit `fbfc7b5f1ffd` (source tree `769a185a0b4f`). Subsequent
-changes to this notes file do not change the measured source tree.
+PR B's clean commit `fbfc7b5f1ffd` (source tree `769a185a0b4f`). These are
+historical measurements of that source, before the #998 round-1 fix round.
+The fix round uses targeted HTTP recovery, discovery and failure-sweep
+regressions plus regenerated deterministic Node/workerd goldens; live evals
+were not rerun for it. The table below is not a measurement of the revised head.
 
 Five tasks exercise the earlier write declines: Overflow refund-once, Tithe.ly
 duplicate refund and committed cancellation recovery, and Stripe partial

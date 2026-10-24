@@ -411,7 +411,7 @@ export class WithheldTextError extends Error {
 }
 
 /** Agent-visible recovery class for downstream credential failures. */
-export type AuthRecoveryMode = "ready" | "oauth" | "operator_config" | "unavailable";
+export type AuthRecoveryMode = "oauth" | "operator_config" | "unavailable";
 
 const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   timeout: true,
@@ -573,7 +573,7 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   connector?: string;
   /** Canonical downstream address the agent may retry after recovery. */
   operation?: string;
-  /** Which safe recovery path `authorize_connector` will return. */
+  /** Safe recovery path for this authentication failure. */
   recovery?: AuthRecoveryMode;
   /** An auth failure followed a write's downstream send. Reconcile before retry. */
   reconciliationRequired?: true;

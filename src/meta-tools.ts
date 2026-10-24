@@ -1,4 +1,4 @@
-import { authorizationHandoff, bindAuthorizationHandoffs } from "./authorization-handoff.js";
+import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
@@ -1250,7 +1250,7 @@ function metaToolsForRequest(
 
     async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
       try {
-        return jsonResult(await authorizationHandoff(registry, baseUrl, requestScope, opts, args));
+        return jsonResult(await authorizeConnector(registry, baseUrl, requestScope, opts, args));
       } catch (err) {
         return errorResult(msg(err));
       }
@@ -1268,7 +1268,7 @@ const CALL_DESTRUCTIVE_DESC =
 const CALL_DESTRUCTIVE_READ_ONLY_DESC =
   "This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer call_tool or execute_code for them.";
 const AUTHORIZE_DESC =
-  "Use after auth_required. Reports when a credential is already configured and the call can proceed; otherwise returns an OAuth or operator-credential handoff, or required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
+  "Use after auth_required. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed with an authentication or operator-configuration error, give the retained handoff to the operator; otherwise proceed with the call. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
   "List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.";
 

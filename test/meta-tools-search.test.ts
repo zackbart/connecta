@@ -410,6 +410,41 @@ describe("search_tools", () => {
     });
     expect(scoped.queryAnalysis!.guidance).not.toContain("zeta");
     expect((await miss({ safety: "approvalRequired" })).queryAnalysis!.guidance).toContain("crm_api_search");
+    const warehouse = api("inventory", {
+      title: "Warehouse stock",
+      tools: [
+        {
+          name: "list_items",
+          description: "List stocked items",
+          annotations: { readOnlyHint: true },
+          handler: () => [],
+        },
+      ],
+    });
+    const identity = textOf(
+      await createMetaTools(makeRegistry([hatch("gifts"), warehouse]), BASE).searchTools({
+        query: "warehouse pallets",
+      }),
+    ) as SearchResult;
+    const guidance = identity.queryAnalysis!.guidance!;
+    expect(guidance).toContain('the query names configured connector "inventory"');
+    expect(guidance).toContain("Scope by connector and browse with an empty query");
+    expect(guidance).toContain("gifts.crm_api_search");
+    expect(guidance.indexOf('connector "inventory"')).toBeLessThan(guidance.indexOf("API operation indexes"));
+    for (const readOnly of [false, true]) {
+      const endpoint = createMetaTools(makeRegistry([hatch("limited", { readOnly: true })]), BASE, { readOnly });
+      const filtered = textOf(
+        await endpoint.searchTools({ query: "webhook", safety: "approvalRequired" }),
+      ) as SearchResult;
+      expect(filtered.queryAnalysis!.guidance).not.toContain("crm_api_search");
+      const readable = textOf(await endpoint.searchTools({ query: "webhook", safety: "readOnly" })) as SearchResult;
+      expect(readable.queryAnalysis!.guidance).toContain("limited.crm_api_search");
+    }
+    const readOnlyEndpoint = createMetaTools(makeRegistry([hatch("writable")]), BASE, { readOnly: true });
+    expect(
+      (textOf(await readOnlyEndpoint.searchTools({ query: "webhook", safety: "approvalRequired" })) as SearchResult)
+        .queryAnalysis!.guidance,
+    ).not.toContain("crm_api_search");
     // Tool grants, classification overrides and read-only surfaces govern the
     // pointer too. An unavailable catalog remains an explicit incomplete search.
     const hidden = makeRegistry([hatch("hidden")], { classification: { hidden: { crm_api_search: "hidden" } } });

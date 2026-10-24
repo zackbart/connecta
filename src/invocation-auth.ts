@@ -97,11 +97,6 @@ export function recordAuthFailure(scope: object, connector: string, eligible: bo
   failures.set(connector, eligible && failures.get(connector) !== false);
 }
 
-/** Presence records the failure even when replay eligibility is false. */
-export function hasAuthFailure(scope: object, connector: string): boolean {
-  return requests.get(scope)?.authFailures.has(connector) === true;
-}
-
 export async function authRecoveryFacts(
   scope: object,
   connector: string,

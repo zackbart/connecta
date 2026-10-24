@@ -245,7 +245,7 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly statuses: StatusTable<F>;
   /** Message for a successful status whose body is not JSON. */
   readonly unreadable: string;
-  /** Optional write-specific wording for an unexpected successful response body. */
+  /** Complete write message; otherwise core appends unknown-outcome and check-before-repeating guidance. */
   readonly unreadableWrite?: string;
   /** Reviewed opt-in handling when a bounded body cannot be read; no additional I/O or raw causes. */
   readonly bodyFailures?: {
@@ -750,11 +750,15 @@ function verdict(
         { retryable: false },
       );
     case "UnreadableBody": {
-      const unreadable =
-        options.classification === "write" ? (vendor.unreadableWrite ?? vendor.unreadable) : vendor.unreadable;
+      const unreadable = failure.readFailed
+        ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? vendor.unreadable)
+        : vendor.unreadable;
       return new ConnectorCallError(
         "connector_call_failed",
-        failure.readFailed ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? unreadable) : unreadable,
+        options.classification === "write"
+          ? (vendor.unreadableWrite ??
+              `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`)
+          : unreadable,
         { retryable: false },
       );
     }
