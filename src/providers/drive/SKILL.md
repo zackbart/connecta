@@ -5,7 +5,8 @@
 ## Finding files and joining Workspace products
 
 Drive searches file data; operation discovery searches API capabilities.
-Use file ids from reads or Drive URLs. The same id identifies a Google Doc,
+Use file ids from reads, Drive URLs or the person: an id they give, such as
+`pdf1`, works as is. The same id identifies a Google Doc,
 Sheet, Slides deck or Form in its product connector. Shared-drive ids identify
 membership and the root folder; folder parents determine inherited access.
 A missing file and a file the delegated user cannot see fail alike.
@@ -15,6 +16,10 @@ Drive query values use single quotes: `name contains 'budget'`,
 `modifiedTime > '2026-01-01T00:00:00'`. Trashed files are excluded by default.
 `incompleteSearch: true` means Google did not search every corpus; narrow the
 query or choose a single shared drive. It is never an exact count.
+
+`maxBytes` is the byte budget and `limit` is rows per page; keep a high limit
+for large folders and continue with the same listing arguments. Named `fields`
+may narrow and `maxBytes` may change between pages. Hatch paths omit `/drive/v3`.
 
 ## Content and file decisions
 

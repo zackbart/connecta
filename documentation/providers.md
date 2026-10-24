@@ -621,8 +621,9 @@ permanent deletion or ownership transfer. Named content tools keep their bounded
 export/download and the separately confined upload connection.
 
 Named lists return `{ items, page }`; terminal pages omit `nextCursor`.
-Continuation is bound to the connection, caller and arguments. A local byte cap
-can end a page early, and a changed source page fails `conflict`. Named page
+Continuation is bound to the connection, caller and listing arguments; named
+`fields` and `maxBytes` may change between pages. A local byte cap can end a page
+early, and a changed source page fails `conflict`. Named page
 limits default to 25 and allow 1–100 rows; whole-result budgets default to 192 KiB
 and allow 64 KiB–4 MiB. Large direct results use Connecta's result pager; keep
 the default for programs. Named uploads allow one million text characters or

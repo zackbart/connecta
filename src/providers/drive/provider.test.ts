@@ -176,6 +176,7 @@ describe("reading content", () => {
       if (DRIVE_REFUSALS[`${op.method} ${op.path}`]) expect(op.summary).toMatch(/^Refused: .+; .+\.$/);
       expect(op.summary!.length).toBeLessThanOrEqual(120);
     }
+    const connector = connection();
     for (const [query, operation] of [
       ["find files by name", "drive.files.list"],
       ["list folder contents", "drive.files.list"],
@@ -187,16 +188,16 @@ describe("reading content", () => {
       ["move file to folder", "drive.files.update"],
       ["change permission role", "drive.permissions.update"],
       ["share file without emailing", "drive.permissions.create"],
-      ["delete file permanently", "drive.files.delete"],
+      ["permanently delete a file", "drive.files.delete"],
       ["generate CSE token", "drive.files.generateCseToken"],
       ["watch files", "drive.files.watch"],
-    ]) {
+    ] as const) {
+      const found = await call(connector, "drive_api_search", { query, limit: 2 });
       expect(
-        driveIndex.search(query!, { limit: 2, partial: true }).map((op) => op.operationId),
+        found.operations.map((op: any) => op.operationId),
         query,
       ).toContain(operation);
     }
-    const connector = connection();
     for (const [name, args, path] of [
       ["search_files", {}, "items[].name"],
       ["list_folder_items", { folderId: "root" }, "items[].name"],
@@ -349,6 +350,9 @@ describe("reading content", () => {
     const safe = await call(connector, "drive_api_read", { path: "/files/f1" });
     expect(JSON.stringify(safe)).not.toContain("private");
     expect(safe.data.appProperties.label).toBe("ok");
+    route = () => ({ body: { drives: [{ id: "sd1", backgroundImageLink: "https://example.com/private-image" }] } });
+    const sharedDrives = await call(connector, "drive_api_read", { path: "/drives" });
+    expect(sharedDrives.data.drives).toEqual([{ id: "sd1", backgroundImageLink: "[redacted]" }]);
     route = () => ({ body: { revisions: [], nextPageToken: "more" } });
     const first = await call(connector, "drive_api_read", {
       path: "/files/f1/revisions",
@@ -679,7 +683,7 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
       ["list_shared_drives", { limit: 1 }],
       ["list_permissions", { fileId: "f1", limit: 1 }],
     ] as const) {
-      const first = await call(delegated, name, args, callerContext("alice"));
+      const first = await call(delegated, name, { ...args, maxBytes: 131_072, fields: ["id"] }, callerContext("alice"));
       expect(first.items.map((item: any) => item.id)).toEqual(["first"]);
       expect(first.page.nextCursor).toBeTypeOf("string");
       const continuation = { ...args, cursor: first.page.nextCursor };
@@ -692,9 +696,15 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
         code: "invalid_args",
       });
       expect({ tokens: tokenCalls, requests: calls.length }).toEqual(before);
-      const continued = await call(delegated, name, continuation, callerContext("alice"));
-      expect(continued.items.map((item: any) => item.id)).toEqual(["second"]);
-      expect(continued.page).toEqual({ hasMore: false });
+      for (const presentation of [
+        { maxBytes: 65_536, fields: ["id"] },
+        { maxBytes: 131_072, fields: name === "list_permissions" ? ["id", "role"] : ["id", "name"] },
+        {},
+      ]) {
+        const continued = await call(delegated, name, { ...continuation, ...presentation }, callerContext("alice"));
+        expect(continued.items.map((item: any) => item.id)).toEqual(["second"]);
+        expect(continued.page).toEqual({ hasMore: false });
+      }
     }
   });
 });

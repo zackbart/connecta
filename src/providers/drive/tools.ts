@@ -1506,11 +1506,12 @@ function buildTool(connection: Connection, tool: DriveTool): ApiTool {
         const ctx = Option.isSome(active) ? active.value : undefined;
         if (!ctx) return yield* Effect.die(new Error(`${tool.name} needs a connector context.`));
         const supplied = args["cursor"] as string | undefined;
-        const cursor = isList && supplied ? yield* boundCursor.decode(tool.name, args, supplied) : supplied;
+        const { maxBytes: _maxBytes, fields: _fields, ...cursorArgs } = args;
+        const cursor = isList && supplied ? yield* boundCursor.decode(tool.name, cursorArgs, supplied) : supplied;
         const result = asRecord(yield* tool.run({ ...args, ...(cursor ? { cursor } : {}) }, ctx));
         const page = asRecord(result["page"]);
         if (isList && typeof page["nextCursor"] === "string")
-          page["nextCursor"] = yield* boundCursor.encode(tool.name, args, page["nextCursor"], (json) =>
+          page["nextCursor"] = yield* boundCursor.encode(tool.name, cursorArgs, page["nextCursor"], (json) =>
             encodeForAgent(ctx, json, { url: true, claims: true }),
           );
         if (isList && jsonBytes(result) > (args["maxBytes"] ?? DEFAULT_RESULT_BYTES))

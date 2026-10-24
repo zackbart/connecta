@@ -102,6 +102,10 @@ export const DRIVE_VALUE_SAFETY = {
     },
     exportLinks: { verdict: "redact", reason: "Use the bounded named export instead of download destinations." },
     thumbnailLink: { verdict: "redact", reason: "Short-lived thumbnail URLs convey private content." },
+    backgroundImageLink: {
+      verdict: "redact",
+      reason: "Short-lived shared-drive background image URLs convey private content.",
+    },
     downloadUrl: { verdict: "redact", reason: "Revision download destinations are private media capabilities." },
   },
 } as const satisfies ValueSafetyTable;

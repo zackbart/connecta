@@ -89,8 +89,8 @@ export const drive = defineApiProvider<DriveOptions>({
   title: "Google Drive",
   readme: "Google Drive",
   bundle: {
-    baselineGzip: 338386,
-    note: "./providers/drive measures 338,386 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 390559,
+    note: "./providers/drive step-2 review snapshot measured standalone with Node 22.23.3, esbuild 0.28.1 and gzip level 9 before recording this baseline (#1020). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

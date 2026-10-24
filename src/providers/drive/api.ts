@@ -73,7 +73,7 @@ export const DriveApi = {
 const google = googleErrors(DRIVE, { standard: true });
 export const errors: ReturnType<typeof googleErrors> = {
   ...google,
-  meanings: { ...google.meanings!, conflicts: ["A Drive source page changed before its local cursor resumed."] },
+  meanings: { ...google.meanings!, conflicts: ["A Drive source page changed before its local cursor resumed"] },
 };
 const values = valueSafety(DRIVE_VALUE_SAFETY, () => driveIndex);
 export const safety = {

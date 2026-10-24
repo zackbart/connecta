@@ -10338,7 +10338,7 @@
   "gradersPromptsFakesChanged": false,
   "sharedSurfaceAdapterChanged": false,
   "deterministicChanges": [
-   "First-sentence write verbs and explicit Refused reasons, with 13 natural-query rows.",
+   "First-sentence write verbs and explicit Refused reasons, initially with 13 raw-index query rows (superseded by tool-level rows in reviewRound1).",
    "Preserve root and per-item truncated metadata after fields on all six named reads."
   ]
  },
@@ -10598,5 +10598,175 @@
    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/selftest-rulings.log",
    "sha256": "8522a171ae374d6e976a11c2d69448432fd265f3ed3a08389369c24daa41f1ea"
   }
- ]
+ ],
+ "reviewRound1": {
+  "reviewedHead": "eb4a13c0370704fa4c882e3f6e3395635bbd259f",
+  "priorPushedHead": "2e3cc2262adab7b1b67d84a8091e23c29ff59a92",
+  "mergedMain": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+  "mergeCommit": "0c3b8158",
+  "protocol": {
+   "version": 1,
+   "taskDefinitionsHash": "5023cf8db6abcf879f6f754697136463d42464b6c94ef3e81555a9c2e7b27842",
+   "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+  },
+  "paidOutcomesChanged": false,
+  "paidTrialsRerun": false,
+  "driveGradersPromptsFakesChanged": false,
+  "sharedSurfaceAdapterChanged": false,
+  "deterministicChanges": [
+   "Withhold backgroundImageLink on generic metadata reads, including short-lived shared-drive image URLs.",
+   "All 13 natural-query rows now call drive_api_search and require the expected operation in its first two results. The accepted permanent-delete refusal query is permanently delete a file; leading write verbs demote refusals in the shared intent ranker (#1018).",
+   "Exclude fields and maxBytes from named-list cursor argument binding, retaining connection, owner, caller, listing and source-page checks; exercise changed and omitted presentation arguments on all four lists.",
+   "Explain byte budgets, row limits, large folders, continued listing arguments, supplied ids and hatch paths in the guide.",
+   "Disclose write timeout code connector_call_failed to write_outcome_unknown and uncertainCall; disclose missing destructiveHint:false on create_folder/restore_file (#1017).",
+   "Remove the duplicate period from the conflict meaning and refresh the declared bundle baseline.",
+   "Merge Docs #1015 while preserving both products in shared documentation, evaluation references, failure-sweep and bundle outputs; non-Drive goldens match merged main."
+  ],
+  "evalAttribution": {
+   "D3": "BEFORE Sonnet r1 (limit 5) and AFTER Sonnet r1/r2 (limits 2/1) hit execute_code's 20-host-call cap: the 21st call is budget_exceeded. Each restarted chain completes at a larger limit; the earlier token remains unconsumed. AFTER Luna r2 hits the same cap with limit 5; BEFORE Luna r1 stops its loop at 20. No cursor-binding, changed-arguments or conflict refusal occurs in any of the 56 trials.",
+   "duplicateReads": "Sonnet changes from search_files to list_folder_items, which re-reads folder metadata per page on both main and AFTER. Folder lookups account for 57 of its 61 duplicate reads; D1 and D5 account for two each. Abandoned chains do not explain the jump.",
+   "D1BeforeLunaR2": "Stops at p8 and returns [], citing uncertainty about excluding another Workspace owner despite observed ownership metadata.",
+   "D3AfterLunaR1": "Recorded pass relies on the frozen grader matching path and pageToken only. Offset-derived fake tokens let a token issued for an abandoned name query count as consumed by an unrelated folder listing. The folder enumeration completes, but the pass does not prove consumption of every original query chain. No rescore."
+  },
+  "bundle": {
+   "baseCommit": "f9bf5afbb9432656bfa6708b85cbdc4642710e6b",
+   "measurement": {
+    "node": "v22.23.3",
+    "zlib": "1.3.1.zlib-ng",
+    "esbuild": "0.28.1",
+    "rows": [
+     {
+      "arm": "before",
+      "drive": {
+       "minified": 1173017,
+       "gzip": 357131
+      },
+      "allSix": {
+       "minified": 1455599,
+       "gzip": 434506
+      }
+     },
+     {
+      "arm": "after",
+      "drive": {
+       "minified": 1342719,
+       "gzip": 390559
+      },
+      "allSix": {
+       "minified": 1613341,
+       "gzip": 463243
+      }
+     }
+    ],
+    "driveGrowth": 33428,
+    "allSixGrowth": 28737
+   },
+   "declaredDriveBaselineGzip": 390559,
+   "baselineNote": "The final standalone measurement matches the refreshed Drive baseline; Docs baseline and every non-Drive bundle declaration are preserved from main.",
+   "docsBaselineGzipPreserved": 369878
+  },
+  "verification": [
+   {
+    "name": "targetedCrossProviderSuites",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-cross.log",
+    "sha256": "ba5bb5b8520eac67667ef53ef225975ca88d72f483b8be75a1052901a5943e00",
+    "node": "v26.12.0",
+    "passed": 1149,
+    "skipped": 0
+   },
+   {
+    "name": "nodeGoldenDeterminism",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-goldens-node.log",
+    "sha256": "41445c1ce8fb3f2b9b7a4d0ef67230f7925401c166348d2e2d10b3dab87fadc8",
+    "node": "v22.23.3",
+    "passed": 16,
+    "skipped": 0
+   },
+   {
+    "name": "workerdGoldensNativeDelegationAndWriteEvidence",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-workers.log",
+    "sha256": "20c4239864ed9c5147ce485ba9a76208dd30735a6976800eeb8f430a64d139b2",
+    "node": "v22.23.3",
+    "passed": 119,
+    "skipped": 112
+   },
+   {
+    "name": "static",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-static.log",
+    "sha256": "08c08ac4a8cf1d47e2ace82321be3f3b5b97784e56bd6c875fe2dce756e88cab",
+    "node": "v22.23.3"
+   },
+   {
+    "name": "buildDeclarationsAndBundle",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-build.log",
+    "sha256": "497742194bd3442e888354e4528990a4492d8780403f81987edca61f2eba3e38",
+    "node": "v22.23.3"
+   },
+   {
+    "name": "finalBundleBaseline",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-bundle-check.log",
+    "sha256": "e13bf3623c406e1cfa8de1a29cbb6f37eedeb7b22fe7daab73318e51f04df96d",
+    "node": "v22.23.3"
+   },
+   {
+    "name": "eveHelper",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-eve.log",
+    "sha256": "0a451253dd256bb79258024f239f3a6b92c4665c07a11313c1f916289a007287",
+    "node": "v24.22.1",
+    "passed": 5,
+    "skipped": 0
+   },
+   {
+    "name": "evePackedConsumer",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-eve-package.log",
+    "sha256": "7f37fb5451d05255d0a6c8da71a3121b49da9b71fda201e67da66d5b107b0886",
+    "node": "v24.22.1"
+   },
+   {
+    "name": "driveFrozenSelftests",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-selftest.log",
+    "sha256": "76efbeeecfa9d82e598881e0afba0bfbb6063d4404f914052ac8d8a97b2c47a2",
+    "node": "v22.23.3"
+   },
+   {
+    "name": "publicDriftAdvisory",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-drift.log",
+    "sha256": "ff334d87c78ce7d62f00e016cf1f8e7951e441e10185a0a38a8e9f1ffa3d0b09",
+    "node": "v22.23.3"
+   },
+   {
+    "name": "finalFormatting",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-final-format-check.log",
+    "sha256": "a33b52eb44c046c41f5f65c899c4955240c7b140db930a843b369bffc2fe787a"
+   },
+   {
+    "name": "finalGeneratedFreshness",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-final-generated-check.log",
+    "sha256": "b4d98d6d02bb76045758bdc33179557cb9f44fb9c23c8412cfec327879090db4"
+   },
+   {
+    "name": "finalDocumentationLinks",
+    "status": "pass",
+    "log": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/drive/review-r1-final-docs-check.log",
+    "sha256": "3b8a796679a3ce9e5c23ead420f6a7d65519248a2522c8d8e8ea0b4098479c7c"
+   }
+  ],
+  "nonDriveGoldenFilesIdenticalToMain": 65,
+  "testDelta": 0,
+  "driveCasesBefore": 12,
+  "driveCasesAfter": 12,
+  "srcTree": "c7b8ea6796966713c4c96d3d62be2d067aba8232"
+ }
 }

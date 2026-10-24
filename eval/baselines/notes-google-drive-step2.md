@@ -55,20 +55,36 @@ physical mutation, no notification and read-back after the committed-500 rename.
 There are no timeouts, runner errors, duplicate writes or unauthorized requests.
 
 Sonnet's existing-capability score regresses by one: D3 changes 1/2 → 0/2.
-Both AFTER failures enumerate the requested ids but abandon an earlier vendor
-cursor chain before finishing a new one; the frozen `full-pages` check rejects
-the unconsumed earlier token. Luna's D3 changes 0/2 → 1/2, offsetting that loss
-in the aggregate. The per-model regression was reported before opening the PR.
-This small sample does not establish a causal improvement or equivalence.
+BEFORE Sonnet repeat 1 (limit 5) and AFTER repeats 1/2 (limits 2/1) hit
+execute_code's 20-host-call cap; their 21st call fails `budget_exceeded`.
+Each then restarts with a higher limit and completes the new chain. The frozen
+`full-pages` check rejects the unconsumed token from the earlier chain. AFTER
+Luna repeat 2 hits the same cap with limit 5; BEFORE Luna repeat 1 stops its own
+loop at 20 with limit 1. No trial has a cursor-binding, changed-arguments or
+conflict refusal. These failures come from small page limits and the program
+call cap, not a broken continuation. The earlier guide omitted the distinction
+between `maxBytes` and `limit`; its contribution cannot be established at n=2.
 
-D1 Luna failures stop on an empty page that still advertises continuation, or
-return id/name objects where the required answer uses id strings. D2 failures
-include treating supplied ids as file names, incomplete source evidence, and
-object-valued permission holders where the frozen expected answer uses strings.
-No grader was loosened. Both AFTER Luna D4 failures treat `pdf1` as a file name;
-one discovers revision operations but never invokes a revision read. Sonnet
-reads revision metadata successfully in both repeats. Deterministic references
-prove D4 is callable on AFTER and remains unavailable on BEFORE.
+Luna's recorded D3 score changes 0/2 → 1/2. Its AFTER repeat 1 pass has a grader
+limitation: the frozen grader matches only path and `pageToken`, and the fake's
+tokens are offset-derived. An abandoned name-search token (`empty`) counts as
+consumed by an unrelated folder listing with the same path/token. The completed
+folder enumeration is real, but the recorded pass does not prove every original
+query chain was consumed. No result is rescored. The per-model regression was
+reported before opening the PR; this sample establishes neither causal
+improvement nor equivalence.
+
+D1 BEFORE Luna repeat 1 returns id/name objects where the required answer uses
+id strings. BEFORE repeat 2 stops with `p8` still pending and returns `[]`, citing
+uncertainty over excluding another Workspace owner despite the observed owner.
+AFTER repeat 1 stops at an unambiguous empty page with `hasMore:true` and a cursor;
+that program makes only two calls. AFTER repeat 2 again returns objects instead
+of id strings. D2 failures include treating supplied ids as file names, incomplete
+source evidence, and object-valued permission holders where strings are expected.
+Both AFTER Luna D4 failures treat `pdf1` as a name; repeat 1 discovers revision
+operations but never invokes a revision read. Sonnet reads revision metadata in
+both repeats. Deterministic references prove D4 is callable on AFTER and remains
+unavailable on BEFORE. Prompts, fakes and graders are unchanged.
 
 ## Calls, discovery, tokens and latency
 
@@ -78,7 +94,13 @@ counted once. Failed attempts remain in tool-use counts. One failed BEFORE Luna
 guest discovery attempt retains only its error code, so its unavailable reply
 bytes are excluded; the JSON records that missing measurement. HTTP reads/writes
 are physical fake data requests; token mints are separate. Duplicate-read counts
-are diagnostics, including necessary re-reads and abandoned paging chains.
+are diagnostics. Sonnet's increase from 14 to 61 comes mainly from switching
+from `search_files` to `list_folder_items`, which re-reads folder metadata on
+every page, as it did on main: 57 of its 61 duplicate reads are folder lookups;
+two are in D1 and two in D5. This is not an attribution to abandoned chains.
+Luna also incurs folder lookups and re-fetches of vendor pages shortened by the
+local byte budget. `fields` is applied after byte fitting, so selecting only ids
+does not increase the number of source rows fitted into that budget.
 
 | Arm/model | Mean MCP calls | HTTP reads/writes | Duplicate reads | Total discovery bytes | Max per-trial / reply bytes | Mean wall seconds |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -115,11 +137,22 @@ the harness hash is unchanged. JSON records both file hashes and the unchanged
 grade/task-construction digest. Prompts, fakes and graders are unchanged.
 
 Commit `429b34d2` also puts write action words and explicit `Refused: …` reasons
-inside compiled first sentences, with 13 natural-query rows, and preserves root
+inside compiled first sentences, initially with 13 raw-index query rows, and preserves root
 and per-item `truncated` after fields selection on all six named reads. These
 follow-ups are validated deterministically, separately from the paid source
 snapshot; no paid trial was rerun or rescored. The authorized Forms
-`google-controls.ts` envelope fix was not needed or applied.
+`google-controls.ts` envelope fix was not needed or applied. The round-1 fix now runs all
+13 rows through the actual `drive_api_search` tool and checks its first two hits.
+The accepted refusal query is `permanently delete a file`; the shared intent
+ranker demotes refused operations for leading write verbs such as `delete file
+permanently` (#1018). The guide now explains high row limits, byte budgets,
+continuing the same listing, supplied ids and hatch paths without `/drive/v3`.
+Named-list `maxBytes` and `fields` no longer participate in the cursor argument
+binding. Short-lived `backgroundImageLink` values are withheld. These fixes and
+the Docs #1015 merge are validated deterministically without new paid trials.
+The merged task-definition hash is
+`5023cf8db6abcf879f6f754697136463d42464b6c94ef3e81555a9c2e7b27842`;
+the harness hash remains unchanged.
 
 ## Verification and size
 
@@ -129,13 +162,22 @@ repeats that matrix after the reference-only change. Counterexamples reject
 wrong subjects, missing evidence, partial pages, wrong upload parents/MIME,
 duplicate mutations and fabricated answers.
 
-Final targeted Node coverage includes 264 passing provider/standards/conventions/
+Original post-eval targeted Node coverage includes 264 passing provider/standards/conventions/
 delegation/secret-boundary cases. The 37 selected failure-sweep cases, 69 golden
 harness cases, 46 registry/generation/purity/package cases, Node 24 Eve check and
 packed-consumer smoke also pass. All-provider Node goldens run with
 `CONNECTA_GOLDENS_DETERMINISM=1`; workerd goldens/native/delegation checks run too.
 `check:static` and `check:build` pass with `VITEST_MAX_WORKERS=2`. No full `check`
 is run under the builder load policy; full INV/spec enforcement remains in CI.
+
+After the Docs merge and round-1 fixes, all 1,149 cases across 28 targeted
+Node suites pass, including every suite explicitly referencing Drive. All-provider
+Node goldens pass determinism again (16/16); workerd goldens/native/delegation/
+write-evidence checks pass (119 passing, 112 platform skips). The Drive
+selftest repeats all seven references on both surfaces and both grading modes.
+Static, build/declarations/bundle, the five Node 24 Eve cases and packed-consumer
+smoke pass. All 65 non-Drive golden files match merged main byte for byte.
+Round-1 log paths, hashes, runtime versions and source tree are recorded in JSON.
 
 Collected test delta is **0**: Drive stays at 12 cases. New cursor, decision,
 summary, safety and field-selection rows are folded into existing cases. Drive
@@ -145,8 +187,17 @@ and operation summaries. Other providers' stored goldens match main byte for byt
 
 Node 22.23.3, esbuild 0.28.1 and gzip level 9 measure Drive **357,131 → 390,396 B**,
 **+33,265 B** against the same main and dependencies. The all-six synthetic entry
-is **417,678 → 451,230 B**, +33,552 B. Historical provider baselines remain
-unchanged. Root, Worker, UI and example bundle caps pass without adjustments.
+is **417,678 → 451,230 B**, +33,552 B. These measurements describe the original
+post-eval snapshot. The review round refreshes Drive's declared baseline and
+remeasures against merged main `f9bf5afb`; those measurements are retained
+separately in the JSON. Root, Worker, UI and example bundle caps pass without
+adjustments.
+
+Against merged main `f9bf5afb`, the final review snapshot measures Drive
+**357,131 → 390,559 B (+33,428 B)** and all six Google products
+**434,506 → 463,243 B (+28,737 B)** with the same Node 22 toolchain.
+The generated Drive baseline is 390,559 B; Docs' baseline remains the merged
+369,878 B measurement.
 
 Fresh Node 22 process observations on bigserv measure import 3.65 → 3.44 s
 (retained heap +42.92 → +44.05 MB), factory 44.6 → 120.5 ms (+0.40 → +1.00 MB),

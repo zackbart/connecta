@@ -25,7 +25,9 @@ The five deprecated teamdrives methods are searchable and refused.
 
 Permanent safety covers decryption JWTs, file/shortcut resource keys, resource-key
 URLs embedded in metadata, webContentLink, exportLinks, thumbnailLink and revision
-downloadUrl. Ordinary public view links, ids, names, custom appProperties and
+downloadUrl. `backgroundImageLink` is also withheld because short-lived shared-drive
+background image URLs convey private content; the global rule also withholds static
+About drive-theme image links. Ordinary public view links, ids, names, custom appProperties and
 permission holders remain requested metadata. appProperties is application data;
 its children still cross the global credential and URL boundary. nextPageToken
 is continuation metadata requiring the same delegated grant. A token altered by
@@ -58,6 +60,10 @@ wrappers remain; there is no approved retirement.
 The final deterministic follow-up keeps refusal reasons and write action words
 in compiled first sentences, preserves truncated metadata after every named
 read's field selection, and narrows the D4 reference to revision id/time fields.
+All 13 natural-query rows now call the agent-facing `drive_api_search` tool and
+require the expected operation in its first two results. The refusal query is
+`permanently delete a file`: the shared intent ranker demotes refused operations
+for leading-write-verb queries such as `delete file permanently` (#1018).
 The reference contains no raw argument, and no out-of-repository preload was
 used. Its refreshed hash is disclosed separately from the paid snapshot. No
 prompt, fake, grader or paid outcome changed.
