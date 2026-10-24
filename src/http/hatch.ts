@@ -104,7 +104,7 @@ export interface HatchDeclaration {
   /** Opt in only reviewed paged reads; existing provider surfaces do not inherit adapters. */
   readonly pages?: Readonly<Partial<Record<OperationKey, HatchPageAdapter | readonly HatchPageAdapter[]>>>;
   /** Separate signed continuation from a vendor's raw first-request anchor. Legacy adapters use their parameter. */
-  readonly pageCursor?: "argument";
+  readonly pageCursor?: "argument" | "parameter";
   readonly binding?: HatchBinding;
   /** Closed, reviewed request-header values. Absent keeps headers out of the catalog. */
   readonly headers?: Readonly<Record<string, { readonly description: string; readonly values: readonly string[] }>>;

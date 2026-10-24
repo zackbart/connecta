@@ -149,7 +149,7 @@ function setup(
     revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
-    pageCursor?: "argument";
+    pageCursor?: "argument" | "parameter";
     binding?: Parameters<typeof hatch>[0]["binding"];
     headers?: Parameters<typeof hatch>[0]["headers"];
     textBodies?: true;
@@ -1261,7 +1261,11 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     links.call("read", { path: "/items", query: { tag: ["duplicate", "duplicate"] } }),
   ).rejects.toMatchObject({ code: "connector_call_failed" });
   response = () => Response.json({ result_info: { cursor: "opaque" } });
-  const cursorStyle = setup({ data: pageData("page"), pages: { "GET /items": cloudflarePage } });
+  const cursorStyle = setup({
+    data: pageData("page"),
+    pages: { "GET /items": cloudflarePage },
+    pageCursor: "parameter",
+  });
   expect(await cursorStyle.call("read", { path: "/items" })).not.toHaveProperty("page");
   expect(() =>
     githubPage("https://api.example").next([], {

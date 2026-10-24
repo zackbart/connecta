@@ -122,11 +122,13 @@ export function renderConventions({ name, kind, kit }) {
     }
     const paging = kit?.hatch?.paging;
     if (paging !== undefined) {
-      if (paging !== "argument") fail(name, "kit.hatch.paging is argument");
+      if (paging !== "argument" && paging !== "parameter") fail(name, "kit.hatch.paging is argument or parameter");
       api.push(
-        "- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. " +
-          "Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. " +
-          "The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.",
+        paging === "parameter"
+          ? "- **Paging:** on a paged hatch read, pass `page.nextCursor` unchanged in the parameter named by `page.param` at `page.in`; keep method, path, filters, page size, fields and headers unchanged. A last page has no cursor. If `page.hasMore` is true without a cursor, the data is incomplete and its continuation was withheld."
+          : "- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. " +
+              "Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. " +
+              "The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.",
       );
     }
     api.push(

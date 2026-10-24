@@ -2169,7 +2169,10 @@ Returned tokens authenticate the selected adapter parameter and value as well
 as the call. Search/v2 raw page tokens cannot replace cursor. Providers without
 this declaration keep parameter-based continuation.
 Separate-cursor paging also adds the hatch Paging line to generated
-Conventions; parameter-based providers retain their existing guide bytes.
+Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
+into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
+the declaration retains the existing guide bytes. An unsafe continuation keeps
+the safe page data with `hasMore: true` and no `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.

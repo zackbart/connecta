@@ -152,7 +152,7 @@ export interface ProviderKitFacts {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
     /** Separate-cursor paging opts into the generated hatch paging convention. */
-    readonly paging?: "argument";
+    readonly paging?: "argument" | "parameter";
     readonly fieldsRoot?: string;
   };
   /**
