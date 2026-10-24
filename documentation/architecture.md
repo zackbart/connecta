@@ -2192,6 +2192,11 @@ Conventions; parameter-based providers retain their existing guide bytes.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
+A binding may opt into `truncated: true` to supply reviewed size-cut paths
+(such as `data.content`) in its answer. The hatch then declares and propagates
+an optional top-level `truncated: string[]` on reads and writes. Without the
+opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
+from vendor booleans or added to other providers.
 Bindings retain the hatch's other-server and JSON/form body-type guards by
 default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
 replace those guards with the binding's reviewed routing or encoding checks.

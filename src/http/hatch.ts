@@ -66,6 +66,8 @@ function operationsOf(index: OperationIndex): ReadonlyMap<string, Operation> {
 /** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
 export interface HatchBinding {
   readonly review: string;
+  /** Opt in to size-cut paths supplied by this reviewed binding. */
+  readonly truncated?: true;
   /** Explicitly replace the default other-server guard with the binding's confined routing. */
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
@@ -75,7 +77,12 @@ export interface HatchBinding {
     call: RestCall,
     options?: SendOptions,
   ) => Effect.Effect<
-    { readonly status: number; readonly data: unknown; readonly headers?: Readonly<Record<string, string>> },
+    {
+      readonly status: number;
+      readonly data: unknown;
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly truncated?: readonly string[];
+    },
     HttpFailure,
     CallServices
   >;
@@ -289,9 +296,17 @@ export function hatch(
       return [key, snapshot] as const;
     }),
   );
-  const envelope = pages.size
+  const callEnvelope = options.binding?.truncated
     ? Schema.Struct({
         ...Envelope.fields,
+        truncated: Schema.optionalKey(
+          Schema.Array(Schema.String).annotate({ description: "Dot paths cut for size, including the data prefix." }),
+        ),
+      })
+    : Envelope;
+  const envelope = pages.size
+    ? Schema.Struct({
+        ...callEnvelope.fields,
         page: Schema.optionalKey(
           Schema.Struct({
             ...StandardPage.fields,
@@ -305,7 +320,7 @@ export function hatch(
           }),
         ),
       })
-    : Envelope;
+    : callEnvelope;
   const tool = (kind: string) => `${name}_api_${kind}`;
   const route = (op: Operation) => {
     const verdict = verdictOf(op);
@@ -1120,6 +1135,9 @@ export function hatch(
         status: answer.status,
         data: selectFields(answer.data === undefined ? null : answer.data, args.fields),
         ...(page ? { page } : {}),
+        ...(options.binding?.truncated && "truncated" in answer && answer.truncated?.length
+          ? { truncated: answer.truncated }
+          : {}),
         ...(key ? { idempotencyKey: key } : {}),
       };
     });
@@ -1189,8 +1207,8 @@ export function hatch(
         description: `Call a reviewed ${title} API write; method and path are stated for approval, and the operation index checks arguments first.${note(options.notes?.write)}`,
         input: Schema.Struct(writeFields),
         output: idempotency
-          ? Schema.Struct({ ...Envelope.fields, idempotencyKey: Schema.optionalKey(Schema.String) })
-          : Envelope,
+          ? Schema.Struct({ ...callEnvelope.fields, idempotencyKey: Schema.optionalKey(Schema.String) })
+          : callEnvelope,
         ...(idempotency
           ? {
               idempotency: {
