@@ -113,19 +113,20 @@ approximately 300 KB gate. This is an early index-retention probe, not a final
 measurement of the implemented provider. The final PR reports the actual
 standalone entry as well. No dispatch or tool surface changes in this pin commit.
 
-The final same-toolchain standalone probe is 1,867,320 B minified and 450,437 B
-gzip: growth 760,180 B raw and 115,204 B gzip from the original 1,107,140 B /
-335,233 B entry. The complete index is reachable without an artificial retained
-export. The canonical bundle report measured 450,413 B before its descriptive
-baseline annotation was updated; its reviewed baseline uses that observation.
-Root (370,942 / 402,000 B gzip) and Worker example (712,337 / 743,000 B) remain
-within their unchanged caps. Other providers' baselines and caps are unchanged.
+After integrating main 8ab21828, the final same-toolchain standalone probe is
+1,868,078 B minified and 450,669 B gzip. Current main's entry is 1,107,726 B /
+335,430 B: growth 760,352 B raw and 115,239 B gzip. The full index is reachable
+without an artificial retained export. The reviewed 450,413 B baseline annotation
+records the earlier observation before main's shared-kit additions; provider
+entries remain uncapped. Root (370,942 / 402,000 B gzip) and Worker example
+(712,452 / 743,000 B) remain within their unchanged caps. Other providers'
+baselines and caps are unchanged by this item.
 
 H9 characterization uses five fresh Node 26.12.0 processes per arm on this shared
 Linux host, with warmed filesystem caches and the same fake installation /
-one-repository owner listing. Median provider import: before 1,264 ms, after
-1,546 ms; factory construction: 40.0 / 52.8 ms; first completed list call:
-171.9 / 206.1 ms. Each arm sends five fake requests, including lazy authentication
+one-repository owner listing. Median provider import: before 1,097 ms, after
+1,213 ms; factory construction: 34.8 / 42.9 ms; first completed list call:
+158.0 / 171.2 ms. Each arm sends five fake requests, including lazy authentication
 and repository verification; no operational vendor request or real credential
 is used. RSA key generation is outside the measured phases. Import/factory
 startup precedes a call deadline; the first-call measurement includes lazy App

@@ -96,7 +96,7 @@
       ]
     },
     "after": {
-      "ref": "HEAD",
+      "ref": "55312412",
       "runtimeTypeScriptBytes": 851314,
       "files": [
         {
@@ -711,5 +711,114 @@
       }
     },
     "delta": -2
+  },
+  "preIntegrationMain": "09258a7fe6ce8b64fea203f5b2917fadce42680c",
+  "integratedMain": "8ab21828",
+  "integratedMeasurements": {
+    "before": {
+      "bundle": {
+        "node": "v26.12.0",
+        "zlib": "1.3.1.zlib-ng",
+        "raw": 1107726,
+        "gzip": 335430
+      },
+      "coldCall": {
+        "samples": [
+          {
+            "node": "v26.12.0",
+            "importMs": 1163.01882,
+            "factoryMs": 50.96349000000009,
+            "firstCallMs": 163.8265570000001,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1096.810769,
+            "factoryMs": 30.455389999999852,
+            "firstCallMs": 154.82562000000007,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 964.2147600000001,
+            "factoryMs": 34.825702999999976,
+            "firstCallMs": 147.063985,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1114.716032,
+            "factoryMs": 38.46045000000004,
+            "firstCallMs": 167.99461900000006,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1047.69399,
+            "factoryMs": 28.082186999999976,
+            "firstCallMs": 157.95157900000004,
+            "sends": 5
+          }
+        ],
+        "medianMs": {
+          "importMs": 1096.810769,
+          "factoryMs": 34.825702999999976,
+          "firstCallMs": 157.95157900000004
+        }
+      }
+    },
+    "after": {
+      "bundle": {
+        "node": "v26.12.0",
+        "zlib": "1.3.1.zlib-ng",
+        "raw": 1868078,
+        "gzip": 450669
+      },
+      "coldCall": {
+        "samples": [
+          {
+            "node": "v26.12.0",
+            "importMs": 1213.4739809999999,
+            "factoryMs": 42.837109000000055,
+            "firstCallMs": 148.15020200000004,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1227.744989,
+            "factoryMs": 44.134203999999954,
+            "firstCallMs": 171.17306499999995,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1004.2144310000001,
+            "factoryMs": 37.24630499999989,
+            "firstCallMs": 153.39099999999985,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1100.447966,
+            "factoryMs": 42.89491399999997,
+            "firstCallMs": 175.509366,
+            "sends": 5
+          },
+          {
+            "node": "v26.12.0",
+            "importMs": 1229.487546,
+            "factoryMs": 43.4671350000001,
+            "firstCallMs": 183.89364899999987,
+            "sends": 5
+          }
+        ],
+        "medianMs": {
+          "importMs": 1213.4739809999999,
+          "factoryMs": 42.89491399999997,
+          "firstCallMs": 171.17306499999995
+        }
+      }
+    },
+    "gzipGrowth": 115239
   }
 }
