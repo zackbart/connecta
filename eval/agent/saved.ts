@@ -12,6 +12,7 @@ export interface SavedGradeInputs {
   world: {
     rest?: World["rest"];
     breeze?: World["breeze"];
+    ccb?: World["ccb"];
     pco?: World["pco"];
     overflow?: World["overflow"];
     tithely?: World["tithely"];
@@ -33,6 +34,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       rest: world.rest,
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
+      ...(world.options.ccb ? { ccb: world.ccb } : {}),
       ...(world.options.planningCenter ? { pco: world.pco } : {}),
       ...(world.options.overflow ? { overflow: world.overflow } : {}),
       ci: world.ci,
@@ -161,6 +163,10 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.breeze, structuredClone(state.breeze));
   } else if (state.calls.some((c) => c.service === "breeze"))
     throw new Error("Incomplete saved grading evidence: breeze");
+  if (state.ccb) {
+    for (const key of ["people", "updated"] as const) requireEvidence(Array.isArray(state.ccb[key]), `ccb.${key}`);
+    Object.assign(world.ccb, structuredClone(state.ccb));
+  } else if (state.calls.some((c) => c.service === "ccb")) throw new Error("Incomplete saved grading evidence: ccb");
   if (state.pco) {
     for (const key of ["people", "notes", "updated"] as const)
       requireEvidence(Array.isArray(state.pco[key]), `pco.${key}`);

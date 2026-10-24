@@ -213,11 +213,18 @@ interface LegacyListSpec<I extends Input, Row extends Schema.Top> extends Omit<T
  * `fields` to the tool's own filters.
  */
 interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.Top> {
+  /** Required when the list performs a reviewed read-only POST. */
+  readonly review?: string;
   readonly name: string;
   readonly description: string;
   readonly filters: F;
   readonly row: Row;
-  readonly limit: { readonly default: number; readonly max: number; readonly description: string };
+  readonly limit: {
+    readonly default: number;
+    readonly max: number;
+    readonly description: string;
+    readonly values?: readonly number[];
+  };
   readonly cursor?: "plain" | "bound";
   /** Expose only an exact count supplied by the vendor, never an estimate from observed rows. */
   readonly total?: true;
@@ -274,6 +281,26 @@ function standardList(
     throw new Error(`${spec.name} total must opt in with true for a vendor-stated exact count.`);
   if (!Number.isSafeInteger(size) || !Number.isSafeInteger(max) || size < 1 || max < size)
     throw new Error(`${spec.name} limit needs positive whole default and max values, with default <= max.`);
+  const values = spec.limit.values === undefined ? undefined : [...spec.limit.values];
+  if (
+    values &&
+    (!values.length ||
+      new Set(values).size !== values.length ||
+      !values.includes(size) ||
+      values.some((value) => !Number.isSafeInteger(value) || value < 1 || value > max))
+  )
+    throw new Error(
+      `${spec.name} limit values must be unique positive whole sizes within max and include the default.`,
+    );
+  const limit = Integer.check(Schema.isBetween({ minimum: 1, maximum: max }));
+  const allowedLimit = values
+    ? limit.check(
+        Schema.makeFilter((value: number) => values.includes(value), {
+          expected: `one of ${values.join(", ")}`,
+          toJsonSchema: () => ({ enum: [...values] }),
+        }),
+      )
+    : limit;
   for (const name of ["limit", "cursor", "fields"]) {
     if (name in spec.filters) throw new Error(`${spec.name} filters cannot declare ${name}; the kit supplies it.`);
   }
@@ -281,7 +308,7 @@ function standardList(
   const input = Schema.Struct({
     ...spec.filters,
     limit: Schema.optionalKey(
-      Integer.check(Schema.isBetween({ minimum: 1, maximum: max })).annotate({
+      allowedLimit.annotate({
         description: spec.limit.description,
         default: size,
       }),
@@ -342,7 +369,7 @@ function standardList(
     "read",
     { readOnlyHint: true },
     undefined,
-    undefined,
+    spec.review,
     sparseItems(
       catalogSchema(
         Schema.Struct({

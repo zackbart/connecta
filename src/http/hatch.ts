@@ -115,6 +115,8 @@ export interface HatchDeclaration {
   readonly writeSteps?: Readonly<Record<string, "once">>;
   /** Vendor-envelope root, used only for field-selection guidance. */
   readonly fieldsRoot?: string;
+  /** Deployment configuration may omit the write hatch without widening read verdicts. Defaults to true. */
+  readonly writeEnabled?: boolean;
   readonly idempotency?: { readonly header: string; readonly methods: readonly RestMethod[] };
 }
 
@@ -278,6 +280,8 @@ export function hatch(
   const Body = options.textBodies
     ? Schema.Union([ObjectValue, Schema.Array(Schema.Unknown), Schema.String])
     : undefined;
+  if (options.writeEnabled !== undefined && typeof options.writeEnabled !== "boolean")
+    throw new Error("Hatch writeEnabled must be a boolean.");
   if (options.binding && !options.binding.review.trim()) throw new Error("A hatch binding needs a vendor review.");
   const idempotency = options.idempotency
     ? { ...options.idempotency, methods: [...options.idempotency.methods] }
@@ -354,7 +358,9 @@ export function hatch(
     const verdict = verdictOf(op);
     const authored = named.get(`${op.method} ${op.path}`);
     return {
-      ...(verdict === "refuse" ? {} : { tool: tool(verdict === "read" ? "read" : "write") }),
+      ...(verdict === "refuse" || (verdict !== "read" && options.writeEnabled === false)
+        ? {}
+        : { tool: tool(verdict === "read" ? "read" : "write") }),
       ...(authored ? { named: authored } : {}),
     };
   };
@@ -1229,7 +1235,7 @@ export function hatch(
   };
   // Let the Schema infer the program arguments rather than the shared field declarations.
   tools.push(read(connection, { ...readSpec, run: (args) => run("read", args as unknown as CallArgs) }));
-  if (writeMethods.length > 0) {
+  if (writeMethods.length > 0 && options.writeEnabled !== false) {
     const writeFields: Record<string, Schema.Top & { readonly DecodingServices: never }> = {
       method: methodEnum(writeMethods).annotate({ description: "The operation's HTTP method." }),
       path: Path,

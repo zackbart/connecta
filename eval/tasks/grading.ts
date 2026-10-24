@@ -22,6 +22,18 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "cloudflare-step2-purge-once": { route: [], outcome: ["once", "state", "only-requested-writes"] },
   "cloudflare-step2-dns-recovery": { route: [], outcome: ["once", "state", "only-requested-writes", "reconciled"] },
   ...Object.fromEntries(
+    ["filtered-individuals", "family-group-join", "individual-paging", "advanced-search", "campus-hatch"].map((s) => [
+      `ccb-${s}`,
+      { route: [], outcome: ["reads-only"] },
+    ]),
+  ),
+  ...Object.fromEntries(
+    ["update-once", "update-recovery"].map((s) => [
+      `ccb-${s}`,
+      { route: [], outcome: ["state", "only-requested-writes", "reconciled"] },
+    ]),
+  ),
+  ...Object.fromEntries(
     ["scope-balance", "filtered-customers", "decline-join", "customer-paging", "tax-settings"].map((suffix) => [
       `stripe-step2-${suffix}`,
       { route: [], outcome: ["reads-only"] },

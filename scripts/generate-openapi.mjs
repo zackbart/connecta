@@ -423,7 +423,17 @@ function compactSchema(document, schema, shape, level) {
   }
   if (Array.isArray(node.required) && node.required.length > 0) out.r = node.required;
   if (node.items !== undefined) out.i = compactSchema(document, node.items, shape, level + 1);
-  if (node.additionalProperties === true) out.m = {};
+  // Some reviewed documents use an explicitly empty properties map for a
+  // vendor-defined filter bag. Preserve the default typo guard elsewhere.
+  if (
+    node.additionalProperties === true ||
+    (shape.emptyObjectsOpen &&
+      node.type === "object" &&
+      node.properties &&
+      Object.keys(node.properties).length === 0 &&
+      node.additionalProperties === undefined)
+  )
+    out.m = {};
   else if (node.additionalProperties && typeof node.additionalProperties === "object") {
     out.m = compactSchema(document, node.additionalProperties, shape, level + 1);
   }
@@ -535,7 +545,7 @@ function share(rows) {
  * refs and composition are bounded; overflow drops the whole response contract
  * so fields validation never mistakes an incomplete set for a complete one.
  */
-function responseFields(document, operation) {
+function responseFields(document, operation, additionalMediaTypes = []) {
   const paths = new Set();
   let remaining = 1024;
   let overflow = false;
@@ -591,9 +601,10 @@ function responseFields(document, operation) {
     .sort()) {
     const response = resolveRef(document, operation.responses[status]);
     const content = response.content ?? {};
-    const type = Object.keys(content)
-      .filter((type) => /^application\/(?:[^/]+\+)?json$/i.test(type))
-      .sort()[0];
+    const type =
+      Object.keys(content)
+        .filter((type) => /^application\/(?:[^/]+\+)?json$/i.test(type))
+        .sort()[0] ?? additionalMediaTypes.find((type) => content[type]?.schema);
     if (!type || !content[type]?.schema) continue;
     visit(content[type].schema);
     break;
@@ -633,6 +644,7 @@ export function buildOperationIndex(document, source) {
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
     numericBounds: source.options?.numericBounds === true,
+    emptyObjectsOpen: source.options?.emptyObjectsOpen === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
   // `operationIds: false` drops ids that only restate the summary,
@@ -669,7 +681,7 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
-      fields.push(responseFields(document, operation));
+      fields.push(responseFields(document, operation, source.options?.additionalResponseMediaTypes));
     }
   }
   return {

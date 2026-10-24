@@ -125,35 +125,13 @@ per-product versions and rate/admission limits, see
 and `pco_api_details` discover reviewed operations; `pco_api_read` reads them,
 and `pco_api_write` sends approved writes.
 
-Church Community Builder drops sensitive fields from every result by
-default: allergies, giving numbers and dates, envelope ids, statement dates,
-attendance prayer requests and meeting notes, and form payment details
-(`CCB_SENSITIVE_FIELDS`). The drop goes by field name at any depth and covers
-the named tools, `raw: true`, the read hatches, CCB's advanced search, and
-write replies. No tool argument returns them. A deployment that needs them
-opts in with `sensitiveFields: "return"`, after which `raw: true` and the
-hatches return CCB's rows without the drop. Tithe.ly's option works the same
-way; see [Tithe.ly](./providers.md#tithely).
-
-```ts
-import { ccb } from "@zackbart/connecta/providers/ccb";
-
-const church = ccb("church", {
-  purpose: "Pastoral care for the care team",
-  environment: "production",
-  mode: "identity",
-  clientId: env.CCB_CLIENT_ID,
-  clientSecret: env.CCB_CLIENT_SECRET,
-  sensitiveFields: "return",
-});
-```
-
-The option controls a projection, not credential redaction: either way,
-`api()` replaces every credential the connection sent with `[redacted]`
-wherever it appears in a result. The drop removes fields from results only.
-CCB's advanced search can still filter on them, so a value can be inferred
-from which rows match; where that matters, leave `read:advanced_searches` out
-of `scopes`.
+Church Community Builder's `sensitiveFields` option controls the documented
+sensitive response fields. Advanced search can still filter on dropped sensitive
+fields, so matching rows can reveal their values by inference. Where that
+matters, omit `read:advanced_searches` from the exact configured OAuth scopes.
+See [Church Community Builder](./providers.md#church-community-builder)
+for OAuth setup, scope boundaries, permanent withholding, paging and limits.
+Tithe.ly's option works the same way; see [Tithe.ly](./providers.md#tithely).
 
 ## Another remote MCP server
 

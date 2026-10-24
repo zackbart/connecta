@@ -4,6 +4,7 @@
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
 import { cloudflareStep2Dns } from "./cloudflare.js";
+import { FakeCcb, ccbState } from "./ccb.js";
 import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeOverflow, overflowState } from "./overflow.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
@@ -47,7 +48,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze" | "planning-center" | "overflow";
+  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -55,6 +56,7 @@ export interface ConnectorSpec {
 export interface WorldOptions {
   restVendor?: RestVendor;
   breeze?: { fault?: "update-500" };
+  ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
   overflow?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
@@ -86,8 +88,11 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakePlanningCenter | FakeOverflow> = [];
+  readonly restServices: Array<
+    FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakePlanningCenter | FakeOverflow
+  > = [];
   readonly breeze = breezeState();
+  readonly ccb = ccbState();
   readonly pco = planningCenterState();
   readonly overflow = overflowState();
   readonly tithely = tithelyState();
@@ -129,6 +134,7 @@ export class World {
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
+    if (options.ccb) this.restServices = [new FakeCcb("ccb", this.ledger, this.ccb, options.ccb.fault)];
     if (options.planningCenter)
       this.restServices = [new FakePlanningCenter("pco", this.ledger, this.pco, options.planningCenter.fault)];
     if (options.overflow)
@@ -172,6 +178,7 @@ export class World {
       this.options.restVendor ||
       this.options.tithely ||
       this.options.breeze ||
+      this.options.ccb ||
       this.options.planningCenter ||
       this.options.overflow
     )

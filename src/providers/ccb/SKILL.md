@@ -1,56 +1,40 @@
 ---
-{
-  "name": "ccb",
-  "instructionsHeading": "Church instructions"
-}
+{"name":"ccb","instructionsHeading":"Church instructions"}
 ---
 
-<!-- fragment: guide_0 -->
+## People, households and groups
 
+CCB v2 addresses records by integer ids. Resolve a person from the individual
+list and a household from families; never guess ids. Family membership and
+church group membership join by individual id. A membership role belongs to
+that group, rather than being a property of the person everywhere.
 
-## Resolve ids before acting
+Identity Auth acts with the signed-in person's permissions. A permission
+refusal can mean that person lacks access even when the connection is healthy.
 
-- Every record is addressed by an integer id. Read it from a list tool and
-  pass it back; never guess one. `list_individuals` finds people by partial
-  name, phone, or email; `familyId`, `groupId`, `eventId`, form, process,
-  queue, and category ids come from their own list tools.
-- Events are series with dated occurrences. `list_events` returns
-  `eventId` plus `occurrence`; the attendance tools need both.
-- Campus and membership-type ids resolve through `ccb_api_get` on
-  `/campuses` and `/church/membership_types`.
-<!-- endfragment -->
+## Events and attendance
 
-<!-- fragment: guide_1 -->
+An event is a series; its dated occurrence is a separate identity. Attendance
+joins need both the event id and occurrence. Preserve the vendor's date and
+time-zone meaning instead of treating every occurrence as UTC midnight.
 
-## Sensitive data stays out of results
+## Pastoral and financial records
 
-Allergies, giving numbers and dates, attendance prayer requests and leader
-notes, and form payment details are sensitive fields. Projections always
-drop them; Raw access below says whether `raw: true` and the hatches do
-too. Notes, pledges, giving metrics, background checks, and
-financial settings are pastoral or financial: read them inside
-`execute_code` and return only the reduced answer the task needs.
+Notes, background checks, pledges and giving metrics can be sensitive. Read
+only what the task needs and reduce those records inside execute_code before
+returning an answer. Gift metrics are counts by period, with a range of at
+most twelve months. Per-gift transactions and amounts belong to the legacy
+v1 XML API, which this v2 connector does not reach.
 
-Giving in v2 is counts per period (`get_giving_metrics`), pledges, scheduled
-gifts, and financial settings. Transactions, batches, and amounts per gift
-live only in CCB's legacy v1 XML API, which this connector does not reach.
+## Vendor call rates and recovery
 
-## Paging
+CCB meters endpoints separately per API client. Individual profile reads have
+no burst; individual advanced searches allow one call per five seconds, and
+category schedule lists allow one per two seconds. Prefer list pages over a
+loop of individual gets. Other deployments sharing the client spend from the
+same vendor allowance.
 
-Lists take `page` (1-based) and `perPage` (25, 50, 75, or 100 only) and
-return `page.hasMore`, `page.nextPage`, and `page.total`. Field names are
-CCB's snake_case turned camelCase.
-
-## Rate limits
-
-CCB allows each endpoint about one call a second after a burst of 60, per API
-client. This connector keeps a per-runtime 60-per-minute window per endpoint
-— an approximation, not an enforcement. `get_individual` (1/s),
-`list_schedules` (1 per 2 s), and individuals advanced search (1 per 5 s)
-allow no burst: page a list instead of looping a get, and space those calls.
-A `rate_limited` failure carries CCB's wait.
-
-## Raw access
-
-`ccb_api_get` reaches any GET path; `ccb_api_search` runs advanced searches,
-which CCB serves as POST but are reads.<!-- endfragment -->
+For a profile edit, resolve the individual first and preserve fields outside
+the requested change. Use `ccb_api_write` for the edit; the host may ask the
+user to confirm. After an ambiguous update, read that profile to determine
+what actually changed before deciding whether another write is needed.

@@ -5,7 +5,7 @@ export const fixture = {
   options,
   cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"identity","options":{"mode":"identity","access":"read"}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof ccb>[1]> = {}) { return ccb(id, { ...options, ...overrides } as Parameters<typeof ccb>[1]); },
-  conventions: {"verbs":["list","get","ccb"],"nestedDescriptionExceptions":[],"auth":"oauth"},
+  conventions: {"verbs":["list","get","ccb","search"],"nestedDescriptionExceptions":[],"auth":"oauth"},
 };
 
 export const createAuthored = () => fixture.create();

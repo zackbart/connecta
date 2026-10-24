@@ -41,9 +41,20 @@ function installTransport() {
   globalThis.fetch = (async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (!Object.values(HOSTS).flat().includes(url.hostname) && url.hostname !== "church.breezechms.com")
+    if (
+      !Object.values(HOSTS).flat().includes(url.hostname) &&
+      url.hostname !== "church.breezechms.com" &&
+      url.hostname !== "api.ccbchurch.com"
+    )
       return forward(request);
+    const oauthClient =
+      url.hostname === "api.ccbchurch.com" && url.pathname === "/oauth/token"
+        ? request.headers.get("authorization")?.startsWith("Basic ")
+          ? Buffer.from(request.headers.get("authorization")!.slice(6), "base64").toString().split(":")[0]
+          : new URLSearchParams(await request.clone().text()).get("client_id")
+        : undefined;
     const key =
+      oauthClient ??
       request.headers.get("api-key") ??
       request.headers.get("x-auth-key") ??
       request.headers.get("authorization")?.replace(/^Bearer /, "");

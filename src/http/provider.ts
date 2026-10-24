@@ -113,7 +113,9 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   /** Complete guides preserve legacy fragments and option-dependent lines. */
   readonly guide: (options: Readonly<O>) => ProviderGuideInput | ConnectorUsageGuide;
   /** The standard hatch (decision 0011 S1); `notes` adds connection-dependent description sentences. */
-  readonly hatch?: Omit<HatchDeclaration, "binding"> & {
+  readonly hatch?: Omit<HatchDeclaration, "binding" | "writeEnabled"> & {
+    /** Pure deployment-config selector; absent keeps every reviewed write available. */
+    readonly writeEnabled?: (options: Readonly<O>) => boolean;
     readonly binding?: (kit: { connection: Connection; options: Readonly<O> }) => HatchBinding;
     readonly notes?: (options: Readonly<O>) => { readonly read?: string; readonly write?: string };
   };
@@ -132,10 +134,11 @@ function hatchDeclaration<O extends ProviderOptions>(
   options: Readonly<O>,
   connection: Connection,
 ): HatchDeclaration & { readonly notes?: { readonly read?: string; readonly write?: string } } {
-  const { notes, binding, ...rest } = declared;
+  const { notes, binding, writeEnabled, ...rest } = declared;
   return {
     ...rest,
     ...(notes ? { notes: notes(options) } : {}),
+    ...(writeEnabled ? { writeEnabled: writeEnabled(options) } : {}),
     ...(binding ? { binding: binding({ connection, options }) } : {}),
   };
 }
