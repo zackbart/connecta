@@ -669,7 +669,8 @@ function requestGraph(document, bodies, descriptionLimit) {
         definitions[name] = {};
         definitions[name] = copy(pointer(document, raw.$ref) ?? {});
       }
-      return { $ref: `#/$defs/${name}` };
+      const siblings = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "$ref"));
+      return { ...copy(siblings), $ref: `#/$defs/${name}` };
     }
     return Object.fromEntries(
       Object.entries(raw).flatMap(([key, value]) => {

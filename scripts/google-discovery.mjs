@@ -73,8 +73,7 @@ export function canonicalDiscovery(value) {
 
 function schemaOf(raw, request = false, method, reference = (name) => `Input_${name}`) {
   if (!raw || typeof raw !== "object") return {};
-  if (raw.$ref) return { $ref: `#/components/schemas/${request ? reference(raw.$ref) : raw.$ref}` };
-  const out = {};
+  const out = raw.$ref ? { $ref: `#/components/schemas/${request ? reference(raw.$ref) : raw.$ref}` } : {};
   for (const key of ["type", "format", "description", "enum", "pattern", "default", "readOnly", "deprecated"])
     if (raw[key] !== undefined) out[key] = raw[key];
   for (const key of ["minimum", "maximum"])

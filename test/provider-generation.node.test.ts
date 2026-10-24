@@ -602,6 +602,16 @@ describe("OpenAPI operation index generation", () => {
       expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(pin.digest);
       const original = JSON.parse(bytes.toString());
       const normalized = normalizeDiscovery(original);
+      const deprecations = (raw: any, converted: any) => {
+        if (raw?.deprecated === true) expect(converted?.deprecated).toBe(true);
+        for (const [name, field] of Object.entries(raw?.properties ?? {}))
+          deprecations(field, converted?.properties?.[name]);
+        if (raw?.items) deprecations(raw.items, converted?.items);
+        if (raw?.additionalProperties && typeof raw.additionalProperties === "object")
+          deprecations(raw.additionalProperties, converted?.additionalProperties);
+      };
+      for (const [name, schema] of Object.entries(original.schemas))
+        deprecations(schema, normalized.components.schemas[name]);
       const compiled = buildOperationIndex(normalized, {
         ...pin,
         options: { depth: 5, numericBounds: true, formats: true, requestGraph: true, deprecations: true },
@@ -657,6 +667,8 @@ describe("OpenAPI operation index generation", () => {
               if (value.annotations?.required?.includes(op.operationId)) {
                 requiredAnnotations++;
                 expect(node?.required, `${op.operationId}.${name}`).toContain(name);
+              } else if (value.annotations?.required && value.required !== true && !raw.required?.includes(name)) {
+                expect(node?.required ?? [], `${op.operationId}.${name} must remain optional`).not.toContain(name);
               }
               if (node?.properties?.[name]) verify(value, node.properties[name], seen);
             }
