@@ -25,3 +25,19 @@ when the final batch completes.
 The original full JSON and logs are retained under
 `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/`; the committed
 summary identifies their hashes, clean commits, CLI versions and metrics.
+
+The first AFTER arm at 51c37e8d was deliberately interrupted after the first five
+read tasks per runner passed. An edge test found that the vendor's `number`
+schema admitted fractional page sizes; the final surface adds an integer check
+before dispatch. Each partial arm also records one interrupted purge trial,
+which is not pooled with the complete final arm. Their original files remain
+`after-codex.json` and `after-claude.json`.
+
+Canonical standalone bundles use gzip level 9, matching check:build. A preliminary
+level-6 measurement was diagnostic and is superseded: before 528,947 B; the
+integer-guard source measured 594,631 B (+65,684 B), report-only. Root and Worker
+example remain below their caps. H9 single cold-process observations under load
+were factory 53.5→88.8 ms and call-to-first-send 69.9→113.9 ms; import time was
+2.21→2.28 s. These are characterization, not latency claims or a deadline change.
+Factory/import work precedes invocation; the request deadline still covers the
+call's runtime work and any scoped ownership lookup.

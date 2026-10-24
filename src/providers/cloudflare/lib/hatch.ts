@@ -79,6 +79,21 @@ export function cloudflareBinding({
       runtime.scope({ method: op.method, path: op.path, op, params: {}, query: {}, body }).body,
     refuse: (call) => {
       runtime.scope(call);
+      for (const parameter of cloudflareIndex.contract(call.op).parameters) {
+        if (
+          parameter.in !== "query" ||
+          !["page", "per_page", "limit"].includes(parameter.name) ||
+          !["integer", "number"].includes(String(parameter.schema.type))
+        )
+          continue;
+        const value = call.query[parameter.name];
+        if (value === undefined) continue;
+        if (
+          !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0) &&
+          !(typeof value === "string" && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)))
+        )
+          invalid(`${parameter.name} must be a whole number within the operation's declared bounds.`);
+      }
       const policy = SAFETY.refusal(call.method, call.op.path);
       if (policy) return policy;
       const type = cloudflareIndex.bodyType(call.op)?.toLowerCase() ?? "";
