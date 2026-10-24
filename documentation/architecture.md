@@ -2131,8 +2131,12 @@ that pages. `src/http/hatch-paging.ts` supplies Stripe forward lists
 → `page`), Vercel (`pagination.next` → `until`), and GitHub (quoted or unquoted
 Link `rel=next` → `page`). Stripe opts into indexed forward lists, reverse
 lists (`ending_before`, first safe row id), v1 search (`next_page`) and v2
-lists (a confined `next_page_url` supplying only `page`). A declaration names
-the cursor parameter and `query` or `body`; it must
+lists (a confined `next_page_url` supplying only `page`).
+If a Stripe v2 URL adds query parameters the original call omitted, the read
+keeps its data and returns `hasMore: true` without `nextCursor`; a continuation
+cannot be minted without guessing which vendor defaults to preserve. Changed
+explicit filters and URLs outside the confined origin/path remain refused.
+A declaration names the cursor parameter and `query` or `body`; it must
 exist in that operation's request contract. The response remains
 `{ status, data, page? }`, with `page: { hasMore, nextCursor?, param, in }`.
 With parameter-based continuation, put the opaque `nextCursor` back in the named
@@ -2158,9 +2162,14 @@ both directions or a cursor with any raw anchor are refused before dispatch.
 Returned tokens authenticate the selected adapter parameter and value as well
 as the call. Search/v2 raw page tokens cannot replace cursor. Providers without
 this declaration keep parameter-based continuation.
+Separate-cursor paging also adds the hatch Paging line to generated
+Conventions; parameter-based providers retain their existing guide bytes.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
+Bindings retain the hatch's other-server and JSON/form body-type guards by
+default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
+replace those guards with the binding's reviewed routing or encoding checks.
 Stripe uses it for nested v1 form parameters, v2 JSON, account/context headers
 and the confined PDF origin. An optional hatch idempotency declaration uses
 the kit write builder's checked key hook: Stripe POST writes take or generate

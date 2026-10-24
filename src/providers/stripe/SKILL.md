@@ -7,9 +7,9 @@
 
 ## Account and money
 
-Confirm the account and environment before investigating a payment or moving
-money. A Connect account's objects belong to that account, rather than the
-platform's account. Sandbox objects do not establish anything about live
+Before investigating a payment or moving money, confirm the account and mode
+with `get_stripe_account_info`. A Connect account's objects belong to that
+account, rather than the platform's account. Sandbox objects do not establish anything about live
 customers, revenue or payouts.
 
 Resolve ids before acting. Stripe ids identify types: `cus_` customer, `sub_`
@@ -32,6 +32,8 @@ recent write. A POST's idempotency key identifies the exact operation and
 parameters. Stripe v1 may prune keys after 24 hours, so reconcile the object
 before attempting the operation outside that window. A new key can create a
 second payment or refund.
+
+In v1 requests, an empty string (`""`) or `null` unsets a field.
 
 ## Data reduction and boundaries
 

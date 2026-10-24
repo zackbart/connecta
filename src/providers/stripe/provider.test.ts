@@ -400,6 +400,27 @@ describe("stripe() over an API key", () => {
       ])
         expect((await refusal(connector.callTool("stripe_api_read", invalid, ctx))).code).toBe("invalid_args");
       expect(sent).toHaveLength(before);
+      for (const direction of ["starting_after", "ending_before"]) {
+        expect(
+          (
+            await refusal(
+              connector.callTool(
+                "stripe_api_read",
+                { ...args, query: { ...args.query, [direction]: first.page.nextCursor } },
+                ctx,
+              ),
+            )
+          ).message,
+        ).toContain("top-level cursor");
+      }
+      expect(
+        (
+          await refusal(
+            connector.callTool("stripe_api_read", { path: "/v1/account", cursor: first.page.nextCursor }, ctx),
+          )
+        ).message,
+      ).toContain("does not page");
+      expect(sent).toHaveLength(before);
       respond = () => Response.json({ object: "list", data: [], has_more: false });
       const last = (await connector.callTool(
         "stripe_api_read",
@@ -489,6 +510,11 @@ describe("stripe() over an API key", () => {
       expect((await refusal(connector.callTool("stripe_api_read", args, ctx))).code).toBe("connector_call_failed");
     }
     const search = { path: "/v1/customers/search", query: { query: "email:'alice@example.com'", limit: 1 } };
+    respond = () => Response.json({ data: [{ id: "acct_kept" }], next_page_url: "/v2/core/accounts?page=x&limit=20" });
+    const incomplete = (await connector.callTool("stripe_api_read", { path: "/v2/core/accounts" }, ctx)) as any;
+    expect(incomplete.data.data).toEqual([{ id: "acct_kept" }]);
+    expect(incomplete.page).toEqual({ hasMore: true, param: "page", in: "query" });
+    expect(sent.at(-1)!.url.search).toBe("");
     respond = () =>
       Response.json({ object: "search_result", data: [{ id: "cus_1" }], has_more: true, next_page: "next_search" });
     const searched = (await connector.callTool("stripe_api_read", search, ctx)) as any;

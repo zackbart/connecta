@@ -10,7 +10,8 @@ export interface HatchPageAdapter {
   readonly initialAnchor?: boolean;
   /** Validate and restore a decoded cursor's vendor type before index.check. */
   readonly decode: (cursor: string | number) => string | number;
-  /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor. */
+  /** undefined: no paging metadata; null: last page; a scalar: next vendor cursor;
+   * { hasMore: true }: keep the data, but no continuation can be confined. */
   readonly next: (
     data: unknown,
     call: {
@@ -18,7 +19,7 @@ export interface HatchPageAdapter {
       readonly query: Readonly<Record<string, unknown>>;
       readonly headers: Readonly<Record<string, string>>;
     },
-  ) => string | number | null | undefined;
+  ) => string | number | null | undefined | { readonly hasMore: true };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -120,14 +121,21 @@ export const stripeV2Page: HatchPageAdapter = {
         expected.append(name, String(item));
       }
     }
+    let extra = false;
     for (const name of new Set(next.searchParams.keys())) {
+      if (name !== "page" && !expected.has(name)) {
+        extra = true;
+        continue;
+      }
       if (
         name !== "page" &&
         JSON.stringify(next.searchParams.getAll(name).sort()) !== JSON.stringify(expected.getAll(name).sort())
       )
         return bad();
     }
-    return pages[0];
+    // A URL may echo vendor defaults absent from the original call. Keep the
+    // fetched data, without minting a cursor that would silently drop them.
+    return extra ? { hasMore: true } : pages[0];
   },
 };
 

@@ -63,6 +63,11 @@ Hatch pages now always include `param` and `in`; `nextCursor` appears only
 while `hasMore` is true. Forward, backward, v1 search and v2 pagination remain
 available. v2 next-page URLs supply only a confined page token; Connecta never
 follows the URL or changes the original request path and filters.
+If a v2 URL adds parameters the call omitted, the fetched data is returned
+with `page.hasMore: true` and no `nextCursor`; the result is incomplete and
+Connecta cannot safely continue it. Repeat with explicit parameters or narrow
+the request. A signed cursor placed in a raw anchor is refused with guidance
+to use the top-level `cursor` instead.
 
 Whole withheld marker values and withheld links are refused on writes; paths
 and queries refuse any containment. Longer prose can mention the marker.

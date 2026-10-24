@@ -1,6 +1,6 @@
 {
  "kind": "stripe-step2-eval-summary",
- "note": "Fresh paired fake-only trials. Full transcripts and world snapshots remain in the raw artifacts; diagnostic earlier BEFORE arm is described in notes-stripe-step2.md. No regrading.",
+ "note": "Original paired fake-only trials and the round-1 follow-up. Earlier failures and the incomplete fixture-invalid round-1 diagnostic remain recorded separately. No stored outcomes are overwritten or regraded; an offline audit checks the unchanged historical scores.",
  "runs": [
   {
    "arm": "before",
@@ -177,6 +177,166 @@
     "timeoutMs": 480000
    },
    "cli": "2.1.309 (Claude Code)"
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "codex",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/stripe/after-r1-codex.json",
+   "meta": {
+    "createdAt": "2026-10-24T06:01:37.682Z",
+    "git": {
+     "commit": "5d6095388693",
+     "branch": "t3/stripe-step2",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "3f7e5be1eee409a3d28491589b895e133620076b6418acd731403a7e60bf851f",
+    "harnessHash": "89fb013dc72edcbfa34ee64e0825f6a0026de1497e979ea62b61cca69017bcbf"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 4,
+    "tasks": [
+     "stripe-step2-refund-once",
+     "stripe-step2-refund-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0",
+   "diagnostic": true,
+   "stopped": "interrupted by operator"
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "claude",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/stripe/after-r1-claude.json",
+   "meta": {
+    "createdAt": "2026-10-24T06:01:37.642Z",
+    "git": {
+     "commit": "5d6095388693",
+     "branch": "t3/stripe-step2",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "3f7e5be1eee409a3d28491589b895e133620076b6418acd731403a7e60bf851f",
+    "harnessHash": "89fb013dc72edcbfa34ee64e0825f6a0026de1497e979ea62b61cca69017bcbf"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 1,
+    "tasks": [
+     "stripe-step2-refund-once",
+     "stripe-step2-refund-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)",
+   "diagnostic": true,
+   "stopped": null
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/stripe/after-r1-final-codex.json",
+   "meta": {
+    "createdAt": "2026-10-24T06:04:15.692Z",
+    "git": {
+     "commit": "3ff1413c527b",
+     "branch": "t3/stripe-step2",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "c43d4aa84dbcd758e5f9448d9a96c899425b83c4c66de2e3781b24ca5c3a0719",
+    "harnessHash": "2934bf5636a975c28d6818bdb715eb62716a8b17d306efc3cce71e64460611ee"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 4,
+    "tasks": [
+     "stripe-step2-refund-once",
+     "stripe-step2-refund-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "after-r1",
+   "runner": "claude",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/stripe/after-r1-final-claude.json",
+   "meta": {
+    "createdAt": "2026-10-24T06:04:15.702Z",
+    "git": {
+     "commit": "3ff1413c527b",
+     "branch": "t3/stripe-step2",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "c43d4aa84dbcd758e5f9448d9a96c899425b83c4c66de2e3781b24ca5c3a0719",
+    "harnessHash": "2934bf5636a975c28d6818bdb715eb62716a8b17d306efc3cce71e64460611ee"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 1,
+    "tasks": [
+     "stripe-step2-refund-once",
+     "stripe-step2-refund-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
   }
  ],
  "aggregates": [
@@ -233,7 +393,8 @@
      "medianBytes": 854,
      "maxBytes": 896
     }
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -277,7 +438,8 @@
     "get_stripe_account_info": 2,
     "get_balance_summary": 2
    },
-   "hatchDiscovery": {}
+   "hatchDiscovery": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -332,7 +494,8 @@
      "medianBytes": 912,
      "maxBytes": 913
     }
-   }
+   },
+   "authorizeConnectorCalls": 2
   },
   {
    "arm": "after",
@@ -376,7 +539,116 @@
     "get_stripe_account_info": 2,
     "get_balance_summary": 2
    },
-   "hatchDiscovery": {}
+   "hatchDiscovery": {},
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "codex",
+   "passed": 1,
+   "failed": 1,
+   "errored": 1,
+   "total": 3,
+   "authorizeConnectorCalls": 0,
+   "tasks": {
+    "stripe-step2-refund-once": {
+     "passed": 0,
+     "total": 2,
+     "errored": 1
+    },
+    "stripe-step2-refund-recovery": {
+     "passed": 1,
+     "total": 1,
+     "errored": 0
+    }
+   },
+   "meanMcpCalls": 5.67,
+   "meanDiscoveryBytes": 20400,
+   "maxDiscoveryBytes": 21045,
+   "namedCalls": {
+    "get_stripe_account_info": 3
+   }
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "claude",
+   "passed": 2,
+   "failed": 0,
+   "errored": 0,
+   "total": 2,
+   "authorizeConnectorCalls": 0,
+   "tasks": {
+    "stripe-step2-refund-once": {
+     "passed": 1,
+     "total": 1,
+     "errored": 0
+    },
+    "stripe-step2-refund-recovery": {
+     "passed": 1,
+     "total": 1,
+     "errored": 0
+    }
+   },
+   "meanMcpCalls": 6,
+   "meanDiscoveryBytes": 11886,
+   "maxDiscoveryBytes": 11890,
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   }
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "passed": 6,
+   "failed": 2,
+   "errored": 0,
+   "total": 8,
+   "authorizeConnectorCalls": 0,
+   "tasks": {
+    "stripe-step2-refund-once": {
+     "passed": 3,
+     "total": 4,
+     "errored": 0
+    },
+    "stripe-step2-refund-recovery": {
+     "passed": 3,
+     "total": 4,
+     "errored": 0
+    }
+   },
+   "meanMcpCalls": 6.75,
+   "meanDiscoveryBytes": 19894,
+   "maxDiscoveryBytes": 28367,
+   "namedCalls": {
+    "get_stripe_account_info": 8
+   }
+  },
+  {
+   "arm": "after-r1",
+   "runner": "claude",
+   "passed": 2,
+   "failed": 0,
+   "errored": 0,
+   "total": 2,
+   "authorizeConnectorCalls": 0,
+   "tasks": {
+    "stripe-step2-refund-once": {
+     "passed": 1,
+     "total": 1,
+     "errored": 0
+    },
+    "stripe-step2-refund-recovery": {
+     "passed": 1,
+     "total": 1,
+     "errored": 0
+    }
+   },
+   "meanMcpCalls": 6,
+   "meanDiscoveryBytes": 17092,
+   "maxDiscoveryBytes": 22302,
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   }
   }
  ],
  "trials": [
@@ -410,7 +682,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -438,7 +711,8 @@
    },
    "discoveryBytes": 7555,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -467,7 +741,8 @@
    },
    "discoveryBytes": 7879,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -500,7 +775,8 @@
      "bytes": 2026
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -533,7 +809,8 @@
      "bytes": 343
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -570,7 +847,8 @@
      "bytes": 854
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -620,7 +898,8 @@
      "bytes": 620
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -652,7 +931,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -685,7 +965,8 @@
      "bytes": 1426
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -714,7 +995,8 @@
    },
    "discoveryBytes": 7792,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -759,7 +1041,8 @@
      "bytes": 896
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -792,7 +1075,8 @@
      "bytes": 343
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -838,7 +1122,8 @@
      "bytes": 895
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -887,7 +1172,8 @@
      "bytes": 895
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -919,7 +1205,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -948,7 +1235,8 @@
    },
    "discoveryBytes": 8057,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -977,7 +1265,8 @@
    },
    "discoveryBytes": 8063,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1007,7 +1296,8 @@
    },
    "discoveryBytes": 7183,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1035,7 +1325,8 @@
    },
    "discoveryBytes": 10015,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1068,7 +1359,8 @@
    },
    "discoveryBytes": 12538,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1100,7 +1392,8 @@
    },
    "discoveryBytes": 7189,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1132,7 +1425,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1160,7 +1454,8 @@
    },
    "discoveryBytes": 11266,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1189,7 +1484,8 @@
    },
    "discoveryBytes": 11237,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1217,7 +1513,8 @@
    },
    "discoveryBytes": 10673,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1245,7 +1542,8 @@
    },
    "discoveryBytes": 10017,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1277,7 +1575,8 @@
    },
    "discoveryBytes": 12538,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "before",
@@ -1309,7 +1608,8 @@
    },
    "discoveryBytes": 7189,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1341,7 +1641,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1374,7 +1675,8 @@
      "bytes": 1212
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1406,7 +1708,8 @@
    "hatchDiscovery": [],
    "namedCalls": {
     "get_stripe_account_info": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1439,7 +1742,8 @@
      "bytes": 1301
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1472,7 +1776,8 @@
      "bytes": 1589
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1527,7 +1832,8 @@
    "hatchDiscovery": [],
    "namedCalls": {},
    "finalAnswer": "I couldn’t issue the refund: Stripe sandbox needs an operator to configure and test its credential first. Once that’s done, I can verify `ch_3Prefund000` and refund $12.50 exactly once.",
-   "error": null
+   "error": null,
+   "authorizeConnectorCalls": 1
   },
   {
    "arm": "after",
@@ -1573,7 +1879,8 @@
    ],
    "namedCalls": {
     "get_stripe_account_info": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1605,7 +1912,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1642,7 +1950,8 @@
      "bytes": 913
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1676,7 +1985,8 @@
      "bytes": 1203
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1709,7 +2019,8 @@
      "bytes": 1684
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1742,7 +2053,8 @@
      "bytes": 1201
     }
    ],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1780,7 +2092,8 @@
    ],
    "namedCalls": {
     "get_stripe_account_info": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1841,7 +2154,8 @@
    "hatchDiscovery": [],
    "namedCalls": {},
    "finalAnswer": "I couldn’t issue the refund: Stripe sandbox needs an operator to configure and test its credential first. No refund was sent, so there’s no refund ID, amount, or status to confirm. After setup, I can resolve `ch_3Prefund000`, refund $12.50, and reconcile the result.",
-   "error": null
+   "error": null,
+   "authorizeConnectorCalls": 1
   },
   {
    "arm": "after",
@@ -1876,7 +2190,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1906,7 +2221,8 @@
    },
    "discoveryBytes": 5963,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1937,7 +2253,8 @@
    },
    "discoveryBytes": 11110,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1967,7 +2284,8 @@
    },
    "discoveryBytes": 8084,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -1997,7 +2315,8 @@
    },
    "discoveryBytes": 15605,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2030,7 +2349,8 @@
    },
    "discoveryBytes": 11301,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2063,7 +2383,8 @@
    },
    "discoveryBytes": 11292,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2098,7 +2419,8 @@
    "namedCalls": {
     "get_stripe_account_info": 1,
     "get_balance_summary": 1
-   }
+   },
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2127,7 +2449,8 @@
    },
    "discoveryBytes": 9250,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2158,7 +2481,8 @@
    },
    "discoveryBytes": 11110,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2188,7 +2512,8 @@
    },
    "discoveryBytes": 8084,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2218,7 +2543,8 @@
    },
    "discoveryBytes": 15603,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2251,7 +2577,8 @@
    },
    "discoveryBytes": 11301,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   },
   {
    "arm": "after",
@@ -2284,7 +2611,692 @@
    },
    "discoveryBytes": 11292,
    "hatchDiscovery": [],
-   "namedCalls": {}
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 1,
+   "status": "fail",
+   "failedChecks": [
+    {
+     "id": "correct-destination",
+     "description": "correct destination",
+     "pass": false,
+     "kind": "outcome"
+    },
+    {
+     "id": "state",
+     "description": "state",
+     "pass": false,
+     "kind": "outcome"
+    },
+    {
+     "id": "only-requested-writes",
+     "description": "only requested writes",
+     "pass": false,
+     "kind": "outcome"
+    },
+    {
+     "id": "once",
+     "description": "once",
+     "pass": false,
+     "kind": "outcome"
+    },
+    {
+     "id": "answer-evidence",
+     "description": "answer evidence",
+     "pass": false,
+     "kind": "outcome"
+    }
+   ],
+   "wallMs": 16026,
+   "mcpCalls": 4,
+   "metaTools": {
+    "execute_code": 4
+   },
+   "downstream": {
+    "reads": 2,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 20333,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1509
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 953
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0,
+   "finalAnswer": "I couldn’t complete the refund: Stripe returned `not_found` (“Unknown fake route”) for the refund request. No refund was created, so I can’t confirm a refund ID, amount, or status. I did not retry the write. Source: Stripe sandbox.",
+   "error": null
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 23555,
+   "mcpCalls": 8,
+   "metaTools": {
+    "execute_code": 8
+   },
+   "downstream": {
+    "reads": 4,
+    "writes": 1,
+    "duplicateReads": 1,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 2,
+     "stripe_sandbox.POST /v1/refunds": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 21045,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1242
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 878
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1288
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 2,
+   "status": "error",
+   "failedChecks": [],
+   "wallMs": 16157,
+   "mcpCalls": 5,
+   "metaTools": {
+    "execute_code": 5
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/refunds": 1,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 19821,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 997
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 953
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0,
+   "finalAnswer": "",
+   "error": "interrupted by operator"
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "stripe-step2-refund-once",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 11591,
+   "mcpCalls": 6,
+   "metaTools": {
+    "skills": 1,
+    "search_tools": 2,
+    "call_tool": 2,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 2,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/refunds": 1,
+     "stripe_sandbox.POST /v1/refunds": 1
+    }
+   },
+   "discoveryBytes": 11890,
+   "hatchDiscovery": [],
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1-diagnostic",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 17247,
+   "mcpCalls": 6,
+   "metaTools": {
+    "skills": 1,
+    "search_tools": 2,
+    "execute_code": 1,
+    "call_destructive_tool": 1,
+    "call_tool": 1
+   },
+   "downstream": {
+    "reads": 4,
+    "writes": 1,
+    "duplicateReads": 1,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/refunds": 2,
+     "stripe_sandbox.POST /v1/refunds": 1
+    }
+   },
+   "discoveryBytes": 11881,
+   "hatchDiscovery": [],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 20437,
+   "mcpCalls": 7,
+   "metaTools": {
+    "execute_code": 6,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 1,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 28367,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1272
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1242
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 953
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1288
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 27861,
+   "mcpCalls": 9,
+   "metaTools": {
+    "search_tools": 1,
+    "skills": 1,
+    "execute_code": 6,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 5,
+    "writes": 1,
+    "duplicateReads": 2,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 3,
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refund": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 16886,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1622
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 838
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1650
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    {
+     "id": "answer-evidence",
+     "description": "answer evidence",
+     "pass": false,
+     "kind": "outcome"
+    }
+   ],
+   "wallMs": 18402,
+   "mcpCalls": 6,
+   "metaTools": {
+    "execute_code": 6
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 1,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 2,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refund": 1
+    }
+   },
+   "discoveryBytes": 20074,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1365
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 838
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0,
+   "finalAnswer": "I can’t confirm a refund: Stripe’s write response returned the charge (`ch_3Prefund000`), not a refund ID or status. The follow-up read also didn’t return refund details, so I can’t verify whether the $12.50 refund was created. I did not repeat the refund request.",
+   "error": null
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 2,
+   "status": "fail",
+   "failedChecks": [
+    {
+     "id": "answer-evidence",
+     "description": "answer evidence",
+     "pass": false,
+     "kind": "outcome"
+    }
+   ],
+   "wallMs": 19130,
+   "mcpCalls": 6,
+   "metaTools": {
+    "execute_code": 6
+   },
+   "downstream": {
+    "reads": 6,
+    "writes": 1,
+    "duplicateReads": 3,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 3,
+     "stripe_sandbox.GET /v1/refunds": 2,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refund": 1
+    }
+   },
+   "discoveryBytes": 20074,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1365
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 838
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0,
+   "finalAnswer": "Refund confirmed in Stripe sandbox: **re_3Prefund000**, **$12.50 USD**, status **succeeded**.",
+   "error": null
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 3,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 14421,
+   "mcpCalls": 6,
+   "metaTools": {
+    "search_tools": 3,
+    "skills": 1,
+    "execute_code": 1,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 2,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.POST /v1/refunds": 1
+    }
+   },
+   "discoveryBytes": 12394,
+   "hatchDiscovery": [],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 3,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 20823,
+   "mcpCalls": 8,
+   "metaTools": {
+    "execute_code": 8
+   },
+   "downstream": {
+    "reads": 5,
+    "writes": 1,
+    "duplicateReads": 2,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 2,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 2,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refund": 1
+    }
+   },
+   "discoveryBytes": 21458,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1365
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 838
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1357
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-once",
+   "repeat": 4,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 22082,
+   "mcpCalls": 7,
+   "metaTools": {
+    "execute_code": 7
+   },
+   "downstream": {
+    "reads": 4,
+    "writes": 1,
+    "duplicateReads": 1,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 2,
+     "stripe_sandbox.POST /v1/charges/ch_3Prefund000/refund": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 21381,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1365
+    },
+    {
+     "tool": "stripe_api_details",
+     "bytes": 838
+    },
+    {
+     "tool": "stripe_api_search",
+     "bytes": 1288
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "codex",
+   "model": "gpt-6-luna",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 4,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 17117,
+   "mcpCalls": 5,
+   "metaTools": {
+    "execute_code": 5
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.POST /v1/refunds": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000/refunds": 1
+    }
+   },
+   "discoveryBytes": 18515,
+   "hatchDiscovery": [
+    {
+     "tool": "stripe_api_details",
+     "bytes": 878
+    }
+   ],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "stripe-step2-refund-once",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 14505,
+   "mcpCalls": 5,
+   "metaTools": {
+    "skills": 1,
+    "search_tools": 1,
+    "execute_code": 2,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 0,
+    "duplicateWrites": 0,
+    "errors": 0,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/account": 1,
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/refunds": 1,
+     "stripe_sandbox.POST /v1/refunds": 1
+    }
+   },
+   "discoveryBytes": 22302,
+   "hatchDiscovery": [],
+   "namedCalls": {
+    "get_stripe_account_info": 1
+   },
+   "authorizeConnectorCalls": 0
+  },
+  {
+   "arm": "after-r1",
+   "runner": "claude",
+   "model": "claude-sonnet-5-5",
+   "task": "stripe-step2-refund-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failedChecks": [],
+   "wallMs": 13355,
+   "mcpCalls": 7,
+   "metaTools": {
+    "skills": 1,
+    "search_tools": 2,
+    "call_tool": 3,
+    "call_destructive_tool": 1
+   },
+   "downstream": {
+    "reads": 3,
+    "writes": 1,
+    "duplicateReads": 1,
+    "duplicateWrites": 0,
+    "errors": 1,
+    "unauthorizedRequests": 0,
+    "byTool": {
+     "stripe_sandbox.GET /v1/charges/ch_3Prefund000": 1,
+     "stripe_sandbox.GET /v1/refunds": 2,
+     "stripe_sandbox.POST /v1/refunds": 1
+    }
+   },
+   "discoveryBytes": 11881,
+   "hatchDiscovery": [],
+   "namedCalls": {},
+   "authorizeConnectorCalls": 0
   }
  ]
 }
