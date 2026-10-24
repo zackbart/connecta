@@ -216,7 +216,7 @@ describe("vercel() over an access token", () => {
     ]);
   });
 
-  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before fieldsion", async () => {
+  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before field selection", async () => {
     const connector = vercel("hosting", TOKEN);
     const rule = {
       id: "rule_1",
@@ -362,7 +362,7 @@ describe("vercel() over an access token", () => {
     expect(failure.retryAfterMs).toBeGreaterThan(0);
   });
 
-  it("INV-3 INV-4 INV-5 INV-9: confines selectors, fields, continuations and secret-bearing writes before dispatch", async () => {
+  it("INV-3 INV-4 INV-5 INV-9: routes selectors and confines fields, continuations and secret-bearing writes before dispatch", async () => {
     const connector = vercel("hosting", TOKEN);
     const refused = await refusal(
       call(connector, "vercel_api_write", {

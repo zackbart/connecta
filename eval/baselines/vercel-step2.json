@@ -1,0 +1,4928 @@
+{
+ "kind": "vercel-step2-eval-summary",
+ "note": "Fake-only paired trials plus a complete final AFTER rerun. Original outcomes retained, no rescoring. Only the pagination scripted reference changed before AFTER; prompts, fake and graders stayed frozen.",
+ "runs": [
+  {
+   "arm": "before",
+   "runner": "codex",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/before-luna.json",
+   "rawSha256": "4e3b71b338cee3f66534df6225a71f7ee82c0bf2a90229aef253a5f2e87dbecc",
+   "meta": {
+    "createdAt": "2026-10-24T10:59:24.683Z",
+    "git": {
+     "commit": "d97adfaa24d7",
+     "branch": "t3/vercel-step2-evals",
+     "dirty": false,
+     "srcTree": "1367a2cedf1e",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "before",
+   "runner": "claude",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/before-sonnet.json",
+   "rawSha256": "03216288470b1dac58f5a964b901aca188d787a94147e1f94c0d4be37f026275",
+   "meta": {
+    "createdAt": "2026-10-24T10:59:24.875Z",
+    "git": {
+     "commit": "d97adfaa24d7",
+     "branch": "t3/vercel-step2-evals",
+     "dirty": false,
+     "srcTree": "1367a2cedf1e",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
+  },
+  {
+   "arm": "after-initial",
+   "runner": "codex",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after-luna.json",
+   "rawSha256": "1385ce0f0d09a04a85885e9f192eeb1c040d348d55f4b9e5a01de9b468fe6ff7",
+   "meta": {
+    "createdAt": "2026-10-24T11:18:16.279Z",
+    "git": {
+     "commit": "48b5a422074b",
+     "branch": "t3/vercel-step2",
+     "dirty": false,
+     "srcTree": "10a8e7d4c94d",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "after-initial",
+   "runner": "claude",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after-sonnet.json",
+   "rawSha256": "16ed24fd2ca2a22bfd27e15200b360884ddc149c583eab7688f9fac5a0a0acfc",
+   "meta": {
+    "createdAt": "2026-10-24T11:18:16.307Z",
+    "git": {
+     "commit": "48b5a422074b",
+     "branch": "t3/vercel-step2",
+     "dirty": false,
+     "srcTree": "10a8e7d4c94d",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
+  },
+  {
+   "arm": "after-final",
+   "runner": "codex",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after2-luna.json",
+   "rawSha256": "6a487329d0f6b98fdacc9a4c70a4bc5645f49409a4d5e67cbe2ece5b3715c508",
+   "meta": {
+    "createdAt": "2026-10-24T11:27:41.134Z",
+    "git": {
+     "commit": "5b2cd4f47b5b",
+     "branch": "t3/vercel-step2",
+     "dirty": false,
+     "srcTree": "42b8e87953d0",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "after-final",
+   "runner": "claude",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/vercel/after2-sonnet.json",
+   "rawSha256": "5655aed03241ca2e046c12acf7d9b472ec89b5201d82e25202f41db1bed228ec",
+   "meta": {
+    "createdAt": "2026-10-24T11:27:40.807Z",
+    "git": {
+     "commit": "5b2cd4f47b5b",
+     "branch": "t3/vercel-step2",
+     "dirty": false,
+     "srcTree": "42b8e87953d0",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+    "harnessHash": "9b15489014044e749000d690da69c328fb55d1d86fc470ed320b096a801270ba"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "route",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "vercel-step2-filtered-deployments",
+     "vercel-step2-team-project-alias",
+     "vercel-step2-deployment-paging",
+     "vercel-step2-domain-hatch",
+     "vercel-step2-bounded-logs",
+     "vercel-step2-env-once",
+     "vercel-step2-env-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
+  }
+ ],
+ "aggregates": [
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "passed": 10,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 6.428571428571429,
+   "httpReads": 43,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 29915.214285714286,
+   "maxCumulativeDiscoveryBytes": 58853,
+   "maxDiscoveryReplyBytes": 16128,
+   "maxHatchDiscoveryReplyBytes": 3946,
+   "namedTools": {
+    "vercel_rest.list_teams": 4,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 7,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "passed": 14,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 4.714285714285714,
+   "httpReads": 37,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 12310.714285714286,
+   "maxCumulativeDiscoveryBytes": 16445,
+   "maxDiscoveryReplyBytes": 8489,
+   "maxHatchDiscoveryReplyBytes": 0,
+   "namedTools": {
+    "vercel_rest.list_teams": 2,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 6,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  },
+  {
+   "arm": "after-initial",
+   "model": "gpt-6-luna",
+   "passed": 9,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 0,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 4.5,
+   "httpReads": 28,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 25732.35714285714,
+   "maxCumulativeDiscoveryBytes": 43847,
+   "maxDiscoveryReplyBytes": 18646,
+   "maxHatchDiscoveryReplyBytes": 3145,
+   "namedTools": {
+    "vercel_rest.list_teams": 2,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 7,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  },
+  {
+   "arm": "after-initial",
+   "model": "claude-sonnet-5-5",
+   "passed": 14,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 5,
+   "httpReads": 39,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 11875.57142857143,
+   "maxCumulativeDiscoveryBytes": 20878,
+   "maxDiscoveryReplyBytes": 8486,
+   "maxHatchDiscoveryReplyBytes": 0,
+   "namedTools": {
+    "vercel_rest.list_teams": 5,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 6,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  },
+  {
+   "arm": "after-final",
+   "model": "gpt-6-luna",
+   "passed": 11,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 1,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 0,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 6.071428571428571,
+   "httpReads": 49,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 36589.57142857143,
+   "maxCumulativeDiscoveryBytes": 77092,
+   "maxDiscoveryReplyBytes": 18632,
+   "maxHatchDiscoveryReplyBytes": 2584,
+   "namedTools": {
+    "vercel_rest.list_teams": 2,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 6,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  },
+  {
+   "arm": "after-final",
+   "model": "claude-sonnet-5-5",
+   "passed": 14,
+   "trials": 14,
+   "perTask": {
+    "vercel-step2-filtered-deployments": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-team-project-alias": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-deployment-paging": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-domain-hatch": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-bounded-logs": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-once": {
+     "passed": 2,
+     "trials": 2
+    },
+    "vercel-step2-env-recovery": {
+     "passed": 2,
+     "trials": 2
+    }
+   },
+   "meanMcpCalls": 5.357142857142857,
+   "httpReads": 42,
+   "httpWrites": 4,
+   "duplicateWrites": 0,
+   "unauthorizedRequests": 0,
+   "meanDiscoveryBytes": 11982.785714285714,
+   "maxCumulativeDiscoveryBytes": 23537,
+   "maxDiscoveryReplyBytes": 7297,
+   "maxHatchDiscoveryReplyBytes": 1246,
+   "namedTools": {
+    "vercel_rest.list_teams": 3,
+    "vercel_rest.get_deployment_build_logs": 2,
+    "vercel_rest.get_runtime_logs": 2,
+    "vercel_rest.list_project_env_vars": 6,
+    "vercel_rest.upsert_project_env_var": 2,
+    "vercel_rest.update_project_env_var": 2
+   }
+  }
+ ],
+ "trials": [
+  {
+   "arm": "before",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 19828,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 29148,
+     "output": 845,
+     "cacheRead": 193152,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 10
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 2,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1
+     }
+    }
+   },
+   "mcpCalls": 10,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 2
+   },
+   "discoveryBytes": 39105,
+   "maxDiscoveryReplyBytes": 12978,
+   "hatchDiscoveryReplyBytes": [
+    755,
+    1424,
+    3926
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 18042,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26772,
+     "output": 729,
+     "cacheRead": 142720,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 7
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 33396,
+   "maxDiscoveryReplyBytes": 12996,
+   "hatchDiscoveryReplyBytes": [
+    2026,
+    755,
+    1559,
+    1828
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 12786,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26572,
+     "output": 358,
+     "cacheRead": 55040,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 22885,
+   "maxDiscoveryReplyBytes": 12750,
+   "hatchDiscoveryReplyBytes": [
+    755,
+    1424
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 17040,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18372,
+     "output": 442,
+     "cacheRead": 72064,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 28210,
+   "maxDiscoveryReplyBytes": 8739,
+   "hatchDiscoveryReplyBytes": [
+    1559,
+    493,
+    526
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10356,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 25273,
+     "output": 313,
+     "cacheRead": 19456,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 21466,
+   "maxDiscoveryReplyBytes": 11309,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 12855,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 17282,
+     "output": 476,
+     "cacheRead": 48128,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 29637,
+   "maxDiscoveryReplyBytes": 15538,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12110,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 20735,
+     "output": 405,
+     "cacheRead": 59392,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 23972,
+   "maxDiscoveryReplyBytes": 16016,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 17729,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26222,
+     "output": 672,
+     "cacheRead": 100608,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 23450,
+   "maxDiscoveryReplyBytes": 11285,
+   "hatchDiscoveryReplyBytes": [
+    755,
+    1424,
+    2026,
+    4
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 25570,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 28976,
+     "output": 1190,
+     "cacheRead": 273920,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 13
+    },
+    "otherTools": {},
+    "toolErrors": 4,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 9,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 2,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 2,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1,
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v9/projects/web/domains": 1,
+      "vercel_rest.GET /v1/domains/example.app/project-domains": 1
+     }
+    }
+   },
+   "mcpCalls": 13,
+   "httpReads": 9,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 43089,
+   "maxDiscoveryReplyBytes": 12750,
+   "hatchDiscoveryReplyBytes": [
+    75,
+    3540,
+    3755,
+    266,
+    438,
+    1559
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 29302,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 63557,
+     "output": 1285,
+     "cacheRead": 238336,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 10,
+     "skills": 2
+    },
+    "otherTools": {},
+    "toolErrors": 3,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 12,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 36268,
+   "maxDiscoveryReplyBytes": 12993,
+   "hatchDiscoveryReplyBytes": [
+    755,
+    1424,
+    2026,
+    617,
+    3946
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 24253,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 34728,
+     "output": 1057,
+     "cacheRead": 136704,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 9
+    },
+    "otherTools": {},
+    "toolErrors": 4,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 6,
+     "writes": 0,
+     "duplicateReads": 2,
+     "duplicateWrites": 0,
+     "errors": 4,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains": 2,
+      "vercel_rest.GET /v9/domains/app.example.com/verification": 2,
+      "vercel_rest.GET /v5/domains/app.example.com": 1,
+      "vercel_rest.GET /v5/domains": 1
+     }
+    }
+   },
+   "mcpCalls": 9,
+   "httpReads": 6,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 20502,
+   "maxDiscoveryReplyBytes": 8699,
+   "hatchDiscoveryReplyBytes": [
+    75,
+    3697,
+    75
+   ]
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10384,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14036,
+     "output": 316,
+     "cacheRead": 30592,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 21458,
+   "maxDiscoveryReplyBytes": 11301,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 19933,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 24709,
+     "output": 779,
+     "cacheRead": 153344,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 9
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 9,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 58853,
+   "maxDiscoveryReplyBytes": 16128,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 18054,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12663,
+     "output": 443,
+     "cacheRead": 73856,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 16522,
+   "maxDiscoveryReplyBytes": 8566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 20566,
+    "apiMs": 16493,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1615,
+     "cacheRead": 47584,
+     "cacheCreation": 14275
+    },
+    "costUsd": 0.0780364,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 4,
+      "vercel_rest.GET /v10/projects": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 7956,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15659,
+    "apiMs": 11691,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1256,
+     "cacheRead": 54429,
+     "cacheCreation": 7981
+    },
+    "costUsd": 0.0499589,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 15830,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16511,
+    "apiMs": 12476,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1373,
+     "cacheRead": 44864,
+     "cacheCreation": 5966
+    },
+    "costUsd": 0.042108400000000004,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 3,
+      "vercel_rest.GET /v10/projects": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 15728,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 7781,
+    "apiMs": 4494,
+    "modelTurns": 3,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 304,
+     "cacheRead": 13643,
+     "cacheCreation": 4242
+    },
+    "costUsd": 0.021384300000000002,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 7956,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9298,
+    "apiMs": 5773,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 553,
+     "cacheRead": 21867,
+     "cacheCreation": 5696
+    },
+    "costUsd": 0.0305167,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 10722,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10607,
+    "apiMs": 9196,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 679,
+     "cacheRead": 29238,
+     "cacheCreation": 9551
+    },
+    "costUsd": 0.0479378,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 13051,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16799,
+    "apiMs": 13127,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 950,
+     "cacheRead": 45997,
+     "cacheCreation": 6017
+    },
+    "costUsd": 0.038195700000000006,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 4,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.update_project_env_var": 1,
+    "vercel_rest.list_project_env_vars": 2
+   },
+   "discoveryBytes": 13051,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 14027,
+    "apiMs": 10092,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 988,
+     "cacheRead": 36462,
+     "cacheCreation": 11745
+    },
+    "costUsd": 0.0605302,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 11103,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 14942,
+    "apiMs": 10967,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1047,
+     "cacheRead": 45114,
+     "cacheCreation": 5851
+    },
+    "costUsd": 0.0384134,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 7956,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16454,
+    "apiMs": 12868,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1352,
+     "cacheRead": 45079,
+     "cacheCreation": 5549
+    },
+    "costUsd": 0.0402519,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 3,
+      "vercel_rest.GET /v10/projects": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 15728,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9544,
+    "apiMs": 5616,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 424,
+     "cacheRead": 21244,
+     "cacheCreation": 4254
+    },
+    "costUsd": 0.023396399999999998,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 16445,
+   "maxDiscoveryReplyBytes": 8489,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9926,
+    "apiMs": 6312,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 586,
+     "cacheRead": 22288,
+     "cacheCreation": 5281
+    },
+    "costUsd": 0.0292288,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 10722,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12380,
+    "apiMs": 8906,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 744,
+     "cacheRead": 29916,
+     "cacheCreation": 4897
+    },
+    "costUsd": 0.0300396,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 13051,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "before",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "b4540687e4888597914787d70c9ec5f83a8f045f96c21c2241f6c2854c6ae566",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15131,
+    "apiMs": 11436,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 839,
+     "cacheRead": 38422,
+     "cacheCreation": 5227
+    },
+    "costUsd": 0.0331642,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 1,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 13051,
+   "maxDiscoveryReplyBytes": 7956,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 11402,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 21838,
+     "output": 307,
+     "cacheRead": 57600,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 0,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {}
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 0,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 41209,
+   "maxDiscoveryReplyBytes": 12642,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 24274,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 25567,
+     "output": 1016,
+     "cacheRead": 238976,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 12
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 6,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 12,
+   "httpReads": 6,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 33859,
+   "maxDiscoveryReplyBytes": 16231,
+   "hatchDiscoveryReplyBytes": [
+    1776,
+    1546,
+    1546,
+    3145,
+    1695,
+    2584
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 17933,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 27590,
+     "output": 591,
+     "cacheRead": 72832,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 25704,
+   "maxDiscoveryReplyBytes": 16222,
+   "hatchDiscoveryReplyBytes": [
+    1566,
+    2584
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12412,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 13298,
+     "output": 411,
+     "cacheRead": 45824,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 18028,
+   "maxDiscoveryReplyBytes": 11093,
+   "hatchDiscoveryReplyBytes": [
+    1603
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 14313,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12928,
+     "output": 270,
+     "cacheRead": 30336,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 17990,
+   "maxDiscoveryReplyBytes": 12658,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 12842,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 21677,
+     "output": 378,
+     "cacheRead": 59136,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 23920,
+   "maxDiscoveryReplyBytes": 18588,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12640,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16846,
+     "output": 433,
+     "cacheRead": 91136,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 23898,
+   "maxDiscoveryReplyBytes": 18566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15344,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26782,
+     "output": 540,
+     "cacheRead": 59520,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 23075,
+   "maxDiscoveryReplyBytes": 12641,
+   "hatchDiscoveryReplyBytes": [
+    1319,
+    1199,
+    2584
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 15311,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 22632,
+     "output": 613,
+     "cacheRead": 116992,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 2,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 43847,
+   "maxDiscoveryReplyBytes": 16224,
+   "hatchDiscoveryReplyBytes": [
+    1546,
+    1566,
+    1603,
+    1352
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 16080,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 15275,
+     "output": 384,
+     "cacheRead": 65280,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 21810,
+   "maxDiscoveryReplyBytes": 12648,
+   "hatchDiscoveryReplyBytes": [
+    1246,
+    2584
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10226,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 21727,
+     "output": 349,
+     "cacheRead": 39552,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 17717,
+   "maxDiscoveryReplyBytes": 11085,
+   "hatchDiscoveryReplyBytes": [
+    1300
+   ]
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15340,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 19035,
+     "output": 325,
+     "cacheRead": 45440,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 21316,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12094,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 13202,
+     "output": 463,
+     "cacheRead": 33664,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 23978,
+   "maxDiscoveryReplyBytes": 18646,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15083,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 15259,
+     "output": 498,
+     "cacheRead": 102016,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 3,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 3,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 23902,
+   "maxDiscoveryReplyBytes": 18566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15399,
+    "apiMs": 11089,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1093,
+     "cacheRead": 53044,
+     "cacheCreation": 10507
+    },
+    "costUsd": 0.058290400000000006,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 13130,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16191,
+    "apiMs": 12388,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1371,
+     "cacheRead": 67671,
+     "cacheCreation": 9689
+    },
+    "costUsd": 0.0592651,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 6,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 2,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 6,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 2
+   },
+   "discoveryBytes": 13818,
+   "maxDiscoveryReplyBytes": 8486,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 25963,
+    "apiMs": 21444,
+    "modelTurns": 10,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 20,
+     "output": 2448,
+     "cacheRead": 104378,
+     "cacheCreation": 19446
+    },
+    "costUsd": 0.1127418,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 7
+    },
+    "otherTools": {},
+    "toolErrors": 3,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 9,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 16904,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9176,
+    "apiMs": 5831,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 500,
+     "cacheRead": 19793,
+     "cacheCreation": 3578
+    },
+    "costUsd": 0.0213073,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 16547,
+   "maxDiscoveryReplyBytes": 7298,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9762,
+    "apiMs": 6089,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 567,
+     "cacheRead": 21042,
+     "cacheCreation": 4720
+    },
+    "costUsd": 0.026670199999999998,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 8345,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10854,
+    "apiMs": 9438,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 712,
+     "cacheRead": 30004,
+     "cacheCreation": 5296
+    },
+    "costUsd": 0.0313244,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 9653,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 11901,
+    "apiMs": 10434,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 752,
+     "cacheRead": 38886,
+     "cacheCreation": 5638
+    },
+    "costUsd": 0.033984600000000004,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 9653,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 14264,
+    "apiMs": 10159,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 1028,
+     "cacheRead": 43122,
+     "cacheCreation": 9984
+    },
+    "costUsd": 0.0545522,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 10399,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 20601,
+    "apiMs": 16615,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1645,
+     "cacheRead": 62250,
+     "cacheCreation": 8863
+    },
+    "costUsd": 0.058159,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 3,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 8,
+     "writes": 0,
+     "duplicateReads": 2,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 3,
+      "vercel_rest.GET /v10/projects": 2,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 8,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 3
+   },
+   "discoveryBytes": 11522,
+   "maxDiscoveryReplyBytes": 6190,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 18569,
+    "apiMs": 14561,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1575,
+     "cacheRead": 51641,
+     "cacheCreation": 8043
+    },
+    "costUsd": 0.0531141,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 20878,
+   "maxDiscoveryReplyBytes": 6705,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9327,
+    "apiMs": 5941,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 428,
+     "cacheRead": 20625,
+     "cacheCreation": 4322
+    },
+    "costUsd": 0.0236465,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 7758,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 11592,
+    "apiMs": 7618,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 592,
+     "cacheRead": 21048,
+     "cacheCreation": 4722
+    },
+    "costUsd": 0.026928800000000003,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 8345,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12267,
+    "apiMs": 10850,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 695,
+     "cacheRead": 30024,
+     "cacheCreation": 5311
+    },
+    "costUsd": 0.031216400000000002,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 9653,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-initial",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 13345,
+    "apiMs": 11875,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 779,
+     "cacheRead": 38884,
+     "cacheCreation": 5640
+    },
+    "costUsd": 0.0342624,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 9653,
+   "maxDiscoveryReplyBytes": 5332,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16564,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 37152,
+     "output": 683,
+     "cacheRead": 88320,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 23438,
+   "maxDiscoveryReplyBytes": 16230,
+   "hatchDiscoveryReplyBytes": [
+    1569
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 36096,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 48992,
+     "output": 1561,
+     "cacheRead": 563328,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 17
+    },
+    "otherTools": {},
+    "toolErrors": 5,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 16,
+     "writes": 0,
+     "duplicateReads": 7,
+     "duplicateWrites": 0,
+     "errors": 5,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 3,
+      "vercel_rest.GET /v9/projects/web/domains": 5,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 2,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 3,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1
+     }
+    }
+   },
+   "mcpCalls": 17,
+   "httpReads": 16,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 60492,
+   "maxDiscoveryReplyBytes": 16247,
+   "hatchDiscoveryReplyBytes": [
+    1546,
+    1566,
+    1463,
+    1603,
+    2584,
+    2348
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 19104,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 25958,
+     "output": 710,
+     "cacheRead": 142592,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 7
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 43518,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": [
+    1718,
+    1609,
+    2584
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 11070,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 17536,
+     "output": 288,
+     "cacheRead": 48896,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 23265,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": [
+    1642
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10153,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14659,
+     "output": 321,
+     "cacheRead": 32000,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 2,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 21623,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 18719,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 20238,
+     "output": 686,
+     "cacheRead": 65408,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 77092,
+   "maxDiscoveryReplyBytes": 18566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 17487,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 19760,
+     "output": 416,
+     "cacheRead": 82432,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 24205,
+   "maxDiscoveryReplyBytes": 18566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 32449,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26556,
+     "output": 729,
+     "cacheRead": 115840,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 22711,
+   "maxDiscoveryReplyBytes": 12642,
+   "hatchDiscoveryReplyBytes": [
+    1271,
+    1550,
+    1609
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-team-project-alias",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 27181,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 32399,
+     "output": 1172,
+     "cacheRead": 285440,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 11
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 9,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/web": 2,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1,
+      "vercel_rest.GET /v9/projects/web/domains": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1
+     }
+    }
+   },
+   "mcpCalls": 11,
+   "httpReads": 9,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 64301,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": [
+    1546,
+    1566,
+    1463,
+    1452,
+    2584,
+    1603
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-deployment-paging",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence",
+    "correct-destination"
+   ],
+   "metrics": {
+    "wallMs": 14948,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18378,
+     "output": 460,
+     "cacheRead": 102784,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 0,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {}
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 0,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 39846,
+   "maxDiscoveryReplyBytes": 9053,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-domain-hatch",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 16939,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 17675,
+     "output": 502,
+     "cacheRead": 83072,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 2,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/domains/app.example.com/verification": 1,
+      "vercel_rest.GET /v5/domains": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 15648,
+   "maxDiscoveryReplyBytes": 7519,
+   "hatchDiscoveryReplyBytes": [
+    1225,
+    1265
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-bounded-logs",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12162,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8763,
+     "output": 379,
+     "cacheRead": 33280,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 23386,
+   "maxDiscoveryReplyBytes": 15984,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-once",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "fail",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 17007,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 24772,
+     "output": 584,
+     "cacheRead": 47616,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 48524,
+   "maxDiscoveryReplyBytes": 18632,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-recovery",
+   "model": "gpt-6-luna",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 15291,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 23899,
+     "output": 681,
+     "cacheRead": 65536,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 24205,
+   "maxDiscoveryReplyBytes": 18566,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 17278,
+    "apiMs": 11473,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1181,
+     "cacheRead": 59384,
+     "cacheCreation": 16820
+    },
+    "costUsd": 0.0850564,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 4,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 10717,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 25233,
+    "apiMs": 20073,
+    "modelTurns": 9,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18,
+     "output": 1601,
+     "cacheRead": 70601,
+     "cacheCreation": 8771
+    },
+    "costUsd": 0.058190099999999995,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 6,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 1,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1
+     }
+    }
+   },
+   "mcpCalls": 8,
+   "httpReads": 6,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 1
+   },
+   "discoveryBytes": 11231,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 19847,
+    "apiMs": 14162,
+    "modelTurns": 9,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18,
+     "output": 1402,
+     "cacheRead": 77308,
+     "cacheCreation": 9256
+    },
+    "costUsd": 0.0588108,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 2,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 2
+     }
+    }
+   },
+   "mcpCalls": 8,
+   "httpReads": 3,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 21991,
+   "maxDiscoveryReplyBytes": 7297,
+   "hatchDiscoveryReplyBytes": [
+    1246
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 11776,
+    "apiMs": 7160,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 563,
+     "cacheRead": 26736,
+     "cacheCreation": 3781
+    },
+    "costUsd": 0.023447600000000002,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 8767,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10669,
+    "apiMs": 5959,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 573,
+     "cacheRead": 21248,
+     "cacheCreation": 4822
+    },
+    "costUsd": 0.027158800000000004,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 8652,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 11379,
+    "apiMs": 9486,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 685,
+     "cacheRead": 30310,
+     "cacheCreation": 5398
+    },
+    "costUsd": 0.031493,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 9960,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 1,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 13523,
+    "apiMs": 11539,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 750,
+     "cacheRead": 39293,
+     "cacheCreation": 5741
+    },
+    "costUsd": 0.0344173,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 9960,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-filtered-deployments",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 19481,
+    "apiMs": 14471,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1223,
+     "cacheRead": 53798,
+     "cacheCreation": 10717
+    },
+    "costUsd": 0.0605058,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 2,
+      "vercel_rest.GET /v7/deployments": 3
+     }
+    }
+   },
+   "mcpCalls": 6,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 14490,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-team-project-alias",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 17078,
+    "apiMs": 12965,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1482,
+     "cacheRead": 63571,
+     "cacheCreation": 8979
+    },
+    "costUsd": 0.0571251,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 7,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v2/teams": 2,
+      "vercel_rest.GET /v10/projects": 1,
+      "vercel_rest.GET /v7/deployments": 1,
+      "vercel_rest.GET /v9/projects/prj_web/domains": 1,
+      "vercel_rest.GET /v2/deployments/dpl_release000/aliases": 1,
+      "vercel_rest.GET /v13/deployments/dpl_release000": 1
+     }
+    }
+   },
+   "mcpCalls": 7,
+   "httpReads": 7,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.list_teams": 2
+   },
+   "discoveryBytes": 11817,
+   "maxDiscoveryReplyBytes": 6178,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-deployment-paging",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 22138,
+    "apiMs": 17475,
+    "modelTurns": 10,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 20,
+     "output": 1792,
+     "cacheRead": 87891,
+     "cacheCreation": 10203
+    },
+    "costUsd": 0.0675611,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 2,
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 5,
+     "writes": 0,
+     "duplicateReads": 2,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/web": 1,
+      "vercel_rest.GET /v7/deployments": 4
+     }
+    }
+   },
+   "mcpCalls": 9,
+   "httpReads": 5,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 23537,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": [
+    1246
+   ]
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-domain-hatch",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9642,
+    "apiMs": 5959,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 429,
+     "cacheRead": 20828,
+     "cacheCreation": 4425
+    },
+    "costUsd": 0.024088799999999997,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v9/projects/prj_web/domains/app.example.com": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 1,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {},
+   "discoveryBytes": 8065,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-bounded-logs",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 9596,
+    "apiMs": 5955,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 562,
+     "cacheRead": 21245,
+     "cacheCreation": 4810
+    },
+    "costUsd": 0.0270005,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v3/deployments/dpl_release002/events": 1,
+      "vercel_rest.GET /v1/projects/prj_web/deployments/dpl_release000/runtime-logs": 1
+     }
+    }
+   },
+   "mcpCalls": 3,
+   "httpReads": 2,
+   "httpWrites": 0,
+   "writeDestinations": [],
+   "namedTools": {
+    "vercel_rest.get_deployment_build_logs": 1,
+    "vercel_rest.get_runtime_logs": 1
+   },
+   "discoveryBytes": 8652,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-once",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 10772,
+    "apiMs": 9253,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 694,
+     "cacheRead": 30310,
+     "cacheCreation": 5400
+    },
+    "costUsd": 0.031591,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 1,
+      "vercel_rest.POST /v10/projects/prj_web/env": 1
+     }
+    }
+   },
+   "mcpCalls": 4,
+   "httpReads": 1,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.POST /v10/projects/prj_web/env"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 1,
+    "vercel_rest.upsert_project_env_var": 1
+   },
+   "discoveryBytes": 9960,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  },
+  {
+   "arm": "after-final",
+   "task": "vercel-step2-env-recovery",
+   "model": "claude-sonnet-5-5",
+   "repeat": 2,
+   "status": "pass",
+   "taskDefinitionsHash": "80603b5123231d0cca36a760df33a3796f646dac3dd7d5f65c45c75bb6eca31c",
+   "failedChecks": [],
+   "metrics": {
+    "wallMs": 12314,
+    "apiMs": 10855,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 801,
+     "cacheRead": 39288,
+     "cacheCreation": 5740
+    },
+    "costUsd": 0.034922800000000004,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "vercel_rest.GET /v10/projects/prj_web/env": 2,
+      "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod": 1
+     }
+    }
+   },
+   "mcpCalls": 5,
+   "httpReads": 2,
+   "httpWrites": 1,
+   "writeDestinations": [
+    "vercel_rest.PATCH /v9/projects/prj_web/env/env_prod"
+   ],
+   "namedTools": {
+    "vercel_rest.list_project_env_vars": 2,
+    "vercel_rest.update_project_env_var": 1
+   },
+   "discoveryBytes": 9960,
+   "maxDiscoveryReplyBytes": 5639,
+   "hatchDiscoveryReplyBytes": []
+  }
+ ]
+}

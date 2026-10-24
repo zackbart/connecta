@@ -103,7 +103,7 @@
       "baselineGzip": 333313
     },
     "./providers/vercel": {
-      "baselineGzip": 423956
+      "baselineGzip": 424345
     },
     "./ui": {
       "baselineGzip": 272943,
