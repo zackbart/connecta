@@ -367,16 +367,27 @@ describe("API provider failure sweep", () => {
                 providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
               ).toHaveLength(requests.length);
             }
-            const unreadableArgs = UNREADABLE_WRITES[address];
+            const unreadableArgs = UNREADABLE_WRITES[address] ?? (tool.name.endsWith("_api_write") ? args : undefined);
             if (failure === "503" && unreadableArgs) {
+              let vendorMessage: string | undefined;
               for (const [body, type] of [
-                ["<html>ok</html>", "text/html"],
                 ["{broken", "application/json"],
-              ]) {
+                ["<html>ok</html>", "application/json"],
+                ["{broken", "application/problem+json"],
+                ["{broken", undefined],
+                ["{broken", "text/plain"],
+                ["[broken", "text/plain"],
+                ["not JSON", "text/plain"],
+                ["{broken", "text/html"],
+                ["<html>ok</html>", "text/html"],
+              ] as const) {
                 const sent: string[] = [];
                 const unreadable = await sweepCall(provider, tool.name, address, unreadableArgs, "write", (request) => {
                   sent.push(request.method);
-                  return new Response(body, { status: 200, headers: { "content-type": type! } });
+                  return new Response(new TextEncoder().encode(body), {
+                    status: 200,
+                    ...(type ? { headers: { "content-type": type } } : {}),
+                  });
                 });
                 expect(sent).toEqual([unreadableArgs["method"] ?? "PATCH"]);
                 expect(unreadable.structuredContent).toMatchObject({
@@ -385,11 +396,16 @@ describe("API provider failure sweep", () => {
                     code: "connector_call_failed",
                     retryable: false,
                     writeOutcome: "unknown",
-                    message: expect.stringContaining(
-                      "Whether the write took effect is unknown; check the target before repeating it.",
-                    ),
                   },
                 });
+                const { message } = (unreadable.structuredContent as { error: CallErrorDetails }).error;
+                // Each Stripe call gets a fresh recovery key; compare the wording around it.
+                const wording = message.replace(/(Idempotency-Key: )[0-9a-f-]{36}/, "$1<generated>");
+                vendorMessage ??= wording;
+                if (type === "text/html" && body.startsWith("<")) expect(wording).toContain("unexpected text/HTML");
+                else expect(wording).toBe(vendorMessage);
+                expect(message).toMatch(/unknown[\s\S]*check[\s\S]*before repeating/);
+                expect(message).not.toContain("..");
               }
             }
             if (failure === "503" && address === "gmail.update_draft") {

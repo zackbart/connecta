@@ -502,7 +502,9 @@ export function connect<R>(
             new UnreadableBody(
               reply.readFailed
                 ? { readFailed: true }
-                : /^text\/(?:html|plain)(?:;|$)/.test(formatType(headers.get("content-type") ?? ""))
+                : formatType(headers.get("content-type") ?? "")
+                      .split(";", 1)[0]!
+                      .trim() === "text/html" && !/^[\t\r\n ]*[[{]/.test(reply.text ?? "")
                   ? { unexpectedText: true }
                   : {},
             ),

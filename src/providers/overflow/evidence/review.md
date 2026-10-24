@@ -43,6 +43,7 @@ Refund initiation documents a JSON string and several writes document empty
 acknowledgements. That one refund operation also accepts a bounded plain-text
 acknowledgement with text/plain only, under the #1026 fix-round ruling. This is
 narrow NestJS compatibility behavior, not a claim that a live reply was observed.
+Empty 2xx refund acknowledgements, including 202/204, remain successes. Nonempty
 text/html, binary and every other media fail as UnreadableBody, as do non-string
 JSON refund responses. Dispatched failures have unknown outcomes, check-before-repeat
 guidance and one physical send. `bodyFormat` distinguishes those from an unexpected non-JSON

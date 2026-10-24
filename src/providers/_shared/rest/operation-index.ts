@@ -753,11 +753,11 @@ export class OperationIndex {
     if (path && !schema.a && !types.includes("string") && (types.includes("integer") || types.includes("number"))) {
       const integer = types.includes("integer") && !types.includes("number");
       const numeric = typeof value === "string" ? Number(value) : NaN;
-      const syntax = integer ? /^(?:0|-?[1-9][0-9]*)$/ : /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/;
+      const syntax = integer ? /^(?:0|-?[1-9][0-9]*)$/ : /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
       if (
         typeof value !== "string" ||
         !syntax.test(value) ||
-        value === "-0" ||
+        Object.is(numeric, -0) ||
         !Number.isFinite(numeric) ||
         Math.abs(numeric) > Number.MAX_SAFE_INTEGER ||
         (integer && !Number.isSafeInteger(numeric))

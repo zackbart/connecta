@@ -37,8 +37,9 @@ is refused.
 
 Stripe, Cloudflare and Vercel accept non-JSON success bodies only for reviewed
 operation/media pairs from their pins. Cloudflare also preserves three raw Worker
-script downloads with JavaScript media and treats R2/KV object downloads as bytes
-regardless of the stored Content-Type. An unexpected HTML or text answer to a
+content downloads with any non-JSON media. R2/KV object downloads use the full
+JSON value-safety boundary for application/json and +json replies; other stored
+media return bounded bytes with sent-secret checks. An unexpected HTML or text answer to a
 JSON write reports an unknown outcome after one send; check the target before
 repeating the write. Documented PDFs, text exports and streaming formats retain
 their reviewed handling.
@@ -50,8 +51,9 @@ write-only inputs on both named tools and raw env writes. Shared-env POST, PATCH
 and DELETE failure prose is withheld too.
 
 Overflow refund initiation accepts an `application/json` string or a bounded
-`text/plain` acknowledgement, a narrow NestJS compatibility exception. HTML,
-binary and other success media fail with an unknown outcome after one dispatch;
+`text/plain` acknowledgement, a narrow NestJS compatibility exception. Empty 2xx
+refund acknowledgements also succeed. Nonempty HTML, binary, other media and
+JSON-object replies fail with an unknown outcome after one dispatch;
 check whether the refund took effect before repeating it.
 
 ## Planning Center

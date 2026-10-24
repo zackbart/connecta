@@ -1173,7 +1173,7 @@ export const OverflowApi: Vendor = {
   ),
   textBodies: {
     review:
-      "Overflow errors can be JSON or text; GET /health declares text and refund initiation accepts a JSON or plain-text string acknowledgement. Empty acknowledgements remain distinct.",
+      "Overflow errors can be JSON or text; GET /health declares text and refund initiation accepts a JSON or plain-text string acknowledgement, or an empty 2xx acknowledgement.",
     forResponse: (status, operation, contentType = "") =>
       status < 200 || status > 299
         ? "json-or-text"
@@ -1455,6 +1455,7 @@ export const result = (
   answer: { bodyFormat: "json" | "text" | "empty"; headers: Headers; operation: { method: string; template: string } },
 ): Effect.Effect<unknown, HttpFailure> => {
   if (isRefund(answer.operation)) {
+    if (answer.bodyFormat === "empty") return Effect.succeed(body);
     const type = (answer.headers.get("content-type") ?? "").split(";", 1)[0]!.trim().toLowerCase();
     if (
       typeof body !== "string" ||
@@ -1463,7 +1464,13 @@ export const result = (
         (type === "text/plain" && (answer.bodyFormat === "text" || answer.bodyFormat === "json"))
       )
     )
-      return Effect.fail(new UnreadableBody(/^text\/(?:html|plain)$/.test(type) ? { unexpectedText: true } : {}));
+      return Effect.fail(
+        new UnreadableBody(
+          type === "text/html" && !(answer.bodyFormat === "json" && body !== null && typeof body === "object")
+            ? { unexpectedText: true }
+            : {},
+        ),
+      );
   }
   return answer.bodyFormat === "text" &&
     !(answer.operation.method === "GET" && answer.operation.template === "/health") &&

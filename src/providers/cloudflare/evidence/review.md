@@ -111,10 +111,11 @@ It includes DNS/plain-text exports, CSV, XML threat feeds, NDJSON analytics,
 SSE queue metrics, PDFs, images, KV/R2 bytes, archives and Worker content.
 `image/*` retains the pin's image-family wildcard only on that image operation.
 The pin's literal `string` labels are malformed media labels for three raw
-Worker content operations. These exact operations admit application/javascript,
-application/javascript+module and text/javascript, preserving raw scripts.
-R2 objects and KV values accept any stored Content-Type as bounded bytes.
-Both explicit exceptions retain sent-secret checks before base64 encoding. Existing argument/scope/value-safety refusals still
+Worker content operations. Exactly these operations admit any non-JSON media,
+including JavaScript, Python modules, multipart bundles, octet-stream and text.
+R2 objects and KV values labelled application/json or +json use parsing and the
+full JSON value-safety boundary, including credential-name heuristics. Other
+stored media return bounded bytes with sent-secret checks before base64 encoding. Existing argument/scope/value-safety refusals still
 apply before dispatch, so an allowlisted format never grants an operation.
 Ownership lookups remain JSON-only. JSON-only operations no longer treat an
 unexpected text/HTML/binary page as success; dispatched writes report unknown
@@ -122,8 +123,11 @@ outcomes with check-before-repeat guidance and no resend.
 
 The exact pin declares 16 integer path parameters with minimum 0 plus
 exclusiveMinimum true. `lib/path-bounds.ts` records exactly those operation/param
-pairs; the provider rejects zero locally before authentication/dispatch. Keeping
+pairs; the provider rejects zero locally before authentication/dispatch and
+reports the effective integer minimum of 1 in operation details. Keeping
 the compiled index bytes unchanged preserves existing discovery continuations.
 Compound telemetry event segments whose two parameters are not captured separately
 are not validated as the literal string undefined; the concrete route remains
-callable. Independently captured number params require canonical decimal syntax.
+callable. Independently captured number params require decimal syntax with a
+canonical integer part; fractional trailing zeros are accepted, while negative
+zero, hex, exponents, leading plus and whitespace remain refused.

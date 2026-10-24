@@ -477,7 +477,7 @@ describe("overflow() credential probe", () => {
     });
     expect(await connection().testCredentials!(KEYS, context())).toEqual({
       ok: false,
-      message: "Overflow returned unexpected text/HTML for a JSON response.",
+      message: "Overflow returned a non-JSON body for a successful read.",
     });
   });
 });

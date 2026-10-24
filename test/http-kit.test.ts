@@ -291,6 +291,11 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
         [new ResponseTooLarge({ detail: "Acme exceeded its byte ceiling." }), "connector_call_failed", "byte ceiling"],
         [status(400), "invalid_args", "HTTP 400"],
         [new UnreadableBody(), "connector_call_failed", VENDOR.unreadable],
+        [
+          new UnreadableBody({ unexpectedText: true }),
+          "connector_call_failed",
+          "Acme returned unexpected text/HTML for a JSON response.",
+        ],
         [new Refusal({ error: carried }), "auth_required", carried.message],
         [new ResendRefused({ first: answered(status(409)) }), "connector_call_failed", "HTTP 409"],
       ];
@@ -320,16 +325,18 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
           toConnectorCallError(new UnreadableBody(), { ...VENDOR, unreadableWrite }, { classification, dispatches: [] })
             .message,
         ).toBe(classification === "write" ? unreadableWrite : VENDOR.unreadable);
-        for (const readFailed of [undefined, true] as const) {
-          const message = toConnectorCallError(new UnreadableBody(readFailed ? { readFailed } : {}), VENDOR, {
-            classification,
-            dispatches: [],
-          }).message;
+        for (const options of [{}, { readFailed: true }, { unexpectedText: true }] as const) {
+          const failure = new UnreadableBody(options);
+          const unreadable = failure.unexpectedText
+            ? "Acme returned unexpected text/HTML for a JSON response."
+            : VENDOR.unreadable;
+          const message = toConnectorCallError(failure, VENDOR, { classification, dispatches: [] }).message;
           expect(message).toBe(
             classification === "write"
-              ? `${VENDOR.unreadable} Whether the write took effect is unknown; check the target before repeating it.`
-              : VENDOR.unreadable,
+              ? `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`
+              : unreadable,
           );
+          expect(message).not.toContain("..");
         }
       }
 
