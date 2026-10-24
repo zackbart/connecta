@@ -287,6 +287,14 @@ cancellation that commits before answering HTTP 500. Their graders read only
 fake state, the HTTP ledger and the final answer, so they grade any Tithe.ly
 surface. `eval:selftest --tasks <ids>` checks a subset. The
 [before/after notes](baselines/notes-tithely-step2.md) record the runs.
+Seven [Stripe step-2 tasks](tasks/stripe.ts) use an isolated extension of the
+REST fake: account/balance scope, filtered customers, a PaymentIntent/charge
+join, more than 100 customers over cursor pages, tax settings through the
+coverage hatch, one partial refund, and reconciliation after a committed refund
+answers HTTP 500. The same prompts and state/ledger/final-answer graders run
+before and after the provider surface change. They require one business refund;
+a same-key replay is allowed in recovery but not required. Historical #801
+worlds retain their original replies.
 [Planned tasks](tasks/planned.ts) is currently empty.
 The historical #765 paired comparison registered 19 tasks. The current roster
 retains 18 of them after removing the Mixpanel bootstrap; frozen comparison

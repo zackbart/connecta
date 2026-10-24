@@ -3,6 +3,7 @@ import { serveFetch, type Served } from "../support/serve.js";
 import type { CallRecord, Ledger } from "./service.js";
 import { randomUUID } from "node:crypto";
 import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
+import { stripeStep2Read } from "./stripe.js";
 
 export type RestVendor = "stripe" | "cloudflare" | "vercel";
 export const ACCOUNT_A = "a".repeat(32);
@@ -122,6 +123,7 @@ export class FakeRestService {
     private readonly refundFault = false,
     private readonly stripeMode: "test" | "live" = "test",
     private readonly stripeAccount = "acct_eval",
+    private readonly stripeStep2 = false,
   ) {
     this.token = `${vendor === "stripe" ? `sk_${stripeMode}_eval_` : "eval_"}${randomUUID()}`;
   }
@@ -217,6 +219,10 @@ export class FakeRestService {
       value: { error: { code: "not_found", message: "Unknown fake route" } },
     });
     if (this.vendor === "stripe") {
+      if (this.stripeStep2 && method === "GET") {
+        const reply = stripeStep2Read(path, query);
+        if (reply !== undefined) return ok(reply);
+      }
       const charge = {
         id: "ch_3Pfail0000",
         object: "charge",

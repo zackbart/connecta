@@ -53,6 +53,8 @@ export interface WorldOptions {
   /** A Tithe.ly giving world, with an optional injected fault. */
   tithely?: { fault?: TithelyFault };
   refundFault?: boolean;
+  /** Stripe step-2 reads; isolated from the historical #801 fixtures. */
+  stripeStep2?: boolean;
   prerequisites?: boolean;
   assets?: boolean;
   oauth?: boolean;
@@ -97,7 +99,19 @@ export class World {
         vendor === "cloudflare"
           ? ["cloudflare_prod", "cloudflare_legacy"]
           : [vendor === "stripe" ? "stripe_sandbox" : "vercel_rest"];
-      this.restServices = ids.map((id) => new FakeRestService(id, vendor, this.ledger, this.rest, options.refundFault));
+      this.restServices = ids.map(
+        (id) =>
+          new FakeRestService(
+            id,
+            vendor,
+            this.ledger,
+            this.rest,
+            options.refundFault,
+            "test",
+            "acct_eval",
+            options.stripeStep2,
+          ),
+      );
     }
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
