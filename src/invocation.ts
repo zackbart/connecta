@@ -43,6 +43,7 @@ import {
   isSettledWrite,
   keyProtectsCall,
   knownCallFailure,
+  onlyAuxiliaryRequests,
   type LogicalCall,
   knownProviderFailure,
   openLogicalCall,
@@ -422,12 +423,10 @@ export class InvocationService {
         const enteredWrite =
           dispatchedToConnector &&
           ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
-        // `answered` proves the failure holds for the whole logical call,
-        // including complete request tracking. An empty ledger alone proves
-        // nothing for an untracked handler or an interrupted call.
-        const mayHaveWritten =
-          enteredWrite &&
-          !(answered && logicalCall && !logicalCall.sent.some((request) => request.dispatched && !request.auxiliary));
+        // A known answer alone is not dispatch evidence. Require an owned,
+        // complete ledger with a positively recorded auxiliary resource read;
+        // an empty ledger, custom entry or interruption proves nothing.
+        const mayHaveWritten = enteredWrite && !(answered && onlyAuxiliaryRequests(logicalCall));
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
         // settled verdict is final: no enricher adds advice to it.
@@ -436,6 +435,9 @@ export class InvocationService {
             ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
             : "";
         if (isTimeoutFailure(error) && mayHaveWritten) {
+          // An empty ledger's known mark cannot settle this timeout. Keep
+          // program accounting conservative as well as its displayed code.
+          answered = false;
           const echoed = argumentEcho;
           return {
             ...error,

@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest"
 import { z } from "zod";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { recordRecovery } from "../src/call-recovery.js";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -204,6 +205,91 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
         }
       }
     }
+
+    // Without complete auxiliary-read proof, a custom entry's declaration
+    // and recovery facts cannot prove that a timed-out write never left.
+    for (const entry of ["custom", "api", "declared-api", "declared-auth", "declared-override"] as const) {
+      const declared = entry.startsWith("declared-");
+      const sent: string[] = [];
+      vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(init?.method ?? "GET");
+        return Response.json({ id: "created" });
+      });
+      const lookup = guardedFetch({
+        provider: "Tickets",
+        baseUrl: "https://tickets.test",
+        authenticate: () => ({}),
+        maxResponseBytes: 1024,
+      });
+      const run = async (ctx: ConnectorContext) => {
+        recordRecovery(ctx, { idempotencyKey: "recorded-before-deadline" });
+        if (entry === "api")
+          await lookup({ method: "GET", path: "/items", auxiliary: true, classification: "read" }, ctx, (response) =>
+            response.json(),
+          );
+        if (entry === "declared-auth")
+          await lookup({ method: "POST", path: "/token", auxiliary: true, classification: "write" }, ctx, (response) =>
+            response.json(),
+          );
+        if (entry === "declared-override")
+          await lookup(
+            {
+              method: "GET",
+              path: "/items",
+              auxiliary: true,
+              classification: "read",
+              headers: { "X-HTTP-Method-Override": "POST" },
+            },
+            ctx,
+            (response) => response.json(),
+          );
+        if (!declared) await fetch("https://tickets.test/items", { method: "POST" });
+        throw new ConnectorCallError("timeout", "Lost reply.");
+      };
+      const boundary = api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) => run(ctx),
+          },
+        ],
+      });
+      const target: Connector =
+        entry === "custom"
+          ? { ...boundary, callTool: (_name, _args, ctx) => run(ctx) }
+          : declared
+            ? tracksEveryRequest(boundary)
+            : boundary;
+      const registry = makeRegistry([target]);
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "tickets.send",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (served.ok) throw new Error(`expected a timeout: ${entry}`);
+      expect(served.error, entry).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        uncertainCall: { recovery: { idempotencyKey: "recorded-before-deadline" } },
+      });
+      expect(classifyWriteOutcome(served), entry).toBe("unknown");
+      expect(served.error.retry, entry).not.toContain("cannot repeat the write");
+      const program = await catchingProgram(registry, "tickets.send");
+      expect(program.structuredContent, entry).toMatchObject({
+        error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      });
+      expect(sent, entry).toEqual(
+        entry === "declared-api"
+          ? []
+          : entry === "api"
+            ? ["GET", "POST", "GET", "POST"]
+            : entry === "declared-override"
+              ? ["GET", "GET"]
+              : ["POST", "POST"],
+      );
+    }
   });
 });
 
@@ -364,6 +450,7 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       [422, "failed"],
       [408, "unknown"],
     ] as const) {
+      let dispatched = 0;
       const downstream = httpDownstream((server) => {
         server.registerTool(
           "create_item",
@@ -373,7 +460,10 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const rpc = typeof init?.body === "string" ? (JSON.parse(init.body) as { method?: string }) : {};
-        if (rpc.method === "tools/call") return new Response("refused", { status });
+        if (rpc.method === "tools/call") {
+          dispatched++;
+          return new Response("refused", { status });
+        }
         return downstream.fetch(String(input), init);
       });
       const connector = remoteMcp("tickets", { url: downstream.url, versionNegotiation: "legacy" });
@@ -382,6 +472,27 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
       const error = await failure(connector.callTool("create_item", {}, ctx));
       expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe(state);
       expect(classifyCallError(error).retryable).toBe(false);
+      const registry = makeRegistry([connector]);
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "tickets.create_item",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (served.ok) throw new Error("expected the remote MCP request to fail");
+      expect(classifyWriteOutcome(served)).toBe(state);
+      expect(served.error.retryable).toBe(false);
+      expect(dispatched).toBe(2);
+      if (status === 408) {
+        expect(served.error).toMatchObject({
+          code: "write_outcome_unknown",
+          uncertainCall: { address: "tickets.create_item" },
+        });
+        const program = await catchingProgram(registry, "tickets.create_item");
+        expect(program.structuredContent).toMatchObject({
+          error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+        });
+        expect(dispatched).toBe(3);
+      }
       await connector.closeScope?.(ctx);
     }
   });

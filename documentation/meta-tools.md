@@ -1060,12 +1060,13 @@ bounded to ten calls with `uncertainCallsTruncated` when more exist.
 
 A dispatched write is never reported as retryable once the downstream may
 have acted on it (INV-9). A failed write call whose complete request ledger
-proves that no call-owned request departed keeps the failure's retry advice
-and needs no write reconciliation. For example, if `crm.update_person` fails
+records an auxiliary resource read and proves that no call-owned request departed
+keeps the failure's retry advice and needs no write reconciliation. For example, if `crm.update_person` fails
 during an auxiliary lookup before its update is sent, its authorization
 handoff says to retry after recovery. The same rule applies to a timeout
-reported by that completed call. An absent or incomplete ledger, an untracked
-handler, or an invocation deadline or caller cancellation without a complete
+reported by that completed call. An authentication POST alone supplies no
+resource-read proof. An empty, absent or incomplete ledger, an
+untracked handler, or an invocation deadline or caller cancellation without a complete
 answer cannot supply this proof; those calls retain conservative write outcomes.
 A 5xx (a gateway's 502 to 504 included), any
 network failure of its send (a refused connection included), or a reply that

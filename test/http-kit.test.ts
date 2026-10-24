@@ -14,6 +14,8 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { attachCallClassification } from "../src/call-classification.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
 import { attachFailureFacts, failureRecord } from "../src/operator-record.js";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
@@ -119,7 +121,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
 import { classifyWriteOutcome, providerCallFailure, settleWrite } from "../src/write-outcome.js";
-import { silentLogger } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 let sent: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
 let answers: Array<() => Response> = [];
@@ -4189,6 +4191,63 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     );
     expect(upload).toEqual({ value: { ok: true } });
     expect(sent.map((request) => request.method)).toEqual(["POST", "PUT"]);
+
+    // Positive auxiliary evidence must not hide a call-owned dispatch in
+    // either a binary upload or a tool with several declared write steps.
+    for (const shape of ["upload", "writeSteps"] as const) {
+      for (const status of [401, 408]) {
+        const label = `${shape}, ${status}`;
+        sent = [];
+        answers = [
+          () => Response.json({ rows: [] }),
+          () => Response.json({ session: "s_1" }, { status: 201 }),
+          () => new Response(null, { status }),
+        ];
+        const connection = acme();
+        const tool = write(connection, {
+          name: "upload",
+          description: "Create a session and send its bytes.",
+          destructive: false,
+          input: Schema.Struct({}),
+          output: Schema.Unknown,
+          writeSteps: { lookup: "once", session: "once", bytes: "once" },
+          run: () =>
+            Effect.gen(function* () {
+              yield* connection.sendPath(LOOKUP, { effect: "read", step: "lookup" });
+              yield* connection.sendPath(POST_ITEMS, { step: "session" });
+              return yield* connection.sendPath(
+                shape === "upload"
+                  ? {
+                      ...POST_ITEMS,
+                      method: "PUT",
+                      rawBody: new Uint8Array([1, 2, 3]),
+                      headers: { "Content-Type": "application/octet-stream" },
+                    }
+                  : POST_ITEMS,
+                { step: "bytes" },
+              );
+            }),
+        });
+        const registry = makeRegistry([tracksEveryRequest(apiConnector("acme", { tools: [tool] }))]);
+        const outcome = await new InvocationService(registry, new CatalogService(registry, context().baseUrl)).invoke(
+          "acme.upload",
+          {},
+          { source: "call_destructive_tool" },
+        );
+        if (outcome.ok) throw new Error(`expected failure: ${label}`);
+        expect(
+          sent.map((request) => request.method),
+          label,
+        ).toEqual(["GET", "POST", shape === "upload" ? "PUT" : "POST"]);
+        expect(outcome.error, label).toMatchObject({
+          code: status === 408 ? "connector_call_failed" : "auth_required",
+          retryable: false,
+          writeOutcome: "unknown",
+          ...(status === 401 ? { reconciliationRequired: true } : {}),
+        });
+        expect(classifyWriteOutcome(outcome), label).toBe("unknown");
+      }
+    }
 
     sent = [];
     answers = [() => new Response(null, { status: 503 })];
