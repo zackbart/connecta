@@ -70,6 +70,46 @@ export default defineGoldenSpec({
     body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
+    { tool: "sheets_api_search", args: { query: "read cell formulas" }, replies: [] },
+    {
+      tool: "sheets_api_details",
+      args: { method: "POST", path: "/spreadsheets/{spreadsheetId}:batchUpdate" },
+      replies: [],
+    },
+    {
+      tool: "sheets_api_read",
+      args: { method: "GET", path: `/spreadsheets/${ID}/values/Sheet1!A1%3AD7`, fields: ["values"] },
+      replies: [{ body: { range: "Sheet1!A1:D7", majorDimension: "ROWS", values: [["literal", 3]] } }],
+    },
+    {
+      label: "sheets_api_read metadata search POST",
+      tool: "sheets_api_read",
+      args: {
+        method: "POST",
+        path: `/spreadsheets/${ID}/developerMetadata:search`,
+        body: { dataFilters: [{ developerMetadataLookup: { metadataKey: "review" } }] },
+      },
+      replies: [
+        {
+          body: {
+            matchedDeveloperMetadata: [
+              { developerMetadata: { metadataId: 9, metadataKey: "review", metadataValue: "checked" } },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      tool: "sheets_api_write",
+      args: {
+        method: "PUT",
+        path: `/spreadsheets/${ID}/values/Sheet1!A1%3AB1`,
+        query: { valueInputOption: "RAW" },
+        body: { values: [["literal", null]] },
+      },
+      replies: [{ body: { spreadsheetId: ID, updatedRange: "Sheet1!A1:B1", updatedCells: 1 } }],
+    },
+
     { tool: "get_spreadsheet", args: { spreadsheetId: ID }, replies: [{ body: SPREADSHEET }] },
     {
       tool: "get_values",

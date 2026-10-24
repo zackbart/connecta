@@ -681,7 +681,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
       await read("get_values", { spreadsheetId: "sheets1", ranges: ["Amounts", "People!A1:B2"] });
     }
     if (task === 4) {
-      await read("get_spreadsheet", { spreadsheetId: "sheets1", raw: true });
+      await read("sheets_api_read", { method: "GET", path: "/spreadsheets/sheets1" });
       await write("batch_update_spreadsheet", {
         spreadsheetId: "sheets1",
         requests: [

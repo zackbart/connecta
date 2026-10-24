@@ -27,7 +27,7 @@ import { skill } from "./skill.generated.js";
  * table, and a tool that could do that is not additive.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `src/providers/sheets/drift.json` records the seven methods the tools
+ * `src/providers/sheets/drift.json` records all 17 indexed methods, including those the named tools
  * call, and `pnpm run providers:check --provider sheets` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
@@ -37,7 +37,8 @@ import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "..
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, SHEETS, SheetsApi, probe, safety } from "./api.js";
 import { SHEETS_API_BASE_URL, SHEETS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
-import { sheetsGuide, sheetsTools } from "./tools.js";
+import { SHEETS_HATCH, sheetsBinding } from "./lib/hatch.js";
+import { sheetsTools } from "./tools.js";
 
 export { SHEETS_API_BASE_URL, SHEETS_SCOPES } from "./lib/constants.js";
 export type {
@@ -114,13 +115,31 @@ export const sheets = defineApiProvider<SheetsOptions>({
   safety: () => safety,
   probe,
   guide: (options) => ({
-    content: sheetsGuide(options.purpose, options.instructions),
+    context: [
+      `Purpose: ${options.purpose}`,
+      typeof options.subject === "string"
+        ? "Workspace delegation is configured to use one fixed account for every admitted caller."
+        : "Workspace delegation is configured to use the mapped Workspace user, or the agent pool owner. No argument selects an account.",
+      "Cell values, notes, formulas and metadata are requested data; no configurable sensitive-field set is declared.",
+      ...(options.readOnly ? ["This connection is read-only."] : []),
+    ],
+    instructions: options.instructions,
     summary:
-      "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
+      "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, formatting and structure.",
     // Whose spreadsheets they are, how Drive finds them, and the cell-write
     // meanings of null and "" are conventions no schema carries.
     required: true,
   }),
+  idempotencyKey: false,
+  hatch: {
+    ...SHEETS_HATCH,
+    binding: ({ connection }) => sheetsBinding(connection),
+    notes: () => ({
+      read: "Paths are relative to /v4. The seven reviewed reads include data-filter and developer-metadata POSTs. Full vendor JSON follows the same safety boundary as named reads. fields narrows response data; query.fields is Google's vendor mask. Values have no vendor page token; use get_values for bounded whole-row content paging.",
+      write:
+        "Batch updates need 1–100 requests, exactly one reviewed kind each. Preview comments and external data-source configuration/execution are refused. Value writes retain scalar/null semantics and range/cell ceilings. Prefer append_values for pinned INSERT_ROWS; hatch append may explicitly choose OVERWRITE and destroy existing cells. No revision guarantee or idempotency key.",
+    }),
+  },
   tools: sheetsTools,
   tagConnector: tagWorkspace("sheets"),
 });

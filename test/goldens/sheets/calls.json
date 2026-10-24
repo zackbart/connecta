@@ -1,5 +1,401 @@
 [
   {
+    "label": "sheets_api_search",
+    "tool": "sheets_api_search",
+    "args": {
+      "query": "read cell formulas"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/spreadsheets/{spreadsheetId}/values:batchGet",
+            "operationId": "sheets.spreadsheets.values.batchGet",
+            "summary": "Batch get read cells across multiple A1 ranges; read cell formulas or unformatted numbers.",
+            "tool": "sheets_api_read",
+            "named": "get_values"
+          },
+          {
+            "method": "GET",
+            "path": "/spreadsheets/{spreadsheetId}/values/{range}",
+            "operationId": "sheets.spreadsheets.values.get",
+            "summary": "Get read cells by A1 range; read cell formulas, displayed text or unformatted numbers.",
+            "tool": "sheets_api_read"
+          },
+          {
+            "method": "POST",
+            "path": "/spreadsheets/{spreadsheetId}/values:batchUpdate",
+            "operationId": "sheets.spreadsheets.values.batchUpdate",
+            "summary": "Batch update write cell values across ranges, overwriting existing cells.",
+            "tool": "sheets_api_write",
+            "matched": "response field totalUpdatedCells"
+          },
+          {
+            "method": "POST",
+            "path": "/spreadsheets/{spreadsheetId}/values:batchUpdateByDataFilter",
+            "operationId": "sheets.spreadsheets.values.batchUpdateByDataFilter",
+            "summary": "Batch update write cell values by data filter, overwriting matched cells.",
+            "tool": "sheets_api_write",
+            "matched": "response field totalUpdatedCells"
+          },
+          {
+            "method": "PUT",
+            "path": "/spreadsheets/{spreadsheetId}/values/{range}",
+            "operationId": "sheets.spreadsheets.values.update",
+            "summary": "Update write cell values into one range, overwriting existing cells.",
+            "tool": "sheets_api_write",
+            "matched": "response field updatedCells"
+          }
+        ],
+        "revision": "20261019",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "sheets_api_details",
+    "tool": "sheets_api_details",
+    "args": {
+      "method": "POST",
+      "path": "/spreadsheets/{spreadsheetId}:batchUpdate"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "POST",
+        "path": "/spreadsheets/{spreadsheetId}:batchUpdate",
+        "operationId": "sheets.spreadsheets.batchUpdate",
+        "summary": "Batch update format cells bold, conditional formatting, protections, sheets, rows and columns; structural edits can del…",
+        "parameters": [
+          {
+            "name": "prettyPrint",
+            "in": "query",
+            "required": false,
+            "description": "Returns response with indentations and line breaks.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "description": "Selector specifying which fields to include in a partial response.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "spreadsheetId",
+            "in": "path",
+            "required": true,
+            "description": "The spreadsheet to apply the updates to.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "body": {
+          "contentType": "application/json",
+          "required": true,
+          "schema": {
+            "properties": {}
+          }
+        },
+        "verdict": "destructive",
+        "tool": "sheets_api_write",
+        "named": "batch_update_spreadsheet",
+        "revision": "20261019",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiYWIxMmY0YjQxMjgxNzhkY2NlY2E0OTZmY2IzNjg0OWYiLCJjIjoie1wiaVwiOjMsXCJvXCI6MH0iLCJtIjoiVHZzWEhmLVB2UW90WmxuWEdnR3d4c3VETkZDRGlRdUVGRGE2cGJNN2Z1RSJ9"
+        }
+      }
+    }
+  },
+  {
+    "label": "sheets_api_read",
+    "tool": "sheets_api_read",
+    "args": {
+      "method": "GET",
+      "path": "/spreadsheets/sheet-budget-1/values/Sheet1!A1%3AD7",
+      "fields": [
+        "values"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-sheets-api-read@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values/Sheet1!A1:D7",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "values": [
+            [
+              "literal",
+              3
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "label": "sheets_api_read metadata search POST",
+    "tool": "sheets_api_read",
+    "args": {
+      "method": "POST",
+      "path": "/spreadsheets/sheet-budget-1/developerMetadata:search",
+      "body": {
+        "dataFilters": [
+          {
+            "developerMetadataLookup": {
+              "metadataKey": "review"
+            }
+          }
+        ]
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-sheets-api-read-metadata-search-post@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/developerMetadata:search",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "dataFilters": [
+                {
+                  "developerMetadataLookup": {
+                    "metadataKey": "review"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "matchedDeveloperMetadata": [
+            {
+              "developerMetadata": {
+                "metadataId": 9,
+                "metadataKey": "review",
+                "metadataValue": "checked"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "label": "sheets_api_write",
+    "tool": "sheets_api_write",
+    "args": {
+      "method": "PUT",
+      "path": "/spreadsheets/sheet-budget-1/values/Sheet1!A1%3AB1",
+      "query": {
+        "valueInputOption": "RAW"
+      },
+      "body": {
+        "values": [
+          [
+            "literal",
+            null
+          ]
+        ]
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-sheets-api-write@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "PUT",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values/Sheet1!A1:B1?valueInputOption=RAW",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "values": [
+                [
+                  "literal",
+                  null
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "spreadsheetId": "sheet-budget-1",
+          "updatedRange": "Sheet1!A1:B1",
+          "updatedCells": 1
+        }
+      }
+    }
+  },
+  {
     "label": "get_spreadsheet",
     "tool": "get_spreadsheet",
     "args": {
@@ -198,8 +594,7 @@
         ],
         "cellCount": 5,
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -290,12 +685,13 @@
                 3
               ]
             ],
-            "rowCount": 3,
-            "truncated": true,
-            "omittedRows": 7
+            "rowCount": 3
           }
         ],
         "cellCount": 6,
+        "truncated": [
+          "valueRanges[].values"
+        ],
         "page": {
           "hasMore": true,
           "nextCursor": "eyJkIjoiSHJPVHFsN2lIaURQeXEwSUQxeEdLdyIsImkiOjAsInMiOjN9"

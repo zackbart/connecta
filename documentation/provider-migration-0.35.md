@@ -545,3 +545,39 @@ Configured path placeholders, encoded slashes inside KV/R2 keys, closed R2
 headers and reviewed text/SQL/NDJSON/upload framing remain supported. No tool
 argument can widen pin scope or reveal a stored secret. Operator setup is in
 [Cloudflare](./providers.md#cloudflare).
+
+## Google Sheets
+
+All nine named tools remain. Four coverage tools are added:
+`sheets_api_search`, `sheets_api_details`, `sheets_api_read` and
+`sheets_api_write`. Search searches operations, not spreadsheet files or cells;
+use Drive to find a workbook. Update deployment instructions and programs:
+
+| Previous use                                            | Replacement                                                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `get_spreadsheet({ spreadsheetId, raw: true })`         | `sheets_api_read({ method: "GET", path: "/spreadsheets/<id>" })`; vendor JSON is under `data` in the hatch result. |
+| Named read without selection                            | Same call; optional `fields` narrows its projected record.                                                         |
+| Terminal `page.nextCursor: null`                        | Absent `nextCursor` when `page.hasMore` is false.                                                                  |
+| `namedRangesOmitted`                                    | `truncated: ["namedRanges[]"]`.                                                                                    |
+| `truncatedCells` or per-range `truncated`/`omittedRows` | Top-level `truncated: ["valueRanges[].values"]`; use content continuation or read a cut cell separately.           |
+| `repliesSummarized`/`repliesOmitted`                    | `truncated: ["replies[]"]`, with the saved-edit recovery `note`.                                                   |
+| Batch preview comment or external data-source kinds     | Refused before dispatch; use a separately authorized Google workflow.                                              |
+
+No named tool or other argument is renamed. Named values reads retain the
+`valueRanges` record and `maxCells`, `maxBytes`, `maxCellChars` content budgets.
+All named reads and hatch reads/writes support result `fields`. Cell values
+remain available; there is no privacy-widening argument or empty configurable
+sensitive set. Hatch paths omit `/v4`; values-range `%3A` is accepted, while
+encoded action separators and unreserved path characters are refused.
+Repeated ranges remain arrays in vendor `query.ranges`. Vendor masks under
+`query.fields` or batch `fields` are distinct from result-selection `fields`.
+
+The read hatch admits seven explicit methods, including three read-only POSTs;
+the destructive write hatch admits ten methods with the same value limits and
+batch-kind guards. Every hatch write uses the host's destructive route; retained
+named create/add/append tools keep their additive annotations. Generic append
+can explicitly select `OVERWRITE`; named append stays pinned to `INSERT_ROWS`.
+No scope expansion, revision guarantee, idempotency key or write replay is added.
+Standard kit errors now distinguish incomplete reads from malformed complete
+responses and use its shared status fallbacks. An inaccessible or unknown id
+remains ambiguous (`connector_call_failed`); a 404 does not prove absence.
