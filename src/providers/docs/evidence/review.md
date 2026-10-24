@@ -44,3 +44,11 @@ remain separate. All six named tools are retained under the approved plan.
 All three existing endpoint contract digests are unchanged; recording advances
 only their Discovery revision from 20261005 to the approved 20261019 snapshot.
 The archived raw bytes remain the immutable source, independently of live drift.
+
+The compact summaries keep every eval write's action words in their first
+sentence, within 120 characters: create, append/insert, and format bold text
+or named ranges. Natural-query rows check those actions after compilation.
+All three indexed methods are admitted, so no method needs a `Refused:`
+summary; preview request members remain explicitly refused by the batch guard.
+Named read field selection retains top-level `truncated`, even when the
+selection omits the shortened data. A complete read does not invent that marker.

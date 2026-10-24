@@ -15,7 +15,7 @@
             "method": "POST",
             "path": "/documents/{documentId}:batchUpdate",
             "operationId": "docs.documents.batchUpdate",
-            "summary": "Batch update document: append paragraph insert text at index replace all text format document text styles named ranges …",
+            "summary": "Edit document: append paragraph, insert text at index, delete replace text range, format bold style, table, tab, header",
             "tool": "docs_api_write",
             "named": "batch_update_document"
           },
@@ -577,6 +577,109 @@
             "endIndex": 11,
             "text": "Approved."
           }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_document selected fields retain page and truncation",
+    "tool": "get_document",
+    "args": {
+      "documentId": "doc-1",
+      "tabId": "t.0",
+      "withIndexes": true,
+      "maxChars": 0,
+      "fields": [
+        "tabs.elements"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "docs-get-document-selected-fields-retain-page-and-truncation@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/documents",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "tabs": [
+          {
+            "elements": [
+              {
+                "type": "paragraph",
+                "startIndex": 1,
+                "endIndex": 16,
+                "style": "TITLE",
+                "text": "Elders meeting"
+              },
+              {
+                "type": "paragraph",
+                "startIndex": 16,
+                "endIndex": 34,
+                "text": "See the [plan](https://example.org/plan) now."
+              },
+              {
+                "type": "paragraph",
+                "startIndex": 34,
+                "endIndex": 41,
+                "text": "Budget"
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false
+        },
+        "truncated": [
+          "tabs[0].text"
         ]
       }
     }

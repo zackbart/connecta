@@ -110,6 +110,12 @@ export default defineGoldenSpec({
     },
     { tool: "get_document", args: { documentId: "doc-1" }, replies: [{ body: DOCUMENT }] },
     {
+      label: "get_document selected fields retain page and truncation",
+      tool: "get_document",
+      args: { documentId: "doc-1", tabId: "t.0", withIndexes: true, maxChars: 0, fields: ["tabs.elements"] },
+      replies: [{ body: DOCUMENT }],
+    },
+    {
       label: "get_document withIndexes",
       tool: "get_document",
       args: { documentId: "doc-1", tabId: "t.0", withIndexes: true },

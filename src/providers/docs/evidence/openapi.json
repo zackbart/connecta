@@ -9,7 +9,7 @@
     "summaries": {
       "docs.documents.get": "Get read document tabs text named ranges styles headers footers and revision",
       "docs.documents.create": "Create add blank document with title",
-      "docs.documents.batchUpdate": "Batch update document: append paragraph insert text at index replace all text format document text styles named ranges delete text range"
+      "docs.documents.batchUpdate": "Edit document: append paragraph, insert text at index, delete replace text range, format bold style, table, tab, header"
     }
   },
   "options": {

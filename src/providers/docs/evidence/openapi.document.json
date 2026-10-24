@@ -10285,7 +10285,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch update document: append paragraph insert text at index replace all text format document text styles named ranges delete text range",
+        "summary": "Edit document: append paragraph, insert text at index, delete replace text range, format bold style, table, tab, header",
         "tags": [
           "documents"
         ],

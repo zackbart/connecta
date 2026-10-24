@@ -1,6 +1,7 @@
 // Effect declarations are the catalog and runtime decoder for every named Docs tool.
 import { Schema } from "effect";
 import { Integer, isMinChars, isMaxChars } from "../../../http/json-schema.js";
+import { fieldsInput } from "../../../http/fields.js";
 import { REQUEST_KINDS } from "./requests.js";
 const matches = (pattern: string) =>
   Schema.makeFilter((value: string) => new RegExp(pattern).test(value), {
@@ -51,9 +52,12 @@ export const GET_DOCUMENT_INPUT = Schema.Struct({
         "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
     }),
   ),
+  fields: Schema.optionalKey(
+    fieldsInput("Dot paths to keep in the result. Page and truncation metadata are always returned."),
+  ),
 });
 export const GET_DOCUMENT_OUTPUT = Schema.Struct({
-  "documentId": Schema.String,
+  "documentId": Schema.optionalKey(Schema.String),
   "title": Schema.optionalKey(Schema.String),
   "revisionId": Schema.optionalKey(Schema.String),
   "url": Schema.optionalKey(Schema.String),
@@ -65,7 +69,7 @@ export const GET_DOCUMENT_OUTPUT = Schema.Struct({
         "parentTabId": Schema.optionalKey(Schema.String),
         "nestingLevel": Schema.optionalKey(Integer),
         "endIndex": Schema.optionalKey(Integer),
-        "text": Schema.String,
+        "text": Schema.optionalKey(Schema.String),
         "notRendered": Schema.optionalKey(
           Schema.Array(
             Schema.Literals(["headers", "footers", "positioned_objects", "suggestion_marks", "unknown_elements"]),
@@ -88,7 +92,7 @@ export const GET_DOCUMENT_OUTPUT = Schema.Struct({
     ),
   ),
   "page": Schema.optionalKey(
-    Schema.Struct({ "hasMore": Schema.Boolean, "nextCursor": Schema.optionalKey(Schema.String) }),
+    Schema.Struct({ "hasMore": Schema.optionalKey(Schema.Boolean), "nextCursor": Schema.optionalKey(Schema.String) }),
   ),
   "dropped": Schema.optionalKey(Schema.Array(Schema.String)),
   "truncated": Schema.optionalKey(Schema.Array(Schema.String)),

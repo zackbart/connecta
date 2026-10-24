@@ -1,7 +1,7 @@
 // The Google Docs connection. test/goldens/docs pins each tool's catalog entry,
 // requests, results and failure ladder; these tests stub the network for what
 // the goldens do not reach: rendering every element kind, index paging, result
-// and raw ceilings, refusals before dispatch, and write outcomes. Delegation,
+// and hatch ceilings, refusals before dispatch, and write outcomes. Delegation,
 // subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import { docs } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { usesCallerIdentity } from "../../connector-caller.js";
+import { createExecuteTool } from "../../execute.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
@@ -254,6 +255,33 @@ describe("reading a document (H9)", () => {
     // The section break is no edit target; the footnote is its own segment.
     expect(elements.some((element: any) => element.startIndex === 0)).toBe(false);
     expect(elements.some((element: any) => /bylaws/.test(element.text ?? ""))).toBe(false);
+    // Field selection cannot turn a shortened rendering into a complete-looking result.
+    expect(
+      await call(connection(), "get_document", {
+        documentId: "doc-1",
+        tabId: "t.0",
+        maxChars: 0,
+        fields: ["documentId"],
+      }),
+    ).toEqual({ documentId: "doc-1", truncated: ["tabs[0].text"] });
+    expect(await call(connection(), "get_document", { documentId: "doc-1", fields: ["documentId"] })).toEqual({
+      documentId: "doc-1",
+    });
+    const indexed = await call(connection(), "get_document", {
+      documentId: "doc-1",
+      tabId: "t.0",
+      withIndexes: true,
+      maxChars: 0,
+      fields: ["tabs.elements"],
+    });
+    expect(indexed.page).toEqual({ hasMore: false });
+    expect(indexed.truncated).toContain("tabs[0].text");
+    expect(indexed.documentId).toBeUndefined();
+    const beforeInvalidFields = calls.length;
+    await expect(
+      call(connection(), "get_document", { documentId: "doc-1", fields: ["invented"] }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(beforeInvalidFields);
   });
 
   it("INV-3 INV-4: pages index rows once and binds continuation to the delegated caller", async () => {
@@ -339,7 +367,7 @@ describe("reading a document (H9)", () => {
     await expect(
       call(connector, "get_document", { documentId: "big", withIndexes: true, maxChars: 0, cursor: firstCursor }),
     ).rejects.toMatchObject({ code: "conflict" });
-  });
+  }, 10_000);
 });
 
 describe("editing a document", () => {
@@ -425,12 +453,13 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     },
   );
 
-  it("calls an edit applied after a 2xx body breaks, and never invites a repeat", async () => {
+  it("keeps the kit's uncertain-write advice after a 2xx body breaks", async () => {
     route = () => ({ brokenBody: true });
     const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("so it was applied");
-    expect(failure.message).toContain("Do not repeat it");
+    expect(failure).toMatchObject({ writeOutcome: "unknown" });
+    expect(failure.message).toContain("check the target before repeating it");
+    expect(failure.message).not.toContain("The outcome of this edit is unknown");
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
@@ -456,6 +485,32 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(failure.message).toContain(`Created document new-1, but ${says}`);
     expect(failure.message).toContain(advice);
     expect(failure.message).toContain("Do not create it again");
+    const registry = makeRegistry([connection()]);
+    const sentBeforeProgram = calls.length;
+    const program = await createExecuteTool(
+      registry,
+      "https://connecta.example",
+      {
+        async execute(_code, providers) {
+          try {
+            await providers.find((provider) => provider.name === "connecta")!.fns["call"]!("docs.create_document", {
+              title: "Minutes",
+              text: "x",
+            });
+          } catch {
+            /* A caught partial create must retain its reconciliation fact. */
+          }
+          return { result: "caught" };
+        },
+      },
+      silentLogger,
+      undefined,
+      { readOnly: false },
+    )({ code: "async () => null" });
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", uncertainCall: { recovery: { documentId: "new-1" } } },
+    });
+    expect(calls).toHaveLength(sentBeforeProgram + 2);
   });
 
   it.each([
@@ -512,10 +567,18 @@ describe("indexed Docs surface", () => {
       "replace all text",
       "format document text",
       "delete text range",
+      "bold",
+      "add header",
+      "create table",
     ]) {
       const found = await call(connector, "docs_api_search", { query });
       expect(found.operations.slice(0, 2).some((op: { path: string }) => op.path.endsWith(":batchUpdate"))).toBe(true);
     }
+    for (const query of ["create a document", "add blank document"]) {
+      const found = await call(connector, "docs_api_search", { query });
+      expect(found.operations.slice(0, 2).some((op: { path: string }) => op.path === "/documents")).toBe(true);
+    }
+    expect(DOCS_INDEX.ops.every((op) => op.summary.length <= 120)).toBe(true);
     for (const query of ["document named ranges", "document styles", "read document tabs"]) {
       const found = await call(connector, "docs_api_search", { query });
       expect(found.operations.slice(0, 2).some((op: { method: string }) => op.method === "GET")).toBe(true);

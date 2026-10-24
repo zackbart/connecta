@@ -4,18 +4,13 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { canonicalJson } from "../../canonical-json.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type HttpFailure } from "../../http/errors.js";
-import type { CallServices } from "../../http/services.js";
+import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { Recovery, type CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
 import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext } from "../../types.js";
 import { providerCallFailure } from "../../write-outcome.js";
-import {
-  googleClient,
-  googleFailureMessage,
-  googleOutcomeOf,
-  type GoogleClient,
-  type GoogleRequest,
-} from "../_shared/google/kit.js";
+import { googleClient, googleFailureMessage, googleOutcomeOf, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { DOCS } from "./api.js";
 import { DOCS_INDEX } from "./lib/discovery.js";
@@ -31,12 +26,6 @@ import * as schemas from "./lib/schemas.js";
  */
 const DEFAULT_MAX_CHARS = 20_000;
 /**
- * Connecta's ceiling on one rendering; Google caps a document near 1.02M
- * characters. At most about 3 MB of JSON, inside what a direct call can stash
- * and page with connecta.result; past 256 KiB it cannot cross into execute_code.
- */
-
-/**
  * Serialized bytes of index rows in one page. Rows are a few hundred bytes at
  * most, so a page is hundreds of them; a long document pages by cursor rather
  * than returning more than the execute_code bridge carries.
@@ -44,10 +33,6 @@ const DEFAULT_MAX_CHARS = 20_000;
 const ELEMENT_PAGE_BYTES = 64 * 1024;
 /** Characters of each index row's text preview. */
 const PREVIEW_CHARS = 80;
-/** One text argument; Google caps a whole document near 1.02M characters. */
-
-/** Raw requests in one batch_update_document call; connecta's cap. */
-
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
@@ -519,40 +504,6 @@ function writeOutcome(error: unknown): WriteOutcome {
   }
 }
 
-/** The words a write's uncertain outcomes are told in, per tool. */
-interface WriteWords {
-  /** Sent, and no answer came back, or Google answered a 5xx. */
-  unknown: (detail: string) => string;
-  /** Google answered 2xx and the reply could not be used. */
-  applied: string;
-}
-
-/** Send one write through the kit; keep the tool's recovery advice for every uncertain outcome. */
-function sendWrite(
-  connection: Connection,
-  client: GoogleClient,
-  ctx: ConnectorContext,
-  request: GoogleRequest,
-  revisionGuarded: boolean,
-  words: WriteWords,
-  step?: string,
-): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
-  return client
-    .json(request, { ...(revisionGuarded ? { revisionGuarded: true } : {}), ...(step ? { step } : {}) })
-    .pipe(
-      Effect.map(asRecord),
-      Effect.catch((failure) => {
-        // A cancelled call is the caller's own decision; its reason stays whole.
-        if (ctx.signal?.aborted) return Effect.fail(failure);
-        const outcome = writeOutcome(failure);
-        if (outcome === "not-sent" || outcome === "refused") return Effect.fail(failure);
-        return googleFailureMessage(connection, failure, (detail) =>
-          outcome === "probably-applied" ? words.applied : words.unknown(detail),
-        );
-      }),
-    );
-}
-
 /**
  * One `documents.batchUpdate`, atomic on Google's side: every request applies
  * or none does. A write naming `requiredRevisionId` is sent revision-guarded,
@@ -563,38 +514,23 @@ function sendWrite(
  * for what every other failure means.
  */
 function batchUpdate(
-  connection: Connection,
   client: GoogleClient,
-  ctx: ConnectorContext,
   documentId: string,
   requests: unknown[],
   requiredRevisionId: string | undefined,
   step?: string,
 ): Effect.Effect<JsonRecord, HttpFailure, CallServices> {
-  return sendWrite(
-    connection,
-    client,
-    ctx,
-    {
-      method: "POST",
-      path: batchPath(documentId),
-      template: "/documents/{documentId}:batchUpdate",
-      body: compact({
-        requests,
-        writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
-      }),
-    },
-    requiredRevisionId !== undefined,
-    {
-      // A requiredRevisionId is a precondition, not an idempotency key the
-      // vendor honors, so it grants no repeat (INV-9).
-      unknown: (detail) =>
-        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.`,
-      applied:
-        "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
-    },
-    step,
-  );
+  return client
+    .json(
+      {
+        method: "POST",
+        path: batchPath(documentId),
+        template: "/documents/{documentId}:batchUpdate",
+        body: compact({ requests, writeControl: requiredRevisionId ? { requiredRevisionId } : undefined }),
+      },
+      { ...(requiredRevisionId !== undefined ? { revisionGuarded: true } : {}), ...(step ? { step } : {}) },
+    )
+    .pipe(Effect.map(asRecord));
 }
 
 /** Characters of one projected reply string: an id or a short value, never prose. */
@@ -603,8 +539,8 @@ const REPLY_STRING_CHARS = 512;
 /**
  * One batchUpdate reply kept to what a later request needs: its kind, and
  * the ids and counts beneath it to two levels. A string too long to be an id
- * is dropped whole, never cut into a different one; `repliesTruncated` says
- * the replies were projected. Most replies are `{}` or one id; this only
+ * is dropped whole, never cut into a different one; `truncated` names
+ * the projected replies. Most replies are `{}` or one id; this only
  * bites on the rare kind that echoes more.
  */
 function projectReply(value: JsonRecord, depth = 0): JsonRecord {
@@ -702,6 +638,7 @@ function delivered(name: string, args: JsonRecord, result: unknown): unknown {
 export function docsTools({ connection }: { connection: Connection }): ApiTool[] {
   const client = googleClient(connection, DOCS.provider, { standard: true, index: DOCS_INDEX });
   return toolDefinitions(connection, client).map((tool) => {
+    const isRead = tool.annotations.readOnlyHint === true;
     const spec = {
       name: tool.name,
       description: tool.description,
@@ -710,18 +647,30 @@ export function docsTools({ connection }: { connection: Connection }): ApiTool[]
       ...(tool.writeSteps ? { writeSteps: tool.writeSteps } : {}),
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
+          const fields = isRead ? (args["fields"] as readonly string[] | undefined) : undefined;
+          const problem = isRead
+            ? fieldsProblem(fields, new Set(Object.keys(schemas.GET_DOCUMENT_OUTPUT.fields)), "the result")
+            : undefined;
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const operation = yield* Effect.serviceOption(Operation);
           if (Option.isNone(operation) || !operation.value)
             return yield* Effect.die(new Error("Docs needs a call context."));
-          return delivered(tool.name, args, yield* tool.run(args, operation.value));
+          const result = delivered(tool.name, args, yield* tool.run(args, operation.value));
+          if (!isRead) return result;
+          const record = asRecord(result);
+          return {
+            ...asRecord(selectFields(record, fields)),
+            ...(record["page"] ? { page: record["page"] } : {}),
+            ...(record["truncated"] ? { truncated: record["truncated"] } : {}),
+          };
         }).pipe(
           Effect.catchDefect((defect) =>
             defect instanceof ConnectorCallError ? Effect.fail(new Refusal({ error: defect })) : Effect.die(defect),
           ),
         ),
     };
-    return tool.annotations.readOnlyHint === true
-      ? read(connection, { ...spec, fields: true })
+    return isRead
+      ? read(connection, spec)
       : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
   });
 }
@@ -895,29 +844,25 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
           // that may have left a document behind says so and is not retryable.
           const title = String(args["title"]);
           const createdButUnknown = `Google Docs created the document (HTTP 2xx), but its reply could not be read, so its id is unknown. Do not create it again; find "${title}" in Drive (a Google Drive connection's search) and use that id.`;
-          const created = yield* sendWrite(
-            connection,
-            client,
-            ctx,
-            { method: "POST", path: "/documents", template: "/documents", body: { title } },
-            false,
-            {
-              unknown: (detail) =>
-                `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
-              applied: createdButUnknown,
-            },
-            "create",
-          );
+          const created = yield* client
+            .json({ method: "POST", path: "/documents", template: "/documents", body: { title } }, { step: "create" })
+            .pipe(
+              Effect.map(asRecord),
+              Effect.catch((failure) =>
+                !ctx.signal?.aborted && writeOutcome(failure) === "probably-applied"
+                  ? googleFailureMessage(connection, failure, () => createdButUnknown)
+                  : Effect.fail(failure),
+              ),
+            );
           const dropped: string[] = [];
           // An id that could not be passed back is no id at all.
           const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
           if (!documentId) throw uncertain(createdButUnknown, ctx);
+          yield* (yield* Recovery).record({ documentId });
           let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
           if (typeof args["text"] === "string") {
             const reply = yield* batchUpdate(
-              connection,
               client,
-              ctx,
               documentId,
               [{ insertText: { text: args["text"], endOfSegmentLocation: {} } }],
               undefined,
@@ -928,11 +873,12 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
                 // second one, so the failure names it and is not retryable. Only
                 // an explicit refusal proves the text is absent; anything else
                 // sends the caller to look before appending.
-                return googleFailureMessage(connection, cause, (detail) =>
-                  ["refused", "not-sent"].includes(writeOutcome(cause))
-                    ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
-                    : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
-                );
+                return googleFailureMessage(connection, cause, (detail) => {
+                  const sentence = /[.!?]$/.test(detail.trim()) ? detail.trim() : `${detail.trim()}.`;
+                  return ["refused", "not-sent"].includes(writeOutcome(cause))
+                    ? `Created document ${documentId}, but Google refused its initial text: ${sentence} Do not create it again; add the text with append_text on ${documentId}.`
+                    : `Created document ${documentId}, but whether its initial text was written is unknown: ${sentence} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+                });
               }),
             );
             revisionId = revisionAfter(reply, dropped) ?? revisionId;
@@ -955,12 +901,10 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
       annotations: { readOnlyHint: false, destructiveHint: false },
       input: schemas.APPEND_TEXT_INPUT,
       output: schemas.APPEND_TEXT_OUTPUT,
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [{ insertText: { text: args["text"], endOfSegmentLocation: compact({ tabId: args["tabId"] }) } }],
             revision(args),
@@ -976,12 +920,10 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
       annotations: { readOnlyHint: false, destructiveHint: false },
       input: schemas.INSERT_TEXT_INPUT,
       output: schemas.INSERT_TEXT_OUTPUT,
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [{ insertText: { text: args["text"], location: compact({ index: args["index"], tabId: args["tabId"] }) } }],
             revision(args),
@@ -998,12 +940,10 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
       annotations: { readOnlyHint: false, destructiveHint: true },
       input: schemas.REPLACE_ALL_TEXT_INPUT,
       output: schemas.REPLACE_ALL_TEXT_OUTPUT,
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
           const reply = yield* batchUpdate(
-            connection,
             client,
-            ctx,
             args["documentId"],
             [
               {
@@ -1036,16 +976,9 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
       annotations: { readOnlyHint: false, destructiveHint: true },
       input: schemas.BATCH_UPDATE_DOCUMENT_INPUT,
       output: schemas.BATCH_UPDATE_DOCUMENT_OUTPUT,
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
-          const reply = yield* batchUpdate(
-            connection,
-            client,
-            ctx,
-            args["documentId"],
-            args["requests"],
-            revision(args),
-          );
+          const reply = yield* batchUpdate(client, args["documentId"], args["requests"], revision(args));
           return boundedReplies(savedEdit(args["documentId"], reply), asArray(reply["replies"]).map(asRecord));
         }),
     },

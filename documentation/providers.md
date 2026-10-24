@@ -548,8 +548,9 @@ hatches discover all three pinned methods and expose JSON reads and writes.
 `docs_api_search` searches operations; use Drive to find document data.
 Batch hatch writes require `writeControl.requiredRevisionId`, 1–100 requests,
 and exactly one supported generally available request kind each. Preview
-comment and suggestion writes are refused. All hatch writes are destructive;
-the named create/append/insert tools retain their additive annotations. Writes
+comment and suggestion writes are refused. All hatch writes are destructive.
+The named create/append/insert catalog entries now omit the previous explicit
+`destructiveHint:false`; approval routing is unchanged. Writes
 are never replayed and take no idempotency key. A named create with text uses
 two explicit steps: one create POST and at most one initial-text batch POST.
 
@@ -567,12 +568,14 @@ For complete styles or named ranges, use a hatch read:
 const reply = await connecta.call("documents.docs_api_read", {
   path: "/documents/doc_123",
   query: { includeTabsContent: true },
-  fields: ["documentId", "revisionId", "tabs", "namedRanges"],
+  fields: ["documentId", "revisionId", "tabs"],
 });
 // The guest delivery wraps the hatch value; vendor data is under data.data.
 const document = reply.data.data;
 ```
 
+With `includeTabsContent:true`, named ranges are in
+`document.tabs[].documentTab.namedRanges`; select `tabs` as above to read them.
 `fields` selects vendor-body paths. Hatch values are `{status,data}` inside
 Connecta's [guest call delivery](./code-mode.md). Caller headers,
 credential query arguments, alternate origins and media transport are refused.

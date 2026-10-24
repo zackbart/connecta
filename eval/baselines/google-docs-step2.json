@@ -17050,14 +17050,20 @@
     "trialsPerArm": 28,
     "taskCoverage": "All seven Docs tasks were supported before; no new-coverage row.",
     "regressions": [
-      "Sonnet O3 repeat 2 returned a boundary array instead of start/end pairs.",
-      "Luna O4 repeat 1 stopped after discovery without dispatching.",
-      "Luna O7 repeat 1 stopped after its Drive content fallback failed; missing text was not inserted."
+      "Observed Sonnet O3 repeat 2 miss: reported boundaries instead of pairs; all indexed rows were collected.",
+      "Observed Luna O4 repeat 1 miss: pre-existing supplied-id interpretation error, also seen in BEFORE O6 repeat 1; no zero-result discovery or Google dispatch.",
+      "Observed Luna O7 repeat 1 miss: pre-existing program unknown-write replacement, caught or uncaught, plus the frozen fake missing a valid Drive export fallback."
     ],
     "offsettingImprovements": [
       "Luna O1 repeat 1 counted all 600 paragraphs.",
       "Luna O3 repeat 1 returned complete valid position pairs and source metadata."
-    ]
+    ],
+    "surfaceCausedAfterMisses": [],
+    "attributionCorrections": {
+      "O1LunaRepeat2": "Counted only the first indexed page: 435 BEFORE, 389 AFTER; continuation metadata was present but discarded by the program.",
+      "O4LunaRepeat1": "Has the BEFORE O6 repeat 1 identity-error twin; discovery results were non-empty, with zero Google requests.",
+      "O7LunaRepeat1": "Core replacement happens whether caught or not; the measured call recorded no recovery facts. BEFORE trials used the byte-identical direct-call message."
+    }
   },
   "validation": {
     "standardsConventionsAndDocs": {
@@ -17194,5 +17200,78 @@
         ]
       }
     }
+  },
+  "reviewFollowup": {
+    "baseHead": "90387c387da4521916207443211cfebfbcaa4c67",
+    "referenceAdaptationCommit": "2ce02c7c4d99ddde99da9f5430a8426ab3a7a672",
+    "protocol": {
+      "version": 1,
+      "pairId": "google-docs-step2-2026-10-24",
+      "taskDefinitionsHash": "acfffa5fec9274c136db82361e990330cfb6df816c526a7dff0a73ce89034c36",
+      "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+    },
+    "preloadAdapter": null,
+    "paidOutcomesModified": false,
+    "batchSummaryCharacters": 119,
+    "fullyRefusedIndexedMethods": [],
+    "fieldSelectionPreserves": [
+      "page",
+      "truncated"
+    ],
+    "createdIdRecoveryFactBeforeInitialText": true,
+    "testDelta": 0,
+    "targetedTestsPassed": 557,
+    "standardsAndConventionsPassed": 72,
+    "docsGoldenNodeDeterminism": "pass",
+    "docsGoldenWorkerd": "pass",
+    "plainDocsSelftests": "pass",
+    "static": "pass",
+    "build": "pass",
+    "postReviewBundleGzip": 370111,
+    "evaluatedSnapshotBundleGzip": 369878,
+    "logEvidence": [
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-final-targeted.log",
+        "sha256": "dde70cfea12904940db15ad77353e26d51d89700f484c0b508474719e7c8f6a8"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-targeted.log",
+        "sha256": "b244624b314b45e19a111ffa1e67c266370a312293627ee9f7de5c0d15b011e5"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-goldens-node.log",
+        "sha256": "60383ba1c0112383753bb8622911e4c77bb560fa937156d6a9cff5233b4f367a"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-goldens-workers.log",
+        "sha256": "45ff3eb6e36b5ee831a18d97f9023762540314046fc2131101f9ce476adc2068"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-selftest.log",
+        "sha256": "ee959708e752f7a7d211f70222dc4171e19a3df66d9598f4df10dc7fa26cbad4"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-static.log",
+        "sha256": "5be151c8d8da05b8adf5a5bb33d664e0641390ddc1381f7226c1e18b4ebe19e8"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-build-final.log",
+        "sha256": "339cc57b55287b28840b5e1f2de0a36d747ebe3e6ccf7b3b59b469ec44fbe468"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-eve.log",
+        "sha256": "8cb14d4ae06520fc0381bb6c1a80be5df91d6d3ba21e9a50870da8a4712417b5"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-eve-package.log",
+        "sha256": "7f37fb5451d05255d0a6c8da71a3121b49da9b71fda201e67da66d5b107b0886"
+      },
+      {
+        "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/docs/r1-docs.log",
+        "sha256": "9dadc8bbd73963fd8777a3dd30886e0c19e8e1026c4032a21f6300ee48b1b785"
+      }
+    ],
+    "eveNode24": "pass",
+    "evePackage": "pass"
   }
 }

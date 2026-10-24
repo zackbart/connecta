@@ -634,7 +634,9 @@ with `replies.length`. `notRendered` and `dropped` remain semantic facts.
 A 404 now reports `connector_call_failed` because absence and sharing denial
 are ambiguous. Standard read 5xx failures report `unavailable`; revision facts
 retain `conflict`. Write outcomes remain conservative and non-retryable after
-dispatch. Additive annotations on create/append/insert remain; every new hatch
+dispatch. Create/append/insert catalog entries omit the previous explicit
+`destructiveHint:false` through the shared builder; approval routing is unchanged.
+Every new hatch
 write requires the host's destructive-write route. No new privacy switch or
 scope is introduced.
 

@@ -1014,7 +1014,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
+            "message": "Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1516,7 +1516,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 500 failure Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
+            "message": "Google Docs: Golden 500 failure Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1597,7 +1597,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
+            "message": "Google Docs: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1690,7 +1690,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Could not reach the Google Docs API. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
+            "message": "Could not reach the Google Docs API. Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
