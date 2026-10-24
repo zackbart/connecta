@@ -110,7 +110,7 @@ export function googleHatchBinding(
         };
         const optionsForSend = {
           ...sendOptions,
-          ...(options.revisionGuarded?.(call) ? { flags: { revisionGuarded: true } } : {}),
+          ...(options.revisionGuarded?.(call) ? { flags: { revisionGuarded: true as const } } : {}),
         };
         let sent = false;
         const send = () =>
