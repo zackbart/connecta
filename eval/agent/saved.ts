@@ -12,6 +12,7 @@ export interface SavedGradeInputs {
   world: {
     rest?: World["rest"];
     breeze?: World["breeze"];
+    ccb?: World["ccb"];
     tithely?: World["tithely"];
     ci?: World["ci"];
     tracker: TrackerState;
@@ -31,6 +32,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       rest: world.rest,
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
+      ...(world.options.ccb ? { ccb: world.ccb } : {}),
       ci: world.ci,
       tracker: world.tracker,
       chat: world.chat,
@@ -140,6 +142,10 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.breeze, structuredClone(state.breeze));
   } else if (state.calls.some((c) => c.service === "breeze"))
     throw new Error("Incomplete saved grading evidence: breeze");
+  if (state.ccb) {
+    for (const key of ["people", "updated"] as const) requireEvidence(Array.isArray(state.ccb[key]), `ccb.${key}`);
+    Object.assign(world.ccb, structuredClone(state.ccb));
+  } else if (state.calls.some((c) => c.service === "ccb")) throw new Error("Incomplete saved grading evidence: ccb");
   world.ci.splice(0, world.ci.length, ...state.ci!);
   Object.assign(world.tracker, saved.world.tracker);
   Object.assign(world.chat, saved.world.chat);

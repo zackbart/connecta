@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
+import { ccb } from "@zackbart/connecta/providers/ccb";
 import { breeze } from "@zackbart/connecta/providers/breeze";
 import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
@@ -90,6 +91,14 @@ export async function startNodeDeployment(
       ...(oauth ? [oauth.connector()] : []),
       ...connectors.map((spec) => {
         const options = { purpose: spec.description };
+        if (spec.rest === "ccb")
+          return ccb(spec.id, {
+            ...options,
+            environment: "production",
+            mode: "system",
+            access: "read-write",
+            ...JSON.parse(spec.credential!.value!),
+          });
         if (spec.rest === "breeze") return breeze(spec.id, { ...options, subdomain: "church" });
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
         if (spec.rest === "tithely")
@@ -122,7 +131,7 @@ export async function startNodeDeployment(
     ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
   });
   for (const spec of connectors) {
-    if (spec.credential?.value) {
+    if (spec.rest !== "ccb" && spec.credential?.value) {
       if (spec.id === "cloudflare_legacy" || spec.rest === "tithely")
         await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
       else await vault.set(spec.id, spec.credential.value, "operator");
@@ -135,6 +144,14 @@ export async function startNodeDeployment(
   });
   await once(server, "listening");
   if (connectors.some((spec) => spec.rest)) installRestKitTransport();
+  for (const spec of connectors.filter((entry) => entry.rest === "ccb")) {
+    const connector = connecta.registry.getConnector(spec.id)!;
+    const ctx = connecta.registry.contextFor(spec.id, origin);
+    const start = await connector.startAuth!({ ...ctx, allowAuthorization: true });
+    const state = new URL(start.authorizationUrl!).searchParams.get("state")!;
+    if (!(await connector.verifyState!(state, ctx))) throw new Error("CCB eval OAuth state was refused.");
+    await connector.finishAuth!("fake-code", ctx, new URLSearchParams({ code: "fake-code", state }));
+  }
   return {
     kind: "node-template-shape",
     programs: observed.programs,

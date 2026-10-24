@@ -1,4 +1,5 @@
 /** Classify attempts from the published providers' complete static REST catalogs. */
+import { ccb } from "@zackbart/connecta/providers/ccb";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
@@ -7,6 +8,14 @@ import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A } from "../fakes/rest.js";
 
 const connectors = [
+  ccb("ccb", {
+    purpose: "Deterministic CCB acceptance grading",
+    environment: "production",
+    mode: "system",
+    access: "read-write",
+    clientId: "50cd5d6a-1943-4fb8-a24a-4e138851df2b",
+    clientSecret: "3c841e51-c2a4-496a-8800-8d23875c0193",
+  }),
   breeze("breeze", { purpose: "Deterministic Breeze acceptance grading", subdomain: "church" }),
   stripe("stripe_sandbox", {
     purpose: "Deterministic REST acceptance grading",
