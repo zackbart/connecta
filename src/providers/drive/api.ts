@@ -4,7 +4,7 @@ import { guardedClient } from "../../http/client.js";
 import { bearer, Grant, refreshOnce } from "../../http/oauth.js";
 import { resultSafety } from "../../http/safety.js";
 import { connect, del, get, patch, post, type Connection, type ConnectOptions } from "../../http/vendor.js";
-import type { HttpFailure, OperationRef, VendorErrors } from "../../http/errors.js";
+import type { HttpFailure, OperationRef } from "../../http/errors.js";
 import type { CallServices } from "../../http/services.js";
 import {
   GOOGLE_GRANT_RENEWAL,
@@ -71,7 +71,7 @@ export const DriveApi = {
   },
 };
 const google = googleErrors(DRIVE, { standard: true });
-export const errors: VendorErrors = {
+export const errors: ReturnType<typeof googleErrors> = {
   ...google,
   meanings: { ...google.meanings!, conflicts: ["A Drive source page changed before its local cursor resumed."] },
 };

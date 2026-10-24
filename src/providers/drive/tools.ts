@@ -1563,6 +1563,14 @@ function nextToken(value: unknown): string | undefined {
 }
 function decisionRecord(value: unknown): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) decisionFailure();
+  // A withheld key may have been mimeType/parents; absence cannot then mean a legitimate omission.
+  for (const key of Object.keys(value)) {
+    try {
+      refuseWithheldValues(key, "Drive decision metadata", true);
+    } catch {
+      decisionFailure();
+    }
+  }
   return value as JsonRecord;
 }
 function decisionFailure(): never {

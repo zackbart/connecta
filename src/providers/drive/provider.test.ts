@@ -231,6 +231,12 @@ describe("reading content", () => {
         JSON.stringify(error),
       ).toEqual(["GET"]);
     }
+    calls.length = 0;
+    route = () => ({ body: { "pa[redacted]rents": ["old-1"] } });
+    await expect(call(connector, "move_file", { fileId: "f1", folderId: "root" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
     for (const parents of [[], ["old-1"], ["root"], undefined]) {
       calls.length = 0;
       route = (r) =>
@@ -256,6 +262,7 @@ describe("reading content", () => {
     for (const metadata of [
       { mimeType: `text/${ACCESS_TOKEN}` },
       { mimeType: "[redacted]" },
+      { "mi[redacted]meType": "text/plain" },
       { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: ACCESS_TOKEN } },
       {
         mimeType: "application/vnd.google-apps.shortcut",
