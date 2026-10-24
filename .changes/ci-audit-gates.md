@@ -2,4 +2,4 @@
 type: changed
 ---
 
-CI skips the test, build and browser jobs for pull requests that change only decision records or changelog fragments, runs visual comparisons without retries and uploads the Playwright report with diffs and traces when an attempt fails, and scopes pull request provider drift scans to the providers they change, reporting new findings apart from standing manual reviews.
+Run browser and dependency-audit jobs for relevant pull requests and every main/nightly run. Visual comparisons do not retry; failed attempts upload the Playwright report with diffs and traces. Weekly provider drift scans remain advisory and separate changed contracts from standing manual reviews.

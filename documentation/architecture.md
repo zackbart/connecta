@@ -2379,7 +2379,8 @@ the admitted caller, and the private token exchange keeps its in-memory
 cache, so only token strings and expiries cross requests. Each product
 declares its operations, and a value-safety resolver refuses any path it does
 not declare. Revision-guarded writes set the
-`revisionGuarded` request flag that Google's error table reads. The completed product migrations use Effect-declared named tools and indexed
+`revisionGuarded` request flag that Google's error table reads. The completed
+product migrations use Effect-declared named tools and indexed
 hatches. Fixed write steps are snapshotted at construction. Docs declares a
 create and its optional initial-text edit as separate steps, each sent at most
 once.
