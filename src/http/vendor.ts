@@ -287,9 +287,13 @@ interface Answer {
   /** The JSON body after the vendor's `result` hook and the connection's ResultSafety; `undefined` when empty. */
   readonly data: unknown;
   readonly prefix?: PrefixResult;
+  /** Only explicitly requested response headers, after sent-secret redaction. */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 interface SendOptions {
+  /** Internal consumers may request protocol metadata, never the raw response. */
+  readonly responseHeaders?: readonly string[];
   /** Success-only bounded streaming, without exposing a response or bypassing safety. */
   readonly prefix?: SuccessPrefix;
   /** Auxiliary ownership; replay and capacity still follow the core's physical-request classification. */
@@ -518,6 +522,16 @@ export function connect<R>(
         return {
           status: reply.status,
           data: options.safety.redact(kept, operation),
+          ...(sendOptions?.responseHeaders?.length
+            ? {
+                headers: Object.fromEntries(
+                  sendOptions.responseHeaders.flatMap((name) => {
+                    const value = headers.get(name);
+                    return value === null ? [] : [[name.toLowerCase(), value]];
+                  }),
+                ),
+              }
+            : {}),
           ...(reply.prefix ? { prefix: reply.prefix } : {}),
         };
       }).pipe(

@@ -199,8 +199,13 @@ const STRAY_CURSOR =
  * SHA-256 over the tool name and its arguments (cursor and limit excluded).
  */
 export const boundCursor = {
-  encode(tool: string, args: Readonly<Record<string, unknown>>, cursor: string): Effect.Effect<string> {
-    return Effect.map(digest(tool, args), (d) => base64url(JSON.stringify({ v: 1, d, c: cursor })));
+  encode(
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    cursor: string,
+    encode: (json: string) => string = base64url,
+  ): Effect.Effect<string> {
+    return Effect.map(digest(tool, args), (d) => encode(JSON.stringify({ v: 1, d, c: cursor })));
   },
   decode(tool: string, args: Readonly<Record<string, unknown>>, token: string): Effect.Effect<string, Refusal> {
     return Effect.flatMap(digest(tool, args), (expected) => {

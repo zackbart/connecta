@@ -58,8 +58,11 @@ export interface OpenApiData {
    * success-response property paths (`data[].widget_id`). The standard hatch
    * validates `fields` against the response roots and searches these names;
    * an index without them declares no response contract.
+   * Generated REST indexes use a lazy JSON string `{p,d,o}`: `p` holds
+   * response paths, `d` shared rows of path indices, and `o` row indices
+   * aligned with operations. Kit indexes may supply the arrays directly.
    */
-  readonly fields?: readonly (readonly OperationField[])[];
+  readonly fields?: readonly (readonly OperationField[])[] | string;
 }
 
 /** A property an operation's request body or success response declares, as a dot path (`data[].widget_id`). */
@@ -224,6 +227,7 @@ export class OperationIndex {
   readonly #segments: readonly (readonly string[])[];
   readonly #slashParams: ReadonlySet<string>;
   #details: { d: readonly SchemaNode[]; o: readonly (0 | DetailsRow)[] } | undefined;
+  #fields: readonly (readonly OperationField[])[] | undefined;
   #words: readonly { path: Set<string>; summary: Set<string>; id: Set<string> }[] | undefined;
 
   /**
@@ -258,7 +262,17 @@ export class OperationIndex {
 
   /** The request and response properties this operation declares; none when the index carries no fields. */
   fields(op: Operation): readonly OperationField[] {
-    return this.#data.fields?.[op.row] ?? [];
+    if (!this.#fields) {
+      const data = this.#data.fields;
+      if (typeof data === "string") {
+        // Generated REST indexes share response paths and complete rows. Kit
+        // vendor indexes retain their directly declared body/response fields.
+        const { p, d, o } = JSON.parse(data) as { p: string[]; d: number[][]; o: number[] };
+        const rows = d.map((ids) => ids.map((id): OperationField => ({ in: "response", path: p[id]! })));
+        this.#fields = o.map((id) => rows[id]!);
+      } else this.#fields = data ?? [];
+    }
+    return this.#fields[op.row] ?? [];
   }
 
   /**

@@ -47,7 +47,8 @@ import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
 import { renderValueSafety, reviewedTable } from "./value-safety.mjs";
 
-/** Bump when the generated shape changes, so every output reads as stale. */
+/** Bump when the required generated shape changes, so every output reads as stale.
+ * Response fields are optional additive metadata; existing v4 indexes remain valid. */
 export const OPENAPI_FORMAT = 4;
 const OUTPUT = "openapi.generated.ts";
 const STANDARD = {
@@ -404,6 +405,85 @@ function share(rows) {
 }
 
 /**
+ * Response names only, independent of request shrinking and contract digests.
+ * Keep root properties and properties of root/list-envelope array items. Local
+ * refs and composition are bounded; overflow drops the whole response contract
+ * so fields validation never mistakes an incomplete set for a complete one.
+ */
+function responseFields(document, operation) {
+  const paths = new Set();
+  let remaining = 1024;
+  let overflow = false;
+  const visit = (raw, prefix = "", level = 0, refs = new Set(), arraysOnly = false) => {
+    if (!raw || typeof raw !== "object") return;
+    if (--remaining < 0 || level > 24) {
+      overflow = true;
+      return;
+    }
+    if (raw.$ref) {
+      if (refs.has(raw.$ref)) return;
+      const target = pointer(document, raw.$ref);
+      if (!target) {
+        overflow = true;
+        return;
+      }
+      return visit(target, prefix, level + 1, new Set([...refs, raw.$ref]), arraysOnly);
+    }
+    for (const branch of [...(raw.allOf ?? []), ...(raw.anyOf ?? []), ...(raw.oneOf ?? [])]) {
+      visit(branch, prefix, level + 1, refs, arraysOnly);
+    }
+    if (raw.items && !prefix.includes("[]")) visit(raw.items, `${prefix}[]`, level + 1, refs);
+    if (arraysOnly) return;
+    for (const name of Object.keys(raw.properties ?? {}).sort()) {
+      // Dot-path selection cannot address literal dots or array syntax in keys.
+      if (!name || /[.[\]]/.test(name)) continue;
+      const path = prefix ? `${prefix}.${name}` : name;
+      if (path.length > 200 || paths.size >= 256) {
+        overflow = true;
+        return;
+      }
+      paths.add(path);
+      // Inspect an envelope's immediate properties only for list items;
+      // never enumerate a resource's nested records or expansions.
+      if (!prefix) visit(raw.properties[name], path, level + 1, refs, true);
+    }
+  };
+  // The lowest explicit JSON success response, then the 2XX range. Error and
+  // default schemas do not establish a success contract.
+  for (const status of Object.keys(operation.responses ?? {})
+    .filter((code) => /^2(?:\d\d|XX)$/i.test(code))
+    .sort()) {
+    const response = resolveRef(document, operation.responses[status]);
+    const content = response.content ?? {};
+    const type = Object.keys(content)
+      .filter((type) => /^application\/(?:[^/]+\+)?json$/i.test(type))
+      .sort()[0];
+    if (!type || !content[type]?.schema) continue;
+    visit(content[type].schema);
+    break;
+  }
+  return overflow ? [] : [...paths].sort();
+}
+
+/** Share paths and complete rows; one lazy JSON string avoids thousands of JS objects. */
+function shareFields(rows) {
+  const p = [...new Set(rows.flat())].sort();
+  const ids = new Map(p.map((path, i) => [path, i]));
+  const d = [];
+  const seen = new Map();
+  const o = rows.map((paths) => {
+    const row = paths.map((path) => ids.get(path));
+    const key = JSON.stringify(row);
+    if (!seen.has(key)) {
+      seen.set(key, d.length);
+      d.push(row);
+    }
+    return seen.get(key);
+  });
+  return JSON.stringify({ p, d, o });
+}
+
+/**
  * Compile an OpenAPI 3 document into the shipped index. Deprecated operations
  * are dropped: the index is the contract an agent may call, and Connecta does
  * not offer what the vendor has retired.
@@ -430,6 +510,7 @@ export function buildOperationIndex(document, source) {
   const tags = [];
   const ops = [];
   const details = [];
+  const fields = [];
   for (const path of Object.keys(document.paths).sort()) {
     const item = resolveRef(document, document.paths[path]);
     for (const verb of VERBS) {
@@ -451,6 +532,7 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
+      fields.push(responseFields(document, operation));
     }
   }
   return {
@@ -466,6 +548,7 @@ export function buildOperationIndex(document, source) {
     tags,
     ops,
     details: JSON.stringify(share(details)),
+    ...(fields.some((paths) => paths.length) ? { fields: shareFields(fields) } : {}),
   };
 }
 
@@ -559,7 +642,7 @@ export const openapi: OpenApiData = {
   ops: [
 ${rows}
   ],
-  details: ${JSON.stringify(data.details)},
+  details: ${JSON.stringify(data.details)},${data.fields === undefined ? "" : `\n  fields: ${JSON.stringify(data.fields)},`}
 };
 `;
 }

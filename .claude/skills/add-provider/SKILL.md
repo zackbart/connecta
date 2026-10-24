@@ -396,6 +396,20 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 8. A hatch over a compiled REST pin declares response fields in its index
    (`OpenApiData.fields`) before `fields` can narrow it; operations without a
    declared response refuse `fields`.
+   `providers:spec` emits shared, bounded response paths independently of
+   request-depth shrinking; rerun `providers:generate` afterward and measure
+   index and bundle growth without moving the pin. This metadata alone must
+   leave a step-1 provider's goldens byte-identical.
+9. Opt paged hatch reads into `hatch.pages` by indexed operation. Select a
+   declared adapter from `src/http/hatch-paging.ts`, or supply one with the
+   vendor's exact cursor parameter, location, decoder and continuation rule.
+   Preserve paging metadata through the result hook; adapters read safe data
+   before `fields` selection. The hatch returns bound `nextCursor` bytes in
+   `{ hasMore, nextCursor?, param, in }` and decodes them before dispatch.
+   Request only required protocol headers. Link adapters extract a cursor
+   from a confined URL without following it. Cover last pages, malformed
+   metadata, binding to the original call and credential echoes with fixture
+   vendors before switching a maintained provider's surface.
 
 ## Changing a provider that has not migrated (transitional)
 
