@@ -8,8 +8,8 @@ import { SLIDES_INDEX } from "./api.js";
 import { slides } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext } from "../../types.js";
+import { makeRegistry, silentLogger } from "../../../test/helpers.js";
+import type { AuthenticatedIdentity, Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -510,7 +510,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     ).rejects.toMatchObject({ code: "conflict" });
   });
 
-  it("INV-4: signed content cursors reject tampering and another connector before dispatch", async () => {
+  it("INV-4: signed content and list cursors reject tampering, another connector and another delegated caller before dispatch", async () => {
     route = () => ({
       body: {
         objectId: "p",
@@ -545,6 +545,60 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
       fields: ["elements.text", "page"],
     });
     expect(next.elements[0].text).toBeTruthy();
+
+    const delegated = connection({
+      subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@example.com`,
+    });
+    const registry = makeRegistry([delegated], { storage });
+    const asCaller = (id: string, tool: string, args: Record<string, unknown>) => {
+      const ctx = registry
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: {
+              actor: { kind: "test-users", namespace: "https://identity.test", id },
+              principal: { namespace: "https://identity.test", id },
+              subject: { namespace: "https://identity.test", id },
+              interactive: true,
+            },
+          },
+        })
+        .contextFor("decks", "https://connecta.example");
+      return delegated.callTool(tool, args, ctx) as Promise<any>;
+    };
+    for (const [tool, args, body] of [
+      [
+        "get_page",
+        { presentationId: "deck1", pageObjectId: "p" },
+        {
+          objectId: "p",
+          revisionId: "rev1",
+          pageElements: [{ objectId: "shape1", shape: { text: textContent("x".repeat(300000)) } }],
+        },
+      ],
+      [
+        "list_layouts",
+        { presentationId: "deck1", limit: 1 },
+        {
+          presentationId: "deck1",
+          revisionId: "rev1",
+          layouts: [{ objectId: "layout1" }, { objectId: "layout2" }],
+        },
+      ],
+      ["list_comments", { presentationId: "deck1", limit: 1 }, COMMENT_DECK],
+    ] as const) {
+      route = () => ({ body });
+      const issued = await asCaller("alice", tool, args);
+      expect(issued.page.hasMore, tool).toBe(true);
+      const cursor = issued.page.nextCursor;
+      const sends = { api: calls.length, tokens: tokenCalls };
+      await expect(asCaller("bob", tool, { ...args, cursor })).rejects.toMatchObject({ code: "invalid_args" });
+      expect({ api: calls.length, tokens: tokenCalls }, tool).toEqual(sends);
+      const continued = await asCaller("alice", tool, { ...args, cursor });
+      expect(continued, tool).toBeTruthy();
+      expect(calls.length, tool).toBe(sends.api + 1);
+    }
   });
 });
 
