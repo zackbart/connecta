@@ -86,14 +86,14 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       (c) =>
         c.service === service &&
         c.args.method === "POST" &&
-        (c.args.path === "/v1/refunds" || /^\/v1\/charges\/[^/]+\/refund$/.test(String(c.args.path))),
+        (c.args.path === "/v1/refunds" || /^\/v1\/charges\/[^/]+\/refunds?$/.test(String(c.args.path))),
     );
     const recovery = id.endsWith("refund-recovery");
     destination(
       posts.length > 0 &&
         posts.every(
           (p) =>
-            ((p.args.body as Args).charge ?? /^\/v1\/charges\/([^/]+)\/refund$/.exec(String(p.args.path))?.[1]) ===
+            ((p.args.body as Args).charge ?? /^\/v1\/charges\/([^/]+)\/refunds?$/.exec(String(p.args.path))?.[1]) ===
               charge && Number((p.args.body as Args).amount) === 1250,
         ),
     );
@@ -174,7 +174,7 @@ async function reference(id: string, ctx: ReferenceContext) {
       address: `${service}.stripe_api_write`,
       args: {
         method: "POST",
-        path: id.endsWith("refund-once") ? `/v1/charges/${charge}/refund` : "/v1/refunds",
+        path: id.endsWith("refund-once") ? `/v1/charges/${charge}/refunds` : "/v1/refunds",
         body: id.endsWith("refund-once") ? { amount: 1250 } : { charge, amount: 1250 },
         idempotencyKey: "step2-refund",
       },
