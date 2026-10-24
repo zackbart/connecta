@@ -1467,6 +1467,17 @@ describe("kit construction (decision 0010, B.4)", () => {
       await expect(
         apiConnector("acme", { tools: [enumerated] }).callTool("list_sizes", { limit: 3 }, context()),
       ).rejects.toMatchObject({ code: "invalid_args", message: "The limit must be one of 2, 5." });
+      const mixedError = validateToolInput(
+        {
+          ...enumerated.inputSchema,
+          required: ["other"],
+          properties: { ...(enumerated.inputSchema as any).properties, other: { type: "string" } },
+        },
+        { limit: 3 },
+        { address: "acme.list_sizes", failClosed: true },
+      );
+      expect(mixedError?.message).toContain("other");
+      expect(mixedError?.message).toContain("limit");
       expect(selected.outputSchema).toEqual(sparse);
       expect((rows.outputSchema as { properties: { items: { items: unknown } } }).properties.items.items).toEqual(
         sparse,
