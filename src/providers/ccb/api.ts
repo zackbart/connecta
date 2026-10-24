@@ -254,12 +254,16 @@ export const CCB_INDEX = new OperationIndex(
   {
     ...openapi,
     details: JSON.stringify(details),
+    // The public campus directory is church setup; retain both resource
+    // words so conversational searches distinguish it from campus subresources.
+    tags: [...openapi.tags, "church campuses"],
     ops: openapi.ops.map((row) => {
       const summary = summaries[`${row[0]} ${row[1]}`];
       const label = summary ? `${summary}; ${row[3]}` : row[3];
+      const tag = row[0] === "GET" && row[1] === "/campuses" ? openapi.tags.length : row[4];
       return row[5] === undefined
-        ? ([row[0], row[1], row[2], label, row[4]] as const)
-        : ([row[0], row[1], row[2], label, row[4], row[5]] as const);
+        ? ([row[0], row[1], row[2], label, tag] as const)
+        : ([row[0], row[1], row[2], label, tag, row[5]] as const);
     }),
   },
   { vendor: "ccb", title: "CCB" },

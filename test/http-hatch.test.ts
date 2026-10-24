@@ -216,9 +216,15 @@ it(
     const closed = setup({ writeEnabled: false });
     expect(closed.tools.map((tool) => tool.name)).not.toContain("items_api_write");
     const closedSearch = (await closed.call("search", { query: "create item", method: "POST" })) as {
-      operations: Array<{ tool?: string }>;
+      operations: Array<{ tool?: string; method: string; path: string }>;
     };
-    expect(closedSearch.operations.every((row) => row.tool === undefined)).toBe(true);
+    expect(closedSearch.operations).toContainEqual(expect.objectContaining({ method: "POST", path: "/items" }));
+    expect(
+      closedSearch.operations
+        .filter((row) => VERDICTS[`${row.method} ${row.path}` as keyof typeof VERDICTS] !== "read")
+        .every((row) => row.tool === undefined),
+    ).toBe(true);
+    expect(closedSearch.operations.every((row) => row.tool !== "items_api_write")).toBe(true);
     await expect(closed.call("write", { method: "POST", path: "/items", body: { name: "alice" } })).rejects.toThrow(
       /Unknown tool/,
     );

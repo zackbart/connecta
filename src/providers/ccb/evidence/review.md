@@ -56,7 +56,9 @@ vendor text, with explicit page/id/name fallbacks and a humanized contract
 label for missing descriptions. Authored synonyms augment the vendor's CRUD
 words. Read/write hatch notes carry resource and edit vocabulary for catalog searches.
 Regression assertions require natural profile-update, person-create,
-pastoral-note and campus queries to find the intended operation at rank 1/2.
+pastoral-note and campus queries to find the intended operation at rank 1/2. The campus directory carries
+CCB-local church/campus resource synonyms so the shared conversational ranking
+keeps the directory ahead of campus subresources for “church campuses.”
 
 The former 41-operation drift inventory described named calls, not the API.
 It now records all 385 index operations. Recording the verified public pin

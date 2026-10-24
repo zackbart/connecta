@@ -34,30 +34,30 @@
           },
           {
             "method": "GET",
+            "path": "/campuses/{id}/leadership_roles",
+            "operationId": "getLeadershipRoles",
+            "summary": "Get campus leadership roles",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/events/shared_campuses",
+            "operationId": "getSharedEvents",
+            "summary": "Get list of shared events, campuses, statuses",
+            "tool": "ccb_api_read"
+          },
+          {
+            "method": "GET",
             "path": "/events/{id}/shared_campuses",
             "operationId": "getEventSharedCampuses",
             "summary": "Get an events's shared campuses",
             "tool": "ccb_api_read"
-          },
-          {
-            "method": "POST",
-            "path": "/events/{id}/shared_campuses",
-            "operationId": "postEventSharedCampuses",
-            "summary": "Share an event with other campuses",
-            "tool": "ccb_api_write"
-          },
-          {
-            "method": "PUT",
-            "path": "/events/{id}/shared_campuses/{campus_id}",
-            "operationId": "putEventSharedCampus",
-            "summary": "Update shared event invite for campus",
-            "tool": "ccb_api_write"
           }
         ],
         "revision": "sha256:2f532bfdcd2c",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiZGQxZGQwMDY1NDAxM2FkZGQxMGNjZTEyZDZkMDk3MGQiLCJjIjoiNiIsIm0iOiItbWF0dF82dS1lV3l0SHIxS2JTSTFZMVJkSXFnMThCblhHQW1CYi1jcUpVIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiY2UzM2IwZGUwMzM2MTM0YmI0ZmE3Y2UwMGQzZTZkMmYiLCJjIjoiNiIsIm0iOiJYVnVHd1RmaXNsRkJOak9BMktPd3hKLW10d2thSVhhUkpsY1JhOXgwU0dzIn0"
         }
       }
     }

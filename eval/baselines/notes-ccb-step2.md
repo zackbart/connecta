@@ -289,3 +289,43 @@ CCB bundle is **389,282 B gzip**; the cited CI baseline remains 389,649 B.
 Other providers' 42 golden JSON files and five operation indexes remain
 byte-identical to `93ba5381` and merged main `ce0c7492`. Evidence uses the
 `r2-` prefix in the same scratch directory. No full local check was run.
+
+
+## Shared ranking and confirmation merge
+
+Main `09258a7f` (#996 search ranking and #998 shared wording) merges cleanly in
+`d7d96d4f`; its tree equals Git's automatic merge result, with no conflicts.
+`providers:generate` refreshes CCB's Conventions to say the host may ask the
+user to confirm `ccb_api_write`. The old mandatory-approval sentence is absent
+from shipped CCB source and golden files; historical model-transcript evidence
+above remains intact. No model trials are rerun or overwritten.
+
+Under the new ranking, “church campuses” initially placed the directory fifth.
+A CCB-local church/campus resource synonym restores it to first; all 15 natural
+operation-query rows again rank their expected operation first/two. Shared
+`hatch.ts` is unchanged after the main merge. The omission test now permits
+reviewed POST read results while asserting that writes have no call route when
+`writeEnabled` is false. CCB also joins the existing unreadable-write sweep
+rows: HTML and malformed JSON replies remain unknown outcomes, name the shared
+check-before-repeating guidance and prove exactly one HTTP send.
+
+All golden changes against `f2489b5f` are inventoried in the scratch artifact
+`shared-main-golden-audit.json`. Eight catalogs change confirmation prose
+(Breeze, CCB, Forms, Overflow, Planning Center, Sheets, Stripe and Tithe.ly);
+Forms' batch-write description changes too. Five calls files change offline
+discovery rankings/match metadata (CCB, Overflow, Planning Center, Stripe and
+Tithe.ly), including Planning Center's new discovery continuation and CCB's
+changed signed search cursor. Tool names, validation schemas, HTTP requests,
+resource-data results and every failure golden are unchanged. Other providers'
+bytes are retained exactly from main, including Overflow and Planning Center.
+
+Fresh merged-main verification passes **651 targeted cases in nine files**,
+including CCB, hatch and the **443-case failure sweep**. Deterministic Node
+goldens/harness pass **85**; workerd canonical goldens/native hatch pass **17**
+with two intentional Node-only skips. Static/generated freshness, strict
+385-endpoint CCB drift checking, build/declarations and every bundle cap pass.
+The fresh local Node 26.12.0/zlib-ng standalone CCB measurement is
+**391,017 B gzip**; the historical CI baseline stays 389,649 B. No caps or
+provider baselines change. The merge/follow-up adds or removes no test cases;
+the PR's overall delta remains **−8**. No full root check ran, and all Vitest
+commands used `VITEST_MAX_WORKERS=2`.
