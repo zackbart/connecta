@@ -83,6 +83,10 @@ export interface HatchBinding {
   readonly path?: (path: string) => string;
   /** Reviewed body framing before index validation, such as NDJSON arrays. */
   readonly prepareBody?: (body: unknown, operation: Operation) => unknown;
+  /** Exclude vendor-specific supplied values from discovery noun coverage. */
+  readonly searchNoun?: (term: string) => boolean;
+  /** Static operation refusal, also shown by search and details without request validation. */
+  readonly refusal?: (operation: Operation) => string | undefined;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -318,6 +322,15 @@ export function hatch(
     if (!known(key) || !tool.trim()) throw new Error(`Hatch named tool for ${key} needs an indexed operation.`);
   }
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
+  const refusalOf = (op: Operation) =>
+    connection.safety.refusal?.({ method: op.method, template: op.path }) ?? options.binding?.refusal?.(op);
+  const summaryOf = (op: Operation) => {
+    const reason =
+      verdictOf(op) === "refuse"
+        ? (refusalOf(op) ?? `Connecta refuses ${op.method} ${op.path}: it has no admitted hatch verdict.`)
+        : undefined;
+    return reason ? `Refused: ${reason}` : op.summary;
+  };
   const pages = new Map(
     Object.entries(options.pages ?? {}).map(([key, declared]) => {
       const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
@@ -509,6 +522,7 @@ export function hatch(
   let resourceTerms: Set<string> | undefined;
   const isNoun = (term: string) => {
     if (functionWords.has(term) || /^\d+$/.test(term)) return false;
+    if (options.binding?.searchNoun?.(term) === false) return false;
     if (term.length < 5 || !/\d/.test(term)) return true;
     resourceTerms ??= new Set(index.ops.flatMap((op) => queryWords(op.path.replace(/\{[^}]*\}/g, ""))));
     return resourceTerms.has(term);
@@ -529,11 +543,23 @@ export function hatch(
       const object = ["rename", "change", "set", "make"].includes(first)
         ? queryWords(query.split(/\bto\b/i)[0]!).filter((term) => !functionWords.has(term))
         : terms;
-      return { terms, nouns: object.slice(1).filter(isNoun), verbWords: verbs[first], intent: "write" as const };
+      const nouns = object.slice(1).filter(isNoun);
+      return {
+        terms,
+        nouns,
+        suppliedValue: object.length > 1 && !nouns.length,
+        verbWords:
+          (first === "make" && /^\s*make\s+(?:an?|new)\b/i.test(query)) ||
+          (first === "set" && /^\s*set\s+up\b/i.test(query))
+            ? verbs.create
+            : verbs[first],
+        intent: "write" as const,
+      };
     }
     const verb = lookup ?? (leadingVerb ? first : undefined);
     return {
       terms,
+      suppliedValue: false,
       nouns: terms.filter(
         (term, position) =>
           isNoun(term) &&
@@ -837,11 +863,16 @@ export function hatch(
           const query = queryTerms(args.query);
           const primary = rank(
             yield* checked(() =>
-              index.search(pathQuery ? args.query : query.terms.join(" "), {
-                ...scope,
-                limit: index.ops.length,
-                partial: !pathQuery && query.terms.length > 0,
-              }),
+              index.search(
+                pathQuery
+                  ? args.query
+                  : [...query.terms, ...(query.suppliedValue ? (query.verbWords ?? []) : [])].join(" "),
+                {
+                  ...scope,
+                  limit: index.ops.length,
+                  partial: !pathQuery && query.terms.length > 0,
+                },
+              ),
             ),
             query,
             pathQuery,
@@ -883,7 +914,7 @@ export function hatch(
                 method: op.method,
                 path: op.path,
                 operationId: label("operationId", op.operationId),
-                summary: label("summary", op.summary),
+                summary: label("summary", summaryOf(op)),
                 ...routed,
                 // A named tool's projection may omit the matched field, so a field match points at the hatch only.
                 ...(field
@@ -968,7 +999,7 @@ export function hatch(
         Effect.gen(function* () {
           const { op, contract } = yield* checked(() => {
             const op = index.operation(args.method, args.path) ?? index.resolve(args.method, args.path).op;
-            return { op, contract: index.contract(op, args.param) };
+            return { op, contract: { ...index.contract(op, args.param), summary: summaryOf(op) } };
           });
           const tail = { verdict: verdictOf(op), ...route(op), revision: index.revision };
           const whole = { ...contract, ...tail };
@@ -1153,7 +1184,8 @@ export function hatch(
         const verdict = verdictOf(op);
         if (verdict === "refuse") {
           invalid(
-            options.binding?.refuse?.(call()) ??
+            refusalOf(op) ??
+              options.binding?.refuse?.(call()) ??
               `Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`,
           );
         }

@@ -1251,11 +1251,14 @@ refuses a provider past step 1 that breaks the `drift.json` rules, or one past
 step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
 (operations from the kit's `ProviderKitFacts` and evidence digests), and a guide's `## Conventions`, rendered
 from the definition's declarations into `skill.generated.ts`.
-The generator derives paged tool names from authored fixtures' static output
-schemas: every tool declaring a top-level `page` is named in the paging
-convention, including `get_*`, hatch search and details. That convention tells
-agents to return `page.nextCursor` at the per-program call limit and continue
-in the next program. The Hatch line reports the explicit refusal count and
+The generator requires `fixtures.ts` to export `createAuthored()` with a
+nonempty offline `staticTools` catalog. Its input/output schemas derive one
+paging convention, including `get_*`, hatch search and details, excluding
+tools whose `page.hasMore` is always false. The convention distinguishes
+top-level `cursor` from `query[page.param]` or `body[page.param]` continuation
+and tells agents to return `page.nextCursor` before the call that would exceed
+the per-program call limit, then continue in the next program. The Hatch line
+reports a nonzero explicit refusal count with singular/plural wording and
 points to the actual prefixed details tool with method/path lookup; it never
 embeds the refusal table. Unreviewed operations remain refused.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
@@ -2141,14 +2144,26 @@ field-only matches need half-noun coverage across text and declared field
 names. Verb-less noun phrases retain their broader rule: any noun in the
 path/id, or all nouns in the text. A leading create/add/update/edit/make/set/apply/change/rename/send/delete/remove/cancel/stop
 with an object sets write intent and retains later read words as nouns. Make,
-set, apply, change, edit and rename share update synonyms. Otherwise, a read
+set, apply, change, edit and rename share update synonyms. Raw `make a`,
+`make an`, `make new` and `set up` phrases instead select create synonyms;
+`make text bold` retains update intent. Otherwise, a read
 word anywhere sets read intent, including after refund/charge/issue/process.
 Short function words and id-shaped tokens do not contribute to noun coverage.
+Sheets A1-style cell references also supply no resource noun. A write query
+whose supplied object contains no resource nouns includes its verb synonyms
+in candidate retrieval, so values do not restrict it to reads mentioning them.
+Verb-only queries and a rename destination without an object retain ordinary
+retrieval.
 Reviewed intent, the requested verb/synonym in summary/id/path, and resource
 focus sort first. A refused operation with a matching verb shares the intent
 tier only when its noun coverage exceeds every admitted operation matching that
-verb and intent. Its refusal summary remains visible without a read/write hatch
-pointer; a reviewed named alternative can still be shown.
+verb and intent. Search and details render the same reviewed reason used at
+call time in the refused operation's summary, without feeding that reason
+into ranking. Search caps long summaries and details pages their complete
+text. REST safety tables supply the reason through `restSafety`; reviewed
+bindings declare static operation refusals separately from argument validation.
+An unreviewed operation reports the missing hatch verdict. A refused hit has
+no read/write hatch pointer; a reviewed named alternative can still be shown.
 
 Verb-less noun phrases then sort by noun coverage, an exact summary phrase prefix,
 then path depth with a one-segment preference for authored tools, exact
@@ -2222,7 +2237,7 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-Separate-cursor paging also adds the hatch Paging line to generated
+Separate-cursor paging also contributes to the single Paging convention in generated
 Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
 into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
 the declaration retains the existing guide bytes. An unsafe continuation keeps

@@ -83,7 +83,11 @@ must never silently select an API credential.
 - A Node-only suite starts with `// Node-only: <reason>`. Tests and fixtures do
   not ship; generated skill strings do.
 - Every fixture exports `createAuthored()` returning a connector whose nonempty
-  catalog contains every Connecta-authored tool, offline. This is required
+  `staticTools` catalog contains every Connecta-authored tool, offline. The
+  generator imports `fixtures.ts` and calls `createAuthored().staticTools` to
+  derive paging names and continuation locations from input/output schemas.
+  Missing `createAuthored`, absent `staticTools`, or an empty catalog fails
+  generation before any output is written. This is required
   even without H-convention metadata. The S rules check it structurally on
   Node; workerd's native evidence is the provider's goldens and focused cases.
 - Characterization goldens live in `test/goldens/<name>/`, never in the
@@ -241,8 +245,11 @@ guide text. The guide leads with the routing fact, keeps its summary within
 120 bytes, and never restates a schema (H13).
 
 `providers:generate` appends `## Conventions` to `skill.generated.ts` from the
-definition: results (`fields`, `truncated`) for an `api` surface, paging from
-`kit.pageSize`, the hatch's tools, approval and refused operations from
+definition: results (`fields`, `truncated`) for an `api` surface; one paging
+convention from `createAuthored().staticTools` schemas and `kit.pageSize`
+defaults (exclude tools whose `page.hasMore` is always false, and distinguish
+top-level `cursor` from `query[page.param]` or `body[page.param]` continuation);
+the hatch's tools, approval and nonzero refusal count from
 `kit.hatch`, the write-once rule with the declared `idempotencyKey` (checked
 against the kit write builders at construction), and the Errors line from
 `VendorErrors.meanings` (the code an unknown id fails with, whether it proves

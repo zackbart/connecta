@@ -532,6 +532,7 @@ export function pcoBinding({
   return {
     review:
       "The ten reviewed JSON:API product pins each require their own X-PCO-API-Version header. Preserve scalar query values/repeated pairs, exact-URL exclusions and Connection.sendPath safety on every dispatch.",
+    refusal: (op) => PCO_REFUSALS[`${op.method} ${op.path}`],
     refuse: (call) => {
       const refusal = PCO_REFUSALS[`${call.op.method} ${call.op.path}`];
       if (refusal) return refusal;

@@ -912,8 +912,9 @@ because connecta enforces them above the sandbox:
 | Logs presented to the model                                                             | 4,000 characters                                                                                             |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
-If the program reaches its host-call limit, return `page.nextCursor` and continue
-in the next program with the same arguments and that cursor; don't restart.
+When approaching the program's host-call limit, return `page.nextCursor` before
+the call that would exceed it and continue in the next program with the same
+arguments and that cursor; don't restart.
 For example, return `{ nextCursor: result.page.nextCursor }` after reducing the
 current page, then pass that cursor to the tool in the next program.
 

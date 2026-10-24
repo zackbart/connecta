@@ -368,6 +368,13 @@ function pathProblem(path: string): string | undefined {
     ? "CCB paths must be canonical indexed API paths; OAuth and encoded or traversal paths are refused."
     : undefined;
 }
+function bodyRefusal(op: Parameters<typeof CCB_INDEX.bodyType>[0]): string | undefined {
+  const content = CCB_INDEX.bodyType(op);
+  return content && !/^application\/(?:[^/]+\+)?json$/.test(content)
+    ? `CCB's JSON hatch cannot send ${content} request bodies; use the vendor application for this operation.`
+    : undefined;
+}
+
 export const ccbBinding = ({
   connection,
   options,
@@ -377,6 +384,7 @@ export const ccbBinding = ({
 }): NonNullable<HatchDeclaration["binding"]> => ({
   review:
     "CCB v2 uses JSON bodies, repeated form-array query parameters and deep-object bracket keys on its fixed environment origin. The index, safety and OAuth grant own admission and dispatch.",
+  refusal: (op) => safety.refusal(op.method, op.path) ?? bodyRefusal(op),
   refuse: (call) => {
     const denied = safety.refusal(call.method, call.op.path);
     if (denied) return denied;
@@ -393,10 +401,7 @@ export const ccbBinding = ({
     const page = call.query["page"];
     if (page !== undefined && (!/^[1-9]\d*$/.test(String(page)) || !Number.isSafeInteger(Number(page))))
       return "CCB page must be a positive whole number.";
-    const content = CCB_INDEX.bodyType(call.op);
-    return content && !/^application\/(?:[^/]+\+)?json$/.test(content)
-      ? `CCB's JSON hatch cannot send ${content} request bodies; use the vendor application for this operation.`
-      : undefined;
+    return bodyRefusal(call.op);
   },
   send: (call, settings) =>
     connection.sendPath(

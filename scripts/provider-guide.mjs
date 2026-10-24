@@ -68,7 +68,9 @@ function hatchLine(name, hatch) {
       ? ` ${tool("write")} calls a reviewed write; the host may ask the user to confirm it.`
       : "") +
     " An operation without a reviewed verdict is refused." +
-    ` ${refused} operations are refused by design; use ${tool("details")} with the method and path to inspect an operation's contract and refusal.`
+    (refused
+      ? ` ${refused} ${refused === 1 ? "operation is" : "operations are"} refused by design; use ${tool("details")} with the method and path to inspect an operation's contract and refusal.`
+      : "")
   );
 }
 
@@ -105,38 +107,43 @@ export function renderConventions({ name, kind, kit, tools = [] }) {
   const api = [];
   const tail = [];
   {
-    const paged = tools
-      .filter((tool) => tool.outputSchema?.properties?.page)
-      .map((tool) => `\`${tool.name}\``)
-      .sort();
-    if (paged.length) {
-      api.push(
-        `- **Paging:** every tool whose output declares \`page\` is paged: ${paged.join(", ")}. ` +
-          "While `page.hasMore` is true, pass `page.nextCursor` back unchanged using the continuation argument its schema declares; keep the original arguments. " +
-          "The last page has no `nextCursor`. At execute_code's per-program call limit, return page.nextCursor and continue in the next program; don't restart.",
-      );
-    }
+    const paged = tools.filter((tool) => {
+      const page = tool.outputSchema?.properties?.page;
+      const hasMore = page?.properties?.hasMore;
+      return page && hasMore?.const !== false && !(hasMore?.enum?.length === 1 && hasMore.enum[0] === false);
+    });
+    const names = (selected) =>
+      selected
+        .map((tool) => `\`${tool.name}\``)
+        .sort()
+        .join(", ");
+    const cursors = paged.filter((tool) => tool.inputSchema?.properties?.cursor);
+    const parameters = paged.filter((tool) => !tool.inputSchema?.properties?.cursor);
     const pageSize = kit?.pageSize;
     if (pageSize !== undefined) {
       if (!Number.isSafeInteger(pageSize.default) || pageSize.default < 1 || !Number.isSafeInteger(pageSize.max)) {
         fail(name, "kit.pageSize needs a positive integer default and maximum");
       }
       if (pageSize.max < pageSize.default) fail(name, "kit.pageSize default exceeds its maximum");
-      api.push(
-        `- **Paging:** a paged \`list_*\` or \`search_*\` read takes \`limit\` (default ${pageSize.default}, at most ` +
-          `${pageSize.max}) and \`cursor\`. While \`page.hasMore\` is true, pass \`page.nextCursor\` back unchanged as \`cursor\`; ` +
-          "the last page has no `nextCursor`.",
-      );
     }
     const paging = kit?.hatch?.paging;
-    if (paging !== undefined) {
-      if (paging !== "argument" && paging !== "parameter") fail(name, "kit.hatch.paging is argument or parameter");
+    if (paging !== undefined && paging !== "argument" && paging !== "parameter")
+      fail(name, "kit.hatch.paging is argument or parameter");
+    if (paged.length) {
       api.push(
-        paging === "parameter"
-          ? "- **Paging:** on a paged hatch read, pass `page.nextCursor` unchanged in the parameter named by `page.param` at `page.in`; keep method, path, filters, page size, fields and headers unchanged. A last page has no cursor. If `page.hasMore` is true without a cursor, the data is incomplete and its continuation was withheld."
-          : "- **Paging:** on a paged hatch read, keep the original method, path, filters, limit and fields. " +
-              "Pass `page.nextCursor` unchanged as the top-level `cursor`; omit raw anchors on continuations. " +
-              "The last page has `page.hasMore: false` and no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation could not be confined.",
+        "- **Paging:** while `page.hasMore` is true, continue with `page.nextCursor` unchanged. " +
+          (cursors.length
+            ? `For ${names(cursors)}, pass it as the top-level \`cursor\`; omit raw paging anchors on continuations. `
+            : "") +
+          (parameters.length
+            ? `For ${names(parameters)}, put it in \`query[page.param]\` or \`body[page.param]\`, as \`page.in\` specifies. `
+            : "") +
+          "Keep the original method, path, filters, page size, fields and headers. " +
+          (pageSize
+            ? `Paged \`list_*\` and \`search_*\` reads take \`limit\` (default ${pageSize.default}, at most ${pageSize.max}). `
+            : "") +
+          "The last page has no `nextCursor`. If `page.hasMore` is true without a cursor, the data is incomplete and continuation was withheld. " +
+          "When approaching execute_code's per-program call limit, return page.nextCursor before the call that would exceed it and continue in the next program; don't restart.",
       );
     }
     api.push(

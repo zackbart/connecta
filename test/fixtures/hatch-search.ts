@@ -2,6 +2,19 @@
 // original rows retain or tighten their measured rank. Previously passing
 // rows from #996's independent and adversarial corpora join the same table.
 export const HATCH_SEARCH_QUERIES = [
+  // Articles/new and "set up" select creation; an unqualified "make" still updates.
+  ["cloudflare", "make a dns record", "POST", "/zones/{zone_id}/dns_records", 1],
+  ["vercel", "make a new project", "POST", "/v11/projects", 1],
+  ["stripe", "make a customer", "POST", "/v1/customers", 1],
+  ["vercel", "make a deployment", "POST", "/v13/deployments", 1],
+  ["sheets", "make a spreadsheet", "POST", "/spreadsheets", 1],
+  ["stripe", "make a payment", "POST", "/v1/payment_intents", 1],
+  ["stripe", "set up a subscription", "POST", "/v1/subscriptions", 1],
+  ["stripe", "make an invoice", "POST", "/v1/invoices", 1],
+  ["vercel", "make new project", "POST", "/v11/projects", 1],
+  ["stripe", "set up subscription", "POST", "/v1/subscriptions", 1],
+  ["docs", "make text bold", "POST", "/documents/{documentId}:batchUpdate", 1],
+  ["sheets", "set A1 to 5", "PUT", "/spreadsheets/{spreadsheetId}/values/{range}", 4],
   ["vercel","list deployments","GET","/v7/deployments",1],
   ["vercel","list projects","GET","/v10/projects",1],
   ["vercel","project env vars","GET","/v10/projects/{idOrName}/env",1],

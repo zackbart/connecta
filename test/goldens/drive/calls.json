@@ -1884,13 +1884,13 @@
             "method": "PATCH",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.update",
-            "summary": "Refused: Update edit modify revisions; only revision metadata reads are admitted."
+            "summary": "Refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
           },
           {
             "method": "DELETE",
             "path": "/files/{fileId}/revisions/{revisionId}",
             "operationId": "drive.revisions.delete",
-            "summary": "Refused: Delete remove revisions; only revision metadata reads are admitted."
+            "summary": "Refused: Revision mutations can remove retained content or change publication; only revision metadata reads are admitted."
           },
           {
             "method": "GET",

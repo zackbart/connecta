@@ -562,6 +562,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       "Repository-ID-bound App tokens and per-operation documented permissions; all unreviewed operations, raw search and merge refuse before authentication.",
     truncated: true,
     path: contentsPath,
+    refusal: (op) => hatchRefusal(`${op.method} ${op.path}`),
     refuse: (call) => {
       const key = `${call.method} ${call.op.path}`,
         refusal = hatchRefusal(key);

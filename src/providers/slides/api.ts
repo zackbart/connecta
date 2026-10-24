@@ -99,17 +99,22 @@ export const SLIDES_NAMED = {
   "POST /presentations/{presentationId}:batchUpdate": "batch_update_presentation",
 } as const satisfies HatchDeclaration["named"];
 
+const thumbnailRefusal = (op: { path: string }) =>
+  op.path.endsWith("/thumbnail")
+    ? "Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link."
+    : undefined;
+
 export function slidesBinding(connection: Connection): HatchBinding {
   return googleHatchBinding(connection, {
     index: SLIDES_INDEX,
     review:
       "Four reviewed Slides JSON routes; thumbnails mint a temporary capability and remain named-only. Batch requests retain the 49 shipped kinds and revision precondition. No new preview methods.",
+    refusal: thumbnailRefusal,
     refuse: (call) =>
-      call.op.path.endsWith("/thumbnail")
-        ? "Generic Slides thumbnail/preview links are refused; use get_slide_thumbnail for the reviewed short-lived link."
-        : call.op.path.endsWith(":batchUpdate")
-          ? googleBatchGuard(call.body, { kinds: REQUEST_KINDS, revision: true, max: 100 })
-          : undefined,
+      thumbnailRefusal(call.op) ??
+      (call.op.path.endsWith(":batchUpdate")
+        ? googleBatchGuard(call.body, { kinds: REQUEST_KINDS, revision: true, max: 100 })
+        : undefined),
     revisionGuarded: (call) => call.op.path.endsWith(":batchUpdate"),
     wrapSend: (call, send) =>
       send().pipe(

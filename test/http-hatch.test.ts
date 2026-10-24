@@ -176,6 +176,7 @@ function setup(
       title: "Items",
       operations: {
         "GET /items": { verdict: "safe", reason: "Only item metadata is returned.", keep: ["nextPageToken"] },
+        "GET /blocked": { verdict: "refuse", reason: "Item access is managed by the operator." },
       },
     },
     () => index,
@@ -271,6 +272,49 @@ it(
     const first = (await call("search", { query: "items", limit: 3 })) as { operations: Array<{ path: string }> };
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
     const fixtures = new Map(providerFixtures.map((fixture) => [fixture.name, fixture.create()]));
+    // Reviewed reasons are metadata: search/details and rejected calls agree without authentication or sends.
+    for (const [provider, method, path] of [
+      ["cloudflare", "POST", "/user/tokens"],
+      ["vercel", "GET", "/v1/env/{id}"],
+      ["stripe", "POST", "/v1/customer_sessions"],
+      ["ccb", "POST", "/oauth/token"],
+      ["ccb", "POST", "/files"],
+      ["planning-center", "POST", "/publishing/v2/episodes/{episode_id}/generate_download_url"],
+      ["github", "GET", "/search/issues"],
+      ["github", "POST", "/repos/{owner}/{repo}/branches/{branch}/rename"],
+      ["drive", "DELETE", "/files/{fileId}"],
+      ["gmail", "GET", "/settings/vacation"],
+      ["forms", "POST", "/forms/{formId}:setPublishSettings"],
+      ["slides", "GET", "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail"],
+    ]) {
+      const connector = fixtures.get(provider!)!;
+      const prefix = provider === "planning-center" ? "pco" : provider;
+      const detailsReply = (await connector.callTool(
+        `${prefix}_api_details`,
+        { method, path },
+        connectorContext(),
+      )) as any;
+      const details = (detailsReply.structuredContent ?? detailsReply) as { summary: string; verdict: string };
+      expect(details.verdict).toBe("refuse");
+      expect(details.summary).toMatch(/^Refused: /);
+      const searchReply = (await connector.callTool(
+        `${prefix}_api_search`,
+        { query: path!.replace(/\{[^}]*\}/g, "fixture"), method, limit: 8 },
+        connectorContext(),
+      )) as any;
+      const search = (searchReply.structuredContent ?? searchReply) as {
+        operations: Array<{ method: string; path: string; summary: string; tool?: string }>;
+      };
+      const hit = search.operations.find((op) => op.method === method && op.path === path)!;
+      expect(hit, `${provider}: ${method} ${path}`).toBeDefined();
+      expect(hit.summary).toBe(details.summary);
+      expect(hit.tool).toBeUndefined();
+      const args = { path: path!.replace(/\{[^}]*\}/g, "fixture"), ...(method !== "GET" ? { method } : {}) };
+      await expect(
+        connector.callTool(`${prefix}_api_${method === "GET" ? "read" : "write"}`, args, connectorContext()),
+      ).rejects.toThrow(details.summary.slice("Refused: ".length));
+    }
+    expect(sent).toEqual([]);
     for (const [provider, query, method, path, maxRank] of HATCH_SEARCH_QUERIES) {
       const connector = fixtures.get(provider)!;
       const prefix = provider === "planning-center" ? "pco" : provider;
@@ -306,6 +350,8 @@ it(
       expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
     }
     for (const [provider, query] of [
+      ["planning-center", "rename to bob"],
+      ["github", "make"],
       ["planning-center", "Show All"],
       ["planning-center", "please show all"],
       ["planning-center", "delete dns record"],
@@ -492,6 +538,12 @@ it(
     ]) {
       const details = (await call("details", { method, path })) as Record<string, unknown>;
       expect(details).toMatchObject({ method, path, verdict, revision: "r1" });
+      if (path === "/blocked") {
+        expect(details["summary"]).toBe(
+          "Refused: Connecta refuses GET /blocked. Item access is managed by the operator.",
+        );
+        expect(rows.find((row) => row["path"] === path)?.["summary"]).toBe(details["summary"]);
+      }
       expect(details["tool"]).toBe(tool);
       expect(rows.find((row) => row["method"] === method && row["path"] === path)?.["tool"]).toBe(tool);
     }
@@ -857,7 +909,10 @@ it(
       ) as Promise<Record<string, any>>;
     const framedPages = await walk(framedCall, { method: "POST", path: "/framed" });
     expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
-    expect(framedPages.contract).toEqual(original(framed));
+    expect(framedPages.contract).toEqual({
+      ...original(framed),
+      summary: "Refused: Connecta refuses POST /framed: it has no admitted hatch verdict.",
+    });
     // Search trims whole entries to its exact byte budget, page and cursor included, and continues by cursor.
     const long = new OperationIndex(
       {
@@ -905,7 +960,10 @@ it(
       { method: "GET", path: "/things" },
     );
     expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
-    expect(labels.contract).toEqual(original(label));
+    expect(labels.contract).toEqual({
+      ...original(label),
+      summary: "Refused: Connecta refuses GET /things: it has no admitted hatch verdict.",
+    });
     expect(sendPath).not.toHaveBeenCalled();
     expect(authenticate).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
