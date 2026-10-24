@@ -1099,6 +1099,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   const googleData = pageData("pageToken");
   const googleDetails = JSON.parse(googleData.details);
   googleDetails.o[0][0].push(["fields", "query", 0, { t: "string" }]);
+  googleDetails.o[5] = JSON.parse(DATA.details).o[5];
   const google = setup({
     pathMatching: "uri-template",
     data: { ...googleData, details: JSON.stringify(googleDetails) },
@@ -1110,7 +1111,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   const googleTools = hatch({
     name: "google",
     index: google.index,
-    verdicts: { "GET /items": "read" },
+    verdicts: { "GET /items": "read", "POST /items": "write" },
     pages: { "GET /items": googlePageToken },
     pageCursor: "argument",
     binding: googleHatchBinding(google.connection, {
@@ -1123,13 +1124,13 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
         return Effect.gen(function* () {
           const answer = yield* send();
           if (repeatWrappedSend) yield* send();
-          return answer;
+          return { ...answer, warnings: ["The secondary save was not confirmed."] };
         });
       },
     }),
     connection: google.connection,
   });
-  const googleConnector = apiConnector("google", { tools: googleTools });
+  const googleConnector = tracksEveryRequest(apiConnector("google", { tools: googleTools }));
   const googleCall = (args: Record<string, unknown>) =>
     googleConnector.callTool("google_api_read", args, connectorContext(storage));
   // An indexed operation without an admission verdict never reaches a send wrapper.
@@ -1141,6 +1142,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   response = () => Response.json({ data: [], nextPageToken: "next-token" });
   const firstGoogle = (await googleCall({ path: "/items", query: { fields: "data(id)" }, fields: ["data"] })) as any;
   expect(firstGoogle).toMatchObject({ data: { data: [] }, page: { hasMore: true, param: "pageToken", in: "query" } });
+  expect(firstGoogle.warnings).toEqual(["The secondary save was not confirmed."]);
   expect(new URL(sent.at(-1)!.url).pathname).toBe("/v1/items");
   expect(new URL(sent.at(-1)!.url).searchParams.get("fields")).toBe("data(id),nextPageToken");
   response = () => Response.json({ data: [] });
@@ -1156,7 +1158,13 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   expect(wrappedRequests).toEqual(["/items", "/items"]);
   repeatWrappedSend = true;
   const beforeRepeat = sent.length;
-  await expect(googleCall({ path: "/items" })).rejects.toMatchObject({ code: "invalid_args" });
+  await expect(
+    googleConnector.callTool(
+      "google_api_write",
+      { method: "POST", path: "/items", body: { name: "alice" } },
+      connectorContext(storage),
+    ),
+  ).rejects.toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
   expect(sent).toHaveLength(beforeRepeat + 1);
   repeatWrappedSend = false;
   for (const args of [
@@ -1440,23 +1448,29 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       }
     }
   }
-  // Size-cut metadata is opt-in, for both result and catalog compatibility.
+  // Size-cut metadata and warnings are opt-in, for both result and catalog compatibility.
   for (const enabled of [false, true]) {
     const bound = setup({
       binding: {
         review: "Fixture supplies reviewed size-cut paths after safe content framing.",
-        ...(enabled ? { truncated: true as const } : {}),
-        send: () => Effect.succeed({ status: 200, data: { id: "safe" }, truncated: ["data.id"] }),
+        ...(enabled ? { truncated: true as const, warnings: true as const } : {}),
+        send: () =>
+          Effect.succeed({
+            status: 200,
+            data: { id: "safe", label: "unused" },
+            truncated: ["data.id"],
+            warnings: ["A secondary save is unconfirmed."],
+          }),
       },
     });
     for (const [kind, args] of [
       ["read", { path: "/items" }],
       ["write", { method: "POST", path: "/items", body: { name: "alice" } }],
     ] as const) {
-      expect(await bound.call(kind, args)).toEqual({
+      expect(await bound.call(kind, { ...args, fields: ["id"] })).toEqual({
         status: 200,
         data: { id: "safe" },
-        ...(enabled ? { truncated: ["data.id"] } : {}),
+        ...(enabled ? { truncated: ["data.id"], warnings: ["A secondary save is unconfirmed."] } : {}),
       });
     }
   }

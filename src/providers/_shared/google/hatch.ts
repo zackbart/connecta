@@ -1,7 +1,6 @@
 // Opt-in plumbing only. Product PRs supply their reviewed literal verdicts.
 import { Effect } from "effect";
 import { ConnectorCallError } from "../../../errors.js";
-import { Refusal } from "../../../http/errors.js";
 import type { HatchBinding } from "../../../http/hatch.js";
 import type { Connection } from "../../../http/vendor.js";
 import type { RestCall } from "../rest/tools.js";
@@ -69,6 +68,7 @@ export function googleHatchBinding(
   requireGoogleIndex(options.index);
   return {
     index: options.index,
+    ...(options.wrapSend ? { warnings: true as const } : {}),
     review: options.review,
     refuse: (call) => {
       for (const match of call.path.matchAll(/%([a-f0-9]{2})/gi))
@@ -115,15 +115,7 @@ export function googleHatchBinding(
         let sent = false;
         const send = () =>
           Effect.suspend(() => {
-            if (sent)
-              return Effect.fail(
-                new Refusal({
-                  error: new ConnectorCallError(
-                    "invalid_args",
-                    "A Google hatch wrapper may send its admitted request only once.",
-                  ),
-                }),
-              );
+            if (sent) return Effect.die(new Error("A Google hatch wrapper may send its admitted request only once."));
             sent = true;
             return connection.sendPath(request, optionsForSend);
           });

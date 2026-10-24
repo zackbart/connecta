@@ -2219,7 +2219,9 @@ A binding may opt into `truncated: true` to supply reviewed size-cut paths
 (such as `data.content`) in its answer. The hatch then declares and propagates
 an optional top-level `truncated: string[]` on reads and writes. Without the
 opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
-from vendor booleans or added to other providers.
+from vendor booleans or added to other providers. A separate `warnings: true`
+opt-in declares and preserves reviewed `warnings: string[]` beside `data`, even
+when `fields` narrows the vendor body.
 
 A binding may expand deployment-owned path defaults (Cloudflare) or canonicalize
 repository contents paths (GitHub) before indexed resolution, and may prepare a
@@ -2394,7 +2396,10 @@ delegated grant, safety and field-selection pipeline. Its optional `wrapSend`
 receives a detached copy of the admitted request (including its body) and a
 zero-argument inner send. The binding retains its original `send` function;
 wrappers run only after hatch admission and can dispatch the captured request
-at most once. Mutating the inspection copy cannot change its path, body,
+at most once. A second send is an internal defect; after a write dispatch its
+outcome remains unknown. Opting into this wrapper also enables envelope-level
+warnings, so request-dependent save advice survives field selection without
+changing vendor data. Mutating the inspection copy cannot change its path, body,
 query, revision flag or safety policy. Products use this seam for response
 semantics that depend on the request, such as independent comment saves.
 The `googlePageToken`
