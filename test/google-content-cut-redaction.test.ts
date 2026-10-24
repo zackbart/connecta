@@ -365,7 +365,7 @@ describe("Forms", () => {
       );
       const connector = forms("forms", await workspaceOptions());
       const result = await read(connector.callTool("list_responses", { formId: "form1" }, caller()));
-      expectNoFragment(result.responses[0].answers[0].values[0], echo);
+      expectNoFragment(result.items[0].answers[0].values[0], echo);
     },
   );
 });
