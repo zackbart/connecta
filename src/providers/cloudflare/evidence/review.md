@@ -76,3 +76,12 @@ GraphQL retains its query-only AST and pin checks; verification retains user-tok
 account-token and Global API Key diagnosis. Uploads retain their distinct byte/
 multipart safety boundary. The seven frozen evals exercise the lists and GraphQL;
 verification and uploads are workflow/safety choices, not measured eval wins.
+
+Automatic hatch paging is limited to a pinned `result_info` envelope with one
+unambiguous continuation parameter. APIs declaring both page and cursor, or
+omitting the response envelope contract (for example Cloudforce One's
+`pagination.cursor`), retain their raw vendor query protocol. They are not
+claimed as signed adapter continuations: guessing a metadata location would
+block a valid cursor without supplying a replacement. DNS, account/zone, KV and
+R2 reads with the documented envelope remain eligible. This eligibility audit
+changes no evaluated task route or result.

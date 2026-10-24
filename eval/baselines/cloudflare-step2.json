@@ -1,0 +1,1341 @@
+{
+  "kind": "cloudflare-step2-eval-summary",
+  "note": "Final paired arms are before and after-final. Interrupted after diagnostics are separate. Prompts, fake replies and graders are unchanged; reference KV limit and semantically equivalent lint/unused-export cleanup are disclosed in the notes.",
+  "runs": [
+    {
+      "arm": "before",
+      "runner": "codex",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/before-codex.json",
+      "sha256": "07126e7680b576b1cd8284c4fe9849ef7557bf508e36a0dcd303e767ac7117cd",
+      "meta": {
+        "createdAt": "2026-10-24T08:24:50.091Z",
+        "git": {
+          "commit": "7da1521d0cc1",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "6f89c309a135",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "0dba149b9efc79f3d2a4a5dca8e928b391e9b13fc5254cd2cda39f0bc1817340",
+        "harnessHash": "310940b56cc7f753c68f14a55fd086747a4a7921272e3df52cdb9ee14b034829"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "codex-cli 0.163.0",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 2
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-paging": {
+          "fail": 1,
+          "pass": 1
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 1,
+          "fail": 1
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 2
+        },
+        "cloudflare-step2-purge-once": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-recovery": {
+          "pass": 2
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 12,
+        "cloudflare_prod.cloudflare_api_search": 15,
+        "cloudflare_prod.cloudflare_api_read": 31,
+        "cloudflare_prod.list_accounts": 4,
+        "cloudflare_prod.cloudflare_api_details": 11,
+        "cloudflare_prod.graphql_query": 2,
+        "cloudflare_prod.cloudflare_api_write": 4
+      },
+      "totals": {
+        "pass": 12,
+        "fail": 2
+      },
+      "meanMcpCalls": 6.5,
+      "meanDiscoveryBytes": 21748.785714285714,
+      "maxDiscoveryBytes": 45877,
+      "hatchSearchMaxBytes": 3305,
+      "hatchDetailsMaxBytes": 7461,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13689,
+          "hatchSearchMaxBytes": 412,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 24577,
+          "hatchSearchMaxBytes": 412,
+          "hatchDetailsMaxBytes": 3431,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "fail",
+          "failed": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 7,
+          "discoveryBytes": 17145,
+          "hatchSearchMaxBytes": 412,
+          "hatchDetailsMaxBytes": 3431,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 9,
+          "discoveryBytes": 45877,
+          "hatchSearchMaxBytes": 1794,
+          "hatchDetailsMaxBytes": 622,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13590,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 13,
+          "discoveryBytes": 27417,
+          "hatchSearchMaxBytes": 1557,
+          "hatchDetailsMaxBytes": 867,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 23721,
+          "hatchSearchMaxBytes": 3305,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 15970,
+          "hatchSearchMaxBytes": 1337,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 20912,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 7,
+          "discoveryBytes": 8162,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 2,
+          "status": "fail",
+          "failed": [
+            "correct-destination",
+            "answer-evidence"
+          ],
+          "mcpCalls": 10,
+          "discoveryBytes": 19457,
+          "hatchSearchMaxBytes": 447,
+          "hatchDetailsMaxBytes": 636,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13590,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 27302,
+          "hatchSearchMaxBytes": 1046,
+          "hatchDetailsMaxBytes": 867,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 33074,
+          "hatchSearchMaxBytes": 1337,
+          "hatchDetailsMaxBytes": 7461,
+          "writes": 1,
+          "duplicateWrites": 0
+        }
+      ]
+    },
+    {
+      "arm": "before",
+      "runner": "claude",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/before-claude.json",
+      "sha256": "2eb1710ca2507316f79c9127829aa80daceba8ff9442f84f4c177f9529cfc9ec",
+      "meta": {
+        "createdAt": "2026-10-24T08:24:51.174Z",
+        "git": {
+          "commit": "7da1521d0cc1",
+          "branch": "HEAD",
+          "dirty": false,
+          "srcTree": "6f89c309a135",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "0dba149b9efc79f3d2a4a5dca8e928b391e9b13fc5254cd2cda39f0bc1817340",
+        "harnessHash": "310940b56cc7f753c68f14a55fd086747a4a7921272e3df52cdb9ee14b034829"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "2.1.309 (Claude Code)",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 2
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-paging": {
+          "pass": 2
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 2
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 2
+        },
+        "cloudflare-step2-purge-once": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-recovery": {
+          "pass": 2
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 15,
+        "cloudflare_prod.cloudflare_api_read": 26,
+        "cloudflare_prod.list_accounts": 2,
+        "cloudflare_prod.graphql_query": 2,
+        "cloudflare_prod.cloudflare_api_write": 4
+      },
+      "totals": {
+        "pass": 14
+      },
+      "meanMcpCalls": 3.9285714285714284,
+      "meanDiscoveryBytes": 9415.142857142857,
+      "maxDiscoveryBytes": 13765,
+      "hatchSearchMaxBytes": 0,
+      "hatchDetailsMaxBytes": 0,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 13765,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 10923,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 8927,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "runner": "codex",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/after-codex.json",
+      "sha256": "4fbdbb6ccabb24fa30c18f6f1487035d0435e4890204a619fc32b76f1a3f973f",
+      "meta": {
+        "createdAt": "2026-10-24T08:39:36.362Z",
+        "git": {
+          "commit": "51c37e8d0cde",
+          "branch": "t3/cloudflare-step2",
+          "dirty": false,
+          "srcTree": "ffacbf813333",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "be9b2c311f9b41d142394dc5a5ef11b1f0168722db39c64b8f3998ca08655539",
+        "harnessHash": "348e4337dcd519e78e3ec008415b8d797014047dd774e13abc0dc1f8b7577890"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "codex-cli 0.163.0",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 1
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 1
+        },
+        "cloudflare-step2-dns-paging": {
+          "pass": 1
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 1
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 1
+        },
+        "cloudflare-step2-purge-once": {
+          "error": 1
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 4,
+        "cloudflare_prod.cloudflare_api_search": 2,
+        "cloudflare_prod.cloudflare_api_read": 17,
+        "cloudflare_prod.list_accounts": 2,
+        "cloudflare_prod.cloudflare_api_details": 1,
+        "cloudflare_prod.graphql_query": 2
+      },
+      "totals": {
+        "pass": 5,
+        "error": 1
+      },
+      "meanMcpCalls": 4.333333333333333,
+      "meanDiscoveryBytes": 17317.5,
+      "maxDiscoveryBytes": 28561,
+      "hatchSearchMaxBytes": 1891,
+      "hatchDetailsMaxBytes": 716,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 28561,
+          "hatchSearchMaxBytes": 1718,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 16461,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 16525,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 26918,
+          "hatchSearchMaxBytes": 1891,
+          "hatchDetailsMaxBytes": 716,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 15440,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "error",
+          "failed": [],
+          "mcpCalls": 0,
+          "discoveryBytes": 0,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        }
+      ]
+    },
+    {
+      "arm": "after",
+      "runner": "claude",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/after-claude.json",
+      "sha256": "423e4eb37032d68581363aaba0bdf12ecc80a2187721b8d0e37e0e22f099c1c1",
+      "meta": {
+        "createdAt": "2026-10-24T08:39:37.414Z",
+        "git": {
+          "commit": "51c37e8d0cde",
+          "branch": "t3/cloudflare-step2",
+          "dirty": false,
+          "srcTree": "ffacbf813333",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "be9b2c311f9b41d142394dc5a5ef11b1f0168722db39c64b8f3998ca08655539",
+        "harnessHash": "348e4337dcd519e78e3ec008415b8d797014047dd774e13abc0dc1f8b7577890"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "2.1.309 (Claude Code)",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 1
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 1
+        },
+        "cloudflare-step2-dns-paging": {
+          "pass": 1
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 1
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 1
+        },
+        "cloudflare-step2-purge-once": {
+          "error": 1
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 4,
+        "cloudflare_prod.cloudflare_api_read": 18,
+        "cloudflare_prod.list_accounts": 1,
+        "cloudflare_prod.graphql_query": 1
+      },
+      "totals": {
+        "pass": 5,
+        "error": 1
+      },
+      "meanMcpCalls": 4.166666666666667,
+      "meanDiscoveryBytes": 11765.666666666666,
+      "maxDiscoveryBytes": 16469,
+      "hatchSearchMaxBytes": 0,
+      "hatchDetailsMaxBytes": 0,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13775,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 7,
+          "discoveryBytes": 16469,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13775,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 12794,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 13781,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "error",
+          "failed": [],
+          "mcpCalls": 0,
+          "discoveryBytes": 0,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        }
+      ]
+    },
+    {
+      "arm": "after-final",
+      "runner": "codex",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/after-final-codex.json",
+      "sha256": "79e2c3411562bf4d3e1683dfebc6a558bc48cfe849bfa68a3069c3ec7c6db77f",
+      "meta": {
+        "createdAt": "2026-10-24T08:42:31.668Z",
+        "git": {
+          "commit": "b0da43bfa230",
+          "branch": "t3/cloudflare-step2",
+          "dirty": false,
+          "srcTree": "32fa267a03ab",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "be9b2c311f9b41d142394dc5a5ef11b1f0168722db39c64b8f3998ca08655539",
+        "harnessHash": "348e4337dcd519e78e3ec008415b8d797014047dd774e13abc0dc1f8b7577890"
+      },
+      "config": {
+        "runner": "codex",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "gpt-6-luna"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "codex-cli 0.163.0",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 2
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-paging": {
+          "pass": 2
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 2
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 2
+        },
+        "cloudflare-step2-purge-once": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-recovery": {
+          "pass": 2
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 14,
+        "cloudflare_prod.cloudflare_api_read": 29,
+        "cloudflare_prod.list_accounts": 3,
+        "cloudflare_prod.cloudflare_api_search": 15,
+        "cloudflare_prod.cloudflare_api_details": 8,
+        "cloudflare_prod.graphql_query": 3,
+        "cloudflare_prod.cloudflare_api_write": 4
+      },
+      "totals": {
+        "pass": 14
+      },
+      "meanMcpCalls": 6.285714285714286,
+      "meanDiscoveryBytes": 38163.42857142857,
+      "maxDiscoveryBytes": 86492,
+      "hatchSearchMaxBytes": 1927,
+      "hatchDetailsMaxBytes": 3490,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13628,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 16323,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 9,
+          "discoveryBytes": 86492,
+          "hatchSearchMaxBytes": 1490,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 74177,
+          "hatchSearchMaxBytes": 1891,
+          "hatchDetailsMaxBytes": 716,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 25539,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 60718,
+          "hatchSearchMaxBytes": 1821,
+          "hatchDetailsMaxBytes": 1419,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 9,
+          "discoveryBytes": 33070,
+          "hatchSearchMaxBytes": 1507,
+          "hatchDetailsMaxBytes": 3490,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 28327,
+          "hatchSearchMaxBytes": 1490,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 27959,
+          "hatchSearchMaxBytes": 1718,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 11397,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 7,
+          "discoveryBytes": 57128,
+          "hatchSearchMaxBytes": 1927,
+          "hatchDetailsMaxBytes": 716,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 15099,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 60448,
+          "hatchSearchMaxBytes": 778,
+          "hatchDetailsMaxBytes": 1419,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 13,
+          "discoveryBytes": 23983,
+          "hatchSearchMaxBytes": 1429,
+          "hatchDetailsMaxBytes": 3490,
+          "writes": 1,
+          "duplicateWrites": 0
+        }
+      ]
+    },
+    {
+      "arm": "after-final",
+      "runner": "claude",
+      "artifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/after-final-claude.json",
+      "sha256": "34b60746ca0b0928d658811c01f0b6f4198c5805bdc0250b791aea8457b80566",
+      "meta": {
+        "createdAt": "2026-10-24T08:42:32.927Z",
+        "git": {
+          "commit": "b0da43bfa230",
+          "branch": "t3/cloudflare-step2",
+          "dirty": false,
+          "srcTree": "32fa267a03ab",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "be9b2c311f9b41d142394dc5a5ef11b1f0168722db39c64b8f3998ca08655539",
+        "harnessHash": "348e4337dcd519e78e3ec008415b8d797014047dd774e13abc0dc1f8b7577890"
+      },
+      "config": {
+        "runner": "claude",
+        "surface": "six",
+        "grading": "route",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "repeats": 2,
+        "tasks": [
+          "cloudflare-step2-filtered-dns",
+          "cloudflare-step2-account-zone-join",
+          "cloudflare-step2-dns-paging",
+          "cloudflare-step2-kv-hatch",
+          "cloudflare-step2-analytics",
+          "cloudflare-step2-purge-once",
+          "cloudflare-step2-dns-recovery"
+        ],
+        "concurrency": 1,
+        "timeoutMs": 480000
+      },
+      "cli": "2.1.309 (Claude Code)",
+      "tasks": {
+        "cloudflare-step2-filtered-dns": {
+          "pass": 2
+        },
+        "cloudflare-step2-account-zone-join": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-paging": {
+          "pass": 2
+        },
+        "cloudflare-step2-kv-hatch": {
+          "pass": 2
+        },
+        "cloudflare-step2-analytics": {
+          "pass": 2
+        },
+        "cloudflare-step2-purge-once": {
+          "pass": 2
+        },
+        "cloudflare-step2-dns-recovery": {
+          "pass": 2
+        }
+      },
+      "toolUses": {
+        "cloudflare_prod.list_zones": 13,
+        "cloudflare_prod.cloudflare_api_read": 34,
+        "cloudflare_prod.list_accounts": 3,
+        "cloudflare_prod.graphql_query": 2,
+        "cloudflare_prod.cloudflare_api_write": 4
+      },
+      "totals": {
+        "pass": 14
+      },
+      "meanMcpCalls": 4.857142857142857,
+      "meanDiscoveryBytes": 13701.42857142857,
+      "maxDiscoveryBytes": 16469,
+      "hatchSearchMaxBytes": 0,
+      "hatchDetailsMaxBytes": 0,
+      "trials": [
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 13776,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 13776,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13776,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 5,
+          "discoveryBytes": 12795,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 13781,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 15066,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 12841,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-filtered-dns",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 13776,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-account-zone-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 7,
+          "discoveryBytes": 16469,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 3,
+          "discoveryBytes": 13775,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-kv-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 8,
+          "discoveryBytes": 10294,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-analytics",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 13781,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-purge-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 4,
+          "discoveryBytes": 15073,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "cloudflare-step2-dns-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "mcpCalls": 6,
+          "discoveryBytes": 12841,
+          "hatchSearchMaxBytes": 0,
+          "hatchDetailsMaxBytes": 0,
+          "writes": 1,
+          "duplicateWrites": 0
+        }
+      ]
+    }
+  ]
+}

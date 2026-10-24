@@ -21,6 +21,8 @@
         "properties": {
           "name": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
             "description": "Exact account name."
           },
           "limit": {
@@ -108,6 +110,8 @@
         "properties": {
           "name": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 253,
             "description": "Exact domain name, e.g. example.com."
           },
           "status": {
@@ -121,6 +125,8 @@
           },
           "accountId": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
             "description": "Only zones in this account."
           },
           "limit": {

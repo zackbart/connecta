@@ -367,6 +367,8 @@ Approval classifications do not change: hatch writes and uploads are destructive
 - Hatch `page.next` becomes signed `page.nextCursor`. Put it unchanged into
   `page.param` at `page.in`; do not send raw vendor page numbers or tokens.
   Preserve the path, filters, page size, selected fields and R2 headers.
+  Automatic adapters require an unambiguous pinned `result_info` contract;
+  mixed page/cursor or undeclared envelopes retain their vendor query protocol.
 - Operation search defaults to six hits, with maximum eight (previously ten
   and fifty). Search and details expose signed continuation and `truncated`
   paths for labels cut for size; larger details remain recoverable in pages

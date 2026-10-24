@@ -1,5 +1,6 @@
 // Curated, projected tools; the standard hatch covers the pinned REST API.
 import { Effect, Schema } from "effect";
+import { ConnectorCallError } from "../../errors.js";
 import { list, read, write } from "../../http/tools.js";
 import type { Connection } from "../../http/vendor.js";
 import { RequestSecrets } from "../../http/services.js";
@@ -24,6 +25,7 @@ import {
 import { settings } from "./api.js";
 import type { CloudflareOptions } from "./index.js";
 import { cloudflarePage } from "../../http/hatch-paging.js";
+import { isMinChars, isMaxChars } from "../../http/json-schema.js";
 type JsonRecord = Record<string, unknown>;
 function closed(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
@@ -301,14 +303,18 @@ export function cloudflareTools({
       const zone = noun === "zones";
       const filters = {
         name: Schema.optionalKey(
-          Schema.String.annotate({
+          Schema.String.check(isMinChars(1), isMaxChars(zone ? 253 : 200)).annotate({
             description: zone ? "Exact domain name, e.g. example.com." : "Exact account name.",
           }),
         ),
         ...(zone
           ? {
               status: Schema.optionalKey(Schema.Literals(["initializing", "pending", "active", "moved"])),
-              accountId: Schema.optionalKey(Schema.String.annotate({ description: "Only zones in this account." })),
+              accountId: Schema.optionalKey(
+                Schema.String.check(isMinChars(1), isMaxChars(64)).annotate({
+                  description: "Only zones in this account.",
+                }),
+              ),
             }
           : {}),
       };
@@ -357,11 +363,23 @@ export function cloudflareTools({
               info = record(body["result_info"]);
             const rows = body["result"];
             if (!Array.isArray(rows))
-              yield* checked(() => invalid("Cloudflare returned a list without a result array."));
+              yield* checked(() => {
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  "Cloudflare returned a list without a result array.",
+                  { retryable: false },
+                );
+              });
             const next = yield* checked(() => cloudflarePage.next(body, { path: `/${noun}`, query, headers: {} }));
             const total = pin ? undefined : info["total_count"];
             if (total !== undefined && (!Number.isSafeInteger(total) || (total as number) < 0))
-              yield* checked(() => invalid("Cloudflare returned an invalid exact list total."));
+              yield* checked(() => {
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  "Cloudflare returned an invalid exact list total.",
+                  { retryable: false },
+                );
+              });
             return {
               rows: (rows as unknown[]).map((item) =>
                 zone

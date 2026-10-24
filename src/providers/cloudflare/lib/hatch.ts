@@ -46,6 +46,12 @@ export const CLOUDFLARE_PAGES = Object.fromEntries(
     if (CLOUDFLARE_VERDICTS[`${op.method} ${op.path}`] !== "read") return [];
     const params = cloudflareIndex.contract(op).parameters.filter((p) => p.in === "query");
     const token = params.find((p) => p.name === "cursor" || p.name === "after");
+    // Only bind a continuation whose response envelope and query location are
+    // established by the pin. Mixed page/cursor APIs can use nonstandard
+    // pagination envelopes; retain their vendor query protocol until reviewed.
+    if (!cloudflareIndex.responseRoots(op)?.has("result_info") || (token && params.some((p) => p.name === "page")))
+      return [];
+
     const adapter = token ? tokenPage(token.name) : params.some((p) => p.name === "page") ? cloudflarePage : undefined;
     return adapter ? [[`${op.method} ${op.path}`, adapter]] : [];
   }),

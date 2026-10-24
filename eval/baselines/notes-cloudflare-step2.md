@@ -19,8 +19,7 @@ No prompts, graders or fake replies were changed between the arms. One scripted
 reference's KV limit changed from 2 to 10 to respect the pinned vendor minimum;
 this does not enter a model conversation or scoring, but changes the task-file
 hash. Both surfaces' references and negative controls pass. No stored score was
-corrected or regraded. AFTER results and per-task metrics are recorded below
-when the final batch completes.
+corrected or regraded. The final AFTER results and per-task metrics appear below.
 
 The original full JSON and logs are retained under
 `/home/zackbart/.t3/scratch/connecta-orchestrator/step2/cloudflare/`; the committed
@@ -35,9 +34,68 @@ which is not pooled with the complete final arm. Their original files remain
 
 Canonical standalone bundles use gzip level 9, matching check:build. A preliminary
 level-6 measurement was diagnostic and is superseded: before 528,947 B; the
-integer-guard source measured 594,631 B (+65,684 B), report-only. Root and Worker
-example remain below their caps. H9 single cold-process observations under load
+final source measured 594,680 B (+65,733 B), report-only. The reviewed baseline
+was taken at the integer-guard source (594,631 B); final metadata adds 49 B. Root
+(370,252/402,000 B) and Worker example (711,744/743,000 B) remain below their caps. H9 single cold-process observations under load
 were factory 53.5→88.8 ms and call-to-first-send 69.9→113.9 ms; import time was
 2.21→2.28 s. These are characterization, not latency claims or a deadline change.
 Factory/import work precedes invocation; the request deadline still covers the
 call's runtime work and any scoped ownership lookup.
+
+## Final results
+
+BEFORE ran at clean 7da1521d; final AFTER ran at clean b0da43bf. The later adapter
+eligibility audit only leaves ambiguous/undeclared envelopes on their vendor
+query protocol; none of the seven task routes or results changes. The final metadata polish
+also retains the legacy name/account-id filter length checks and reports a malformed
+successful list as a provider failure; valid trial routes/results are unchanged. All
+56 scored trials regrade offline with zero status mismatches. The interrupted diagnostic
+arms are retained separately and never pooled.
+
+| Task | Before Luna | After Luna | Before Sonnet | After Sonnet |
+| --- | ---: | ---: | ---: | ---: |
+| filtered-dns | 2/2 | 2/2 | 2/2 | 2/2 |
+| account-zone-join | 2/2 | 2/2 | 2/2 | 2/2 |
+| dns-paging | 1/2 | 2/2 | 2/2 | 2/2 |
+| kv-hatch | 1/2 | 2/2 | 2/2 | 2/2 |
+| analytics | 2/2 | 2/2 | 2/2 | 2/2 |
+| purge-once | 2/2 | 2/2 | 2/2 | 2/2 |
+| dns-recovery | 2/2 | 2/2 | 2/2 | 2/2 |
+| **Total** | **12/14** | **14/14** | **14/14** | **14/14** |
+
+Every final purge and recovery trial made exactly one requested business write;
+none dispatched a duplicate. No grader was changed to improve a score. Account/
+zone lists and GraphQL are observed routes in both arms. verify_credential and
+uploads remain safety/workflow choices with zero measured calls.
+
+| Arm | Model | Mean MCP calls | Mean discovery bytes | Maximum discovery bytes |
+| --- | --- | ---: | ---: | ---: |
+| before | codex | 6.50 | 21749 | 45877 |
+| before | claude | 3.93 | 9415 | 13765 |
+| after-final | codex | 6.29 | 38163 | 86492 |
+| after-final | claude | 4.86 | 13701 | 16469 |
+
+Discovery sums the actual top-level discovery result text and serialized guest
+search/describe/skill/hatch-discovery observations; it is not inferred from
+program text. Final observed hatch search/details maxima were 1,927/3,490 bytes,
+within 16/32 KiB. Sonnet did not call operation-search/details in these trials.
+Cumulative discovery increased; these results show no general efficiency win.
+Seven builder-authored tasks and two correlated repeats do not establish
+statistical significance, production coverage or performance.
+
+The source contract, prompts and scoring remain frozen. The reference-only KV
+limit correction, plus equivalent fake lint/unused-export cleanup, account for
+hash differences; the committed JSON preserves each original task/harness hash.
+Test collection stays 132→132 across all changed suites (net zero); the separate
+generated failure sweep also stays at 457. Other providers' goldens are byte-identical.
+
+
+Targeted verification includes provider/safety (35 passing), shared hatch/kit,
+provider standards/conventions/generation, registry and package/purity boundaries,
+plus all Cloudflare-referencing cross-provider suites. The final failure/safety/
+embedded-URL group passes 496 cases. All 16 providers pass Node golden
+determinism; workerd goldens and affected native suites pass, with Cloudflare
+repeated after final metadata polish. Static/build checks and the Node-24 Eve check/
+packed-consumer smoke pass. The builder intentionally does not run the full
+`pnpm run check` under the brief's load policy; PR CI and independent Opus review
+are left to the orchestrator.

@@ -593,6 +593,23 @@ describe("cloudflare() over a key", () => {
           ).toBe(true);
         }
       }
+
+      respond = () => envelope(null);
+      await expect(connector.callTool("list_zones", {}, token())).rejects.toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+      });
+      // A mixed or undeclared pagination envelope retains its vendor query protocol.
+      const raw = cloudflare("raw", TOKEN);
+      respond = () => Response.json({ items: [], pagination: { cursor: "vendor-next" } });
+      const mixed = (await raw.callTool(
+        "cloudflare_api_read",
+        { path: `/accounts/${ACCOUNT}/cloudforce-one/events/indicators`, query: { cursor: "vendor-previous" } },
+        token(),
+      )) as any;
+      expect(mixed).not.toHaveProperty("page");
+      expect(mixed.data.pagination.cursor).toBe("vendor-next");
+      expect(sent.at(-1)!.url.searchParams.get("cursor")).toBe("vendor-previous");
       const scoped = cloudflare("bounded", { ...TOKEN, zoneId: ZONE, pin: { zoneIds: [ZONE] } });
       const ctx = token();
       for (const [tool, extra] of [
