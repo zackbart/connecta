@@ -1,6 +1,6 @@
 {
   "format": 5,
-  "digest": "sha256:553c2cccefb195234a4773d0360df6e5cb15a30912fefe86a6b1e6c6ceaf5566",
+  "digest": "sha256:4a06e85c284876c709f791b05b27e56f2a612d4eb7edc95edea6cc14f0d94b9a",
   "options": {
     "operationWords": "global-config"
   },
@@ -57,6 +57,21 @@
       ],
       "named": true
     },
+    "PATCH /api-keys/{apiKeyID}/quota": {
+      "fields": [
+        "apiKey",
+        "apiKey.createdBy",
+        "apiKey.id",
+        "apiKey.leakedUrl",
+        "apiKey.metadata",
+        "apiKey.name",
+        "apiKey.partialKey",
+        "apiKey.purpose",
+        "apiKey.quota",
+        "quota"
+      ],
+      "named": true
+    },
     "PUT /projects/transfer-request/{code}": {
       "fields": [],
       "named": true
@@ -66,11 +81,15 @@
       "named": true
     },
     "POST /storage/stores/blob": {
-      "fields": ["store.kind", "store.projectsMetadata[].environmentVariables"],
+      "fields": [
+        "store.kind",
+        "store.projectsMetadata[].environmentVariables",
+        "store.projectsMetadata[].secretsOutdated"
+      ],
       "named": false
     },
     "GET /storage/stores/{id}": {
-      "fields": ["store.projectsMetadata[].environmentVariables"],
+      "fields": ["store.projectsMetadata[].environmentVariables", "store.projectsMetadata[].secretsOutdated"],
       "named": false
     },
     "GET /v1/ai-gateway/routers": {
@@ -795,6 +814,7 @@
     "POST /v1/storage/stores/integration/direct": {
       "fields": [
         "store.projectsMetadata[].environmentVariables",
+        "store.projectsMetadata[].secretsOutdated",
         "store.secretRotationRequestedBy",
         "store.secretRotationRequestedReason",
         "store.secrets"
@@ -982,6 +1002,8 @@
         "services",
         "services[].bindings",
         "services[].bindings[].env",
+        "services[].builder.config.daemon.bindings",
+        "services[].builder.config.daemon.bindings[].env",
         "services[].env",
         "services[].headers",
         "services[].headers[].has[].value",
@@ -1017,6 +1039,8 @@
         "services",
         "services[].bindings",
         "services[].bindings[].env",
+        "services[].builder.config.daemon.bindings",
+        "services[].builder.config.daemon.bindings[].env",
         "services[].env",
         "services[].headers",
         "services[].headers[].has[].value",
@@ -1052,6 +1076,8 @@
         "services",
         "services[].bindings",
         "services[].bindings[].env",
+        "services[].builder.config.daemon.bindings",
+        "services[].builder.config.daemon.bindings[].env",
         "services[].env",
         "services[].headers",
         "services[].headers[].has[].value",
@@ -1384,6 +1410,7 @@
   },
   "reviewed": {
     "operations": {
+      "PATCH /api-keys/{apiKeyID}/quota": ["apiKey", "quota"],
       "GET /ai-gateway/budgets/list": ["defaultCoveredCounts.api-key"],
       "GET /v8/artifacts/status": ["readOnly"],
       "GET /v1/security/firewall/bypass/rules": [
@@ -1458,10 +1485,7 @@
         "projects[].security.firewallBypassIps",
         "projects[].usageStatus.bypassThrottleUntil"
       ],
-      "GET /v1/projects/{idOrName}/daemons": [
-        "daemons.config.livenessProbe.httpGet.httpHeaders.value",
-        "daemons.replicas.items.iroh.publicKeyCiphertext"
-      ],
+      "GET /v1/projects/{idOrName}/daemons": ["daemons.config.livenessProbe.httpGet.httpHeaders.value"],
       "POST /v1/projects/{idOrName}/avatar": [
         "dismissedToasts[].value",
         "env[].legacyValue",

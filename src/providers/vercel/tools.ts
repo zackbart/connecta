@@ -1,12 +1,14 @@
-// Vercel's unchanged declarations and projections, with kit-owned call services.
-import { Effect } from "effect";
+// Curated Vercel metadata and bounded logs through kit-owned call services.
+import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal } from "../../http/errors.js";
-import { read, write } from "../../http/tools.js";
+import { read, write, list } from "../../http/tools.js";
+import { fieldsProblem, selectFields } from "../../http/fields.js";
+import { vercelPage } from "../../http/hatch-paging.js";
 import type { Connection } from "../../http/vendor.js";
 import type { JsonSchema } from "../../types.js";
-import { schema, catalogOrder, restKitTools, typedParams } from "../_shared/rest/kit.js";
+import { schema, typedParams } from "../_shared/rest/kit.js";
 import type { RestCall } from "../_shared/rest/tools.js";
 import type { RestMethod } from "../_shared/rest/operation-index.js";
 import { refuseWithheldUpload } from "../_shared/rest/value-safety.js";
@@ -24,15 +26,10 @@ import {
   record,
   reviewedCode,
   restCall,
-  scope,
-  sendVercel,
   text,
   vercelIndex,
-  vercelSafety,
-  READ_POSTS,
   refuse,
   checkServer,
-  vercelPage,
   type JsonRecord,
 } from "./api.js";
 import type { VercelTokenOptions } from "./index.js";
@@ -46,9 +43,9 @@ function promise<A>(run: () => Promise<A>) {
     ),
   );
 }
-function clamp(value: unknown): { text?: string; textTruncated?: true } {
+function clamp(value: unknown): { text?: string } {
   if (typeof value !== "string") return {};
-  return value.length > MAX_LOG_TEXT ? { text: value.slice(0, MAX_LOG_TEXT), textTruncated: true } : { text: value };
+  return value.length > MAX_LOG_TEXT ? { text: value.slice(0, MAX_LOG_TEXT) } : { text: value };
 }
 
 const TEAM_ID: JsonSchema = {
@@ -173,8 +170,7 @@ export function vercelTools({
             }),
           ),
           Effect.map((answer) => {
-            const page = vercelPage(vercelIndex, answer.data, call);
-            return { ...answer, data: answer.data ?? null, ...(page ? { page } : {}) };
+            return { ...answer, data: answer.data ?? null };
           }),
         );
       }),
@@ -198,64 +194,6 @@ export function vercelTools({
   };
   const declarations = [
     {
-      name: "list_teams",
-      description:
-        "List the Vercel teams this token can reach, with ids and slugs to pass as teamId. Also names the connection's default team.",
-      annotations: { readOnlyHint: true },
-      inputSchema: closed(
-        {
-          limit: { type: "integer", minimum: 1, maximum: 100, description: "Most teams per page; default 20." },
-          until: { type: "number", description: "page.next from the previous page: a millisecond timestamp." },
-        },
-        [],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          teams: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                slug: { type: "string" },
-                name: { type: ["string", "null"] },
-                role: { type: "string" },
-              },
-              required: ["id", "slug"],
-            },
-          },
-          defaultTeamId: { type: ["string", "null"], description: "The team operations use when teamId is omitted." },
-          page: {
-            type: "object",
-            properties: { hasMore: { type: "boolean" }, next: { type: "string" }, param: { type: "string" } },
-            required: ["hasMore"],
-          },
-        },
-        required: ["teams", "defaultTeamId"],
-      },
-      run: (args: JsonRecord) =>
-        Effect.gen(function* () {
-          const result = yield* send("GET", "/v2/teams", {
-            query: compact({ limit: args["limit"] ?? 20, until: args["until"] }),
-          });
-          const teams = Array.isArray(record(result.data)["teams"]) ? (record(result.data)["teams"] as unknown[]) : [];
-          return {
-            teams: teams.map((team) => {
-              const entry = record(team);
-              return compact({
-                id: entry["id"],
-                slug: entry["slug"],
-                name: entry["name"] ?? null,
-                role: record(entry["membership"])["role"],
-              });
-            }),
-            defaultTeamId: teamId ?? null,
-            ...(result.page ? { page: result.page } : {}),
-          };
-        }),
-    },
-    {
       name: "list_project_env_vars",
       description:
         "List a project's environment-variable metadata without decrypting or returning values: keys, types, targets, branches, and custom environments.",
@@ -264,28 +202,53 @@ export function vercelTools({
         {
           projectId: PROJECT_ID,
           teamId: TEAM_ID,
+          slug: {
+            type: "string",
+            minLength: 1,
+            description: "Team slug; overrides the routing default when teamId is omitted.",
+          },
           gitBranch: { type: "string", description: "Preview branch filter." },
           customEnvironmentId: { type: "string", description: "Custom environment filter." },
+          fields: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1, maxLength: 200 },
+            description: "Dot paths to keep in each metadata item; values cannot be restored.",
+          },
         },
         ["projectId"],
       ),
       outputSchema: {
         type: "object",
-        properties: { variables: { type: "array", items: ENV_SCHEMA } },
-        required: ["variables"],
+        properties: {
+          items: { type: "array", items: { ...ENV_SCHEMA, required: [] } },
+          page: { type: "object", properties: { hasMore: { enum: [false], type: "boolean" } }, required: ["hasMore"] },
+        },
+        required: ["items", "page"],
       },
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
+          const fields = args["fields"] as string[] | undefined;
+          const problem = fieldsProblem(
+            fields,
+            new Set(Object.keys(ENV_SCHEMA.properties!)),
+            "an environment metadata item",
+          );
+          if (problem) throw problem;
           const { data } = yield* send("GET", `/v10/projects/${segment(args["projectId"])}/env`, {
             query: compact({
               teamId: args["teamId"],
+              slug: args["slug"],
               gitBranch: args["gitBranch"],
               customEnvironmentId: args["customEnvironmentId"],
               decrypt: "false",
             }),
           });
           const envs = record(data)["envs"];
-          return { variables: (Array.isArray(envs) ? envs : []).map(envMetadata) };
+          return {
+            items: selectFields((Array.isArray(envs) ? envs : []).map(envMetadata), fields),
+            page: { hasMore: false },
+          };
         }),
     },
     {
@@ -297,6 +260,11 @@ export function vercelTools({
         {
           projectId: PROJECT_ID,
           teamId: TEAM_ID,
+          slug: {
+            type: "string",
+            minLength: 1,
+            description: "Team slug; overrides the routing default when teamId is omitted.",
+          },
           key: { type: "string", minLength: 1, maxLength: 256, description: "Environment variable name." },
           value: {
             type: "string",
@@ -323,7 +291,11 @@ export function vercelTools({
       run: (args: JsonRecord) =>
         Effect.gen(function* () {
           const { data } = yield* send("POST", `/v10/projects/${segment(args["projectId"])}/env`, {
-            query: compact({ teamId: args["teamId"], upsert: args["upsert"] === false ? "false" : "true" }),
+            query: compact({
+              slug: args["slug"],
+              teamId: args["teamId"],
+              upsert: args["upsert"] === false ? "false" : "true",
+            }),
             body: compact({
               key: args["key"],
               value: args["value"],
@@ -335,27 +307,26 @@ export function vercelTools({
             }),
           });
           const payload = record(data);
-          const failed = Array.isArray(payload["failed"]) ? payload["failed"] : [];
-          if (failed.length > 0) {
-            // Vercel's message can quote the existing value: only a reviewed code is named.
-            const code = reviewedCode(record(record(failed[0])["error"])["code"]);
-            throw new ConnectorCallError(
-              "invalid_args",
-              code === "ENV_ALREADY_EXISTS" || code === "ENV_CONFLICT"
-                ? `Vercel ${code}: a variable with this key already targets one of these environments. Pass upsert: true to replace it, or update it by id with update_project_env_var.`
-                : `Vercel rejected the environment-variable write${code ? ` (${code})` : ""}; its message is withheld because it can quote stored values.`,
+          if (Array.isArray(payload["failed"]) && payload["failed"].length) {
+            const created = (Array.isArray(payload["created"]) ? payload["created"] : [payload["created"]])
+              .map((item) => text(record(item)["id"]))
+              .filter(Boolean);
+            const failed = payload["failed"].map((item) => ({
+              key: text(record(item)["key"] ?? record(record(item)["error"])["key"]),
+              code: reviewedCode(record(record(item)["error"])["code"]) ?? "unclassified",
+            }));
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError(
+                  "connector_call_failed",
+                  `Vercel partially accepted the environment-variable write. Created ids: ${JSON.stringify(created)}. Failed variables: ${JSON.stringify(failed)}. Check the target before repeating it.`,
+                  { retryable: false, writeOutcome: "unknown" },
+                ),
+              }),
             );
           }
           const created = Array.isArray(payload["created"]) ? payload["created"][0] : payload["created"];
-          const result = envMetadata(created ?? payload);
-          if (!result["id"] || !result["key"] || !result["type"]) {
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              "Vercel accepted the environment-variable write without returning the created variable.",
-              { retryable: false },
-            );
-          }
-          return result;
+          return envMetadata(created ?? payload);
         }),
     },
     {
@@ -367,6 +338,11 @@ export function vercelTools({
         {
           projectId: PROJECT_ID,
           teamId: TEAM_ID,
+          slug: {
+            type: "string",
+            minLength: 1,
+            description: "Team slug; overrides the routing default when teamId is omitted.",
+          },
           envVarId: ENV_VAR_ID,
           key: { type: "string", minLength: 1, maxLength: 256, description: "Replacement variable name." },
           value: { type: "string", maxLength: 65536, description: "Replacement value; write input only." },
@@ -398,28 +374,9 @@ export function vercelTools({
           const { data } = yield* send(
             "PATCH",
             `/v9/projects/${segment(args["projectId"])}/env/${segment(args["envVarId"])}`,
-            { query: compact({ teamId: args["teamId"] }), body },
+            { query: compact({ slug: args["slug"], teamId: args["teamId"] }), body },
           );
           return envMetadata(data);
-        }),
-    },
-    {
-      name: "delete_project_env_var",
-      description:
-        "Delete one environment variable from a Vercel project by id. Existing deployments keep their embedded value; future deployments do not.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: closed({ projectId: PROJECT_ID, teamId: TEAM_ID, envVarId: ENV_VAR_ID }, ["projectId", "envVarId"]),
-      outputSchema: {
-        type: "object",
-        properties: { deleted: { type: "boolean" }, envVarId: { type: "string" } },
-        required: ["deleted", "envVarId"],
-      },
-      run: (args: JsonRecord) =>
-        Effect.gen(function* () {
-          yield* send("DELETE", `/v9/projects/${segment(args["projectId"])}/env/${segment(args["envVarId"])}`, {
-            query: compact({ teamId: args["teamId"] }),
-          });
-          return { deleted: true, envVarId: args["envVarId"] };
         }),
     },
     {
@@ -431,6 +388,11 @@ export function vercelTools({
         {
           deploymentId: { type: "string", minLength: 1, description: "Deployment id (dpl_…) or hostname." },
           teamId: TEAM_ID,
+          slug: {
+            type: "string",
+            minLength: 1,
+            description: "Team slug; overrides the routing default when teamId is omitted.",
+          },
           buildId: { type: "string", minLength: 1, description: "Only this build's events (bld_…)." },
           direction: {
             type: "string",
@@ -454,12 +416,25 @@ export function vercelTools({
                 created: { type: "number" },
                 type: { type: "string", description: "stdout, stderr, command, exit, deployment-state, and so on." },
                 text: { type: "string" },
-                textTruncated: { type: "boolean" },
-                info: { type: "object", description: "Build step, entrypoint, and path when Vercel sends them." },
+
+                info: {
+                  type: "object",
+                  properties: Object.fromEntries(
+                    ["type", "name", "step", "entrypoint", "path", "readyState"].map((name) => [
+                      name,
+                      { type: "string" },
+                    ]),
+                  ),
+                  description: "Build step, entrypoint, and path when Vercel sends them.",
+                },
               },
             },
           },
-          truncated: { type: "boolean", description: "True when the 1 MB or time cap stopped the read early." },
+          truncated: {
+            type: "array",
+            items: { type: "string" },
+            description: "Dot paths cut for size or by the bounded prefix, including events[] and events[].text.",
+          },
         },
         required: ["events", "truncated"],
       },
@@ -468,6 +443,7 @@ export function vercelTools({
           const call = makeCall("GET", `/v3/deployments/${segment(args["deploymentId"])}/events`, {
             query: compact({
               teamId: args["teamId"],
+              slug: args["slug"],
               name: args["buildId"],
               direction: args["direction"],
               limit: args["limit"] ?? 200,
@@ -503,27 +479,40 @@ export function vercelTools({
                 info,
               });
             }),
-            truncated: stopped !== "end",
+            truncated: [
+              ...(stopped !== "end" ? ["events[]"] : []),
+              ...(rows.some((row) => {
+                const e = record(row);
+                return String(record(e["payload"])["text"] ?? e["text"] ?? "").length > MAX_LOG_TEXT;
+              })
+                ? ["events[].text"]
+                : []),
+            ],
           };
         }),
     },
     {
       name: "get_runtime_logs",
       description:
-        "Collect a deployment's runtime log stream for at most waitMs or maxRows, then stop. Returns level, message, request path, and status per row.",
+        "Collect a deployment's runtime log stream for at most waitMs or limit, then stop. Returns level, message, request path, and status per row.",
       annotations: { readOnlyHint: true },
       inputSchema: closed(
         {
           projectId: PROJECT_ID,
           deploymentId: { type: "string", minLength: 1, description: "Deployment id (dpl_…)." },
           teamId: TEAM_ID,
+          slug: {
+            type: "string",
+            minLength: 1,
+            description: "Team slug; overrides the routing default when teamId is omitted.",
+          },
           waitMs: {
             type: "integer",
             minimum: 1000,
             maximum: 20000,
             description: "How long to collect the stream; default 5000.",
           },
-          maxRows: { type: "integer", minimum: 1, maximum: 1000, description: "Most rows returned; default 200." },
+          limit: { type: "integer", minimum: 1, maximum: 1000, description: "Most rows returned; default 200." },
           levels: {
             type: "array",
             uniqueItems: true,
@@ -549,13 +538,18 @@ export function vercelTools({
                 level: { type: "string" },
                 source: { type: "string" },
                 text: { type: "string" },
-                textTruncated: { type: "boolean" },
+
                 requestMethod: { type: "string" },
                 requestPath: { type: "string" },
                 responseStatusCode: { type: "number" },
                 domain: { type: "string" },
               },
             },
+          },
+          truncated: {
+            type: "array",
+            items: { type: "string" },
+            description: "Dot paths cut for size, including logs[] and logs[].text.",
           },
           stopped: {
             type: "string",
@@ -570,10 +564,10 @@ export function vercelTools({
           const call = makeCall(
             "GET",
             `/v1/projects/${segment(args["projectId"])}/deployments/${segment(args["deploymentId"])}/runtime-logs`,
-            { query: compact({ teamId: args["teamId"] }) },
+            { query: compact({ slug: args["slug"], teamId: args["teamId"] }) },
           );
           const waitMs = typeof args["waitMs"] === "number" ? args["waitMs"] : 5_000;
-          const maxRows = typeof args["maxRows"] === "number" ? args["maxRows"] : 200;
+          const maxRows = typeof args["limit"] === "number" ? args["limit"] : 200;
           const levels = Array.isArray(args["levels"]) ? new Set(args["levels"]) : undefined;
           const keep = (row: unknown) => !levels || levels.has(record(row)["level"]);
           const { rows, stopped } = yield* boundedRows(call, { waitMs, maxRows, accept: keep });
@@ -592,7 +586,16 @@ export function vercelTools({
                 domain: row["domain"],
               }),
             );
-          return { logs: logs.slice(0, maxRows), stopped: logs.length > maxRows ? "rows" : stopped };
+          return {
+            logs: logs.slice(0, maxRows),
+            stopped: logs.length > maxRows ? "rows" : stopped,
+            truncated: [
+              ...(logs.length > maxRows || stopped === "rows" || stopped === "bytes" ? ["logs[]"] : []),
+              ...(rows.some((row) => String(record(row)["message"] ?? "").length > MAX_LOG_TEXT)
+                ? ["logs[].text"]
+                : []),
+            ],
+          };
         }),
     },
     {
@@ -635,6 +638,8 @@ export function vercelTools({
           const call = makeCall(args["method"] as RestMethod, String(args["path"]), {
             query: isRecord(args["query"]) ? args["query"] : {},
           });
+          const server = checkServer(call.op.server);
+          if (server) invalid(server);
           const framing = vercelIndex.bodyType(call.op) ?? "";
           if (!/octet-stream|^multipart\//.test(framing))
             invalid(`${call.method} ${call.op.path} is not an upload; call it with vercel_api_write.`);
@@ -666,18 +671,43 @@ export function vercelTools({
   ];
 
   return [
-    ...restKitTools({
-      vendor: "vercel",
-      title: "Vercel",
-      index: vercelIndex,
-      valueSafety: vercelSafety,
-      readPosts: READ_POSTS,
-      refuse,
-      checkServer,
-      scope: (call) => scope(call, teamId),
-      upload: "Send raw bytes with vercel_api_upload.",
-      connection,
-      send: (call) => sendVercel(connection, call),
+    list(connection, {
+      name: "list_teams",
+      description:
+        "List the teams this token can reach, with ids/slugs for project joins. A configured team is a routing default, not a restriction.",
+      filters: {},
+      row: Schema.Struct({
+        id: Schema.String,
+        slug: Schema.String,
+        name: Schema.NullOr(Schema.String),
+        role: Schema.optionalKey(Schema.String),
+      }),
+      limit: { default: 20, max: 100, description: "Teams per page, default 20, maximum 100." },
+      cursor: "bound",
+      page: (_args, cursor) =>
+        Effect.gen(function* () {
+          const result = yield* send("GET", "/v2/teams", {
+            query: { limit: _args.limit, ...(cursor ? { until: JSON.parse(cursor) as unknown } : {}) },
+          });
+          const body = record(result.data),
+            next = vercelPage.next(body, { path: "/v2/teams", query: {}, headers: {} });
+          const rows = Array.isArray(body["teams"]) ? body["teams"] : [];
+          return {
+            rows: rows.map((team) => {
+              const e = record(team);
+              return {
+                id: String(e["id"]),
+                slug: String(e["slug"]),
+                name: text(e["name"]) ?? null,
+                ...(text(record(e["membership"])["role"]) ? { role: text(record(e["membership"])["role"])! } : {}),
+              };
+            }),
+            page: {
+              hasMore: next !== null && next !== undefined,
+              nextCursor: next === null || next === undefined || typeof next === "object" ? null : JSON.stringify(next),
+            },
+          };
+        }),
     }),
     ...declarations.map((declaration) => {
       const spec = {
@@ -695,12 +725,11 @@ export function vercelTools({
             ),
       };
       const tool = declaration.annotations.readOnlyHint
-        ? read(connection, spec)
+        ? read(connection, {
+            ...spec,
+            ...(declaration.name === "list_project_env_vars" ? {} : { fields: true as const }),
+          })
         : write(connection, { ...spec, destructive: true });
-      Object.assign(tool, {
-        inputSchema: catalogOrder(tool.inputSchema, declaration.inputSchema),
-        outputSchema: catalogOrder(tool.outputSchema, declaration.outputSchema),
-      });
       return tool;
     }),
   ];

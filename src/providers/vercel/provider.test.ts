@@ -89,7 +89,7 @@ describe("vercel() over an access token", () => {
     expect(JSON.stringify(long)).not.toMatch(/PRIVATE_SIG|PRIVATE_CREDENTIAL/);
   });
 
-  it("INV-1 INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before select (#890)", async () => {
+  it("INV-1 INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before fields (#890)", async () => {
     const connector = vercel("hosting", TOKEN);
     const headerPath = "daemons.config.livenessProbe.httpGet.httpHeaders";
     const daemon = {
@@ -106,11 +106,11 @@ describe("vercel() over an access token", () => {
       },
       replicas: { items: [{ id: "instance", iroh: { publicKeyCiphertext: "internal-endpoint-marker" } }] },
     };
-    for (const select of [undefined, [headerPath]]) {
+    for (const fields of [undefined, [headerPath]]) {
       respond = () => Response.json({ daemons: [daemon], pagination: { count: 1 } });
       const result = await call(connector, "vercel_api_read", {
         path: "/v1/projects/web/daemons",
-        ...(select ? { select } : {}),
+        ...(fields ? { fields } : {}),
       });
       expect(result.data.daemons[0].config.livenessProbe.httpGet.httpHeaders).toEqual([
         { name: "X-Proof", value: "[redacted]" },
@@ -165,6 +165,8 @@ describe("vercel() over an access token", () => {
       expect(error.code, message).toBe("invalid_args");
       expect(error.message).toContain(message);
     }
+    const artifact = await refusal(call(connector, "vercel_api_read", { path: "/v8/artifacts/hash_1" }));
+    expect(artifact.message).toContain("Artifact downloads serve binary bytes");
     expect(sent).toEqual([]);
   });
 
@@ -178,6 +180,25 @@ describe("vercel() over an access token", () => {
       inviteCode: REDACTED,
       role: "MEMBER",
     });
+    for (const field of ["drainUrl", "logDrainUrl", "webhookUrl", "prevWebhookUrl"]) {
+      const event = {
+        id: "ev_drain",
+        payload: { [field]: "https://logs.example/secret-path?token=secret-query", id: "drain_1" },
+      };
+      for (const shape of [event, [event], { events: [event] }, { data: { events: [event] } }]) {
+        respond = () => Response.json(shape);
+        const result = await call(connector, "vercel_api_read", { path: "/v3/events" });
+        expect(JSON.stringify(result), field).not.toMatch(/secret-path|secret-query|token=/);
+        expect(JSON.stringify(result), field).toContain(REDACTED);
+        expect(JSON.stringify(result), field).toContain("drain_1");
+      }
+      for (const fields of [[`events[].payload.${field}`], ["events[].payload"]]) {
+        respond = () => Response.json({ events: [event] });
+        const selected = await call(connector, "vercel_api_read", { path: "/v3/events", fields });
+        expect(selected.data.events[0].payload[field], field).toBe(REDACTED);
+        expect(JSON.stringify(selected), field).not.toMatch(/secret-path|secret-query|token=/);
+      }
+    }
     respond = () =>
       Response.json({
         products: [
@@ -216,7 +237,7 @@ describe("vercel() over an access token", () => {
     ]);
   });
 
-  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before selection", async () => {
+  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before field selection", async () => {
     const connector = vercel("hosting", TOKEN);
     const rule = {
       id: "rule_1",
@@ -250,7 +271,7 @@ describe("vercel() over an access token", () => {
       path: "/v1/security/firewall/bypass/rules",
       query: { projectId: "prj_1" },
       body: { domain: "app.example.com", conditionGroup: [{ conditions: [rule.conditionGroup[0]!.conditions[0]!] }] },
-      select: ["condition", "conditionGroup"],
+      fields: ["condition", "conditionGroup"],
     });
     expect(JSON.stringify(created)).not.toMatch(/stored-access|stored-cookie|stored-query/);
     respond = () =>
@@ -270,23 +291,64 @@ describe("vercel() over an access token", () => {
     );
   });
 
-  it("INV-5: names an upsert conflict without echoing the submitted value", async () => {
+  it("INV-5 INV-9: names upsert conflicts, preserves partial commits and reports missing acknowledgements without replay", async () => {
     const connector = vercel("hosting", TOKEN);
-    respond = () =>
-      Response.json({
-        failed: [{ error: { code: "ENV_ALREADY_EXISTS", message: "exists", key: "TOKEN", value: "s3cret" } }],
-      });
-    const conflict = await refusal(
-      call(connector, "upsert_project_env_var", {
-        projectId: "web",
-        key: "TOKEN",
-        value: "s3cret",
-        type: "sensitive",
-        targets: ["preview"],
-      }),
-    );
-    expect(conflict.message).toContain("Vercel ENV_ALREADY_EXISTS: a variable with this key already targets");
-    expect(conflict.message).not.toContain("s3cret");
+    const body = { key: "TOKEN", value: "s3cret", type: "sensitive", target: ["preview"] };
+    const named = { projectId: "web", key: body.key, value: body.value, type: body.type, targets: body.target };
+    for (const code of ["ENV_ALREADY_EXISTS", "ENV_CONFLICT"])
+      for (const [tool, args] of [
+        ["upsert_project_env_var", named],
+        ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],
+      ] as const) {
+        sent = [];
+        respond = () =>
+          Response.json(
+            { created: [], failed: [{ error: { code, message: "exists", key: "TOKEN", value: "s3cret" } }] },
+            { status: 201 },
+          );
+        const error = await refusal(call(connector, tool, args));
+        expect(error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(error.message).toContain(code);
+        expect(error.message).toContain(
+          "Pass upsert: true to replace it, or update it by id with update_project_env_var.",
+        );
+        expect(error.message).not.toMatch(/s3cret|HTTP 400/);
+        expect(sent).toHaveLength(1);
+      }
+    const partial = {
+      created: [{ id: "env_a", key: "FIRST", type: "sensitive", value: "stored-first-secret" }],
+      failed: [{ error: { code: "ENV_CONFLICT", key: "SECOND", value: "stored-second-secret" } }],
+    };
+    sent = [];
+    respond = () => Response.json(partial, { status: 201 });
+    const raw = await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v10/projects/web/env",
+      body: [body, { ...body, key: "SECOND" }],
+    });
+    expect(raw.status).toBe(201);
+    expect(raw.data.created[0]).toMatchObject({ id: "env_a", key: "FIRST" });
+    expect(raw.data.failed[0].error).toMatchObject({ code: "ENV_CONFLICT", key: "SECOND" });
+    expect(JSON.stringify(raw)).not.toMatch(/stored-first-secret|stored-second-secret/);
+    expect(sent).toHaveLength(1);
+    sent = [];
+    const namedPartial = await refusal(call(connector, "upsert_project_env_var", named));
+    expect(namedPartial).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown", retryable: false });
+    expect(namedPartial.message).toMatch(/env_a.*SECOND.*ENV_CONFLICT/);
+    expect(namedPartial.message).not.toMatch(/stored-first-secret|stored-second-secret|HTTP 400/);
+    expect(sent).toHaveLength(1);
+    for (const [tool, args] of [
+      ["upsert_project_env_var", named],
+      ["vercel_api_write", { method: "POST", path: "/v10/projects/web/env", body }],
+    ] as const) {
+      sent = [];
+      respond = () => Response.json({ ok: true }, { status: 201 });
+      const missing = await refusal(call(connector, tool, args));
+      expect(missing).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(missing.message).toContain("check the target before repeating");
+      expect(missing.message).not.toMatch(/handler failed|kit|in-band refusal/);
+      expect(sent).toHaveLength(1);
+    }
   });
 
   it("collects runtime logs until waitMs on a stream that never ends, then says why it stopped", async () => {
@@ -316,6 +378,7 @@ describe("vercel() over an access token", () => {
     expect(result).toEqual({
       logs: [{ timestampInMs: 2, level: "error", text: "TypeError: x is undefined", requestPath: "/api" }],
       stopped: "time",
+      truncated: [],
     });
     expect(sent[0]!.url.pathname).toBe("/v1/projects/web/deployments/dpl_1/runtime-logs");
     // The row limit stops a stream that stays open as soon as it is met, not at waitMs.
@@ -324,13 +387,14 @@ describe("vercel() over an access token", () => {
       await call(connector, "get_runtime_logs", {
         projectId: "web",
         deploymentId: "dpl_1",
-        maxRows: 1,
+        limit: 1,
         waitMs: 20_000,
         levels: ["error"],
       }),
     ).toEqual({
       logs: [{ timestampInMs: 2, level: "error", text: "TypeError: x is undefined", requestPath: "/api" }],
       stopped: "rows",
+      truncated: ["logs[]"],
     });
     expect(Date.now() - quick).toBeLessThan(5_000);
   });
@@ -349,8 +413,22 @@ describe("vercel() over an access token", () => {
     expect(failure.retryAfterMs).toBeGreaterThan(0);
   });
 
-  it("refuses a domain move-out, whose answer is a transfer token, before dispatch", async () => {
+  it("INV-3 INV-4 INV-5 INV-9: routes selectors and confines fields, continuations and secret-bearing writes before dispatch", async () => {
     const connector = vercel("hosting", TOKEN);
+    const discoverySends = sent.length;
+    for (const [query, method, path] of [
+      ["redeploy", "POST", "/v13/deployments"],
+      ["create environment variable", "POST", "/v10/projects/{idOrName}/env"],
+      ["add environment variable", "POST", "/v10/projects/{idOrName}/env"],
+      ["update environment variable", "PATCH", "/v9/projects/{idOrName}/env/{id}"],
+      ["delete environment variable", "DELETE", "/v9/projects/{idOrName}/env/{id}"],
+    ]) {
+      for (const filter of [{}, { method }]) {
+        const found = await call(connector, "vercel_api_search", { query, limit: 8, ...filter });
+        expect(found.operations.slice(0, 2), query).toContainEqual(expect.objectContaining({ method, path }));
+      }
+    }
+    expect(sent).toHaveLength(discoverySends);
     const refused = await refusal(
       call(connector, "vercel_api_write", {
         method: "PATCH",
@@ -371,5 +449,133 @@ describe("vercel() over an access token", () => {
         })
       ).data,
     ).toEqual({ moved: true, token: "[redacted]" });
+
+    for (const [path, method, body] of [
+      ["/v1/installations/icfg/products/product/resources/resource/secrets", "PUT", { secrets: [] }],
+      ["/v1/deployments/dpl_1/checks", "POST", {}],
+    ] as const) {
+      const before = sent.length;
+      await expect(call(connector, "vercel_api_write", { path, method, body })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      expect(sent).toHaveLength(before);
+    }
+    // All dispatch routes apply the same intentional team routing overrides.
+    respond = () => Response.json({ projects: [], envs: [], pagination: { next: null } });
+    for (const selectors of [{}, { teamId: "team_other" }, { teamId: null }, { slug: "studio" }]) {
+      sent = [];
+      await call(connector, "vercel_api_read", { path: "/v10/projects", query: selectors });
+      await call(connector, "list_project_env_vars", { projectId: "web", ...selectors });
+      await call(connector, "vercel_api_upload", {
+        method: "POST",
+        path: "/v2/files",
+        textBody: "hello",
+        query: selectors,
+      });
+      const expected =
+        "teamId" in selectors && selectors.teamId === null
+          ? ""
+          : "slug" in selectors
+            ? "slug=studio"
+            : `teamId=${"teamId" in selectors ? selectors.teamId : "team_default"}`;
+      for (const request of sent)
+        expect(request.url.searchParams.toString().replace(/&?decrypt=false&?/, "")).toBe(expected);
+    }
+    // The signed cursor is bound to resolved default selectors, including config changes.
+    const ctx = keyed("k7Q9w2E4r6T8y1U3");
+    respond = () => Response.json({ deployments: [], pagination: { next: 123 } });
+    const first = (await connector.callTool(
+      "vercel_api_read",
+      { path: "/v7/deployments", query: { limit: 10 } },
+      ctx,
+    )) as any;
+    const changed = vercel("hosting", { ...TOKEN, teamId: "team_other" });
+    const count = sent.length;
+    await expect(
+      changed.callTool(
+        "vercel_api_read",
+        { path: "/v7/deployments", query: { limit: 10, until: first.page.nextCursor } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(count);
+    respond = () => Response.json({ deployments: [], pagination: { next: null } });
+    await changed.callTool(
+      "vercel_api_read",
+      { path: "/v7/deployments", query: { limit: 10, teamId: "team_default", until: first.page.nextCursor } },
+      ctx,
+    );
+    expect(sent.at(-1)!.url.searchParams.get("until")).toBe("123");
+    const initialTime = await call(connector, "vercel_api_read", {
+      path: "/v7/deployments",
+      query: { until: 1700000000000 },
+    });
+    expect(initialTime.page.hasMore).toBe(false);
+    expect(sent.at(-1)!.url.searchParams.get("until")).toBe("1700000000000");
+    respond = () =>
+      Response.json({
+        deployments: [{ uid: "dpl_keep" }],
+        pagination: { next: "https://untrusted.example/next?token=private" },
+      });
+    const unsafeNext = await call(connector, "vercel_api_read", { path: "/v7/deployments" });
+    expect(unsafeNext.data.deployments).toEqual([{ uid: "dpl_keep" }]);
+    expect(unsafeNext.page).toEqual({ hasMore: true, param: "until", in: "query" });
+    respond = () => Response.json({ data: [], pagination: { next: "opaque:continuation" } });
+    const labelPath = "/v1/projects/web/feature-flags/labels";
+    const labelQuery = { entityKind: "user", attributeKey: "name" };
+    const opaqueNext = (await connector.callTool(
+      "vercel_api_read",
+      { path: labelPath, query: labelQuery },
+      ctx,
+    )) as any;
+    expect(opaqueNext.page.nextCursor).toEqual(expect.any(String));
+    respond = () => Response.json({ data: [], pagination: { next: null } });
+    await connector.callTool(
+      "vercel_api_read",
+      { path: labelPath, query: { ...labelQuery, cursor: opaqueNext.page.nextCursor } },
+      ctx,
+    );
+    expect(sent.at(-1)!.url.searchParams.get("cursor")).toBe("opaque:continuation");
+    const beforeBadCursor = sent.length;
+    const badCursor = await refusal(
+      call(connector, "vercel_api_read", { path: "/v7/deployments", query: { until: "abc" } }),
+    );
+    expect(badCursor.message).toContain("Pass the signed page.nextCursor unchanged");
+    expect(sent).toHaveLength(beforeBadCursor);
+    for (const limit of [-1, 0, 1.5, "abc"]) {
+      const before = sent.length;
+      await expect(
+        call(connector, "vercel_api_read", { path: "/v7/deployments", query: { limit } }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toHaveLength(before);
+    }
+    for (const fields of [["does_not_exist"], ["value"]]) {
+      const before = sent.length;
+      await expect(call(connector, "list_project_env_vars", { projectId: "web", fields })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      await expect(
+        call(connector, "vercel_api_write", {
+          method: "PATCH",
+          path: "/v9/projects/web",
+          body: { framework: "nextjs" },
+          fields,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(sent).toHaveLength(before);
+    }
+    respond = () =>
+      Response.json({
+        apiKey: { id: "key_1", partialKey: "abc", metadata: { value: "stored-quota-secret" } },
+        quota: { limitAmount: 10 },
+      });
+    const quota = await call(connector, "vercel_api_write", {
+      method: "PATCH",
+      path: "/api-keys/key_1/quota",
+      body: { active: true },
+      fields: ["apiKey", "quota"],
+    });
+    expect(JSON.stringify(quota)).not.toContain("stored-quota-secret");
+    expect(quota.data.quota).toEqual({ limitAmount: 10 });
   });
 });
