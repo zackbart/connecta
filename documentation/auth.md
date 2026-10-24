@@ -2326,9 +2326,15 @@ its URL.
 
 Credential and OAuth mutation require interactive identity, connector visibility, management permission, and
 an exact same-origin `Origin` for browser mutations. A static credential `authorize_connector` call needs
-visibility only: with `ui: operatorUi()` and a vault it returns a secret-free `operator_config` handoff;
-without either it returns `unavailable`. The OAuth branch also checks management permission and returns
-`unavailable` when refused.
+visibility only. With `ui: operatorUi()` and a vault, a missing credential returns a secret-free
+`operator_config` handoff; without either it returns `unavailable`. When all declared credential
+fields are configured, the explicit result returns `ready` with conditional guidance and retains
+the operator handoff fields (or the deployment configuration message when recovery is unavailable).
+If a call just failed with an authentication or operator-configuration error, give that handoff
+to the operator; otherwise proceed with the call. Presence does not validate a key, and this
+stateless result cannot remember failures from earlier requests. Authentication errors retain
+`oauth`, `operator_config` or `unavailable` recovery, never `ready`. The OAuth branch also checks
+management permission and returns `unavailable` when refused.
 
 Core owns `/connect/<connector>` and the callback without the optional UI. Both require Clerk sessions or
 Cloudflare Access users; MCP OAuth tokens, `cta_` tokens, and Access service identities

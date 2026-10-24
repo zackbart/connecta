@@ -8,6 +8,7 @@ import type { Connector } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
+import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -365,6 +366,127 @@ describe("search_tools", () => {
       unmatchedTerms: ["calendar", "availability"],
       guidance: expect.stringContaining('Connector "ghost" is not configured in this deployment'),
     });
+    const hatch = (id: string, options: { readOnly?: boolean; required?: boolean } = {}) =>
+      api(id, {
+        description: "Indexed API coverage",
+        ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+        usageGuide: {
+          content: "# API guide",
+          ...(options.required === undefined ? {} : { required: options.required }),
+        },
+        tools: ["search", "details", "read", "write"].map((kind) => ({
+          name: `crm_api_${kind}`,
+          description: "Indexed API operation",
+          inputSchema: { type: "object", properties: kind === "search" ? { query: { type: "string" } } : {} },
+          annotations: { readOnlyHint: kind !== "write", ...(kind === "write" ? { destructiveHint: true } : {}) },
+          handler: () => {
+            throw new Error("Discovery must not call a hatch");
+          },
+        })),
+      });
+    const indexed = createMetaTools(
+      makeRegistry([
+        hatch("zeta"),
+        hatch("alpha", { readOnly: true, required: true }),
+        hatch("bravo"),
+        hatch("charlie"),
+        hatch("delta"),
+      ]),
+      BASE,
+    );
+    const miss = async (args: Record<string, unknown> = {}) =>
+      textOf(await indexed.searchTools({ query: "tap webhook", ...args })) as SearchResult;
+    const pointer = (await miss()).queryAnalysis!.guidance!;
+    expect(pointer).toContain("`zeta.crm_api_search`, `alpha.crm_api_search`, `bravo.crm_api_search`");
+    expect(pointer).toContain("2 API search tools were omitted");
+    expect(pointer).toContain('browse with an empty query and follow all pages, or search for "_api_search"');
+    expect(pointer).not.toContain("capability is configured");
+    expect((await miss()).queryAnalysis!.guidance).toBe(pointer);
+    const scoped = await miss({ connector: "alpha" });
+    expect(scoped.queryAnalysis).toMatchObject({
+      guide: "connector:alpha",
+      guideRequired: true,
+      guidance: expect.stringContaining("Fetch queryAnalysis.guide"),
+    });
+    expect(scoped.queryAnalysis!.guidance).not.toContain("zeta");
+    expect((await miss({ safety: "approvalRequired" })).queryAnalysis!.guidance).toContain("crm_api_search");
+    const warehouse = api("inventory", {
+      title: "Warehouse stock",
+      tools: [
+        {
+          name: "list_items",
+          description: "List stocked items",
+          annotations: { readOnlyHint: true },
+          handler: () => [],
+        },
+      ],
+    });
+    const identity = textOf(
+      await createMetaTools(makeRegistry([hatch("gifts"), warehouse]), BASE).searchTools({
+        query: "warehouse pallets",
+      }),
+    ) as SearchResult;
+    const guidance = identity.queryAnalysis!.guidance!;
+    expect(guidance).toContain('the query names configured connector "inventory"');
+    expect(guidance).toContain("Scope by connector and browse with an empty query");
+    expect(guidance).toContain("gifts.crm_api_search");
+    expect(guidance.indexOf('connector "inventory"')).toBeLessThan(guidance.indexOf("API operation indexes"));
+    for (const safety of ["readOnly", "approvalRequired"] as const) {
+      for (const connectors of [[warehouse], [hatch("gifts"), warehouse]]) {
+        const result = textOf(
+          await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query: "warehouse pallets", safety }),
+        ) as SearchResult;
+        expect(result.queryAnalysis!.guidance!.match(/Change safety to inspect the other tools\./g)).toHaveLength(1);
+      }
+    }
+    for (const readOnly of [false, true]) {
+      const endpoint = createMetaTools(makeRegistry([hatch("limited", { readOnly: true })]), BASE, { readOnly });
+      const filtered = textOf(
+        await endpoint.searchTools({ query: "webhook", safety: "approvalRequired" }),
+      ) as SearchResult;
+      expect(filtered.queryAnalysis!.guidance).not.toContain("crm_api_search");
+      const readable = textOf(await endpoint.searchTools({ query: "webhook", safety: "readOnly" })) as SearchResult;
+      expect(readable.queryAnalysis!.guidance).toContain("limited.crm_api_search");
+    }
+    const readOnlyEndpoint = createMetaTools(makeRegistry([hatch("writable")]), BASE, { readOnly: true });
+    expect(
+      (textOf(await readOnlyEndpoint.searchTools({ query: "webhook", safety: "approvalRequired" })) as SearchResult)
+        .queryAnalysis!.guidance,
+    ).not.toContain("crm_api_search");
+    // Tool grants, classification overrides and read-only surfaces govern the
+    // pointer too. An unavailable catalog remains an explicit incomplete search.
+    const hidden = makeRegistry([hatch("hidden")], { classification: { hidden: { crm_api_search: "hidden" } } });
+    expect(JSON.stringify(await createMetaTools(hidden, BASE).searchTools({ query: "webhook" }))).not.toContain(
+      "hidden.crm_api_search",
+    );
+    const longId = "x".repeat(300);
+    const bounded = textOf(
+      await createMetaTools(makeRegistry([hatch(longId), hatch("short")]), BASE).searchTools({ query: "webhook" }),
+    ) as SearchResult;
+    expect(bounded.queryAnalysis!.guidance).toContain("1 API search tool was omitted");
+    expect(bounded.queryAnalysis!.guidance).not.toContain(longId);
+    const failed = connectorWith({
+      id: "failed",
+      kind: "api",
+      tools: async () => {
+        throw new ConnectorCallError("unavailable", "PRIVATE_CATALOG");
+      },
+      call: async () => null,
+    });
+    const incomplete = textOf(
+      await createMetaTools(makeRegistry([hatch("healthy"), failed]), BASE).searchTools({ query: "webhook" }),
+    ) as SearchResult;
+    expect(incomplete.queryAnalysis!.guidance).toContain("1 connector catalog was unavailable");
+    expect(incomplete.queryAnalysis!.guidance).toContain("healthy.crm_api_search");
+    expect(JSON.stringify(incomplete)).not.toContain("PRIVATE_CATALOG");
+    expect(new TextEncoder().encode(JSON.stringify(incomplete)).length).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
+    const gifts = createMetaTools(makeRegistry([overflowFixture.create("gifts")]), BASE);
+    for (const query of ["tap", "webhook"]) {
+      const found = textOf(await gifts.searchTools({ connector: "gifts", query })) as SearchResult;
+      expect(found.tools).toEqual([]);
+      expect(found.queryAnalysis!.guidance).toContain("gifts.overflow_api_search");
+      expect(found.queryAnalysis!.guidance).not.toContain("capability is configured");
+    }
   });
 
   it("bounds query analysis independently of long search input", async () => {

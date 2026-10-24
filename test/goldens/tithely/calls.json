@@ -26,12 +26,18 @@
             "tool": "tithely_api_write"
           },
           {
-            "method": "GET",
-            "path": "/charges/{charge_id}",
-            "operationId": "getCharge",
-            "summary": "Retrieve a charge",
-            "tool": "tithely_api_read",
-            "matched": "response field charge_id"
+            "method": "POST",
+            "path": "/charge-once",
+            "operationId": "chargeOnce",
+            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
+            "tool": "tithely_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/charges",
+            "operationId": "createCharge",
+            "summary": "Create a charge (gift) on a donor's stored payment method",
+            "tool": "tithely_api_write"
           },
           {
             "method": "GET",
@@ -39,23 +45,15 @@
             "operationId": "listCharges",
             "summary": "List charges (gifts) for an organization or donor",
             "tool": "tithely_api_read",
-            "matched": "response field data[].charge_id"
+            "named": "list_charges"
           },
           {
-            "method": "POST",
-            "path": "/charges",
-            "operationId": "createCharge",
-            "summary": "Create a charge (gift) on a donor's stored payment method",
-            "tool": "tithely_api_write",
-            "matched": "response field charge_id"
-          },
-          {
-            "method": "POST",
-            "path": "/charge-once",
-            "operationId": "chargeOnce",
-            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
-            "tool": "tithely_api_write",
-            "matched": "response field charge_id"
+            "method": "GET",
+            "path": "/charges/{charge_id}",
+            "operationId": "getCharge",
+            "summary": "Retrieve a charge",
+            "tool": "tithely_api_read",
+            "named": "get_charge"
           }
         ],
         "revision": "v1",

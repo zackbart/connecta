@@ -9,6 +9,7 @@
 // cursor) and details return at most 32 KiB, cutting only optional parts and
 // listing them in `truncated`; a required parameter or body field is never cut.
 import { Effect, Schema } from "effect";
+import { lexicalSearchContent } from "../catalog.js";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { keyResendAdvice } from "../errors.js";
@@ -357,33 +358,176 @@ export function hatch(
       ...(authored ? { named: authored } : {}),
     };
   };
-  // 0014: exact path nouns and root collections ahead of related resources,
-  // and authored operations ahead of equal ones, over the index's own order.
-  const rank = (found: readonly Operation[], query: string): Operation[] => {
-    const terms = new Set(
-      query
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter(Boolean),
-    );
-    const literal = (op: Operation) => op.path.split("/").filter((part) => part && !part.startsWith("{"));
-    const exact = (op: Operation) =>
-      literal(op).some((part) =>
-        part
-          .toLowerCase()
-          .split(/[^a-z0-9]+/)
-          .some((word) => terms.has(word)),
-      );
-    const order = new Map(found.map((op, position) => [op, position]));
-    const lead = found
-      .filter(exact)
+  const verbs: Readonly<Record<string, readonly string[]>> = {
+    delete: ["delete", "remove", "destroy", "cancel", "stop"],
+    remove: ["delete", "remove", "destroy"],
+    cancel: ["cancel", "stop", "delete"],
+    stop: ["cancel", "stop", "delete"],
+    update: ["update", "edit", "modify"],
+    edit: ["update", "edit", "modify"],
+    create: ["create", "add", "new"],
+    add: ["create", "add", "new"],
+    get: ["get", "retrieve", "read"],
+    read: ["get", "retrieve", "read"],
+    retrieve: ["get", "retrieve", "read"],
+    fetch: ["get", "retrieve", "read"],
+    details: ["get", "retrieve", "read"],
+    detail: ["get", "retrieve", "read"],
+    info: ["get", "retrieve", "read"],
+    view: ["get", "retrieve", "read"],
+    status: ["get", "retrieve", "read", "list"],
+    history: ["list", "find", "search"],
+    list: ["list", "find", "search"],
+    find: ["list", "find", "search"],
+    search: ["list", "find", "search"],
+    refund: ["refund", "reimburse"],
+    charge: ["charge"],
+    issue: ["issue"],
+    process: ["process"],
+  };
+  const readActions = new Set([
+    "get",
+    "read",
+    "list",
+    "find",
+    "search",
+    "details",
+    "detail",
+    "status",
+    "history",
+    "info",
+    "view",
+    "retrieve",
+    "fetch",
+  ]);
+  const writeActions = new Set([
+    "create",
+    "add",
+    "update",
+    "edit",
+    "delete",
+    "remove",
+    "cancel",
+    "stop",
+    "refund",
+    "charge",
+    "issue",
+    "process",
+  ]);
+  const queryWords = (query: string) =>
+    lexicalSearchContent(query)
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 2);
+  const writeVerbs = new Set(["create", "add", "update", "edit", "delete", "remove", "cancel", "stop"]);
+  const queryTerms = (query: string) => {
+    const terms = queryWords(query).filter((term) => term !== "by");
+    const lookup = terms.find((term) => readActions.has(term));
+    const first = terms[0];
+    // issue/process remain nouns unless a leading verb has another noun to act on.
+    const leadingVerb =
+      first !== undefined &&
+      Object.hasOwn(verbs, first) &&
+      (!["issue", "process", "refund", "charge"].includes(first) ||
+        (!lookup && terms.slice(1).some((term) => !readActions.has(term) && !/^\d+$/.test(term))));
+    // An explicit leading write verb wins; a later read word (list, status) is its object.
+    if (first !== undefined && terms.length > 1 && writeVerbs.has(first))
+      return { terms, nouns: terms.slice(1), verbWords: verbs[first], intent: "write" as const };
+    const verb = lookup ?? (leadingVerb ? first : undefined);
+    return {
+      terms,
+      nouns: terms.filter(
+        (term, position) =>
+          !readActions.has(term) && !(position === 0 && leadingVerb && !["refund", "charge"].includes(term)),
+      ),
+      verbWords: verb === undefined ? undefined : verbs[verb],
+      intent: (lookup ? "read" : leadingVerb && writeActions.has(first!) ? "write" : undefined) as
+        | "read"
+        | "write"
+        | undefined,
+    };
+  };
+  // Compare inflections symmetrically: campus/campuses must not stem campus to campu.
+  const plural = (word: string) => (word.endsWith("y") ? `${word.slice(0, -1)}ies` : `${word}es`);
+  const sameNoun = (word: string, term: string) =>
+    word === term ||
+    word === `${term}s` ||
+    term === `${word}s` ||
+    word === plural(term) ||
+    term === plural(word) ||
+    (word === "people" && term === "person") ||
+    (word === "person" && term === "people");
+  const matches = (word: string, term: string) => sameNoun(word, term) || (term.length >= 3 && word.startsWith(term));
+  // Intent and the requested verb precede collection ties. Root preference
+  // applies to one resource noun; multi-word phrases retain index relevance.
+  const rank = (found: readonly Operation[], query: ReturnType<typeof queryTerms>, pathQuery: boolean): Operation[] => {
+    if (pathQuery) return [...found];
+    const { nouns, intent, verbWords } = query;
+    // Modifiers may precede the resource in action/read queries. Noun phrases
+    // retain their broader resource match without the half-coverage threshold.
+    const half = Math.ceil(nouns.length / 2);
+    const features = found
+      .map((op, position) => {
+        const parts = op.path.toLowerCase().split("/").filter(Boolean);
+        const literal = parts.filter((part) => !part.startsWith("{")).flatMap(words);
+        const parameter = parts.findIndex((part) => part.startsWith("{"));
+        const root = parameter < 0 ? parts : parts.slice(0, parameter);
+        const verbal = words(`${op.summary} ${op.operationId} ${op.path}`);
+        return {
+          op,
+          position,
+          parts,
+          literal,
+          root,
+          parameter,
+          text: [...verbal, ...words(op.tag)],
+          identity: [...literal, ...words(op.operationId)],
+          verbMatch: verbWords !== undefined && verbal.some((word) => verbWords.includes(word)),
+        };
+      })
+      .filter(({ identity, text }) => {
+        const covered = nouns.filter((term) => text.some((word) => matches(word, term))).length;
+        return (
+          nouns.length === 0 ||
+          covered === nouns.length ||
+          ((intent === undefined || covered >= half) &&
+            nouns.some((term) => identity.some((word) => matches(word, term))))
+        );
+      });
+    const focus = nouns.find((term) => features.some(({ literal }) => literal.some((word) => sameNoun(word, term))));
+    const resourceOnly = nouns.length === 1 && !pathQuery;
+    const keyed = features.map(({ op, position, parts, literal, root, parameter, verbMatch }) => ({
+      op,
+      position,
+      intent: Number(
+        intent === undefined ||
+          (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op))),
+      ),
+      verbMatch: Number(verbMatch),
+      focused: Number(
+        (intent !== undefined || resourceOnly) && focus !== undefined && literal.some((word) => sameNoun(word, focus)),
+      ),
+      exact: Number(focus !== undefined && sameNoun((root.at(-1) ?? "").replace(/-list(?:-all)?$/, ""), focus)),
+      nested: parameter < 0 ? 0 : parts.slice(parameter).filter((part) => !part.startsWith("{")).length,
+      namespace: Number(focus !== undefined && sameNoun((root[0] ?? "").replace(/-list(?:-all)?$/, ""), focus)),
+      depth: parts.length,
+      authored: Number(named.has(`${op.method} ${op.path}`)),
+    }));
+    return keyed
       .sort(
         (a, b) =>
-          a.path.split("/").length - b.path.split("/").length ||
-          Number(named.has(`${b.method} ${b.path}`)) - Number(named.has(`${a.method} ${a.path}`)) ||
-          order.get(a)! - order.get(b)!,
-      );
-    return [...lead, ...found.filter((op) => !exact(op))];
+          b.intent - a.intent ||
+          b.verbMatch - a.verbMatch ||
+          b.focused - a.focused ||
+          (resourceOnly
+            ? b.exact - a.exact ||
+              a.nested - b.nested ||
+              b.namespace - a.namespace ||
+              a.depth - b.depth ||
+              b.authored - a.authored
+            : 0) ||
+          a.position - b.position,
+      )
+      .map(({ op }) => op);
   };
   // Find operations by the request or response properties they declare: a
   // query word must equal a word of a property's name. Rarer words weigh more,
@@ -438,6 +582,14 @@ export function hatch(
           order.get(a.op)! - order.get(b.op)!,
       )
       .map(({ op, field }) => ({ op, field }));
+  };
+  // Nouns an operation's text or declared field names cover.
+  const coverage = (op: Operation, nouns: readonly string[]) => {
+    const own = [
+      ...words(`${op.summary} ${op.operationId} ${op.path} ${op.tag}`),
+      ...index.fields(op).flatMap((field) => words(field.path.split(".").at(-1)!)),
+    ];
+    return nouns.filter((term) => own.some((word) => matches(word, term))).length;
   };
   const methodsWith = (wanted: (verdict: Verdict) => boolean) =>
     index.methods.filter((method) => index.ops.some((op) => op.method === method && wanted(verdictOf(op))));
@@ -521,14 +673,32 @@ export function hatch(
                 error: new ConnectorCallError("invalid_args", "This search cursor is not one search returned."),
               }),
             );
+          const pathQuery = args.query.trim().startsWith("/");
+          const query = queryTerms(args.query);
           const primary = rank(
-            yield* checked(() => index.search(args.query, { ...scope, limit: index.ops.length })),
-            args.query,
+            yield* checked(() =>
+              index.search(pathQuery ? args.query : query.terms.join(" "), {
+                ...scope,
+                limit: index.ops.length,
+                partial: !pathQuery && query.terms.length > 0,
+              }),
+            ),
+            query,
+            pathQuery,
           );
           // Operations found only by a field they return or take rank after every path, id or summary match.
           const ranked: Array<{ op: Operation; field?: OperationField }> = [
             ...primary.map((op) => ({ op })),
-            ...byField(args.query, args.method, new Set(primary)),
+            ...byField(
+              pathQuery ? args.query : (query.nouns.length ? query.nouns : query.terms).join(" "),
+              args.method,
+              new Set(primary),
+            ).filter(
+              ({ op }) =>
+                pathQuery ||
+                query.intent === undefined ||
+                coverage(op, query.nouns) >= Math.ceil(query.nouns.length / 2),
+            ),
           ];
           const reachable = ranked.filter(({ op }) => [...op.path].length <= 2048).length;
           if (continuation !== undefined && offset >= reachable)

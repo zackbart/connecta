@@ -1299,7 +1299,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
     {
       name: "batch_update_form",
       description:
-        "Apply Forms API batchUpdate requests to a Google Form, all or none: create, update, move, or delete items, and change info or quiz settings. Always needs approval.",
+        "Apply Forms API batchUpdate requests to a Google Form, all or none: create, update, move, or delete items, and change info or quiz settings. The host may ask the user to confirm this write.",
       // Destructive whatever it carries: a deleteItem or an updateItem loses
       // what it replaces, and the requests are Google's to interpret.
       annotations: { readOnlyHint: false, destructiveHint: true },

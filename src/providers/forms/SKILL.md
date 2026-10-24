@@ -67,8 +67,8 @@ Drive, or take its id from an edit URL (`/forms/d/<formId>/edit`). The
 - `create_form` makes an empty form: Google takes only its title and Drive
   file name at creation. Add a description and questions afterwards.
 - `update_form_info` replaces the title or description.
-- `batch_update_form` is the escape hatch for everything else, and always
-  needs approval. It takes Google's own Request objects, applied all or none,
+- `batch_update_form` is the escape hatch for everything else; the host may
+  ask the user to confirm this write. It takes Google's own Request objects, applied all or none,
   with the form's current `revisionId` as `requiredRevisionId`: a form
   someone changed since you read it is refused as `conflict`, so re-read it
   and rebuild the edit. Its reply carries the new `revisionId` and each created item's id.

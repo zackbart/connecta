@@ -324,7 +324,7 @@ describe("authorize_connector", () => {
     expect(authConnector.startAuthCalls).toEqual([]);
   });
 
-  it("returns a secret-free operator handoff for a configured credential vault", async () => {
+  it("INV-5 INV-10: configured credentials conditionally proceed and retain a secret-free operator handoff", async () => {
     const connector = api("static", {
       credential: {
         label: "Service credentials",
@@ -341,7 +341,16 @@ describe("authorize_connector", () => {
           },
         ],
       },
-      tools: [],
+      tools: [
+        {
+          name: "read",
+          description: "Read a record",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError("auth_required", "The key was rejected");
+          },
+        },
+      ],
     });
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, CREDENTIAL_KEY);
@@ -353,14 +362,29 @@ describe("authorize_connector", () => {
       },
       "user_1",
     );
-    const result = await createMetaTools(
-      makeRegistry([connector], { storage, credentialVault: vault }),
-      BASE,
-    ).authorizeConnector({ connector: "static", force: true });
-    expect(result.isError).toBeFalsy();
-    expect(textOf(result)).toEqual({
+    const reg = makeRegistry([connector], { storage, credentialVault: vault });
+    const requestScope = {};
+    const mt = createMetaTools(reg, BASE, { requestScope });
+    const configured = await mt.authorizeConnector({ connector: "static", force: true });
+    expect(textOf(configured)).toMatchObject({
       connector: "static",
-      recovery: "operator_config",
+      recovery: "ready",
+      message: expect.stringContaining(
+        "If a call to it just failed with an authentication or operator-configuration error",
+      ),
+      operatorUrl: `${BASE}/`,
+      instructions: expect.stringContaining("Have the operator"),
+    });
+    expect(JSON.stringify(configured)).not.toContain("operator@example.com");
+    expect(JSON.stringify(configured)).not.toContain("do-not-return-this-secret");
+    const rejected = textOf(await mt.callTool({ address: "static.read", resultMode: "value" })) as any;
+    expect(rejected.error).toMatchObject({ code: "auth_required", recovery: "operator_config" });
+    const result = await mt.authorizeConnector({ connector: "static" });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatchObject({
+      connector: "static",
+      recovery: "ready",
+      message: expect.stringContaining("otherwise proceed with the call"),
       credential: {
         label: "Service credentials",
         fields: [
@@ -377,6 +401,15 @@ describe("authorize_connector", () => {
     });
     expect(required(result.content[0]).text).not.toContain("do-not-return-this-secret");
     expect(required(result.content[0]).text).not.toContain("operator@example.com");
+    await vault.delete("static");
+    const missing = await createMetaTools(reg, BASE).authorizeConnector({ connector: "static" });
+    expect(textOf(missing)).toMatchObject({ recovery: "operator_config", operatorUrl: `${BASE}/` });
+    expect(textOf(missing)).not.toHaveProperty("message");
+    // Configured credentials do not need a UI or any downstream probe.
+    await vault.setAll("static", { email: "alice@example.com", apiKey: "evk_91c2e0b84d7a6f35" }, "user_1");
+    expect(textOf(await buildMetaTools(reg, BASE).authorizeConnector({ connector: "static" }))).toMatchObject({
+      recovery: "ready",
+    });
   });
 });
 

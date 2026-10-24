@@ -20,19 +20,18 @@
           },
           {
             "method": "GET",
+            "path": "/refunds/{refundId}",
+            "operationId": "getRefundById",
+            "summary": "Retrieve one refund and its contribution, status and cent amounts",
+            "tool": "overflow_api_read"
+          },
+          {
+            "method": "GET",
             "path": "/refunds",
             "operationId": "getRefunds",
             "summary": "List refunds with contribution and deposit joins and cent amounts",
             "tool": "overflow_api_read",
-            "matched": "response field data[].processorRefundId"
-          },
-          {
-            "method": "GET",
-            "path": "/refunds/{refundId}",
-            "operationId": "getRefundById",
-            "summary": "Retrieve one refund and its contribution, status and cent amounts",
-            "tool": "overflow_api_read",
-            "matched": "response field data.processorRefundId"
+            "named": "list_refunds"
           },
           {
             "method": "GET",

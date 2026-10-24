@@ -390,8 +390,11 @@ export class OperationIndex {
    * the path, summary, operationId, or tag (plural-insensitive, prefixes of
    * three letters count), and path matches weigh most. A query that starts
    * with "/" also matches the templates that fit it.
+   * Standard hatches opt into partial matches, ordered by matched term count
+   * before relevance, including the person/people alias. Legacy callers keep
+   * the all-term contract.
    */
-  search(query: string, options: { method?: RestMethod; limit: number }): Operation[] {
+  search(query: string, options: { method?: RestMethod; limit: number; partial?: boolean }): Operation[] {
     this.#words ??= this.ops.map((op) => ({
       path: new Set(
         op.path
@@ -419,6 +422,14 @@ export class OperationIndex {
     const match = (set: Set<string>, term: string): number => {
       if (set.has(term)) return 2;
       for (const word of set) {
+        if (options.partial && ((term === "person" && word === "people") || (term === "people" && word === "person")))
+          return 2;
+        if (
+          options.partial &&
+          ((term.endsWith("y") && word === `${term.slice(0, -1)}ies`) ||
+            (word.endsWith("y") && term === `${word.slice(0, -1)}ies`))
+        )
+          return 2;
         if (word === `${term}s` || term === `${word}s` || word === `${term}es` || term === `${word}es`) return 2;
         if (term.length >= 3 && word.startsWith(term)) return 1;
       }
@@ -435,12 +446,13 @@ export class OperationIndex {
         if (path + summary + id > 0) matched += 1;
         score += path * 3 + summary * 1.5 + id;
       }
-      if (!fits.has(op.row) && (terms.length === 0 || matched < terms.length)) return [];
-      return [{ op, score }];
+      if (!fits.has(op.row) && (terms.length === 0 || matched < (options.partial ? 1 : terms.length))) return [];
+      return [{ op, score, matched }];
     });
     return ranked
       .sort(
         (a, b) =>
+          (options.partial ? b.matched - a.matched : 0) ||
           b.score - a.score ||
           a.op.path.split("/").length - b.op.path.split("/").length ||
           a.op.path.localeCompare(b.op.path),
