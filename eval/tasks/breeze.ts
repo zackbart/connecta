@@ -28,14 +28,19 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     evidence = /breeze/i.test(answer);
   if (id === ids[0]) {
     destination = reached("/people") && reached("/profile") && reached("/tags/list_tags");
-    add(
-      "filtered",
-      calls.some(
-        (c) =>
-          c.args.path === "/people" &&
-          query(c).filter_json &&
-          JSON.parse(query(c).filter_json!)[STATUS_FIELD] === "901" &&
-          JSON.parse(query(c).filter_json!).tag_contains === `y_${TAG}`,
+    checks.push(
+      check(
+        "filtered",
+        "The vendor filtered both tag and status (efficiency only)",
+        calls.some(
+          (c) =>
+            c.args.path === "/people" &&
+            query(c).filter_json &&
+            JSON.parse(query(c).filter_json!)[STATUS_FIELD] === "901" &&
+            JSON.parse(query(c).filter_json!).tag_contains === `y_${TAG}`,
+        ),
+        undefined,
+        true,
       ),
     );
     evidence &&= /ANSWER:\s*34\b/i.test(answer) && matching.length === 34;
