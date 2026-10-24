@@ -700,7 +700,7 @@
         "dispatched": true,
         "error": {
           "code": "invalid_args",
-          "message": "Not sent: the path does not match GET /accounts/{account_id}/botnet_feed/asn/{asn_id}/day_report in the pinned API index: /path/asn_id (type: a canonical ASCII decimal safe integer). Substitute real ids matching cloudflare_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "message": "Not sent: the path does not match GET /accounts/{account_id}/botnet_feed/asn/{asn_id}/day_report in the pinned API index: /path/asn_id (type: a canonical ASCII decimal safe integer). Substitute real ids matching cloudflare_api_details. Integer ids use canonical ASCII decimal notation within the safe-integer range.",
           "retryable": false,
           "validation": {
             "issues": [
@@ -759,7 +759,7 @@
         "dispatched": true,
         "error": {
           "code": "connector_call_failed",
-          "message": "Cloudflare returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "message": "Cloudflare returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it.",
           "retryable": false,
           "writeOutcome": "unknown"
         }

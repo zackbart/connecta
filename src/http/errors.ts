@@ -86,8 +86,11 @@ export class StatusFailure extends Data.TaggedError("StatusFailure")<{
 }> {}
 
 /** A successful status whose body is not JSON. Its text never surfaces. */
-export class UnreadableBody extends Data.TaggedError("UnreadableBody")<{ readonly readFailed?: true }> {
-  constructor(options: { readonly readFailed?: true } = {}) {
+export class UnreadableBody extends Data.TaggedError("UnreadableBody")<{
+  readonly readFailed?: true;
+  readonly unexpectedText?: true;
+}> {
+  constructor(options: { readonly readFailed?: true; readonly unexpectedText?: true } = {}) {
     super(options);
   }
 }
@@ -752,12 +755,14 @@ function verdict(
     case "UnreadableBody": {
       const unreadable = failure.readFailed
         ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? vendor.unreadable)
-        : vendor.unreadable;
+        : failure.unexpectedText
+          ? `${vendor.provider} returned unexpected text/HTML for a JSON response.`
+          : vendor.unreadable;
       return new ConnectorCallError(
         "connector_call_failed",
         options.classification === "write" && dispatch?.request?.auxiliary !== true
-          ? (vendor.unreadableWrite ??
-              `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`)
+          ? (!failure.unexpectedText && vendor.unreadableWrite) ||
+              `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`
           : unreadable,
         { retryable: false },
       );

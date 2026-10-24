@@ -1855,7 +1855,7 @@
         "dispatched": true,
         "error": {
           "code": "invalid_args",
-          "message": "Not sent: the path does not match GET /spreadsheets/{spreadsheetId}/developerMetadata/{metadataId} in the pinned API index: /path/metadataId (type: a canonical ASCII decimal safe integer). Substitute real ids matching sheets_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "message": "Not sent: the path does not match GET /spreadsheets/{spreadsheetId}/developerMetadata/{metadataId} in the pinned API index: /path/metadataId (type: a canonical ASCII decimal safe integer). Substitute real ids matching sheets_api_details. Integer ids use canonical ASCII decimal notation within the safe-integer range.",
           "retryable": false,
           "validation": {
             "issues": [

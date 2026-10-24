@@ -37,6 +37,7 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
+import { cloudflareIndex } from "../src/providers/cloudflare/api.js";
 import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
@@ -1076,6 +1077,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     { t: "integer", l: 0, u: 42 },
     { t: "integer", l: 1, u: 42 },
     { t: "integer", e: [1, 42] },
+    { t: "number" },
   ]) {
     const details = JSON.parse(DATA.details);
     details.o[1] = [[["item", "path", 1, schema]], 0];
@@ -1095,6 +1097,12 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       " 42",
       "42 ",
       "1.0",
+      "0.5",
+      "-0.5",
+      "42.5",
+      "0x10",
+      "1e3",
+      " +5",
       "1e2",
       "0x2a",
       "４２",
@@ -1110,11 +1118,15 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       "..",
       "a%2Fb",
     ]) {
-      const canonical = /^(?:0|-?[1-9][0-9]*)$/.test(decodeURIComponent(segment));
+      const syntax = schema.t === "integer" ? /^(?:0|-?[1-9][0-9]*)$/ : /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/;
+      const decoded = decodeURIComponent(segment);
+      const canonical = syntax.test(decoded) && decoded !== "-0";
       const number = Number(decodeURIComponent(segment));
       const valid =
         canonical &&
-        Number.isSafeInteger(number) &&
+        (schema.t === "integer"
+          ? Number.isSafeInteger(number)
+          : Number.isFinite(number) && Math.abs(number) <= Number.MAX_SAFE_INTEGER) &&
         (!("l" in schema) || number >= schema.l!) &&
         (!("u" in schema) || number <= schema.u!) &&
         (!("e" in schema) || schema.e!.includes(number));
@@ -1139,6 +1151,34 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       }
     }
   }
+  const enumFailure = (() => {
+    try {
+      return cloudflareIndex.resolve("GET", "/accounts/a/one/applications/app1/setup-flows");
+    } catch (error) {
+      return error;
+    }
+  })();
+  expect(enumFailure).toMatchObject({ code: "invalid_args" });
+  expect((enumFailure as Error).message).not.toContain("Integer ids");
+  let exclusive = 0;
+  for (const op of cloudflareIndex.ops) {
+    if (
+      !/\/cloudforce-one\/v2\/brand-protection\/(?:queries|takedown-notices)\/|\/cloudforce-one\/v2\/credential-monitor\/domains\//.test(
+        op.path,
+      )
+    )
+      continue;
+    for (const param of cloudflareIndex
+      .contract(op)
+      .parameters.filter((param) => param.in === "path" && param.schema["type"] === "integer")) {
+      exclusive++;
+      const path = (value: string) =>
+        op.path.replace(/\{([^}]+)\}/g, (_part, name) => (name === param.name ? value : "1"));
+      expect(() => cloudflareIndex.resolve(op.method, path("0"))).toThrow("at least 1");
+      expect(() => cloudflareIndex.resolve(op.method, path("1"))).not.toThrow();
+    }
+  }
+  expect(exclusive).toBe(16);
   // Native fetch framing must never turn an HTML page into a JSON write acknowledgement.
   for (const [fixture, credential, writes, readPath] of [
     [
@@ -1198,6 +1238,37 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     }
   }
   for (const [fixture, credential, args, type, body] of [
+    ...[
+      "/accounts/0123456789abcdef0123456789abcdef/workers/scripts/script_1/content/v2",
+      "/accounts/0123456789abcdef0123456789abcdef/workers/dispatch/namespaces/ns_1/scripts/script_1/content",
+      "/accounts/0123456789abcdef0123456789abcdef/workers/services/service_1/environments/production/content",
+    ].flatMap((path) =>
+      ["application/javascript", "application/javascript+module", "text/javascript"].map(
+        (type) =>
+          [
+            cloudflareFixture,
+            "cf-media-token",
+            { path },
+            type,
+            "export default { fetch() { return new Response('hello'); } }",
+          ] as const,
+      ),
+    ),
+    ...[
+      "/accounts/0123456789abcdef0123456789abcdef/r2/buckets/bucket_1/objects/key_1",
+      "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1",
+    ].flatMap((path) =>
+      ["application/json", "text/plain", "image/png", "application/x-object-data"].map(
+        (type) => [cloudflareFixture, "cf-media-token", { path }, type, "stored object bytes"] as const,
+      ),
+    ),
+    [
+      cloudflareFixture,
+      "cf-media-token",
+      { path: "/accounts/0123456789abcdef0123456789abcdef/magic/connectors/c1/telemetry/events/1700000000.5" },
+      "application/json",
+      '{"id":"event_1"}',
+    ],
     [stripeFixture, "sk_test_media_fixture", { path: "/v1/quotes/qt_1/pdf" }, "application/pdf", "%PDF"],
     [
       cloudflareFixture,
@@ -1254,6 +1325,54 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     };
     const answer = await fixture.create("media").callTool(`${fixture.name}_api_read`, args, ctx);
     expect(answer).toMatchObject({ status: 200 });
+    if (args.path.includes("script_1") || args.path.includes("key_1")) {
+      const data = (answer as any).data;
+      expect(typeof data === "string" ? data : atob(data.base64)).toBe(body);
+    }
+    expect(sent).toHaveLength(1);
+  }
+  const refund = overflowFixture.create("media");
+  for (const [type, body, accepted] of [
+    ["application/json", '"Refund initiated"', true],
+    ["text/plain; charset=utf-8", "Refund initiated", true],
+    ["text/html", "Refund initiated", false],
+    ["application/octet-stream", "Refund initiated", false],
+    ["application/pdf", "Refund initiated", false],
+    ["application/json", '{"ok":true}', false],
+    ["application/problem+json", '"Refund initiated"', false],
+  ] as const) {
+    sent = [];
+    response = () => new Response(body, { status: 202, headers: { "content-type": type } });
+    const values = { clientId: "media-client", apiKey: "overflow-media-key" };
+    const ctx = { ...connectorContext(), credential: { get: async () => values.apiKey, getAll: async () => values } };
+    attachCallClassification(ctx, "write");
+    const promise = refund.callTool(
+      "overflow_api_write",
+      { method: "POST", path: "/contributions/a143db98-198a-42ab-a2b0-5fcb2a18bfbb/initiate-refund" },
+      ctx,
+    );
+    if (accepted) await expect(promise).resolves.toEqual({ status: 202, data: "Refund initiated" });
+    else
+      await expect(promise).rejects.toMatchObject({
+        code: "connector_call_failed",
+        writeOutcome: "unknown",
+        retryable: false,
+        message: expect.stringContaining("check the target before repeating"),
+      });
+    expect(sent).toHaveLength(1);
+  }
+  for (const path of [
+    "/accounts/0123456789abcdef0123456789abcdef/r2/buckets/bucket_1/objects/key_1",
+    "/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces/ns_1/values/key_1",
+  ]) {
+    sent = [];
+    response = () => new Response("cf-media-token", { headers: { "content-type": "application/json" } });
+    const ctx = {
+      ...connectorContext(),
+      credential: { get: async () => "cf-media-token", getAll: async () => ({ value: "cf-media-token" }) },
+    };
+    const answer = await cloudflareFixture.create("media").callTool("cloudflare_api_read", { path }, ctx);
+    expect(JSON.stringify(answer)).not.toContain(btoa("cf-media-token"));
     expect(sent).toHaveLength(1);
   }
   // Fold the opt-in page adapters into the existing native request matrix.

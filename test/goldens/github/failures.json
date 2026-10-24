@@ -3363,7 +3363,7 @@
         "dispatched": true,
         "error": {
           "code": "invalid_args",
-          "message": "Not sent: the path does not match GET /repos/{owner}/{repo}/issues/{issue_number} in the pinned API index: /path/issue_number (type: a canonical ASCII decimal safe integer). Substitute real ids matching github_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "message": "Not sent: the path does not match GET /repos/{owner}/{repo}/issues/{issue_number} in the pinned API index: /path/issue_number (type: a canonical ASCII decimal safe integer). Substitute real ids matching github_api_details. Integer ids use canonical ASCII decimal notation within the safe-integer range.",
           "retryable": false,
           "validation": {
             "issues": [

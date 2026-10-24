@@ -36,15 +36,23 @@ safe-integer range and obey the operation's declared bounds; for example,
 is refused.
 
 Stripe, Cloudflare and Vercel accept non-JSON success bodies only for reviewed
-operation/media pairs from their pins. An unexpected HTML or text answer to a
+operation/media pairs from their pins. Cloudflare also preserves three raw Worker
+script downloads with JavaScript media and treats R2/KV object downloads as bytes
+regardless of the stored Content-Type. An unexpected HTML or text answer to a
 JSON write reports an unknown outcome after one send; check the target before
 repeating the write. Documented PDFs, text exports and streaming formats retain
 their reviewed handling.
 
 Vercel project-environment partial replies withhold failure prose before `fields`
 selection. Named upsert partial-write reports identify the sent key and reviewed
-failure codes, with reconciliation guidance; vendor-echoed keys and ids are not
-copied into that report.
+failure codes, with reconciliation guidance; safe created and failed entries are retained, and submitted env values are private
+write-only inputs on both named tools and raw env writes. Shared-env POST, PATCH
+and DELETE failure prose is withheld too.
+
+Overflow refund initiation accepts an `application/json` string or a bounded
+`text/plain` acknowledgement, a narrow NestJS compatibility exception. HTML,
+binary and other success media fail with an unknown outcome after one dispatch;
+check whether the refund took effect before repeating it.
 
 ## Planning Center
 

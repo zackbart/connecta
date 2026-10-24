@@ -412,7 +412,7 @@ describe("API provider failure sweep", () => {
                 error: {
                   code: "connector_call_failed",
                   retryable: false,
-                  message: "Gmail returned a successful response that is not JSON.",
+                  message: "Gmail returned unexpected text/HTML for a JSON response.",
                 },
               });
               expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(

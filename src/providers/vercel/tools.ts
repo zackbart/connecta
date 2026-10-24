@@ -268,6 +268,7 @@ export function vercelTools({
           key: { type: "string", minLength: 1, maxLength: 256, description: "Environment variable name." },
           value: {
             type: "string",
+            writeOnly: true,
             maxLength: 65536,
             description: "New value; write input only. Vercel caps a project's environment at 64 KB.",
           },
@@ -308,16 +309,20 @@ export function vercelTools({
           });
           const payload = record(data);
           if (Array.isArray(payload["failed"]) && payload["failed"].length) {
-            const codes = [
-              ...new Set(
-                payload["failed"].map((item) => reviewedCode(record(record(item)["error"])["code"]) ?? "unclassified"),
-              ),
-            ];
+            const created = (Array.isArray(payload["created"]) ? payload["created"] : [payload["created"]]).map(
+              (item) => compact({ id: text(record(item)["id"]), key: text(record(item)["key"]) }),
+            );
+            const failed = payload["failed"].map((item) =>
+              compact({
+                key: text(record(item)["key"] ?? record(record(item)["error"])["key"]),
+                code: reviewedCode(record(record(item)["error"])["code"]) ?? "unclassified",
+              }),
+            );
             return yield* Effect.fail(
               new Refusal({
                 error: new ConnectorCallError(
                   "connector_call_failed",
-                  `Vercel partially accepted the environment-variable write for sent key ${JSON.stringify(args["key"])}; its response contains both created and failed entries (${codes.join(", ")}). Check the target before repeating it.`,
+                  `Vercel partially accepted the environment-variable write for sent key ${JSON.stringify(args["key"])}. Created entries: ${JSON.stringify(created)}. Failed entries: ${JSON.stringify(failed)}. Check the target before repeating it.`,
                   { retryable: false, writeOutcome: "unknown" },
                 ),
               }),
@@ -343,7 +348,12 @@ export function vercelTools({
           },
           envVarId: ENV_VAR_ID,
           key: { type: "string", minLength: 1, maxLength: 256, description: "Replacement variable name." },
-          value: { type: "string", maxLength: 65536, description: "Replacement value; write input only." },
+          value: {
+            type: "string",
+            writeOnly: true,
+            maxLength: 65536,
+            description: "Replacement value; write input only.",
+          },
           type: { type: "string", enum: ["plain", "encrypted", "sensitive"], description: "Replacement storage type." },
           targets: { ...TARGETS, description: "Replacement default environments." },
           gitBranch: { type: ["string", "null"], description: "Replacement preview branch, or null to clear it." },

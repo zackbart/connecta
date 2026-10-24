@@ -417,7 +417,8 @@ export class OperationIndex {
     const issues: ArgumentValidationIssue[] = [];
     const repair: ArgumentRepairDetails["issues"] = [];
     for (const [name, at, , schema] of this.#row(op)?.[0] ?? []) {
-      if (at === "path") this.#check(schema, decodeURIComponent(params[name]!), `/path/${name}`, issues, repair);
+      if (at === "path" && params[name] !== undefined)
+        this.#check(schema, decodeURIComponent(params[name]), `/path/${name}`, issues, repair);
     }
     if (issues.length) {
       const shown = issues
@@ -425,7 +426,7 @@ export class OperationIndex {
         .map((issue) => `${issue.path} (${issue.code}: ${issue.expected})`)
         .join("; ");
       invalid(
-        `Not sent: the path does not match ${op.method} ${op.path} in the pinned API index: ${shown}. Substitute real ids matching ${this.#vendorTool("details")}; integer ids use canonical ASCII decimal notation within the safe-integer range.`,
+        `Not sent: the path does not match ${op.method} ${op.path} in the pinned API index: ${shown}. Substitute real ids matching ${this.#vendorTool("details")}.${issues.some((issue) => issue.expected?.includes("safe integer")) ? " Integer ids use canonical ASCII decimal notation within the safe-integer range." : ""}`,
         issues.slice(0, MAX_ISSUES),
       );
     }
@@ -750,16 +751,21 @@ export class OperationIndex {
     const path = at.startsWith("/path/");
     const types = typesOf(schema);
     if (path && !schema.a && !types.includes("string") && (types.includes("integer") || types.includes("number"))) {
-      const integer = types.includes("integer");
+      const integer = types.includes("integer") && !types.includes("number");
       const numeric = typeof value === "string" ? Number(value) : NaN;
+      const syntax = integer ? /^(?:0|-?[1-9][0-9]*)$/ : /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/;
       if (
         typeof value !== "string" ||
-        (integer ? !/^(?:0|-?[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(numeric) : !Number.isFinite(numeric))
+        !syntax.test(value) ||
+        value === "-0" ||
+        !Number.isFinite(numeric) ||
+        Math.abs(numeric) > Number.MAX_SAFE_INTEGER ||
+        (integer && !Number.isSafeInteger(numeric))
       ) {
         issues.push({
           path: at,
           code: "type",
-          expected: integer ? "a canonical ASCII decimal safe integer" : "a finite number",
+          expected: integer ? "a canonical ASCII decimal safe integer" : "a canonical ASCII decimal number",
         });
         return;
       }

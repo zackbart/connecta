@@ -1465,9 +1465,9 @@
       "POST /v1/webhooks": ["origin:url", "secret"],
       "GET /v1/webhooks/{id}": ["origin:url"],
       "GET /v1/env": ["data[].value"],
-      "POST /v1/env": ["created[].value", "failed[].error.value"],
-      "PATCH /v1/env": ["failed[].error.value", "updated[].value"],
-      "DELETE /v1/env": ["failed[].error.value"],
+      "POST /v1/env": ["created[].value", "failed[].error.message", "failed[].error.value"],
+      "PATCH /v1/env": ["failed[].error.message", "failed[].error.value", "updated[].value"],
+      "DELETE /v1/env": ["failed[].error.message", "failed[].error.value"],
       "PATCH /v1/env/{id}/unlink/{projectId}": [],
       "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": [
         "items"

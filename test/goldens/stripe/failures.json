@@ -871,7 +871,7 @@
         "dispatched": true,
         "error": {
           "code": "connector_call_failed",
-          "message": "Stripe returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it. Idempotency-Key: 00000000-0000-4000-8000-000000000001.",
+          "message": "Stripe returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it. Idempotency-Key: 00000000-0000-4000-8000-000000000001.",
           "retryable": false,
           "writeOutcome": "unknown",
           "uncertainCall": {

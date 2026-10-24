@@ -747,7 +747,7 @@
         "dispatched": true,
         "error": {
           "code": "connector_call_failed",
-          "message": "Vercel returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "message": "Vercel returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it.",
           "retryable": false,
           "writeOutcome": "unknown"
         }
@@ -785,7 +785,7 @@
         "dispatched": true,
         "error": {
           "code": "connector_call_failed",
-          "message": "Vercel returned malformed JSON. Whether the write took effect is unknown; check the target before repeating it.",
+          "message": "Vercel returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it.",
           "retryable": false,
           "writeOutcome": "unknown"
         }
@@ -832,7 +832,7 @@
         "dispatched": true,
         "error": {
           "code": "connector_call_failed",
-          "message": "Vercel partially accepted the environment-variable write for sent key \"TOKEN\"; its response contains both created and failed entries (ENV_CONFLICT). Check the target before repeating it.",
+          "message": "Vercel partially accepted the environment-variable write for sent key \"TOKEN\". Created entries: [{\"id\":\"[redacted]\",\"key\":\"TOKEN\"}]. Failed entries: [{\"key\":\"[redacted]\",\"code\":\"ENV_CONFLICT\"}]. Check the target before repeating it.",
           "retryable": false,
           "writeOutcome": "unknown"
         }

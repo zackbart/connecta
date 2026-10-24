@@ -730,5 +730,103 @@
         }
       }
     }
-  }
+  },
+  "additional": [
+    {
+      "label": "refund unexpected text/html",
+      "tool": "overflow_api_write",
+      "args": {
+        "method": "POST",
+        "path": "/contributions/6710f34fd5061afeec3eab57/initiate-refund"
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "POST",
+            "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57/initiate-refund",
+            "headers": {
+              "accept": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Overflow returned unexpected text/HTML for a JSON response. Whether the write took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    },
+    {
+      "label": "refund unexpected application/octet-stream",
+      "tool": "overflow_api_write",
+      "args": {
+        "method": "POST",
+        "path": "/contributions/6710f34fd5061afeec3eab57/initiate-refund"
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "POST",
+            "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57/initiate-refund",
+            "headers": {
+              "accept": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Overflow returned a non-JSON body for a successful write. Whether it took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    },
+    {
+      "label": "refund unexpected application/pdf",
+      "tool": "overflow_api_write",
+      "args": {
+        "method": "POST",
+        "path": "/contributions/6710f34fd5061afeec3eab57/initiate-refund"
+      },
+      "steps": [
+        [
+          {
+            "after": 0,
+            "method": "POST",
+            "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57/initiate-refund",
+            "headers": {
+              "accept": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            }
+          }
+        ]
+      ],
+      "result": {
+        "ok": false,
+        "dispatched": true,
+        "error": {
+          "code": "connector_call_failed",
+          "message": "Overflow returned a non-JSON body for a successful write. Whether it took effect is unknown; check the target before repeating it.",
+          "retryable": false,
+          "writeOutcome": "unknown"
+        }
+      }
+    }
+  ]
 }

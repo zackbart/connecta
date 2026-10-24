@@ -1,5 +1,6 @@
 // Cloudflare's pinned REST contracts, confinement, framing and failure semantics.
 import { responseMedia } from "../_shared/rest/response-media.js";
+import { EXCLUSIVE_PATH_IDS } from "./lib/path-bounds.js";
 import { RESPONSE_MEDIA } from "./lib/response-media.js";
 import { Effect, Option, Schema } from "effect";
 import { ConnectorCallError } from "../../errors.js";
@@ -464,7 +465,24 @@ function queryOf(call: RestCall): RestFraming["query"] {
 
 // --- The vendor ----------------------------------------------------------------
 
-export const cloudflareIndex = new OperationIndex(cloudflareDiscovery(openapi), {
+class CloudflareIndex extends OperationIndex {
+  override resolve(method: string, path: string) {
+    const match = super.resolve(method, path);
+    for (const name of EXCLUSIVE_PATH_IDS[`${match.op.method} ${match.op.path}`] ?? []) {
+      if (Number(decodeURIComponent(match.params[name]!)) < 1) {
+        throw new ConnectorCallError(
+          "invalid_args",
+          `Not sent: Cloudflare path parameter ${name} must be at least 1. Read cloudflare_api_details for the pinned contract.`,
+          {
+            validation: { issues: [{ path: `/path/${name}`, code: "minimum", expected: "at least 1" }] },
+          },
+        );
+      }
+    }
+    return match;
+  }
+}
+export const cloudflareIndex = new CloudflareIndex(cloudflareDiscovery(openapi), {
   vendor: "cloudflare",
   title: "Cloudflare",
   slashParams: SLASH_PARAMS,
@@ -503,6 +521,23 @@ export const graphqlQuery = post("graphqlQuery", "/graphql", {
 });
 const typed = [getUser, verifyToken, verifyAccountToken, listAccounts, listZones] as const;
 const indexed = indexedVendor("cloudflare", cloudflareIndex, typed);
+const OBJECT_DOWNLOADS = new Set([
+  "/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{object_key}",
+  "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/values/{key_name}",
+]);
+/** Reviewed repairs for the pin's script label and caller-controlled object media. */
+function cloudflareResponseMedia(status: number, operation: OperationRef, contentType = "") {
+  if (status < 200 || status > 299 || operation.flags?.["ownership"] === true) return undefined;
+  const path = operation.template.replace(/:([^/]+)/g, "{$1}");
+  const type = contentType.split(";", 1)[0]!.trim().toLowerCase();
+  if (operation.method === "GET" && OBJECT_DOWNLOADS.has(path)) return "binary";
+  if (
+    RESPONSE_MEDIA[`${operation.method} ${path}`]?.includes("string") &&
+    ["application/javascript", "application/javascript+module", "text/javascript"].includes(type)
+  )
+    return type === "text/javascript" ? "text" : "binary";
+  return responseMedia(RESPONSE_MEDIA, status, operation, contentType);
+}
 export const CloudflareApi = {
   ...indexed,
   api: declareVendor("cloudflare", ...typed, graphqlQuery).api,
@@ -518,17 +553,15 @@ export const CloudflareApi = {
   },
   textBodies: {
     review:
-      "Only operation/media pairs declared by the exact OpenAPI pin accept text, XML, CSV, SSE or NDJSON. Ownership lookups remain JSON-only (#1000).",
+      "Pinned text/XML/CSV/SSE/NDJSON operations and the three reviewed raw Worker-script aliases accept text. Ownership lookups remain JSON-only (#1000).",
     forResponse: (status: number, operation: OperationRef, type = "") =>
-      operation.flags?.["ownership"] !== true && responseMedia(RESPONSE_MEDIA, status, operation, type) === "text"
-        ? ("text" as const)
-        : undefined,
+      cloudflareResponseMedia(status, operation, type) === "text" ? ("text" as const) : undefined,
   },
   binaryBodies: {
     review:
-      "Only operation/media pairs declared by the exact OpenAPI pin accept bounded binary replies, including KV/R2 downloads. Ownership lookups remain JSON-only (#1000).",
+      "Pinned binary operations, three raw Worker-script aliases, and GET KV/R2 objects (any stored media) retain bounded bytes with sent-secret checks. Ownership lookups remain JSON-only (#1000).",
     forResponse: (status: number, operation: OperationRef, type: string) =>
-      operation.flags?.["ownership"] !== true && responseMedia(RESPONSE_MEDIA, status, operation, type) === "binary",
+      cloudflareResponseMedia(status, operation, type) === "binary",
   },
 };
 const canonical = (operation: OperationRef) => operation.template.replace(/\/:([^/]+)/g, "/{$1}");

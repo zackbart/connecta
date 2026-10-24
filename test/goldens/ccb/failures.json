@@ -844,7 +844,7 @@
         "dispatched": true,
         "error": {
           "code": "invalid_args",
-          "message": "Not sent: the path does not match GET /individuals/{id} in the pinned API index: /path/id (type: a canonical ASCII decimal safe integer). Substitute real ids matching ccb_api_details; integer ids use canonical ASCII decimal notation within the safe-integer range.",
+          "message": "Not sent: the path does not match GET /individuals/{id} in the pinned API index: /path/id (type: a canonical ASCII decimal safe integer). Substitute real ids matching ccb_api_details. Integer ids use canonical ASCII decimal notation within the safe-integer range.",
           "retryable": false,
           "validation": {
             "issues": [

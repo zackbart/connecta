@@ -1295,7 +1295,8 @@ generated header records that document's digest beside the pin's, so the
 offline freshness check sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
 transport. Resolved path parameters are validated before authentication or dispatch,
-including pinned enums and numeric bounds. Integer path values must decode to
+including pinned enums and numeric bounds. Number path values must decode to canonical finite ASCII decimals without
+exponents, hexadecimal, a leading plus or whitespace. Integer path values must decode to
 canonical ASCII decimal safe integers: `0`, positive decimals without leading
 zeros, or negative decimals without leading zeros. `-0`, leading `+`, whitespace,
 exponents, decimal points and non-ASCII digits are refused. Negative integers
