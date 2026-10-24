@@ -25,8 +25,8 @@ export const github = defineProvider<GitHubOptions>({
   skill,
   kit,
   bundle: {
-    baselineGzip: 324003,
-    note: "./providers/github measures 324,003 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 450413,
+    note: "./providers/github measures 450,413 B gzip standalone in step 2 (#703), Node 26.12.0 with zlib-ng 1.3.1, scripts/bundle-size.mjs. The complete immutable 1,204-operation index is retained. The same-toolchain pre-change probe was 335,233 B; growth is approximately 115 KB, below the approved 300 KB gate. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,
@@ -43,8 +43,13 @@ export const github = defineProvider<GitHubOptions>({
     // through a property or a function's own `call`.
     const restCall = rest.callTool;
     const usageGuide = provider.usageGuide({
-      context: [`Act as the GitHub App. Reachable configuration: ${policy.summary()}.`, `Purpose: ${options.purpose}`],
-      summary: "GitHub App scopes, installation routing, confined search and workflow-file limits.",
+      context: [
+        `Act as the GitHub App. Reachable configuration: ${policy.summary()}.`,
+        `Purpose: ${options.purpose}`,
+        "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth failure.",
+        ...(options.readOnly === true ? ["This connection is read-only; every write is refused."] : []),
+      ],
+      summary: "GitHub App repository reads, scoped data search, release writes and guarded merges.",
       required: true,
     });
     const credential =

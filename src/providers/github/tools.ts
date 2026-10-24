@@ -1,46 +1,66 @@
-import { Effect, Option } from "effect";
-import { api, type ApiTool } from "../../connectors/api.js";
+import { Effect, Option, Schema } from "effect";
+import { api } from "../../connectors/api.js";
 import { deriveContext } from "../../derived-context.js";
-import { Refusal, type HttpFailure } from "../../http/errors.js";
-import { Operation } from "../../runtime/call.js";
-import { Dispatches, type CallServices } from "../../http/services.js";
-import { read, write } from "../../http/tools.js";
-import { catalogOrder, schema } from "../_shared/rest/kit.js";
-import { githubConnection, rejectedToken } from "./api.js";
 import { ConnectorCallError } from "../../errors.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
-import { AppAuth, type Permissions } from "./lib/auth.js";
-import { ScopePolicy, target, type GitHubScope, type Target } from "./lib/scope.js";
+import { Refusal } from "../../http/errors.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { hatch, type HatchBinding } from "../../http/hatch.js";
+import { githubPage } from "../../http/hatch-paging.js";
+import { Integer, isMinChars } from "../../http/json-schema.js";
+import { boundCursor, StandardPage } from "../../http/paging.js";
+import { Dispatches } from "../../http/services.js";
+import { read, write } from "../../http/tools.js";
+import type { SendOptions } from "../../http/vendor.js";
+import { Operation } from "../../runtime/call.js";
+import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 import { tracksEveryRequest } from "../../provider-call.js";
+import type { ConnectorContext } from "../../types.js";
+import { checked } from "../_shared/rest/kit.js";
+import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
+import { githubConnection, rejectedToken } from "./api.js";
+import { AppAuth, type Permissions } from "./lib/auth.js";
+import { githubIndex, GITHUB_HATCH } from "./lib/discovery.js";
+import { READ_PERMISSIONS, RELEASE_PERMISSIONS, hatchRefusal } from "./lib/operations.js";
+import { ScopePolicy, target, workflowPath, type GitHubScope, type Target } from "./lib/scope.js";
 
-const text = (description: string): JsonSchema => ({ type: "string", minLength: 1, description });
-const ownerRepo = { owner: text("Configured repository owner."), repo: text("Repository name under that owner.") };
-const object = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({
-  type: "object",
-  properties,
-  required,
-  additionalProperties: false,
-});
-const integer = (description: string): JsonSchema => ({ type: "integer", minimum: 1, description });
-const bool = (description: string): JsonSchema => ({ type: "boolean", description });
-const jsonObject: JsonSchema = { type: "object", additionalProperties: true };
-const scopeRecord = object(
-  {
-    org: { type: "string" },
-    repo: { type: "string" },
-    access: { type: "string", enum: ["read", "read-write"] },
-    workflows: { type: "string", enum: ["write"] },
-  },
-  ["access"],
-);
-const selector = object({
-  org: text("Configured org scope."),
-  repo: text("Exact owner/repo within configured scope."),
-});
-const repoPath = (t: Target): string => `/repos/${encodeURIComponent(t.owner)}/${encodeURIComponent(t.repo)}`;
+const text = (description: string) => Schema.String.check(isMinChars(1)).annotate({ description });
 const row = (value: unknown): Record<string, any> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
-
+const repoPath = (t: Target) => `/repos/${encodeURIComponent(t.owner)}/${encodeURIComponent(t.repo)}`;
+const ownerRepo = { owner: text("Configured repository owner."), repo: text("Repository name under that owner.") };
+const optional = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.Struct(Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, Schema.optionalKey(v)])));
+const ScopeRow = optional({
+  org: Schema.String,
+  repo: Schema.String,
+  owner: Schema.String,
+  id: Integer,
+  full_name: Schema.String,
+  access: Schema.Literals(["read", "read-write"]),
+  workflows: Schema.Literal("write"),
+});
+const SearchRow = optional({
+  scope: Schema.String,
+  repository: Schema.String,
+  item: Schema.Record(Schema.String, Schema.Unknown),
+});
+const common = {
+  limit: Schema.optionalKey(
+    Integer.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({
+      description: "Maximum returned items, default 30; at most 100.",
+      default: 30,
+    }),
+  ),
+  cursor: Schema.optionalKey(text("Opaque page.nextCursor from this same search or scope listing.")),
+  fields: Schema.optionalKey(fieldsInput("Dot paths into each item; only narrows already-safe data.")),
+};
+const scopeNames = new Set(["org", "repo", "owner", "id", "full_name", "access", "workflows"]);
+const searchNames = new Set(["scope", "repository", "item"]);
+const contextOf = Effect.gen(function* () {
+  const op = yield* Effect.serviceOption(Operation);
+  if (Option.isNone(op) || !op.value) return yield* Effect.die(new Error("Missing GitHub call context."));
+  return op.value;
+});
 function selectors(input: unknown, policy: ScopePolicy): GitHubScope[] {
   if (!Array.isArray(input) || input.length === 0 || input.length > 100)
     throw new ConnectorCallError("invalid_args", "Select between 1 and 100 configured scopes.");
@@ -110,36 +130,6 @@ function resultTarget(item: Record<string, any>, kind: string): Target {
   return target(match[1], match[2]);
 }
 
-// The kit omits default keywords and output closure and wraps a singleton
-// enum. Restore those legacy spellings before the schema-equality/order check.
-function legacyCatalog(actual: unknown, legacy: unknown): unknown {
-  if (Array.isArray(legacy) && Array.isArray(actual))
-    return catalogOrder(
-      actual.map((value, i) => legacyCatalog(value, legacy[i])),
-      legacy,
-    );
-  if (legacy && typeof legacy === "object" && actual && typeof actual === "object") {
-    const expected = legacy as Record<string, unknown>;
-    let built = { ...actual } as Record<string, unknown>;
-    if (Array.isArray(built["anyOf"]) && built["anyOf"].length === 1 && !expected["anyOf"])
-      built = { ...built["anyOf"][0] };
-    if (built["type"] === "object") {
-      if (Array.isArray(expected["required"]) && expected["required"].length === 0 && built["required"] === undefined)
-        built["required"] = [];
-      if (expected["additionalProperties"] !== undefined && built["additionalProperties"] === undefined)
-        built["additionalProperties"] = expected["additionalProperties"];
-      if (Array.isArray(built["required"]) && built["required"].length === 0 && !expected["required"])
-        delete built["required"];
-      if (built["properties"] && !Object.keys(built["properties"]).length && !expected["properties"])
-        delete built["properties"];
-    }
-    for (const key of Object.keys(built))
-      if (Object.hasOwn(expected, key)) built[key] = legacyCatalog(built[key], expected[key]);
-    return catalogOrder(built, expected);
-  }
-  return catalogOrder(actual, legacy);
-}
-
 function authCall<A>(ctx: ConnectorContext, run: (view: ConnectorContext) => Promise<A>): Effect.Effect<A, Refusal> {
   return Effect.tryPromise({
     try: (interrupted) =>
@@ -152,33 +142,65 @@ function authCall<A>(ctx: ConnectorContext, run: (view: ConnectorContext) => Pro
   );
 }
 
+/** Redact before decoding/cutting; keep only bounded inline UTF-8 content and patches. */
+function boundedData(data: unknown, ctx: ConnectorContext): { data: unknown; truncated?: string[] } {
+  const cutPaths = new Set<string>();
+  const cut = (value: string, path: string) => {
+    let end = 32768;
+    if (value.length <= end) return value;
+    if (/[\uD800-\uDBFF]/.test(value[end - 1]!)) end--;
+    cutPaths.add(path);
+    return value.slice(0, end);
+  };
+  const visit = (value: unknown, path: string): unknown => {
+    if (Array.isArray(value)) return value.map((v) => visit(v, `${path}[]`));
+    if (value === null || typeof value !== "object") return value;
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = Object.create(null);
+    for (const [key, entry] of Object.entries(source)) {
+      const at = `${path}.${key}`;
+      if (key === "patch" && typeof entry === "string")
+        out[key] = cut(withholdEmbeddedUrlsIn(redactBeforeCut(ctx, entry)) as string, at);
+      else if (key === "content" && source.encoding === "base64" && typeof entry === "string") {
+        if (entry.includes("[redacted]")) {
+          out[key] = "[redacted]";
+          continue;
+        }
+        const normalized = entry.replace(/\s/g, "");
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized))
+          throw new ConnectorCallError("connector_call_failed", "GitHub returned invalid base64 file content.");
+        let decoded: string;
+        try {
+          decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+            Uint8Array.from(atob(normalized), (c) => c.charCodeAt(0)),
+          );
+        } catch {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "This GitHub connection returns inline UTF-8 file content only; binary and raw downloads are unavailable.",
+          );
+        }
+        const safe = withholdEmbeddedUrlsIn(redactBeforeCut(ctx, decoded)) as string;
+        out[key] = encodeForAgent(ctx, cut(safe, at));
+      } else out[key] = visit(entry, at);
+    }
+    return out;
+  };
+  const safe = visit(data, "data");
+  return { data: safe, ...(cutPaths.size ? { truncated: [...cutPaths] } : {}) };
+}
+
 export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
-  const connection = githubConnection();
-  const scopedRequest = (
-    args: Record<string, any>,
-    permissions: Permissions,
-    method: "POST" | "PATCH" | "DELETE",
-    suffix: string,
-    body: unknown,
-    ctx: ConnectorContext,
+  const connection = githubConnection(),
+    adapter = githubPage("https://api.github.com");
+  const send = (
+    request: Omit<Parameters<AppAuth["json"]>[0], "query"> & { query?: Readonly<Record<string, unknown>> },
+    bearer: string,
+    options: SendOptions = {},
   ) =>
     Effect.gen(function* () {
-      const t = target(args.owner, args.repo);
-      policy.scope(t, true);
-      const token = yield* authCall(ctx, (view) => auth.repo(t, permissions, view));
-      const data = yield* json(
-        { method, path: `${repoPath(t)}${suffix}`, ...(body !== undefined ? { body } : {}) },
-        token,
-      );
-      return data ?? { deleted: true };
-    });
-  // A resource response can fail while its body is being read. Inspect the
-  // request's recorded status in a finalizer so rejection always invalidates
-  // the exact token, including malformed, oversized or interrupted bodies.
-  const json = (request: Parameters<AppAuth["json"]>[0], bearer: string, step = "write") =>
-    Effect.gen(function* () {
-      const dispatches = yield* Dispatches;
-      const start = dispatches.length;
+      const dispatches = yield* Dispatches,
+        start = dispatches.length;
       return yield* connection
         .sendPath(
           {
@@ -187,356 +209,405 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
             template: request.path,
             ...(request.query
               ? {
-                  query: Object.entries(request.query).flatMap(([key, value]) =>
-                    value === undefined
-                      ? []
-                      : (Array.isArray(value) ? value : [value]).map((entry) => [key, String(entry)] as const),
+                  query: Object.entries(request.query).flatMap(([k, v]) =>
+                    v === undefined ? [] : (Array.isArray(v) ? v : [v]).map((entry) => [k, String(entry)] as const),
                   ),
                 }
               : {}),
             ...(request.body !== undefined ? { json: JSON.stringify(request.body) } : {}),
             headers: { Authorization: `Bearer ${bearer}` },
           },
-          { step },
+          options,
         )
         .pipe(
-          Effect.map((answer) => answer.data),
           Effect.ensuring(
             Effect.sync(() => {
               if (
                 dispatches
                   .slice(start)
-                  .some(
-                    (entry) =>
-                      entry.status !== undefined && rejectedToken(entry.status, entry.headers ?? new Headers()),
-                  )
+                  .some((d) => d.status !== undefined && rejectedToken(d.status, d.headers ?? new Headers()))
               )
                 void auth.rejectToken(bearer);
             }),
           ),
         );
     });
-  const tools: (Omit<ApiTool, "handler"> & {
-    handler: (args: Record<string, any>, ctx: ConnectorContext) => Effect.Effect<unknown, HttpFailure, CallServices>;
-  })[] = [
-    {
-      name: "list_scopes",
-      description: "List configured GitHub scopes and reachable repositories for one owner.",
-      annotations: { readOnlyHint: true },
-      inputSchema: object({
-        owner: text("Configured owner; omit to return configuration without network access."),
-        page: integer("Repository page, default 1, at most 1000."),
-        per_page: { ...integer("Repositories per page, default 100."), maximum: 100 },
-      }),
-      outputSchema: object(
-        {
-          acting_as: { type: "string" },
-          scopes: { type: "array", items: scopeRecord },
-          repositories: { type: "array", items: { type: "string" } },
-          next_page: { type: ["integer", "null"] },
-        },
-        ["acting_as", "scopes"],
-      ),
-      handler: (args, ctx) =>
-        Effect.gen(function* () {
-          if (args.owner === undefined) return { acting_as: "GitHub App", scopes: policy.scopes };
-          const owner = policy.owner(args.owner);
-          const page = args.page ?? 1;
-          const count = args.per_page ?? 100;
-          if (page > 1000) throw new ConnectorCallError("invalid_args", "Repository page must be at most 1000.");
-          const token = yield* authCall(ctx, (view) => auth.token(owner, undefined, { metadata: "read" }, view));
-          const data = row(
-            yield* json({ method: "GET", path: "/installation/repositories", query: { page, per_page: count } }, token),
+  const cursorArgs = (args: Record<string, unknown>) => {
+    const { fields: _fields, cursor: _cursor, ...rest } = args;
+    return { ...rest, grants: policy.scopes };
+  };
+  const decode = (name: string, args: Record<string, unknown>) =>
+    args.cursor === undefined
+      ? Effect.succeed(undefined)
+      : boundCursor.decode(name, cursorArgs(args), String(args.cursor));
+  const finish = (
+    name: string,
+    args: Record<string, unknown>,
+    items: unknown[],
+    next: unknown,
+    extra: Record<string, unknown> = {},
+  ) =>
+    Effect.gen(function* () {
+      const page =
+        next === undefined
+          ? { hasMore: false }
+          : { hasMore: true, nextCursor: yield* boundCursor.encode(name, cursorArgs(args), JSON.stringify(next)) };
+      return {
+        items: selectFields(items, args.fields as string[] | undefined) as Record<string, unknown>[],
+        page,
+        ...extra,
+      };
+    });
+  const parse = (cursor: string | undefined) =>
+    cursor === undefined ? {} : (JSON.parse(cursor) as Record<string, any>);
+  const namesCheck = (fields: readonly string[] | undefined, names: ReadonlySet<string>) =>
+    checked(() => {
+      const bad = fieldsProblem(fields, names, "an item");
+      if (bad) throw bad;
+    });
+  const scopesTool = read(connection, {
+    name: "list_scopes",
+    description:
+      "List configured GitHub grants locally, or verified reachable repositories for one configured owner. Without owner this reads configuration without network access.",
+    input: Schema.Struct({ owner: Schema.optionalKey(text("Configured owner; omit for local grants.")), ...common }),
+    output: Schema.Struct({ items: Schema.Array(ScopeRow), page: StandardPage }),
+    run: (args) =>
+      Effect.gen(function* () {
+        yield* namesCheck(args.fields, scopeNames);
+        const limit = args.limit ?? 30,
+          normalized = { ...args, limit };
+        const position = yield* checked(() => parse(undefined));
+        const raw = yield* decode("list_scopes", normalized);
+        Object.assign(position, yield* checked(() => parse(raw)));
+        const page = position.page ?? 1;
+        if (!Number.isSafeInteger(page) || page < 1 || page > 1000)
+          return yield* checked(() => {
+            throw new ConnectorCallError("invalid_args", "This repository cursor is outside its page bound.");
+          });
+        if (args.owner === undefined) {
+          const items = policy.scopes.slice((page - 1) * limit, page * limit);
+          return yield* finish(
+            "list_scopes",
+            normalized,
+            items,
+            page * limit < policy.scopes.length ? { page: page + 1 } : undefined,
           );
-          if (!Array.isArray(data.repositories))
+        }
+        const owner = yield* checked(() => policy.owner(args.owner)),
+          ctx = yield* contextOf;
+        const token = yield* authCall(ctx, (view) => auth.token(owner, undefined, { metadata: "read" }, view));
+        const answer = yield* send(
+          { method: "GET", path: "/installation/repositories", query: { page, per_page: limit } },
+          token,
+          { responseHeaders: ["link"] },
+        );
+        const body = row(answer.data);
+        if (!Array.isArray(body.repositories))
+          return yield* checked(() => {
             throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid repository list.");
-          const repositories = [];
-          for (const item of data.repositories) {
-            const repository = row(item);
-            const t = resultTarget(repository, "repositories");
-            if (t.owner !== owner)
+          });
+        const items = [];
+        for (const entry of body.repositories) {
+          const repository = row(entry),
+            t = yield* checked(() => resultTarget(repository, "repositories"));
+          if (t.owner !== owner)
+            return yield* checked(() => {
               throw new ConnectorCallError(
                 "connector_call_failed",
                 "GitHub returned a repository from another installation owner.",
               );
-            yield* authCall(ctx, (view) => auth.checkResult(t, repository.id, token, view));
-            repositories.push(`${t.owner}/${t.repo}`);
-          }
-          return {
-            acting_as: "GitHub App",
-            scopes: policy.scopes.filter((scope) => scope.org === owner || scope.repo?.startsWith(`${owner}/`)),
-            repositories,
-            next_page: repositories.length === count ? page + 1 : null,
-          };
-        }),
-    },
-    {
-      name: "search_scoped",
-      description: "Search GitHub repositories, issues, pull requests or code within configured scopes.",
-      annotations: { readOnlyHint: true },
-      inputSchema: object(
-        {
-          terms: text("Literal words only; scope qualifiers and Boolean operators are refused."),
-          kind: {
-            type: "string",
-            enum: ["repositories", "issues", "pull-requests", "code"],
-            description: "Resource to search.",
-          },
-          scopes: {
-            type: "array",
-            minItems: 1,
-            maxItems: 100,
-            items: selector,
-            description: "Optional subset; defaults to all configured scopes.",
-          },
-          pages: {
-            type: "object",
-            additionalProperties: { type: "integer", minimum: 1, maximum: 10 },
-            description: "Page per returned partition ID, at most 10.",
-          },
-          per_page: { ...integer("Results per partition, default 30."), maximum: 100 },
-        },
-        ["terms", "kind"],
+            });
+          yield* authCall(ctx, (view) => auth.checkResult(t, repository.id, token, view));
+          const grant = yield* checked(() => policy.scope(t));
+          items.push({
+            id: repository.id,
+            full_name: `${t.owner}/${t.repo}`,
+            owner: t.owner,
+            repo: t.repo,
+            access: grant.access,
+            ...(grant.workflows ? { workflows: grant.workflows } : {}),
+          });
+        }
+        const next = yield* checked(() =>
+          adapter.next(answer.data, {
+            path: "/installation/repositories",
+            query: { page, per_page: limit },
+            headers: answer.headers ?? {},
+          }),
+        );
+        if (next !== null && page === 1000)
+          return yield* checked(() => {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "The GitHub repository list exceeded its page bound; narrow the configured scope.",
+            );
+          });
+        return yield* finish(
+          "list_scopes",
+          normalized,
+          items,
+          next === null ? undefined : { page: adapter.decode(next as number | string) },
+        );
+      }),
+  });
+  const searchTool = read(connection, {
+    name: "search_scoped",
+    description:
+      "Search GitHub repositories, issues, pull requests or code within configured scopes. Results carry verified repository and partition bindings; continuation visits one bounded partition page at a time.",
+    input: Schema.Struct({
+      terms: text("Literal words only; qualifiers and Boolean operators are refused."),
+      kind: Schema.Literals(["repositories", "issues", "pull-requests", "code"]).annotate({
+        description: "Resource to search.",
+      }),
+      scopes: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            org: Schema.optionalKey(text("Configured organization grant.")),
+            repo: Schema.optionalKey(text("Exact configured owner/repository.")),
+          }),
+        )
+          .check(Schema.isMinLength(1), Schema.isMaxLength(100))
+          .annotate({ description: "Optional subset of the configured scopes." }),
       ),
-      outputSchema: object(
-        { partitions: { type: "array", items: jsonObject }, incomplete_results: { type: "boolean" } },
-        ["partitions", "incomplete_results"],
-      ),
-      handler: (args, ctx) =>
-        Effect.gen(function* () {
+      ...common,
+    }),
+    output: Schema.Struct({ items: Schema.Array(SearchRow), page: StandardPage, incomplete_results: Schema.Boolean }),
+    run: (args) =>
+      Effect.gen(function* () {
+        yield* namesCheck(args.fields, searchNames);
+        const selected = yield* checked(() => {
           if (!/^[a-z0-9_. -]{1,128}$/i.test(args.terms) || /\b(?:OR|NOT|AND)\b/i.test(args.terms))
             throw new ConnectorCallError(
               "invalid_args",
               "Search terms must be literal words, without qualifiers or Boolean operators.",
             );
-          const selected = args.scopes === undefined ? policy.scopes : selectors(args.scopes, policy);
-          const partitions = searchPartitions(selected);
-          if (Object.keys(args.pages ?? {}).some((key) => !partitions.some((partition) => partition.id === key)))
-            throw new ConnectorCallError("invalid_args", "Pagination keys must match the selected search partitions.");
-          const type = args.kind === "issues" ? " is:issue" : args.kind === "pull-requests" ? " is:pr" : "";
-          const queries = partitions.map((partition) => `${partition.qualifier} ${args.terms.trim()}${type}`);
-          if (queries.some((query) => query.length > 256))
+          return args.scopes === undefined ? policy.scopes : selectors(args.scopes, policy);
+        });
+        const partitions = yield* checked(() => searchPartitions(selected)),
+          limit = args.limit ?? 30,
+          normalized = { ...args, limit };
+        const raw = yield* decode("search_scoped", normalized),
+          at = yield* checked(() => parse(raw));
+        const partitionIndex = at.partition ?? 0,
+          page = at.page ?? 1;
+        if (
+          !Number.isSafeInteger(partitionIndex) ||
+          partitionIndex < 0 ||
+          partitionIndex >= partitions.length ||
+          !Number.isSafeInteger(page) ||
+          page < 1 ||
+          page > 10
+        )
+          return yield* checked(() => {
+            throw new ConnectorCallError("invalid_args", "This search cursor is outside the selected partitions.");
+          });
+        const partition = partitions[partitionIndex]!,
+          kind = args.kind === "pull-requests" ? "issues" : args.kind;
+        const type = args.kind === "issues" ? " is:issue" : args.kind === "pull-requests" ? " is:pr" : "";
+        const query = `${partition.qualifier} ${args.terms.trim()}${type}`;
+        if (query.length > 256)
+          return yield* checked(() => {
             throw new ConnectorCallError(
               "invalid_args",
               "The scoped search query exceeds GitHub's 256-character bound. Select fewer repositories.",
             );
-          const seen = new Set<string>();
-          const output = [];
-          let incomplete = false;
-          for (const [partitionIndex, partition] of partitions.entries()) {
-            const page = args.pages?.[partition.id] ?? 1;
-            const count = args.per_page ?? 30;
-            const permissions: Permissions =
-              args.kind === "repositories"
-                ? { metadata: "read" }
-                : args.kind === "code"
-                  ? { contents: "read" }
-                  : { issues: "read", pull_requests: "read" };
-            const token = yield* authCall(ctx, (view) =>
-              auth.token(partition.owner, partition.repos, permissions, view),
-            );
-            const kind = args.kind === "pull-requests" ? "issues" : args.kind;
-            const query = `${partition.qualifier} ${args.terms.trim()}${type}`;
-            const data = row(
-              yield* json(
-                { method: "GET", path: `/search/${kind}`, query: { q: query, page, per_page: count } },
-                token,
-                `partition${partitionIndex}`,
-              ),
-            );
-            if (!Array.isArray(data.items))
-              throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid search result.");
-            const items = [];
-            for (const value of data.items) {
-              const item = row(value);
-              const t = resultTarget(item, args.kind);
-              policy.owner(t.owner);
-              if (t.owner !== partition.owner)
-                throw new ConnectorCallError(
-                  "connector_call_failed",
-                  "GitHub search escaped its selected partition; results were withheld.",
-                );
-              yield* authCall(ctx, (view) =>
-                auth.checkResult(
-                  t,
-                  args.kind === "repositories" ? item.id : args.kind === "code" ? row(item.repository).id : undefined,
-                  token,
-                  view,
-                ),
+          });
+        const permissions: Permissions =
+          args.kind === "repositories"
+            ? { metadata: "read" }
+            : args.kind === "code"
+              ? { contents: "read" }
+              : args.kind === "issues"
+                ? { issues: "read" }
+                : { pull_requests: "read" };
+        const ctx = yield* contextOf,
+          token = yield* authCall(ctx, (view) => auth.token(partition.owner, partition.repos, permissions, view));
+        const answer = yield* send(
+          { method: "GET", path: `/search/${kind}`, query: { q: query, page, per_page: limit } },
+          token,
+          { responseHeaders: ["link"] },
+        );
+        const body = row(answer.data);
+        if (!Array.isArray(body.items))
+          return yield* checked(() => {
+            throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid search result.");
+          });
+        const items = [],
+          seen = new Set<string>();
+        for (const value of body.items) {
+          const item = row(value),
+            t = yield* checked(() => resultTarget(item, args.kind));
+          yield* checked(() => policy.owner(t.owner));
+          if (t.owner !== partition.owner)
+            return yield* checked(() => {
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "GitHub search escaped its selected partition; results were withheld.",
               );
-              const key = `${args.kind}:${t.owner}/${t.repo}:${args.kind === "code" ? item.path : item.id}`;
-              if (!seen.has(key)) {
-                seen.add(key);
-                items.push(value);
-              }
-            }
-            const more = data.items.length === count || data.total_count > page * count;
-            const limited = data.incomplete_results === true || (more && page === 10);
-            incomplete ||= limited;
-            output.push({
-              scope: partition.id,
-              items,
-              total_count: data.total_count,
-              incomplete_results: limited,
-              next_page: more && page < 10 ? page + 1 : null,
             });
+          yield* authCall(ctx, (view) =>
+            auth.checkResult(
+              t,
+              args.kind === "repositories" ? item.id : args.kind === "code" ? row(item.repository).id : undefined,
+              token,
+              view,
+            ),
+          );
+          const key = `${args.kind}:${t.owner}/${t.repo}:${args.kind === "code" ? item.path : item.id}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            items.push({ scope: partition.id, repository: `${t.owner}/${t.repo}`, item: value });
           }
-          return { partitions: output, incomplete_results: incomplete };
-        }),
-    },
-    {
-      name: "create_release",
-      description: "Create a GitHub release, optionally as a draft.",
-      annotations: { readOnlyHint: false },
-      inputSchema: object(
-        {
-          ...ownerRepo,
-          tag_name: text("Release tag."),
-          target_commitish: text("Branch or commit for a new tag."),
-          name: text("Release title."),
-          body: { type: "string", description: "Release notes." },
-          draft: bool("Create a draft release."),
-          prerelease: bool("Mark as a prerelease."),
-        },
-        ["owner", "repo", "tag_name"],
+        }
+        const next = yield* checked(() =>
+          adapter.next(body, {
+            path: `/search/${kind}`,
+            query: { q: query, page, per_page: limit },
+            headers: answer.headers ?? {},
+          }),
+        );
+        const capped = next !== null && page === 10;
+        const position =
+          next !== null && !capped
+            ? { partition: partitionIndex, page: adapter.decode(next as number | string) }
+            : partitionIndex + 1 < partitions.length
+              ? { partition: partitionIndex + 1, page: 1 }
+              : undefined;
+        const incomplete = at.incomplete === true || body.incomplete_results === true || capped;
+        return {
+          ...(yield* finish(
+            "search_scoped",
+            normalized,
+            items,
+            position === undefined ? undefined : { ...position, incomplete },
+          )),
+          incomplete_results: incomplete,
+        };
+      }),
+  });
+  const mergeTool = write(connection, {
+    name: "merge_pull_request",
+    description:
+      "Merge a same-repository GitHub pull request once, guarded by expected head SHA and explicit workflow-write scope. A failed preflight sends no merge.",
+    destructive: true,
+    writeSteps: { pull: "once", write: "once" },
+    input: Schema.Struct({
+      ...ownerRepo,
+      pull_number: Integer.check(Schema.isGreaterThanOrEqualTo(1)).annotate({ description: "Pull request number." }),
+      sha: text("Expected head commit SHA; reread after a conflict."),
+      merge_method: Schema.optionalKey(
+        Schema.Literals(["merge", "squash", "rebase"]).annotate({ description: "Merge strategy, default merge." }),
       ),
-      outputSchema: jsonObject,
-      handler: (args, ctx) => {
-        const { owner: _owner, repo: _repo, ...body } = args;
-        return scopedRequest(args, { contents: "write" }, "POST", "/releases", body, ctx);
-      },
-    },
-    {
-      name: "update_release",
-      description: "Update or publish an existing GitHub release.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: object(
-        {
-          ...ownerRepo,
-          release_id: integer("Release ID in this repository."),
-          tag_name: text("Release tag."),
-          name: text("Release title."),
-          body: { type: "string", description: "Release notes." },
-          draft: bool("Set false to publish a draft."),
-          prerelease: bool("Mark as a prerelease."),
-        },
-        ["owner", "repo", "release_id"],
-      ),
-      outputSchema: jsonObject,
-      handler: (args, ctx) => {
-        const { owner: _owner, repo: _repo, release_id, ...body } = args;
-        return scopedRequest(args, { contents: "write" }, "PATCH", `/releases/${release_id}`, body, ctx);
-      },
-    },
-    {
-      name: "delete_release",
-      description: "Delete a GitHub release from the scoped repository.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: object({ ...ownerRepo, release_id: integer("Release ID in this repository.") }, [
-        "owner",
-        "repo",
-        "release_id",
-      ]),
-      outputSchema: jsonObject,
-      handler: (args, ctx) =>
-        scopedRequest(args, { contents: "write" }, "DELETE", `/releases/${args.release_id}`, undefined, ctx),
-    },
-    {
-      name: "merge_pull_request",
-      description: "Merge a same-repository GitHub pull request with explicit workflow-write scope.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: object(
-        {
-          ...ownerRepo,
-          pull_number: integer("Pull request number."),
-          sha: text("Expected head commit SHA; reread after a conflict."),
-          merge_method: {
-            type: "string",
-            enum: ["merge", "squash", "rebase"],
-            description: "Merge strategy, default merge.",
-          },
-        },
-        ["owner", "repo", "pull_number", "sha"],
-      ),
-      outputSchema: jsonObject,
-      handler: (args, ctx) =>
-        Effect.gen(function* () {
-          const t = target(args.owner, args.repo);
-          // GitHub's atomic sha guard binds only the head, not the base/ref.
-          // Retargeting can turn a file-safe diff into workflow changes. Require
-          // explicit workflow permission before any authentication for merges.
-          policy.scope(t, true, true);
-          const reader = yield* authCall(ctx, (view) =>
-            auth.repo(t, { pull_requests: "read", contents: "read" }, view),
-          );
-          const pr = row(
-            yield* json({ method: "GET", path: `${repoPath(t)}/pulls/${args.pull_number}` }, reader, "pull"),
-          );
-          const head = row(pr.head);
-          const base = row(pr.base);
-          if (
-            head.sha !== args.sha ||
-            row(head.repo).full_name?.toLowerCase() !== `${t.owner}/${t.repo}` ||
-            row(base.repo).full_name?.toLowerCase() !== `${t.owner}/${t.repo}`
-          )
+    }),
+    output: Schema.Record(Schema.String, Schema.Unknown),
+    run: (args) =>
+      Effect.gen(function* () {
+        const t = yield* checked(() => target(args.owner, args.repo));
+        yield* checked(() => policy.scope(t, true, true));
+        const ctx = yield* contextOf,
+          reader = yield* authCall(ctx, (view) => auth.repo(t, { pull_requests: "read" }, view));
+        const pr = row(
+          (yield* send({ method: "GET", path: `${repoPath(t)}/pulls/${args.pull_number}` }, reader, {
+            step: "pull",
+            effect: "read",
+          })).data,
+        );
+        const head = row(pr.head),
+          base = row(pr.base);
+        if (
+          head.sha !== args.sha ||
+          row(head.repo).full_name?.toLowerCase() !== `${t.owner}/${t.repo}` ||
+          row(base.repo).full_name?.toLowerCase() !== `${t.owner}/${t.repo}`
+        )
+          return yield* checked(() => {
             throw new ConnectorCallError(
               "conflict",
               "Merge requires the expected head SHA and a same-repository head and base. Reread the pull request.",
             );
-          const token = yield* authCall(ctx, (view) =>
-            auth.repo(t, { contents: "write", pull_requests: "write", workflows: "write" }, view),
-          );
-          // GitHub verifies sha atomically. No automatic write retry.
-          return yield* json(
+          });
+        const token = yield* authCall(ctx, (view) =>
+          auth.repo(t, { contents: "write", pull_requests: "write", workflows: "write" }, view),
+        );
+        return row(
+          (yield* send(
             {
               method: "PUT",
               path: `${repoPath(t)}/pulls/${args.pull_number}/merge`,
               body: { sha: args.sha, merge_method: args.merge_method ?? "merge" },
             },
             token,
-          );
-        }),
+          )).data,
+        );
+      }),
+  });
+  const binding: HatchBinding = {
+    review:
+      "Repository-ID-bound App tokens and per-operation documented permissions; all unreviewed operations, raw search and merge refuse before authentication.",
+    truncated: true,
+    refuse: (call) => {
+      const key = `${call.method} ${call.op.path}`,
+        refusal = hatchRefusal(key);
+      if (refusal) return refusal;
+      const { params } = githubIndex.resolve(call.method, call.path),
+        t = target(params.owner, params.repo);
+      policy.scope(t, Boolean(RELEASE_PERMISSIONS[key]));
+      if (params.path !== undefined) workflowPath(decodeURIComponent(params.path));
+      const perPage = call.query.per_page;
+      if (
+        perPage !== undefined &&
+        (!/^\d+$/.test(String(perPage)) ||
+          !Number.isSafeInteger(Number(perPage)) ||
+          Number(perPage) < 1 ||
+          Number(perPage) > 100)
+      )
+        return "GitHub per_page must be a whole number from 1 to 100.";
+      return undefined;
     },
-  ];
+    send: (call, options) =>
+      Effect.gen(function* () {
+        const key = `${call.method} ${call.op.path}`,
+          { params } = githubIndex.resolve(call.method, call.path),
+          t = target(params.owner, params.repo),
+          ctx = yield* contextOf;
+        const permissions = READ_PERMISSIONS[key] ?? RELEASE_PERMISSIONS[key];
+        if (!permissions)
+          return yield* checked(() => {
+            throw new ConnectorCallError(
+              "invalid_args",
+              "This GitHub operation has no reviewed permission declaration.",
+            );
+          });
+        const token = yield* authCall(ctx, (view) => auth.repo(t, permissions, view));
+        const answer = yield* send(
+          {
+            method: call.method,
+            path: call.path,
+            query: call.query,
+            ...(call.body === undefined ? {} : { body: call.body }),
+          },
+          token,
+          options,
+        );
+        const bounded = yield* checked(() => boundedData(answer.data, ctx));
+        return { ...answer, ...bounded };
+      }),
+  };
   return tracksEveryRequest(
     api(id, {
-      tools: tools.map((declaration) => {
-        const spec = {
-          name: declaration.name,
-          description: declaration.description,
-          input: schema(declaration.inputSchema!),
-          output: schema(declaration.outputSchema!),
-          ...(declaration.name === "merge_pull_request"
-            ? { writeSteps: { pull: "once" as const, write: "once" as const } }
-            : declaration.name === "search_scoped"
-              ? {
-                  writeSteps: Object.fromEntries(
-                    Array.from({ length: 20 }, (_, i) => [`partition${i}`, "once" as const]),
-                  ),
-                }
-              : {}),
-          run: (args: unknown) =>
-            Effect.gen(function* () {
-              const operation = yield* Effect.serviceOption(Operation);
-              const ctx = Option.isSome(operation) ? operation.value : undefined;
-              if (!ctx) return yield* Effect.die(new Error("Missing GitHub call context."));
-              return yield* declaration.handler(args as Record<string, any>, ctx);
-            }).pipe(
-              Effect.catchDefect((error) =>
-                error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
-              ),
-            ),
-        };
-        const built =
-          declaration.annotations?.readOnlyHint === true
-            ? read(connection, spec)
-            : write(connection, { ...spec, destructive: declaration.annotations?.destructiveHint === true });
-        Object.assign(built, {
-          inputSchema: legacyCatalog(built.inputSchema, declaration.inputSchema),
-          outputSchema: legacyCatalog(built.outputSchema, declaration.outputSchema),
-        });
-        return built;
-      }),
+      tools: [
+        ...hatch({
+          ...GITHUB_HATCH,
+          connection,
+          binding,
+          notes: {
+            read: "Only the reviewed repository reads are available. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
+            write: "Only release create/update/delete are available here. Use merge_pull_request for merges.",
+          },
+        }),
+        scopesTool,
+        searchTool,
+        mergeTool,
+      ],
     }),
   );
 }

@@ -2,67 +2,44 @@
 {"name":"github","instructionsHeading":"Repository instructions"}
 ---
 
-<!-- fragment: guide -->
-## Setup
+## Choose the target
 
-Create a GitHub App, generate its RSA private key, and install it on every
-configured owner. Org grants require **All repositories**, including future
-repositories. Exact repo grants work with selected-repository installations.
-Read-only grants request read permissions; read-write grants request only the
-permissions needed by each operation. The App needs repository Metadata.
-Search requests Contents read for code, or Issues and Pull requests read for
-issue and PR searches. Release writes need Contents write. Merge needs Contents,
-Pull requests and Workflows write, plus `workflows: "write"` on the effective
-scope. Org grants authorize repository operations, not organization administration.
+Act as the configured GitHub App. `list_scopes` identifies its configured grants
+and reachable repositories. An exact repository grant can narrow its parent
+organization grant. Organization access covers repository operations, including
+future repositories in the installation, rather than organization administration.
+A repository rename keeps its ID-bound grant; a replacement at the old name does
+not inherit it. A transfer cannot use the old installation's token.
 
-Pass `app: { appId, privateKey }` with the key from an environment secret, or
-omit privateKey and populate the connector's encrypted `privateKey` vault field.
-Never put private keys or installation tokens in agent instructions. Tokens
-stay in bounded runtime memory, refresh a minute before expiry, and are never
-persisted. Key rotation partitions the caches by the key's fingerprint.
-Configured repository names bind to repository IDs on first use. Bindings last
-for the provider instance; name lookups expire after five minutes. A rename
-keeps its grant, while a replacement repository at the old name does not.
-Reconfigure to authorize a replacement. Transfers leave the original
-installation and cannot use its tokens. Org grants bind to installation IDs.
+Use `search_scoped` for literal-word data search across installations. Each item
+carries its partition and verified repository. Search completeness can be false
+at GitHub's search limit; narrow the selected scopes or terms when that matters.
+Installation tokens do not override GitHub's own code-search restrictions.
 
-## Choose the target first
+## Join the right identifiers
 
-`list_scopes({})` returns configured org/repo grants without network access.
-`list_scopes({ owner })` resolves that owner's installation and pages reachable
-repositories. Carry its `next_page`. The connection context lists configured
-scopes and access. A repo entry overrides and may narrow its parent org entry.
-An org grant covers current and future repositories, as long as the installation
-keeps All repositories selected.
+An issue or pull request number belongs to one owner/repository pair; a numeric
+record ID is a different identifier. An issue-list response can contain pull
+requests: the `pull_request` property distinguishes them. Issue IDs returned for
+pull requests are not necessarily the PR IDs from the pull-request endpoint.
+Reviews join by pull request number; their `commit_id` identifies the reviewed
+revision. Compare review and head commit IDs when deciding whether feedback is
+current. Issue comments and pull-request review comments are different resources.
 
-Repository identity is resolved through GitHub's installation repository list.
-REST calls enforce configured scope and write access and narrow tokens with
-repository IDs and operation permissions. The connection exposes only
-`list_scopes`, `search_scoped`, `create_release`, `update_release`,
-`delete_release`, and `merge_pull_request`.
+Read files at an explicit Git ref when a stable revision matters. Contents are
+base64 encoded; decode the inline content before interpreting it. Directory
+listings have a vendor cap and are not recursive. Missing inline content or a
+missing patch does not establish an empty file or an unchanged diff. Raw diff,
+log/archive downloads, secret/admin operations and arbitrary GraphQL are unavailable.
 
-## Tools and paging
+## Release and merge semantics
 
-Use `search_scoped` for repositories, issues, PRs or code across installations.
-Supply literal words and an optional subset of configured org/repo selectors.
-Scope qualifiers and Boolean operators are refused. Results have a partition
-ID, next page, and an incomplete-results flag. Pass pages keyed by those exact
-partition IDs. Each call makes at most 20 partition requests; select fewer
-scopes when needed. Search pages stop at 10 and retain incompleteness. Returned
-repositories are checked by ID against both deployment scopes and selected
-partitions. Issue and PR results resolve their repository URL to an ID before
-any result is returned.
-Installation tokens do not override GitHub's own code-search access restrictions.
+Publishing a draft release updates that release's `draft` to false. Deleting a
+release does not delete its Git tag. Resolve the intended repository and existing
+release before changing it; a tag name is not a numeric release ID.
 
-REST tools own `create_release`, `update_release`, `delete_release` and
-`merge_pull_request`. Publishing a draft is `update_release({ draft: false })`.
-Merge requires an expected head SHA, a same-repository head/base and explicit
-workflow-write access on the effective scope. GitHub atomically guards only the
-head SHA, so a concurrent base retarget can introduce workflow changes despite
-an earlier file comparison. Merge is therefore disabled by default.
-Read current state before updates. A dispatched write is attempted once;
-GitHub errors never trigger an automatic write retry. Honor retry timing on
-rate limits; an ambiguous 404 may mean absence or an installation permission
-gap. Fix the App installation/key/permissions for auth errors; the App has no
-interactive OAuth reconnect flow.
-<!-- endfragment -->
+Use `merge_pull_request` for merges. It requires the expected head SHA and a
+same-repository head and base, plus explicit workflow-write access. GitHub's
+atomic SHA guard binds the head rather than the base: a concurrent base retarget
+can introduce workflow changes after the preflight. A response with `merged:false`
+is a failed merge, not a completed one. Inspect current PR state before a new attempt.

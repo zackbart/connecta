@@ -542,8 +542,8 @@ describe("remote MCP records its writes in the same ledger", () => {
           );
         });
         const connector = github();
-        const tool = "create_release";
-        const args = { owner: "acme", repo: "one", tag_name: "v1" };
+        const tool = "github_api_write";
+        const args = { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1" } };
         let outcome: Outcome;
         if (how === "direct") {
           outcome = await connector.callTool(tool, args, githubContext()).then(

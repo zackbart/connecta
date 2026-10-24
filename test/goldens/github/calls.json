@@ -1,5 +1,402 @@
 [
   {
+    "label": "github_api_search",
+    "tool": "github_api_search",
+    "args": {
+      "query": "issues"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/search/issues",
+            "operationId": "search/issues-and-pull-requests",
+            "summary": "Search issues and pull requests",
+            "named": "search_scoped"
+          },
+          {
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}/issues",
+            "operationId": "issues/list-for-repo",
+            "summary": "List repository issues",
+            "tool": "github_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}/issues/{issue_number}",
+            "operationId": "issues/get",
+            "summary": "Get an issue",
+            "tool": "github_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            "operationId": "issues/list-comments",
+            "summary": "List issue comments",
+            "tool": "github_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}/issues/{issue_number}/labels",
+            "operationId": "issues/list-labels-on-issue",
+            "summary": "List labels for an issue",
+            "tool": "github_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            "operationId": "issues/get-comment",
+            "summary": "Get an issue comment",
+            "tool": "github_api_read"
+          }
+        ],
+        "revision": "755ee33b4a81d51f6f07a902cce26cbec3b822f2",
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiMTU4NTY1OTNhMmQ4M2VlOWNiZTYzMTkxZTgwODU0OTAiLCJjIjoiNiIsIm0iOiJlUzJIUnpwbnNUemRxT21hMWswak5SMVdtZVdaY3htRGtWcGlHSXNUaktNIn0"
+        }
+      }
+    }
+  },
+  {
+    "label": "github_api_details",
+    "tool": "github_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/repos/{owner}/{repo}/issues",
+        "operationId": "issues/list-for-repo",
+        "summary": "List repository issues",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "description": "The account owner of the repository.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "description": "The name of the repository without the `.git` extension.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "milestone",
+            "in": "query",
+            "required": false,
+            "description": "If an `integer` is passed, it should refer to a milestone by its `number` field.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Indicates the state of the issues to return.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "required": false,
+            "description": "Can be the name of a user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "Can be the name of an issue type.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "creator",
+            "in": "query",
+            "required": false,
+            "description": "The user that created the issue.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mentioned",
+            "in": "query",
+            "required": false,
+            "description": "A user that's mentioned in the issue.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_field_values",
+            "in": "query",
+            "required": false,
+            "description": "A comma-separated list of issue field filters in `field_slug:value` format.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "required": false,
+            "description": "A list of comma separated label names.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "What to sort results by.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "created",
+                "updated",
+                "comments"
+              ]
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "description": "The direction to sort the results by.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Only show results that were last updated after the given time.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "description": "The number of results per page (max 100).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "The page number of the results to fetch.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "github_api_read",
+        "revision": "755ee33b4a81d51f6f07a902cce26cbec3b822f2"
+      }
+    }
+  },
+  {
+    "label": "github_api_read",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/issues",
+      "fields": [
+        "id",
+        "title"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "issues": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/issues",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_issues-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": [
+          {
+            "id": 9001,
+            "title": "Golden issue"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
     "label": "list_scopes configuration",
     "tool": "list_scopes",
     "args": {},
@@ -8,8 +405,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "acting_as": "GitHub App",
-        "scopes": [
+        "items": [
           {
             "org": "acme",
             "access": "read-write"
@@ -23,7 +419,10 @@
             "repo": "other/readonly",
             "access": "read"
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -156,7 +555,7 @@
         {
           "after": 4,
           "method": "GET",
-          "url": "https://api.github.com/installation/repositories?page=1&per_page=100",
+          "url": "https://api.github.com/installation/repositories?page=1&per_page=30",
           "headers": {
             "accept": "application/vnd.github+json",
             "authorization": "Bearer ghs_golden_22_metadata-read_repos-201-202/+=",
@@ -170,23 +569,26 @@
       "ok": true,
       "format": "json",
       "value": {
-        "acting_as": "GitHub App",
-        "scopes": [
+        "items": [
           {
-            "repo": "other/one",
+            "id": 201,
+            "full_name": "other/one",
+            "owner": "other",
+            "repo": "one",
             "access": "read-write",
             "workflows": "write"
           },
           {
-            "repo": "other/readonly",
+            "id": 202,
+            "full_name": "other/readonly",
+            "owner": "other",
+            "repo": "readonly",
             "access": "read"
           }
         ],
-        "repositories": [
-          "other/one",
-          "other/readonly"
-        ],
-        "next_page": null
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -324,171 +726,27 @@
             "x-github-api-version": "2022-11-28"
           }
         }
-      ],
-      [
-        {
-          "after": 5,
-          "auxiliary": "installations",
-          "method": "GET",
-          "url": "https://api.github.com/app/installations?per_page=100&page=1",
-          "headers": {
-            "accept": "application/vnd.github+json",
-            "authorization": {
-              "scheme": "Bearer",
-              "jwt": {
-                "header": {
-                  "alg": "RS256",
-                  "typ": "JWT"
-                },
-                "claims": {
-                  "iat": 1767322985,
-                  "exp": 1767323585,
-                  "iss": "12345"
-                },
-                "signature": "<signature>"
-              }
-            },
-            "user-agent": "connecta",
-            "x-github-api-version": "2022-11-28"
-          }
-        }
-      ],
-      [
-        {
-          "after": 6,
-          "auxiliary": "installation-token",
-          "method": "POST",
-          "url": "https://api.github.com/app/installations/22/access_tokens",
-          "headers": {
-            "accept": "application/vnd.github+json",
-            "authorization": {
-              "scheme": "Bearer",
-              "jwt": {
-                "header": {
-                  "alg": "RS256",
-                  "typ": "JWT"
-                },
-                "claims": {
-                  "iat": 1767322985,
-                  "exp": 1767323585,
-                  "iss": "12345"
-                },
-                "signature": "<signature>"
-              }
-            },
-            "content-type": "application/json",
-            "user-agent": "connecta",
-            "x-github-api-version": "2022-11-28"
-          },
-          "body": {
-            "json": {
-              "permissions": {
-                "metadata": "read"
-              }
-            }
-          }
-        }
-      ],
-      [
-        {
-          "after": 7,
-          "auxiliary": "repository-resolution",
-          "method": "GET",
-          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
-          "headers": {
-            "accept": "application/vnd.github+json",
-            "authorization": "Bearer ghs_golden_22_metadata-read/+=",
-            "user-agent": "connecta",
-            "x-github-api-version": "2022-11-28"
-          }
-        }
-      ],
-      [
-        {
-          "after": 8,
-          "auxiliary": "installation-token",
-          "method": "POST",
-          "url": "https://api.github.com/app/installations/22/access_tokens",
-          "headers": {
-            "accept": "application/vnd.github+json",
-            "authorization": {
-              "scheme": "Bearer",
-              "jwt": {
-                "header": {
-                  "alg": "RS256",
-                  "typ": "JWT"
-                },
-                "claims": {
-                  "iat": 1767322985,
-                  "exp": 1767323585,
-                  "iss": "12345"
-                },
-                "signature": "<signature>"
-              }
-            },
-            "content-type": "application/json",
-            "user-agent": "connecta",
-            "x-github-api-version": "2022-11-28"
-          },
-          "body": {
-            "json": {
-              "permissions": {
-                "metadata": "read"
-              },
-              "repository_ids": [
-                201,
-                202
-              ]
-            }
-          }
-        }
-      ],
-      [
-        {
-          "after": 9,
-          "method": "GET",
-          "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+repo%3Aother%2Freadonly+widget&page=1&per_page=30",
-          "headers": {
-            "accept": "application/vnd.github+json",
-            "authorization": "Bearer ghs_golden_22_metadata-read_repos-201-202/+=",
-            "user-agent": "connecta",
-            "x-github-api-version": "2022-11-28"
-          }
-        }
       ]
     ],
     "result": {
       "ok": true,
       "format": "json",
       "value": {
-        "partitions": [
+        "items": [
           {
             "scope": "org:acme",
-            "items": [
-              {
-                "id": 101,
-                "full_name": "acme/one",
-                "description": "Widget service"
-              }
-            ],
-            "total_count": 1,
-            "incomplete_results": false,
-            "next_page": null
-          },
-          {
-            "scope": "other/one,other/readonly",
-            "items": [
-              {
-                "id": 201,
-                "full_name": "other/one",
-                "description": "Widget client"
-              }
-            ],
-            "total_count": 1,
-            "incomplete_results": false,
-            "next_page": null
+            "repository": "acme/one",
+            "item": {
+              "id": 101,
+              "full_name": "acme/one",
+              "description": "Widget service"
+            }
           }
         ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiMGI0Y2Y2YWVjMTUzYzI2MjdiYzk1M2NhODBlMDFhNmUiLCJjIjoie1wicGFydGl0aW9uXCI6MSxcInBhZ2VcIjoxLFwiaW5jb21wbGV0ZVwiOmZhbHNlfSIsIm0iOiJOT3VGZURZYjNydGZmdGx5UzljR1Q4RnlfY2dKREpMUHRiUG5PY3pxczNRIn0"
+        },
         "incomplete_results": false
       }
     }
@@ -504,7 +762,7 @@
           "repo": "other/one"
         }
       ],
-      "per_page": 1
+      "limit": 1
     },
     "steps": [
       [
@@ -615,8 +873,7 @@
           "body": {
             "json": {
               "permissions": {
-                "issues": "read",
-                "pull_requests": "read"
+                "issues": "read"
               },
               "repository_ids": [
                 201
@@ -632,7 +889,7 @@
           "url": "https://api.github.com/search/issues?q=repo%3Aother%2Fone+crash+is%3Aissue&page=1&per_page=1",
           "headers": {
             "accept": "application/vnd.github+json",
-            "authorization": "Bearer ghs_golden_22_issues-read_pull_requests-read_repos-201/+=",
+            "authorization": "Bearer ghs_golden_22_issues-read_repos-201/+=",
             "user-agent": "connecta",
             "x-github-api-version": "2022-11-28"
           }
@@ -645,7 +902,7 @@
           "url": "https://api.github.com/repos/other/one",
           "headers": {
             "accept": "application/vnd.github+json",
-            "authorization": "Bearer ghs_golden_22_issues-read_pull_requests-read_repos-201/+=",
+            "authorization": "Bearer ghs_golden_22_issues-read_repos-201/+=",
             "user-agent": "connecta",
             "x-github-api-version": "2022-11-28"
           }
@@ -656,40 +913,41 @@
       "ok": true,
       "format": "json",
       "value": {
-        "partitions": [
+        "items": [
           {
             "scope": "other/one",
-            "items": [
-              {
-                "id": 9001,
-                "number": 7,
-                "title": "Crash on launch",
-                "state": "open",
-                "repository_url": "https://api.github.com/repos/other/one",
-                "user": {
-                  "login": "bob",
-                  "id": 2
-                }
+            "repository": "other/one",
+            "item": {
+              "id": 9001,
+              "number": 7,
+              "title": "Crash on launch",
+              "state": "open",
+              "repository_url": "https://api.github.com/repos/other/one",
+              "user": {
+                "login": "bob",
+                "id": 2
               }
-            ],
-            "total_count": 3,
-            "incomplete_results": false,
-            "next_page": 2
+            }
           }
         ],
+        "page": {
+          "hasMore": false
+        },
         "incomplete_results": false
       }
     }
   },
   {
-    "label": "create_release",
-    "tool": "create_release",
+    "label": "create release",
+    "tool": "github_api_write",
     "args": {
-      "owner": "other",
-      "repo": "one",
-      "tag_name": "v1.2.0",
-      "name": "Release v1.2.0",
-      "draft": true
+      "method": "POST",
+      "path": "/repos/other/one/releases",
+      "body": {
+        "tag_name": "v1.2.0",
+        "name": "Release v1.2.0",
+        "draft": true
+      }
     },
     "steps": [
       [
@@ -835,29 +1093,33 @@
       "ok": true,
       "format": "json",
       "value": {
-        "id": 501,
-        "tag_name": "v1.2.0",
-        "target_commitish": "main",
-        "name": "Release v1.2.0",
-        "body": "Bug fixes and performance improvements.",
-        "draft": true,
-        "prerelease": false,
-        "html_url": "https://github.com/other/one/releases/tag/v1.2.0",
-        "author": {
-          "login": "alice",
-          "id": 1
+        "status": 201,
+        "data": {
+          "id": 501,
+          "tag_name": "v1.2.0",
+          "target_commitish": "main",
+          "name": "Release v1.2.0",
+          "body": "Bug fixes and performance improvements.",
+          "draft": true,
+          "prerelease": false,
+          "html_url": "https://github.com/other/one/releases/tag/v1.2.0",
+          "author": {
+            "login": "alice",
+            "id": 1
+          }
         }
       }
     }
   },
   {
-    "label": "update_release",
-    "tool": "update_release",
+    "label": "publish release",
+    "tool": "github_api_write",
     "args": {
-      "owner": "acme",
-      "repo": "one",
-      "release_id": 501,
-      "draft": false
+      "method": "PATCH",
+      "path": "/repos/acme/one/releases/501",
+      "body": {
+        "draft": false
+      }
     },
     "steps": [
       [
@@ -1001,28 +1263,30 @@
       "ok": true,
       "format": "json",
       "value": {
-        "id": 501,
-        "tag_name": "v1.2.0",
-        "target_commitish": "main",
-        "name": "Release v1.2.0",
-        "body": "Bug fixes and performance improvements.",
-        "draft": false,
-        "prerelease": false,
-        "html_url": "https://github.com/other/one/releases/tag/v1.2.0",
-        "author": {
-          "login": "alice",
-          "id": 1
+        "status": 200,
+        "data": {
+          "id": 501,
+          "tag_name": "v1.2.0",
+          "target_commitish": "main",
+          "name": "Release v1.2.0",
+          "body": "Bug fixes and performance improvements.",
+          "draft": false,
+          "prerelease": false,
+          "html_url": "https://github.com/other/one/releases/tag/v1.2.0",
+          "author": {
+            "login": "alice",
+            "id": 1
+          }
         }
       }
     }
   },
   {
-    "label": "delete_release",
-    "tool": "delete_release",
+    "label": "delete release",
+    "tool": "github_api_write",
     "args": {
-      "owner": "other",
-      "repo": "one",
-      "release_id": 501
+      "method": "DELETE",
+      "path": "/repos/other/one/releases/501"
     },
     "steps": [
       [
@@ -1160,7 +1424,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "deleted": true
+        "status": 204,
+        "data": null
       }
     }
   },
@@ -1282,7 +1547,6 @@
           "body": {
             "json": {
               "permissions": {
-                "contents": "read",
                 "pull_requests": "read"
               },
               "repository_ids": [
@@ -1299,7 +1563,7 @@
           "url": "https://api.github.com/repos/other/one/pulls/7",
           "headers": {
             "accept": "application/vnd.github+json",
-            "authorization": "Bearer ghs_golden_22_contents-read_pull_requests-read_repos-201/+=",
+            "authorization": "Bearer ghs_golden_22_pull_requests-read_repos-201/+=",
             "user-agent": "connecta",
             "x-github-api-version": "2022-11-28"
           }
@@ -1525,21 +1789,20 @@
       "ok": true,
       "format": "json",
       "value": {
-        "partitions": [
+        "items": [
           {
             "scope": "other/one",
-            "items": [
-              {
-                "id": 201,
-                "full_name": "other/one",
-                "description": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
-              }
-            ],
-            "total_count": 1,
-            "incomplete_results": false,
-            "next_page": null
+            "repository": "other/one",
+            "item": {
+              "id": 201,
+              "full_name": "other/one",
+              "description": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+            }
           }
         ],
+        "page": {
+          "hasMore": false
+        },
         "incomplete_results": false
       }
     }

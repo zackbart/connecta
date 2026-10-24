@@ -1,3 +1,8 @@
+// Node-only: the value-safety review harness imports the maintainer schema detector.
+import { reviewProblems } from "../../../test/fixtures/value-safety.js";
+import candidates from "./evidence/value-safety.json";
+import source from "./evidence/openapi.json";
+import { SAFETY, githubSafety } from "./safety.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -11,10 +16,13 @@ import {
 } from "../../../test/fixtures/github-api.js";
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
+import { ConnectorCallError } from "../../errors.js";
 import { AppAuth } from "./lib/auth.js";
 import { githubConnection } from "./api.js";
 import { runEdge } from "../../runtime/run.js";
 import { appJwt, privateKeyDer } from "./lib/key.js";
+import { READ_PERMISSIONS, RELEASE_PERMISSIONS } from "./lib/operations.js";
+import { githubIndex, GITHUB_VERDICTS } from "./lib/discovery.js";
 import { parseScopes, ScopePolicy } from "./lib/scope.js";
 
 function value(result: any): any {
@@ -96,11 +104,97 @@ describe("GitHub App provider", () => {
       { scopes: [{ org: "other" }] },
       { scopes: [{ repo: "other/two" }] },
       { scopes: [{ org: "acme" }, { repo: "outside/public" }] },
-      { pages: { "org:outside": 2 } },
+      { cursor: "not-an-issued-cursor" },
     ]) {
       await expect(
         connection().callTool("search_scoped", { terms: "bug", kind: "issues", ...args }, context()),
       ).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    const review = reviewProblems({ table: SAFETY, index: githubIndex, source, candidates });
+    expect(Object.values(review).flat()).toEqual([]);
+    const scrubbed = githubSafety.redact(
+      {
+        temp_clone_token: SENTINEL,
+        parent: { temp_clone_token: SENTINEL },
+        token: SENTINEL,
+        key: SENTINEL,
+        download_url: `https://example.com/?token=${SENTINEL}`,
+      },
+      "GET",
+      "/repos/{owner}/{repo}",
+    );
+    expect(JSON.stringify(scrubbed)).not.toContain(SENTINEL);
+    const connector = connection(),
+      ctx = context();
+    expect(connector.staticTools?.map((t) => t.name)).toEqual([
+      "github_api_search",
+      "github_api_details",
+      "github_api_read",
+      "github_api_write",
+      "list_scopes",
+      "search_scoped",
+      "merge_pull_request",
+    ]);
+    expect(Object.keys(READ_PERMISSIONS)).toHaveLength(31);
+    for (const op of githubIndex.ops) {
+      const key = `${op.method} ${op.path}`;
+      if (!READ_PERMISSIONS[key] && !RELEASE_PERMISSIONS[key])
+        expect(GITHUB_VERDICTS[key as keyof typeof GITHUB_VERDICTS] ?? "refuse").toBe("refuse");
+    }
+    for (const path of [
+      "/repos/outside/public/issues",
+      "/repos/acme/%2e%2e/issues",
+      "/repos/acme/one%2f..%2flocked/issues",
+      "/repos/acme%2fone/two/issues",
+      "/repos/acme/one/contents/%252e%252e%252fsecret",
+      "/repos/acme/one/actions/secrets",
+      "/repos/acme/one/keys",
+      "/repos/acme/one/actions/runs/1/logs",
+      "/app/installations",
+    ]) {
+      await expect(connector.callTool("github_api_read", { path }, ctx), path).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    }
+    for (const args of [
+      { method: "POST", path: "/app/installations/11/access_tokens", body: {} },
+      { method: "PUT", path: "/repos/acme/one/pulls/7/merge", body: { sha: "a".repeat(40) } },
+      { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1" }, fields: ["missing"] },
+      { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "[redacted]" } },
+    ])
+      await expect(connector.callTool("github_api_write", args, ctx)).rejects.toMatchObject({ code: "invalid_args" });
+    for (const [query, targetOp] of [
+      ["issues", "GET /repos/{owner}/{repo}/issues"],
+      ["list pull requests", "GET /repos/{owner}/{repo}/pulls"],
+      ["list PR", "GET /repos/{owner}/{repo}/pulls"],
+      ["pull request reviews", "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"],
+      ["commits", "GET /repos/{owner}/{repo}/commits"],
+      ["file contents", "GET /repos/{owner}/{repo}/contents/{path}"],
+      ["releases", "GET /repos/{owner}/{repo}/releases"],
+      ["workflows", "GET /repos/{owner}/{repo}/actions/workflows"],
+      ["actions runs", "GET /repos/{owner}/{repo}/actions/runs"],
+      ["labels", "GET /repos/{owner}/{repo}/labels"],
+      ["issue comments", "GET /repos/{owner}/{repo}/issues/{issue_number}/comments"],
+      ["create a draft release", "POST /repos/{owner}/{repo}/releases"],
+      ["merge a pull request", "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge"],
+    ]) {
+      const result = value(await connector.callTool("github_api_search", { query, limit: 8 }, ctx));
+      const rank = result.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1;
+      expect(rank, query).toBeGreaterThan(0);
+      if (query!.startsWith("create") || query!.startsWith("merge")) {
+        expect(rank, query).toBeLessThanOrEqual(2);
+        const filtered = value(
+          await connector.callTool("github_api_search", { query, method: targetOp!.split(" ")[0], limit: 8 }, ctx),
+        );
+        expect(
+          filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
+          query,
+        ).toBeGreaterThan(0);
+        expect(
+          filtered.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1,
+          query,
+        ).toBeLessThanOrEqual(2);
+      }
     }
     expect(fixture.fetchStub).not.toHaveBeenCalled();
   });
@@ -114,17 +208,24 @@ describe("GitHub App provider", () => {
       const item = { id: repo === "acme/one" ? 1 : 2, repository_url: `https://api.github.com/repos/${repo}` };
       return Response.json({ items: [item, item], total_count: 100, incomplete_results: q.includes("org:acme") });
     });
-    const result = value(
-      await connection().callTool(
+    const connector = connection(),
+      ctx = context();
+    const first = value(await connector.callTool("search_scoped", { terms: "bug", kind: "issues", limit: 2 }, ctx));
+    const second = value(
+      await connector.callTool(
         "search_scoped",
-        { terms: "bug", kind: "issues", pages: { "org:acme": 2 }, per_page: 2 },
-        context(),
+        { terms: "bug", kind: "issues", limit: 2, cursor: first.page.nextCursor },
+        ctx,
       ),
     );
-    expect(result.partitions.map((partition: any) => partition.items.length)).toEqual([1, 1]);
-    expect(result.partitions.map((partition: any) => partition.next_page)).toEqual([3, 2]);
-    expect(result.incomplete_results).toBe(true);
+    expect(first.items).toHaveLength(1);
+    expect(second.items).toHaveLength(1);
+    expect(first.page.hasMore).toBe(true);
+    expect(second.page).toEqual({ hasMore: false });
+    expect(first.incomplete_results).toBe(true);
+    expect(second.incomplete_results).toBe(true);
     expect(fixture.tokens.map((token) => token.body.repository_ids)).toEqual([undefined, [201, 202]]);
+    expect(fixture.tokens.map((token) => token.body.permissions)).toEqual([{ issues: "read" }, { issues: "read" }]);
     expect(
       fixture.requests
         .filter((request) => request.url.pathname === "/search/issues")
@@ -224,7 +325,11 @@ describe("GitHub App provider", () => {
       const connector = connection();
       for (let i = 0; i < 2; i++)
         await expect(
-          connector.callTool("create_release", { owner: "acme", repo: "one", tag_name: "v1" }, context()),
+          connector.callTool(
+            "github_api_write",
+            { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1" } },
+            context(),
+          ),
           JSON.stringify(headers),
         ).rejects.toMatchObject({
           code: rate ? "rate_limited" : "auth_required",
@@ -265,7 +370,11 @@ describe("GitHub App provider", () => {
     const connector = connection();
     const registry = makeRegistry([connector], { logger: logger.logger });
     const activity = activitySink();
-    await invokeTestCall(registry, activity, "github.create_release", { owner: "acme", repo: "one", tag_name: "v1" });
+    await invokeTestCall(registry, activity, "github.github_api_write", {
+      method: "POST",
+      path: "/repos/acme/one/releases",
+      body: { tag_name: "v1" },
+    });
     expect(JSON.stringify(activity.events)).not.toContain(SENTINEL);
     expect(logger.warnings().join(" ")).not.toContain(SENTINEL);
     expect(activity.events[0]?.errorCode).toBe("auth_required");
@@ -273,6 +382,98 @@ describe("GitHub App provider", () => {
       httpStatus: 403,
     });
     expect(fixture.requests.filter((request) => request.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
+    fixture.respond((request) => (request.url.pathname === "/repos/acme/one/issues" ? Response.json([]) : undefined));
+    expect(
+      value(
+        await connector.callTool(
+          "github_api_read",
+          { path: "/repos/acme/one/issues", fields: ["id", "title"] },
+          context(),
+        ),
+      ),
+    ).toMatchObject({ data: [] });
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/pulls/7" ? new Response("<broken>") : undefined,
+    );
+    const merge = connection({ scopes: [{ org: "acme", access: "read-write", workflows: "write" }] });
+    const failed = await merge
+      .callTool("merge_pull_request", { owner: "acme", repo: "one", pull_number: 7, sha: "a".repeat(40) }, context())
+      .catch((e) => e);
+    expect(failed).toMatchObject({ code: "connector_call_failed" });
+    if (!(failed instanceof ConnectorCallError)) throw new Error("Expected the auxiliary lookup to fail.");
+    expect(failed.writeOutcome).toBeUndefined();
+    expect(failed.message).not.toMatch(/Whether the write|outcome is unknown/);
+    expect(fixture.requests.filter((r) => r.url.pathname.endsWith("/merge"))).toHaveLength(0);
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/pulls/7"
+        ? Response.json({
+            head: { sha: "a".repeat(40), repo: { full_name: "acme/one" } },
+            base: { repo: { full_name: "acme/one" } },
+          })
+        : request.url.pathname.endsWith("/merge")
+          ? Response.json({ merged: false, message: SENTINEL })
+          : undefined,
+    );
+    await expect(
+      merge.callTool(
+        "merge_pull_request",
+        { owner: "acme", repo: "one", pull_number: 7, sha: "a".repeat(40) },
+        context(),
+      ),
+    ).rejects.toMatchObject({ code: "conflict", retryable: false });
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/pulls/7/files"
+        ? Response.json([{ sha: "abc", filename: "one.ts", patch: "x".repeat(40000), token: SENTINEL, key: SENTINEL }])
+        : undefined,
+    );
+    const cut = value(
+      await connector.callTool("github_api_read", { path: "/repos/acme/one/pulls/7/files" }, context()),
+    );
+    expect(cut.truncated).toEqual(["data[].patch"]);
+    expect(cut.data[0].patch).toHaveLength(32768);
+    fixture.respond((request) => {
+      if (!request.url.pathname.endsWith("/contents/settings.json")) return;
+      return Response.json({ name: "settings.json", encoding: "base64", content: btoa("x".repeat(40000)) });
+    });
+    const content = value(
+      await connector.callTool("github_api_read", { path: "/repos/acme/one/contents/settings.json" }, context()),
+    );
+    expect(content.truncated).toEqual(["data.content"]);
+    expect(atob(content.data.content)).toHaveLength(32768);
+    fixture.respond((request) => {
+      if (!request.url.pathname.endsWith("/contents/settings.json")) return;
+      const bearer = request.headers.get("authorization")!.slice(7);
+      return Response.json({
+        name: "settings.json",
+        path: "settings.json",
+        sha: "abc",
+        encoding: "base64",
+        content: btoa("x".repeat(32766) + bearer + " tail"),
+        download_url: `https://example.com/?token=${SENTINEL}`,
+      });
+    });
+    const secretContent = value(
+      await connector.callTool("github_api_read", { path: "/repos/acme/one/contents/settings.json" }, context()),
+    );
+    expect(secretContent.data.content).toBe("[redacted]");
+    expect(secretContent.truncated).toBeUndefined();
+    expect(JSON.stringify(secretContent)).not.toContain("ghs_");
+    expect(JSON.stringify(secretContent)).not.toContain(SENTINEL);
+    for (const [key, permissions] of Object.entries(READ_PERMISSIONS)) {
+      const path = key
+        .slice(4)
+        .replace("{owner}", "acme")
+        .replace("{repo}", "one")
+        .replace(/\{[^}]+\}/g, "1");
+      fixture.respond((request) => (request.url.pathname === path ? Response.json({ id: 1 }) : undefined));
+      await connector.callTool("github_api_read", { path }, context());
+      const request = fixture.requests.filter((r) => r.url.pathname === path).at(-1)!;
+      const token = fixture.tokens.find((t) => request.headers.get("authorization") === `Bearer ${t.value}`)!;
+      expect(token.body.permissions, key).toEqual(permissions);
+      expect(token.body.repository_ids, key).toEqual([101]);
+    }
+
+    expect(JSON.stringify(cut)).not.toContain(SENTINEL);
   });
 
   it("INV-5: signs a verifiable RS256 JWT with bounded time and normalized PKCS#1/PKCS#8 keys", async () => {

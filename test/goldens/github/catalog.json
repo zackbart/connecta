@@ -4,26 +4,481 @@
   "guide": {},
   "tools": [
     {
+      "name": "github_api_search",
+      "description": "Find GitHub API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "Only operations with this method."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
+                }
+              },
+              "required": [
+                "method",
+                "path",
+                "operationId",
+                "summary"
+              ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; github_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "revision",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "github_api_details",
+      "description": "Read one GitHub API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "github_api_read",
+      "description": "Call a reviewed GitHub API read. The operation index checks arguments before anything is sent. Only the reviewed repository reads are available. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /repos/alice/widget/issues. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque page.nextCursor from this same read; omit raw query anchors when continuing."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Dot paths cut for size, including the data prefix.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Vendor parameter restored from cursor; pass nextCursor as the top-level cursor."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "github_api_write",
+      "description": "Call a reviewed GitHub API write; method and path are stated for approval, and the operation index checks arguments first. Only release create/update/delete are available here. Use merge_pull_request for merges.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /repos/alice/widget/issues. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Dot paths cut for size, including the data prefix.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
       "name": "list_scopes",
-      "description": "List configured GitHub scopes and reachable repositories for one owner.",
+      "description": "List configured GitHub grants locally, or verified reachable repositories for one configured owner. Without owner this reads configuration without network access.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "owner": {
             "type": "string",
             "minLength": 1,
-            "description": "Configured owner; omit to return configuration without network access."
+            "description": "Configured owner; omit for local grants."
           },
-          "page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Repository page, default 1, at most 1000."
+            "maximum": 100,
+            "description": "Maximum returned items, default 30; at most 100.",
+            "default": 30
           },
-          "per_page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Repositories per page, default 100.",
-            "maximum": 100
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque page.nextCursor from this same search or scope listing."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths into each item; only narrows already-safe data.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -32,10 +487,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "acting_as": {
-            "type": "string"
-          },
-          "scopes": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -44,6 +496,15 @@
                   "type": "string"
                 },
                 "repo": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "full_name": {
                   "type": "string"
                 },
                 "access": {
@@ -59,31 +520,28 @@
                     "write"
                   ]
                 }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
               },
-              "required": [
-                "access"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "repositories": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "next_page": {
-            "type": [
-              "integer",
-              "null"
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
             ]
           }
         },
         "required": [
-          "acting_as",
-          "scopes"
-        ],
-        "additionalProperties": false
+          "items",
+          "page"
+        ]
       },
       "annotations": {
         "readOnlyHint": true
@@ -91,14 +549,14 @@
     },
     {
       "name": "search_scoped",
-      "description": "Search GitHub repositories, issues, pull requests or code within configured scopes.",
+      "description": "Search GitHub repositories, issues, pull requests or code within configured scopes. Results carry verified repository and partition bindings; continuation visits one bounded partition page at a time.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "terms": {
             "type": "string",
             "minLength": 1,
-            "description": "Literal words only; scope qualifiers and Boolean operators are refused."
+            "description": "Literal words only; qualifiers and Boolean operators are refused."
           },
           "kind": {
             "type": "string",
@@ -114,39 +572,45 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 100,
+            "description": "Optional subset of the configured scopes.",
             "items": {
               "type": "object",
               "properties": {
                 "org": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "Configured org scope."
+                  "description": "Configured organization grant."
                 },
                 "repo": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "Exact owner/repo within configured scope."
+                  "description": "Exact configured owner/repository."
                 }
               },
-              "required": [],
               "additionalProperties": false
-            },
-            "description": "Optional subset; defaults to all configured scopes."
+            }
           },
-          "pages": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 10
-            },
-            "description": "Page per returned partition ID, at most 10."
-          },
-          "per_page": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Results per partition, default 30.",
-            "maximum": 100
+            "maximum": 100,
+            "description": "Maximum returned items, default 30; at most 100.",
+            "default": 30
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque page.nextCursor from this same search or scope listing."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths into each item; only narrows already-safe data.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -158,187 +622,54 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "partitions": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
-              "additionalProperties": true
+              "properties": {
+                "scope": {
+                  "type": "string"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "item": {
+                  "type": "object"
+                }
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           },
           "incomplete_results": {
             "type": "boolean"
           }
         },
         "required": [
-          "partitions",
+          "items",
+          "page",
           "incomplete_results"
-        ],
-        "additionalProperties": false
+        ]
       },
       "annotations": {
         "readOnlyHint": true
       }
     },
     {
-      "name": "create_release",
-      "description": "Create a GitHub release, optionally as a draft.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "owner": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Configured repository owner."
-          },
-          "repo": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Repository name under that owner."
-          },
-          "tag_name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Release tag."
-          },
-          "target_commitish": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Branch or commit for a new tag."
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Release title."
-          },
-          "body": {
-            "type": "string",
-            "description": "Release notes."
-          },
-          "draft": {
-            "type": "boolean",
-            "description": "Create a draft release."
-          },
-          "prerelease": {
-            "type": "boolean",
-            "description": "Mark as a prerelease."
-          }
-        },
-        "required": [
-          "owner",
-          "repo",
-          "tag_name"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "additionalProperties": true
-      },
-      "annotations": {
-        "readOnlyHint": false
-      }
-    },
-    {
-      "name": "update_release",
-      "description": "Update or publish an existing GitHub release.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "owner": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Configured repository owner."
-          },
-          "repo": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Repository name under that owner."
-          },
-          "release_id": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Release ID in this repository."
-          },
-          "tag_name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Release tag."
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Release title."
-          },
-          "body": {
-            "type": "string",
-            "description": "Release notes."
-          },
-          "draft": {
-            "type": "boolean",
-            "description": "Set false to publish a draft."
-          },
-          "prerelease": {
-            "type": "boolean",
-            "description": "Mark as a prerelease."
-          }
-        },
-        "required": [
-          "owner",
-          "repo",
-          "release_id"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "additionalProperties": true
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
-      "name": "delete_release",
-      "description": "Delete a GitHub release from the scoped repository.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "owner": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Configured repository owner."
-          },
-          "repo": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Repository name under that owner."
-          },
-          "release_id": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Release ID in this repository."
-          }
-        },
-        "required": [
-          "owner",
-          "repo",
-          "release_id"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "additionalProperties": true
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
       "name": "merge_pull_request",
-      "description": "Merge a same-repository GitHub pull request with explicit workflow-write scope.",
+      "description": "Merge a same-repository GitHub pull request once, guarded by expected head SHA and explicit workflow-write scope. A failed preflight sends no merge.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -381,8 +712,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
-        "type": "object",
-        "additionalProperties": true
+        "type": "object"
       },
       "annotations": {
         "readOnlyHint": false,

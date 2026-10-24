@@ -1234,7 +1234,7 @@ factory stamps its provider name onto `describe().source.provider`. API
 implementations and their contract evidence remain vendored. Hosted MCP servers
 use generic `remoteMcp()` entries; provider reviews and hosted defaults are
 removed. Legacy hosted selectors fail at construction with the generic migration
-path. GitHub retains only its six scope-enforced REST tools.
+path. GitHub retains its scope-enforced App identity and exposes a bounded repository-read and release-write hatch plus local scope discovery, scoped data search and guarded merge.
 
 [Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
 sets the provider standard the providers above are migrating to. It fixes
@@ -1324,7 +1324,7 @@ Fields are optional additive metadata in format 4, so a previously compiled
 index without the source bytes remains usable without inventing a response
 contract. Vercel's pinned document is unavailable: its index leaves fields
 absent until its step-2 pin review. Breeze's pin declares no response
-properties. GitHub's finite REST complement has no pinned OpenAPI document.
+properties. GitHub's immutable official OpenAPI pin supplies its complete index and response fields; a reviewed repository allowlist controls dispatch. Natural queries with reviewed matches scope discovery to those matches and named-only operations; explicit paths and unmatched queries retain full-pin refusal discovery.
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
 No maintained provider selects an implementation with `surface` any more. See
@@ -2340,7 +2340,7 @@ value is ignored, so it cannot replace or wrap the connector. Google Workspace
 uses it to tag whose account the connector acts as, which the registry reads to
 hide a mapping-subject connector from agents in a pool without an owner.
 
-GitHub's finite REST tools use kit read/write builders and a confined
+GitHub's tools and allowlisted indexed hatch use kit read/write builders and a confined
 Connection while its App authentication and scope-verification transport stays
 private. Its tokens are partitioned by App/key, installation, repository IDs,
 permissions and purpose. A resource 401, or a 403 without rate-limit evidence,
