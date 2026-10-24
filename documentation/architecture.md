@@ -2105,6 +2105,14 @@ cursor. Search ranks exact path nouns, root collections and authored
 operations first, then operations found by a field they return or take, and
 points at the authored tool that serves an operation. `_api_read` omits
 `method` only when GET is its one reviewed read method.
+A standard list can declare `limit.values` for a vendor's discrete page sizes.
+The values must be unique positive integers within `max` and contain the default.
+The catalog declares the enum and decoding refuses other sizes before dispatch.
+A reviewed read-only POST list supplies `review`, like other reviewed POST reads.
+A reviewed OpenAPI pin may opt into `additionalResponseMediaTypes` to declare
+response fields from a vendor's nonstandard media labels. This changes field
+metadata only; the runtime still enforces its declared response format.
+
 A provider may opt into `hatch.writeEnabled(options)` to omit its write hatch
 from a connection whose deployment configuration permits only reads. Discovery
 omits write-tool routing on that connection; reviewed reads do not gain write

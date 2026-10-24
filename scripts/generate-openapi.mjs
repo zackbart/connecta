@@ -410,7 +410,7 @@ function share(rows) {
  * refs and composition are bounded; overflow drops the whole response contract
  * so fields validation never mistakes an incomplete set for a complete one.
  */
-function responseFields(document, operation) {
+function responseFields(document, operation, additionalMediaTypes = []) {
   const paths = new Set();
   let remaining = 1024;
   let overflow = false;
@@ -466,9 +466,10 @@ function responseFields(document, operation) {
     .sort()) {
     const response = resolveRef(document, operation.responses[status]);
     const content = response.content ?? {};
-    const type = Object.keys(content)
-      .filter((type) => /^application\/(?:[^/]+\+)?json$/i.test(type))
-      .sort()[0];
+    const type =
+      Object.keys(content)
+        .filter((type) => /^application\/(?:[^/]+\+)?json$/i.test(type))
+        .sort()[0] ?? additionalMediaTypes.find((type) => content[type]?.schema);
     if (!type || !content[type]?.schema) continue;
     visit(content[type].schema);
     break;
@@ -543,7 +544,7 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
-      fields.push(responseFields(document, operation));
+      fields.push(responseFields(document, operation, source.options?.additionalResponseMediaTypes));
     }
   }
   return {

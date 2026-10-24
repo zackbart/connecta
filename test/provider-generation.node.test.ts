@@ -681,6 +681,16 @@ describe("OpenAPI operation index generation", () => {
       title: "Fixture",
     });
     expect([...arrays.responseRoots(arrays.ops[0]!)!]).toEqual(["city", "line1", "recursive", "widget_id"]);
+    const wildcard = structuredClone(withResponses);
+    wildcard.components.responses.list.content = { "*/*": { schema: { properties: { reviewed_name: {} } } } };
+    const wildcardIndex = (options = {}) =>
+      new OperationIndex(buildOperationIndex(wildcard, { ...source, options }), {
+        vendor: "fixture",
+        title: "Fixture",
+      });
+    expect(wildcardIndex().responseRoots(wildcardIndex().ops[0]!)).toBeUndefined();
+    const admitted = wildcardIndex({ additionalResponseMediaTypes: ["*/*"] });
+    expect([...admitted.responseRoots(admitted.ops[0]!)!]).toEqual(["reviewed_name"]);
     // Bound pathological documents without treating a partial root set as complete.
     withResponses.components.responses.list.content["application/problem+json"].schema = {
       properties: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`field_${i}`, {}])),
