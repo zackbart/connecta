@@ -29,7 +29,7 @@ import { authoredFixtures } from "./providers.generated.js";
 // Check the actual hatch constructor reached by every Google product fixture,
 // including products still awaiting step 2 and declarations through the kit.
 const googleBindings = vi.hoisted(() => {
-  type Declaration = { connection: { provider: string }; index: object; binding?: object };
+  type Declaration = { connection: { provider: string }; index: object; binding?: { send?: object; index?: object } };
   const bindings = new WeakMap<object, { connection: object; index: object }>();
   const check = ({ connection, index, binding }: Declaration) => {
     if (
@@ -38,8 +38,8 @@ const googleBindings = vi.hoisted(() => {
       )
     )
       return;
-    const reviewed = binding && bindings.get(binding);
-    if (!reviewed || reviewed.connection !== connection || reviewed.index !== index)
+    const reviewed = binding?.send && bindings.get(binding.send);
+    if (!reviewed || reviewed.connection !== connection || reviewed.index !== index || binding?.index !== index)
       throw new Error("Google hatch requires googleHatchBinding with its connection and index.");
   };
   return { bindings, check };
@@ -50,7 +50,7 @@ vi.mock("../src/providers/_shared/google/hatch.js", async (original) => {
     ...module,
     googleHatchBinding: (...args: Parameters<typeof module.googleHatchBinding>) => {
       const binding = module.googleHatchBinding(...args);
-      googleBindings.bindings.set(binding, { connection: args[0], index: args[1].index });
+      googleBindings.bindings.set(binding.send, { connection: args[0], index: args[1].index });
       return binding;
     },
   };
@@ -160,12 +160,14 @@ describe("the provider standard (decision 0011)", () => {
     const index = {},
       other = {},
       connection = { provider: "Google Docs" },
-      binding = {};
-    googleBindings.bindings.set(binding, { connection, index });
+      binding = { send: () => {}, index };
+    googleBindings.bindings.set(binding.send, { connection, index });
     expect(() => googleBindings.check({ connection, index, binding })).not.toThrow();
+    expect(() => googleBindings.check({ connection, index, binding: { ...binding } })).not.toThrow();
     for (const options of [
       { connection, index },
       { connection, index, binding: {} },
+      { connection, index, binding: { send: binding.send } },
       { connection, index: other, binding },
       { connection: { provider: "Gmail" }, index, binding },
     ])
