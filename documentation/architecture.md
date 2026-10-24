@@ -2903,6 +2903,35 @@ compiling and configuring the real thing.
   the failing request carries the refusal. A custom connector that composes
   calls, or that could send around them, never inherits an inner verdict; the
   invocation withdraws the mark and the write is unknown.
+  Write inference also needs positive evidence before relaxing timeout or auth
+  reconciliation. `LogicalCall.auxiliaryReads` records each auxiliary GET or HEAD
+  at dispatch, without method-override headers, separately from the call-owned
+  requests in `sent`. Its physical read proof does not depend on the served
+  tool's write classification. `onlyAuxiliaryRequests` requires exactly one
+  boundary that owns the logical call and declares complete request tracking
+  (`tracksEveryRequest`), at least one dispatched auxiliary resource read, and
+  no dispatched call-owned request or kit auxiliary falsely declared as a read.
+  The kit records `blocksAuxiliaryProof` at dispatch for an `effect: "read"`
+  request without physical GET/HEAD proof; `nonReadAuxiliaryDispatched` retains
+  that blocking fact on the logical call. The
+  invocation's `mayHaveWritten` is true
+  for an entered write unless the call answered with that proof; an explicit
+  `writeOutcome: "unknown"` always overrides the relaxation. Empty or partial
+  ledgers, token POSTs alone, multiple boundaries, custom `api()` and
+  `remoteMcp()` connectors, deadlines, and caller cancellation supply no such
+  proof. Only maintained providers have the internal tracking declaration;
+  they must route every dispatch through their tracked transports. The kit
+  still classifies auxiliary POSTs and method-overridden GETs as writes for
+  reservation and replay; the effect label does not change those rules.
+  Their dispatches block auxiliary-only inference even beside a genuine
+  auxiliary read. Guarded authentication token POSTs supply no read proof,
+  but do not invalidate a later auxiliary resource read. A conservative
+  timeout withdraws `answered`; a conservative auth failure does so only with
+  an empty resource ledger, also withdrawing that ledger's private known-failure
+  mark before advice is composed. A refused call-owned write keeps its
+  `answered` evidence and resource-refusal provenance. Token-only auth failures
+  therefore keep conservative program accounting as well as reconciliation
+  wording.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
   `tools/call` is sent, and GitHub's REST target check and token mint.

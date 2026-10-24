@@ -49,6 +49,10 @@ export interface LogicalCall {
   boundaries: object[];
   /** Every resource request dispatched under it, once per dispatch, from any ledger. */
   sent: ProviderRequest[];
+  /** Auxiliary GET/HEAD dispatches without method overrides, apart from resource writes and auth POSTs. */
+  auxiliaryReads: ProviderRequest[];
+  /** A kit auxiliary declared as a read dispatched without physical read proof. */
+  nonReadAuxiliaryDispatched: boolean;
 }
 
 export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
@@ -146,7 +150,16 @@ export function dispatchProviderRequest(
   if (hasMethodOverride(headers)) request.classification = "write";
   recordRequestField(request, "method", method);
   recordRequestField(request, "dispatched", true);
-  if (ctx && !request.auxiliary) recordedService(ctx, LogicalLedger)?.sent.push(request);
+  const logical = ctx && recordedService(ctx, LogicalLedger);
+  if (logical) {
+    if (!request.auxiliary) logical.sent.push(request);
+    // Auxiliary ownership is the provider's read declaration; the served
+    // classification may still be write. Bind method/header evidence now,
+    // so token POSTs and overridden GETs cannot supply this proof later.
+    else if (method !== undefined && readRequest({ classification: "read", method }, headers))
+      logical.auxiliaryReads.push(request);
+    else if (request.blocksAuxiliaryProof) logical.nonReadAuxiliaryDispatched = true;
+  }
 }
 
 // Only a fetch that records physical sends may accept an unsent handoff.
@@ -214,7 +227,14 @@ export function providerRequest(
  * naming the exact object and `callTool` function it is about to invoke.
  */
 export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): LogicalCall {
-  const call: LogicalCall = { target, entered, boundaries: [], sent: [] };
+  const call: LogicalCall = {
+    target,
+    entered,
+    boundaries: [],
+    sent: [],
+    auxiliaryReads: [],
+    nonReadAuxiliaryDispatched: false,
+  };
   setViewService(ctx, LogicalLedger, call);
   return call;
 }
@@ -237,6 +257,31 @@ export function enterProviderBoundary(ctx: ConnectorContext, boundary: object): 
  */
 export function knownCallFailure(call: LogicalCall | undefined, error: unknown): boolean {
   return call !== undefined && isKnownProviderFailure(error) && call.boundaries.length <= 1 && ownsLogicalCall(call);
+}
+
+/**
+ * Positive proof that a complete tracked call dispatched only auxiliaries,
+ * including a recorded resource read (positive GET/HEAD evidence). An
+ * authentication POST alone is not evidence of that call's resource work:
+ * token mints can be shared with callers whose ledgers did not send them.
+ * An empty resource ledger is not this proof: even a declared api() entry
+ * can report a timeout and recovery facts without recording any dispatch.
+ * Keep those calls conservative rather than inferring an auxiliary failure
+ * from the absence of a resource request. Wrappers and untracked boundaries
+ * cannot borrow an inner call's observations.
+ */
+export function onlyAuxiliaryRequests(call: LogicalCall | undefined): boolean {
+  const [boundary, ...others] = call?.boundaries ?? [];
+  return (
+    call !== undefined &&
+    boundary !== undefined &&
+    others.length === 0 &&
+    tracksRequests(boundary) &&
+    ownsLogicalCall(call) &&
+    call.auxiliaryReads.some((request) => request.dispatched) &&
+    !call.nonReadAuxiliaryDispatched &&
+    !call.sent.some((request) => request.dispatched && !request.auxiliary)
+  );
 }
 
 /**
