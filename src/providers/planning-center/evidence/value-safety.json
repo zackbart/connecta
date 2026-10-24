@@ -1,0 +1,927 @@
+{
+  "format": 5,
+  "digest": "sha256:ea58c242969cdf67e71b47c9f05948aa11baca1c731f3f0abda16eb331a2a0cb",
+  "options": {},
+  "candidates": {
+    "GET /api/v2/personal_access_tokens": {
+      "fields": ["data[].attributes.last_used_on"],
+      "named": true
+    },
+    "GET /api/v2/personal_access_tokens/{personal_access_token_id}": {
+      "fields": ["data.attributes.last_used_on"],
+      "named": true
+    },
+    "GET /api/v2/personal_access_tokens/{personal_access_token_id}/person": {
+      "fields": [],
+      "named": true
+    },
+    "GET /api/v2/personal_access_tokens/{personal_access_token_id}/person/{person_id}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /api/v2/personal_access_tokens/{personal_access_token_id}/revoke": {
+      "fields": [],
+      "named": true
+    },
+    "POST /groups/v2/groups/{group_id}/assign_campuses": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/me": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/media/{media_id}/assign_tags": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/people": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/people/{person_id}/assign_tags": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/people/{person_id}/person_team_position_assignments": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}/plan_people/{plan_person_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/person": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/person/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}/plan_people/{plan_person_id}/person/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to/{respond_to_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to/{respond_to_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/schedules/{schedule_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/schedules/{schedule_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/plans": {
+      "fields": ["data[].attributes.secret"],
+      "named": false
+    },
+    "GET /services/v2/plans/{plan_id}": {
+      "fields": ["data.attributes.secret"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller/{controller_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller/{controller_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "PATCH /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/needed_positions/{needed_position_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/series/{series_id}/plans/{plan_id}/needed_positions/{needed_position_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members/{team_member_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members/{team_member_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_times/{plan_time_id}/split_team_rehearsal_assignments/{split_team_rehearsal_assignment_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plan_times/{plan_time_id}/split_team_rehearsal_assignments/{split_team_rehearsal_assignment_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/items": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement": {
+      "fields": ["data[].links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement/{arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement/{arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key": {
+      "fields": ["data[].attributes.alternate_keys"],
+      "named": true
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key/{key_id}": {
+      "fields": ["data.attributes.alternate_keys"],
+      "named": true
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key/{key_id}": {
+      "fields": ["data.attributes.alternate_keys"],
+      "named": true
+    },
+    "DELETE /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/live": {
+      "fields": ["included[].attributes.alternate_keys", "included[].attributes.signature", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/live/{live_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].attributes.signature", "included[].links.keys"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/live/{live_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].attributes.signature", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions/{needed_position_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions/{needed_position_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/signup_teams": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/signup_teams/{signup_team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members/{team_member_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members/{team_member_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/team_position": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/team_position/{team_position_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/team": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/team/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/teams": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/service_types/{service_type_id}/teams": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/service_types/{service_type_id}/teams/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/songs/{song_id}/arrangements": {
+      "fields": ["data[].links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "POST /services/v2/songs/{song_id}/arrangements": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "PATCH /services/v2/songs/{song_id}/arrangements/{arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "POST /services/v2/songs/{song_id}/arrangements/{arrangement_id}/assign_tags": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys": {
+      "fields": ["data[].attributes.alternate_keys"],
+      "named": true
+    },
+    "POST /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys": {
+      "fields": ["data.attributes.alternate_keys"],
+      "named": true
+    },
+    "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}": {
+      "fields": ["data.attributes.alternate_keys"],
+      "named": true
+    },
+    "PATCH /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}": {
+      "fields": ["data.attributes.alternate_keys"],
+      "named": true
+    },
+    "DELETE /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}/attachments": {
+      "fields": [],
+      "named": true
+    },
+    "POST /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}/attachments": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}/attachments/{attachment_id}": {
+      "fields": [],
+      "named": true
+    },
+    "PATCH /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}/attachments/{attachment_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}/attachments/{attachment_id}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /services/v2/songs/{song_id}/assign_tags": {
+      "fields": [],
+      "named": true
+    },
+    "GET /services/v2/songs/{song_id}/last_scheduled_item": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/songs/{song_id}/last_scheduled_item/{last_scheduled_item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "PATCH /services/v2/songs/{song_id}/last_scheduled_item/{last_scheduled_item_id}": {
+      "fields": ["included[].attributes.alternate_keys", "included[].links.keys"],
+      "named": false
+    },
+    "GET /services/v2/songs/{song_id}/unscoped_arrangements": {
+      "fields": ["data[].links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "GET /services/v2/songs/{song_id}/unscoped_arrangements/{unscoped_arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "PATCH /services/v2/songs/{song_id}/unscoped_arrangements/{unscoped_arrangement_id}": {
+      "fields": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "named": false
+    },
+    "GET /services/v2/teams": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "POST /services/v2/teams": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/people": {
+      "fields": ["data[].attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/teams/{team_id}/people/{person_id}": {
+      "fields": ["data.attributes.signature", "included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/person_team_position_assignments": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "PATCH /services/v2/teams/{team_id}/person_team_position_assignments/{person_team_position_assignment_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/team_leaders": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/team_leaders/{team_leader_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/team_positions": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /services/v2/teams/{team_id}/team_positions/{team_position_id}": {
+      "fields": ["included[].attributes.signature"],
+      "named": false
+    },
+    "GET /webhooks/v2/available_events": {
+      "fields": [],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions": {
+      "fields": ["data[].attributes.authenticity_secret", "data[].links.rotate_secret"],
+      "named": true
+    },
+    "POST /webhooks/v2/webhook_subscriptions": {
+      "fields": ["data.attributes.authenticity_secret", "data.links.rotate_secret"],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}": {
+      "fields": ["data.attributes.authenticity_secret", "data.links.rotate_secret"],
+      "named": true
+    },
+    "PATCH /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}": {
+      "fields": ["data.attributes.authenticity_secret", "data.links.rotate_secret"],
+      "named": true
+    },
+    "DELETE /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events": {
+      "fields": [],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/deliveries": {
+      "fields": ["data[].attributes.request_headers", "data[].attributes.response_headers"],
+      "named": true
+    },
+    "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/deliveries/{delivery_id}": {
+      "fields": ["data.attributes.request_headers", "data.attributes.response_headers"],
+      "named": true
+    },
+    "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/ignore": {
+      "fields": [],
+      "named": true
+    },
+    "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/redeliver": {
+      "fields": [],
+      "named": true
+    },
+    "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret": {
+      "fields": [],
+      "named": true
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /api/v2/personal_access_tokens": ["data[].attributes.last_used_on"],
+      "GET /api/v2/personal_access_tokens/{personal_access_token_id}": ["data.attributes.last_used_on"],
+      "GET /services/v2/me": ["data.attributes.signature", "included[].attributes.signature"],
+      "GET /services/v2/people": ["data[].attributes.signature", "included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}": ["data.attributes.signature", "included[].attributes.signature"],
+      "PATCH /services/v2/people/{person_id}": ["data.attributes.signature", "included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/person_team_position_assignments": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/people/{person_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/plan_people": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}": ["included[].attributes.signature"],
+      "PATCH /services/v2/people/{person_id}/plan_people/{plan_person_id}": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/person": [
+        "data[].attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/person/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/people/{person_id}/plan_people/{plan_person_id}/person/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/team": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/plan_people/{plan_person_id}/team/{team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to": [
+        "data[].attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to/{respond_to_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/people/{person_id}/schedules/{schedule_id}/respond_to/{respond_to_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/schedules/{schedule_id}/team": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/schedules/{schedule_id}/team/{team_id}": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/team_leaders": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people": [
+        "data[].attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/people/{person_id}/team_leaders/{team_leader_id}/people/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/team": ["included[].attributes.signature"],
+      "GET /services/v2/people/{person_id}/team_leaders/{team_leader_id}/team/{team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/plans": ["data[].attributes.secret"],
+      "GET /services/v2/plans/{plan_id}": ["data.attributes.secret"],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller": [
+        "data[].attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller/{controller_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/controller/{controller_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "PATCH /services/v2/series/{series_id}/plans/{plan_id}/live/{live_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/needed_positions/{needed_position_id}/team": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/series/{series_id}/plans/{plan_id}/needed_positions/{needed_position_id}/team/{team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members": [
+        "included[].attributes.signature"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members/{team_member_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plan_templates/{plan_template_id}/team_members/{team_member_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_times/{plan_time_id}/split_team_rehearsal_assignments/{split_team_rehearsal_assignment_id}/team": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plan_times/{plan_time_id}/split_team_rehearsal_assignments/{split_team_rehearsal_assignment_id}/team/{team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/items": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement": [
+        "data[].links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement/{arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/arrangement/{arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key": [
+        "data[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key/{key_id}": [
+        "data.attributes.alternate_keys"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/items/{item_id}/key/{key_id}": [
+        "data.attributes.alternate_keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/live": [
+        "included[].attributes.alternate_keys",
+        "included[].attributes.signature",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/live/{live_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].attributes.signature",
+        "included[].links.keys"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/live/{live_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].attributes.signature",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions": [
+        "included[].attributes.signature"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions/{needed_position_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/needed_positions/{needed_position_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/signup_teams": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/signup_teams/{signup_team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": [
+        "included[].attributes.signature"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members/{team_member_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members/{team_member_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions": ["included[].attributes.signature"],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments": [
+        "included[].attributes.signature"
+      ],
+      "POST /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person": [
+        "data[].attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/person/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/team_position": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/person_team_position_assignments/{person_team_position_assignment_id}/team_position/{team_position_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/team": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/team_positions/{team_position_id}/team/{team_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/service_types/{service_type_id}/teams": ["included[].attributes.signature"],
+      "POST /services/v2/service_types/{service_type_id}/teams": ["included[].attributes.signature"],
+      "GET /services/v2/service_types/{service_type_id}/teams/{team_id}": ["included[].attributes.signature"],
+      "GET /services/v2/songs/{song_id}/arrangements": ["data[].links.keys", "included[].attributes.alternate_keys"],
+      "POST /services/v2/songs/{song_id}/arrangements": ["data.links.keys", "included[].attributes.alternate_keys"],
+      "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "PATCH /services/v2/songs/{song_id}/arrangements/{arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys": ["data[].attributes.alternate_keys"],
+      "POST /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys": ["data.attributes.alternate_keys"],
+      "GET /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}": [
+        "data.attributes.alternate_keys"
+      ],
+      "PATCH /services/v2/songs/{song_id}/arrangements/{arrangement_id}/keys/{key_id}": [
+        "data.attributes.alternate_keys"
+      ],
+      "GET /services/v2/songs/{song_id}/last_scheduled_item": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/songs/{song_id}/last_scheduled_item/{last_scheduled_item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "PATCH /services/v2/songs/{song_id}/last_scheduled_item/{last_scheduled_item_id}": [
+        "included[].attributes.alternate_keys",
+        "included[].links.keys"
+      ],
+      "GET /services/v2/songs/{song_id}/unscoped_arrangements": [
+        "data[].links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/songs/{song_id}/unscoped_arrangements/{unscoped_arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "PATCH /services/v2/songs/{song_id}/unscoped_arrangements/{unscoped_arrangement_id}": [
+        "data.links.keys",
+        "included[].attributes.alternate_keys"
+      ],
+      "GET /services/v2/teams": ["included[].attributes.signature"],
+      "POST /services/v2/teams": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/people": ["data[].attributes.signature", "included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/people/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/teams/{team_id}/people/{person_id}": [
+        "data.attributes.signature",
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/teams/{team_id}/person_team_position_assignments": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "PATCH /services/v2/teams/{team_id}/person_team_position_assignments/{person_team_position_assignment_id}": [
+        "included[].attributes.signature"
+      ],
+      "GET /services/v2/teams/{team_id}/team_leaders": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/team_leaders/{team_leader_id}": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/team_positions": ["included[].attributes.signature"],
+      "GET /services/v2/teams/{team_id}/team_positions/{team_position_id}": ["included[].attributes.signature"],
+      "GET /webhooks/v2/webhook_subscriptions": ["data[].attributes.authenticity_secret", "data[].links.rotate_secret"],
+      "POST /webhooks/v2/webhook_subscriptions": ["data.attributes.authenticity_secret", "data.links.rotate_secret"],
+      "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}": [
+        "data.attributes.authenticity_secret",
+        "data.links.rotate_secret"
+      ],
+      "PATCH /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}": [
+        "data.attributes.authenticity_secret",
+        "data.links.rotate_secret"
+      ],
+      "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/deliveries": [
+        "data[].attributes.request_headers",
+        "data[].attributes.response_headers"
+      ],
+      "GET /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/deliveries/{delivery_id}": [
+        "data.attributes.request_headers",
+        "data.attributes.response_headers"
+      ]
+    },
+    "resources": {
+      "Attachment": ["attributes.thumbnail_url", "attributes.url"],
+      "AttachmentActivity": ["attributes.attachment_url"],
+      "SongbookStatus": ["attributes.url"]
+    },
+    "bindings": {}
+  }
+}

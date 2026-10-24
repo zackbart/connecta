@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/registrations/v2/open_api/2025-05-01",
+  "documentation": "https://developer.planning.center/docs/#/registrations/2025-05-01",
+  "revision": "2025-05-01",
+  "digest": "sha256:f07d01bd2bb9b3def0050912e79a7ab9dcd7b1e0a0f64db42dd5b73c9467e5ad",
+  "vendored": true
+}

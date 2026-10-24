@@ -13,6 +13,7 @@ export function driftRecordProblems(
 export function generatedProblems(record: unknown, options?: { kind?: string; files?: readonly string[] }): string[];
 export function supplementalDocument(pin: unknown): string | undefined;
 export function validSupplementalPin(pin: unknown): boolean;
+export function validOpenApiComposition(source: unknown): boolean;
 
 /** A check as the version-1 checkers read it: version 2 endpoint rows become method and path, and pages join. */
 export function checkView(record: unknown, check: unknown, options?: { catalog?: unknown; today?: string }): any;

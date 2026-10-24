@@ -23,6 +23,7 @@
     "bin/version.mjs",
     "src/providers/*/SKILL.md",
     "src/providers/*/drift.json",
+    "src/providers/*/evidence/*.document.json",
     "/package.json",
     "/knip.jsonc",
     "scripts/bundle-budget.json",

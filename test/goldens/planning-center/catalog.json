@@ -24,159 +24,27 @@
     ]
   },
   "guide": {
-    "summary": "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
-    "content": "# Planning Center usage\n\nPlanning Center Online church management — People, Services, Groups, Check-Ins, Calendar, Registrations, Giving, Publishing, Webhooks — for: Grace Church staff operations\n\n## Identity first\n\n- A person id is the join key across every product: the id `search_people` returns is the person id (`personId` argument, `person_id` field) for Services schedules, Groups memberships, Giving donations, and Check-Ins. Resolve ids with list tools; never guess one.\n- A person id that used to resolve and now answers `not_found` was most likely merged. Read `/people/v2/person_mergers` with `where[person_to_remove_id]` and follow `person_to_keep_id`.\n- `get_me` names the user this token acts as. Every read and write runs with that user's permissions, product by product; a `provider_permission_denied` means an administrator must grant that user access to the product or record.\n\n## Results and paging\n\n- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the JSON:API resources as sent, and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.\n- Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers \"how many\" without paging — request `perPage: 1`.\n- A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.\n- `get_plan` fetches the plan, its items, and its team in one call and sets `itemsTruncated`/`teamMembersTruncated` past 100 rows; page the rest with `pco_api_get`.\n\n## What each product lets the API write\n\n- People: full read/write. `update_person` with `status: inactive` archives reversibly; a DELETE is permanent and only reachable through `pco_api_mutate`. `run_list` can fire list automations.\n- Services: full read/write. A plan's dates come from its plan times. Scheduling needs a team.\n- Groups: memberships and group settings are writable; groups cannot be created, and events and attendance are read-only.\n- Check-Ins and Registrations: read-only. Nobody can be checked in or registered through the API.\n- Calendar: events, instances, and times are read-only; tags, resources, rooms, and folders are writable through `pco_api_mutate`.\n- Giving: the named tools only read, amounts in integer cents. Creating or editing donations, refunds, and committing a batch move money and go through `pco_api_mutate`.\n- Publishing and the `api` product (organization, OAuth applications, personal access tokens) have no named tools; use the hatches.\n\n## The hatches\n\n- `pco_api_get` reaches any GET; `pco_api_mutate` any POST, PATCH, or DELETE, always approval-gated. Paths start `/<app>/v2`, exactly as Planning Center documents them; the connector owns host, auth, content type, and the `X-PCO-API-Version` header.\n- Bodies are JSON:API documents: `{\"data\":{\"type\":\"Email\",\"attributes\":{...}}}`. `null` clears an attribute; an omitted key is left alone.\n- Credentials never come back from any tool: a webhook subscription's signing secret (`authenticity_secret`, also in a create or `rotate_secret` reply) and an organization `secret`. An operator reads them in Planning Center.\n- Each product is pinned to a reviewed API version: people 2026-06-04, services 2018-11-01, groups 2023-07-10, check-ins 2025-05-28, calendar 2026-06-22, registrations 2025-05-01, giving 2019-10-18, publishing 2024-03-25, webhooks 2022-10-20, api 2026-09-24. Pass `version` only for an endpoint those versions lack.\n- Query parameters are name/value pairs with literal brackets: `where[status]`, `include`, `order`, `filter`, `fields[Person]`. Every list response's `meta` names the `can_query_by`, `can_order_by`, and `can_include` values for that endpoint; an unknown `where` key is ignored rather than refused.\n- File uploads go to a separate host (upload.planningcenteronline.com), which this connection does not reach.\n\n## Rate limits\n\nPlanning Center allows 100 requests per 20 seconds per user, shared by every integration running as that user. This connection admits 100 calls per 20 seconds, five at a time, per runtime — an approximation, not a guarantee. A `rate_limited` failure carries Planning Center's wait. Filter server-side and use `totalCount` rather than paging to count.\n"
+    "summary": "People ids join products; Groups leaders, Services plans and schedules, local dates, seconds and cents.",
+    "content": "# Planning Center usage\n\nPurpose: Grace Church staff operations\n\nReachable products: People, Services, Groups, Check-Ins, Calendar, Registrations, Giving, Publishing, Webhooks.\n\nAPI pins: people 2026-06-04, services 2018-11-01, groups 2023-07-10, check-ins 2025-05-28, calendar 2026-06-22, registrations 2025-05-01, giving 2019-10-18, publishing 2024-03-25, webhooks 2022-10-20, api 2026-09-24.\n\nStored credentials and private calendar access codes are permanently withheld.\n\n## Identity first\n\nA People person id joins records across products. Resolve people by identity,\nthen join on `person_id`; names can repeat. A membership, scheduled person,\nworkflow card and person each have their own record id.\n\n`get_me` identifies the token's user and the organization's time zone. Bare\ndates mean the organization's local day; use a timestamp with an offset for\nan exact boundary. Name filters are exact unless their value ends in `%`.\n\nAn old person id may have been merged. Read `/people/v2/person_mergers` with\n`where[person_to_remove_id]`, follow `person_to_keep_id`, then read that profile.\nAn empty history does not establish that a person was merged.\n\nReduce pastoral information inside `execute_code` and return aggregates unless\nthe task needs named people. A named projection omits some safe vendor fields;\nread the indexed record when the task needs those fields.\n\n## People and follow-up\n\nResolve a person before changing their profile. An omitted attribute leaves\nthe current value alone; `null` clears it. Archiving a person is reversible;\ndeleting a profile is permanent.\n\nWorkflow cards join people to a workflow and its ordered steps. Resolve both\nthe card id and its person id before acting on a card. Snoozing needs a duration;\npromoting a card completes its step, while skipping moves on without completing\nit. A workflow card note and a profile note are different records. Profile note\ncategories can notify their subscribers.\n\nCustom field values need their field-definition records to supply names and\ndata types. Form answers similarly join submissions, values and fields; the\nAPI cannot submit a form on someone's behalf.\n\nSaved People lists are live cross-product queries. Their results are only as\nfresh as their last refresh. Refreshing a list can fire its automations, such\nas adding a person to a workflow, and is a write even when the task is a count.\n\n## Services plans and schedules\n\nResolve the service type before finding a dated plan. Plan times define the\nservice dates. `get_plan` combines the plan, order of service and scheduled\nteam; a cut section can be read through its indexed items or team-members path.\nItem durations are seconds, so divide by 60 when reporting minutes.\n\nScheduling needs a team and may need a position. `C` means confirmed, `U`\nunconfirmed and `D` declined. Preparing a notification and sending it are\ndifferent actions. A song item's identity comes from its song and arrangement;\nmusical keys are not credentials. Services cannot upload a file through this\nconnection.\n\n## Groups membership joins\n\nUse a group's membership records to distinguish leaders from members. On this\nAPI version memberships carry no person attributes; `include=person` supplies\nnames, and the related person id supplies contact details and other product\nrecords. The API can change memberships and group settings, but cannot create\na group, create a meeting or record group attendance.\n\n## Check-Ins occurrences\n\nAn event is recurring; its event period is a dated occurrence. Period counts\nare the efficient attendance answer. Individual check-ins join a person to a\nperiod, and date filtering uses the period's start, not the check-in's creation\ntime. The API cannot check anyone in or out.\n\n## Calendar occurrences\n\nEvent instances expand recurrence into occurrences. A booking can return a\n`BookedEvent` stub when the user lacks access to its event. Events, instances\nand times are read-only; tags, resources, rooms and folders have write APIs.\n\n## Registrations\n\nA signup describes a registration event. Its attendee records join back to\nPeople and distinguish active, waitlisted and canceled attendees. This API\ncannot register someone.\n\n## Giving amounts and donor joins\n\nAmounts are integer cents with an explicit currency. A donation's designations\nallocate it across funds; do not count a donation once per designation. Join\ndonors by person id and funds by fund id. Recurring schedules and the donations\nthey produce are different records. Creating/editing a donation, refunding it\nor committing a batch changes financial records; named giving tools only read.\n\n## Publishing\n\nEpisodes, channels and resources are available through the indexed API. A public\nChurch Center link and a media resource are different things; use the record\nthe task asks for. Signed download URL generation is refused because the\nprivate link would remain withheld.\n\n## Webhooks\n\nA subscription names an event and callback destination. Signing keys, private\ndownload destinations and opaque event/delivery payloads or headers remain\nwithheld. Status and event metadata are available for audits.\nWebhook signing-key rotation is refused: the new credential cannot be returned\nor installed on the receiver through this connection.\n\n## Organization API\n\nThe organization API includes application metadata and personal-access-token\ninventory. Inventory records describe tokens; they do not return their values.\nRevoking a token is a write and may interrupt another integration, including\nthis connection if its own token is revoked.\n\n## Not available\n\nOnly reviewed product versions and indexed operations are callable. File\nuploads use a separate host this connection does not reach. Credentials and\nprivate calendar access codes cannot be recovered through a tool.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `pco_api_search` finds this API's operations and reads no account data, `pco_api_details` shows one operation's contract, and `pco_api_read` calls a reviewed read. `pco_api_write` calls a reviewed write, and every call to it needs approval. An operation without a reviewed verdict is refused; these are refused by design: `POST /publishing/v2/episodes/{episode_id}/generate_download_url`, `POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret`.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. `conflict` means: HTTP 409 for duplicate records in People.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
-    {
-      "name": "pco_api_get",
-      "description": "Call any Planning Center GET endpoint in any product and return its JSON:API body, less withheld secrets. Prefer a named read; this one does not flatten or resolve includes.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Path beginning /<app>/v2, as Planning Center documents it: /people/v2/people/1/emails. No host or query string."
-          },
-          "query": {
-            "type": "array",
-            "description": "Query parameters as name/value pairs, e.g. where[status]=active, include=emails, order=-created_at, per_page, offset.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "description": "Parameter name, brackets literal: where[first_name]."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ],
-                  "description": "Parameter value; the transport encodes it once."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "version": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "X-PCO-API-Version override. Omit to send this connector's reviewed pin for the path's app."
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Planning Center's response body, less withheld secrets."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "pco_api_mutate",
-      "description": "Call any Planning Center POST, PATCH, or DELETE endpoint with a JSON:API body. The approval-gated hatch for writes, actions, and money movement no named tool covers.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string",
-            "enum": [
-              "POST",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "Mutation method; Planning Center uses PATCH, never PUT, for updates."
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Path beginning /<app>/v2, as Planning Center documents it: /people/v2/people/1/emails. No host or query string."
-          },
-          "query": {
-            "type": "array",
-            "description": "Query parameters as name/value pairs, e.g. where[status]=active, include=emails, order=-created_at, per_page, offset.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "description": "Parameter name, brackets literal: where[first_name]."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ],
-                  "description": "Parameter value; the transport encodes it once."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "body": {
-            "type": "object",
-            "description": "JSON:API document, never flat attributes: {\"data\":{\"type\":\"Email\",\"attributes\":{...}}}. Omit for DELETE and bodiless actions."
-          },
-          "version": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "X-PCO-API-Version override. Omit to send this connector's reviewed pin for the path's app."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Planning Center's response body, less withheld secrets, or null for 204."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
     {
       "name": "get_me",
       "description": "Get the Planning Center person this token acts as, with the organization's name and time zone. Supplies personId for my-schedule and assignee questions.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
@@ -210,15 +78,9 @@
               "time_zone": {
                 "type": "string"
               }
-            },
-            "required": [
-              "id"
-            ]
+            }
           }
-        },
-        "required": [
-          "id"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -267,20 +129,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -289,7 +158,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "people": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -339,10 +208,7 @@
                 "updated_at": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -351,32 +217,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "people",
+          "items",
           "page"
         ]
       },
@@ -395,9 +246,15 @@
             "pattern": "^[0-9]+$",
             "description": "Person id from search_people. The same id resolves in every Planning Center product."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -513,10 +370,7 @@
           "households": {
             "type": "array"
           }
-        },
-        "required": [
-          "id"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -524,7 +378,7 @@
     },
     {
       "name": "create_person",
-      "description": "Create a People profile. Emails and phone numbers are separate records; add them after with add_person_email and add_person_phone_number.",
+      "description": "Create a People profile. Emails and phone numbers are separate records; add them after with pco_api_write: POST /people/v2/people/{person_id}/emails or POST /people/v2/people/{person_id}/phone_numbers.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -803,427 +657,6 @@
       }
     },
     {
-      "name": "add_person_email",
-      "description": "Add an email address to a person. Making it primary demotes the current primary; edit or delete existing addresses with pco_api_mutate.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Person id from search_people. The same id resolves in every Planning Center product."
-          },
-          "address": {
-            "type": "string",
-            "minLength": 3,
-            "description": "Email address."
-          },
-          "location": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Label such as Home or Work. Defaults to Home."
-          },
-          "primary": {
-            "type": "boolean",
-            "description": "Make this the primary address."
-          }
-        },
-        "required": [
-          "personId",
-          "address"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "address": {
-            "type": "string"
-          },
-          "location": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "primary": {
-            "type": "boolean"
-          },
-          "person_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
-      }
-    },
-    {
-      "name": "add_person_phone_number",
-      "description": "Add a phone number to a person. Making it primary demotes the current primary; edit or delete existing numbers with pco_api_mutate.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Person id from search_people. The same id resolves in every Planning Center product."
-          },
-          "number": {
-            "type": "string",
-            "minLength": 3,
-            "description": "Phone number as dialed; Planning Center formats it."
-          },
-          "location": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Label such as Mobile, Home, or Work. Defaults to Mobile."
-          },
-          "primary": {
-            "type": "boolean",
-            "description": "Make this the primary number."
-          }
-        },
-        "required": [
-          "personId",
-          "number"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "number": {
-            "type": "string"
-          },
-          "location": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "primary": {
-            "type": "boolean"
-          },
-          "person_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
-      }
-    },
-    {
-      "name": "list_lists",
-      "description": "List People lists (saved, rule-based searches) with size and last refresh. Members come from list_list_people; results are only as fresh as refreshed_at.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Exact list name; end it with % for a prefix match."
-          },
-          "order": {
-            "type": "string",
-            "enum": [
-              "name",
-              "-name",
-              "updated_at",
-              "-updated_at",
-              "refreshed_at",
-              "-refreshed_at"
-            ],
-            "description": "Sort attribute; a leading '-' reverses it."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "lists": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "description": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "total_people": {
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "refreshed_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "auto_refresh": {
-                  "type": "boolean"
-                },
-                "automations_active": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "lists",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_list_people",
-      "description": "List the people in one People list as of its last refresh, with primary email and phone. Call run_list first when the results must be current.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "listId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "List id from list_lists."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [
-          "listId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "people": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "first_name": {
-                  "type": "string"
-                },
-                "last_name": {
-                  "type": "string"
-                },
-                "nickname": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "membership": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "child": {
-                  "type": "boolean"
-                },
-                "primary_email": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "primary_phone": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "people",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "run_list",
-      "description": "Refresh a People list's results now. Destructive: a refresh can fire the list's automations, such as adding people to workflows or forms.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "listId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "List id from list_lists."
-          }
-        },
-        "required": [
-          "listId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "listId": {
-            "type": "string"
-          },
-          "queued": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "listId",
-          "queued"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
-    {
       "name": "list_workflows",
       "description": "List People workflows with their steps and ready, overdue, and unassigned card counts. Archived workflows are excluded unless asked for.",
       "inputSchema": {
@@ -1238,20 +671,27 @@
             "type": "boolean",
             "description": "Include archived workflows."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1260,7 +700,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "workflows": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1295,10 +735,7 @@
                 "steps": {
                   "type": "array"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -1307,32 +744,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "workflows",
+          "items",
           "page"
         ]
       },
@@ -1382,20 +804,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1406,7 +835,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "cards": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1474,10 +903,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -1486,32 +912,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "cards",
+          "items",
           "page"
         ]
       },
@@ -1625,7 +1036,7 @@
     },
     {
       "name": "apply_workflow_card_action",
-      "description": "Promote, send back, skip a step on, snooze, unsnooze, remove, or restore one workflow card. Never emails; sending a card email is pco_api_mutate.",
+      "description": "Promote, send back, skip a step on, snooze, unsnooze, remove, or restore one workflow card. Never emails; sending a card email is pco_api_write.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1669,76 +1080,17 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "cardId": {
-            "type": "string"
-          },
-          "action": {
-            "type": "string"
-          },
-          "applied": {
+          "ok": {
             "type": "boolean"
           }
         },
         "required": [
-          "cardId",
-          "action",
-          "applied"
+          "ok"
         ]
       },
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true
-      }
-    },
-    {
-      "name": "add_workflow_card_note",
-      "description": "Add a note to one workflow card's activity. Notifies nobody by itself and does not move the card.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "personId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "The card's person_id from list_workflow_cards."
-          },
-          "cardId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Workflow card id from list_workflow_cards."
-          },
-          "note": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Note text."
-          }
-        },
-        "required": [
-          "personId",
-          "cardId",
-          "note"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "note": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
       }
     },
     {
@@ -1767,20 +1119,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1791,7 +1150,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "notes": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1829,10 +1188,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -1841,32 +1197,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "notes",
+          "items",
           "page"
         ]
       },
@@ -1951,7 +1292,7 @@
     },
     {
       "name": "list_person_field_data",
-      "description": "List one person's custom field values, each labeled with its field name and data type. Writing a value is pco_api_mutate at /people/v2/field_data.",
+      "description": "List one person's custom field values, each labeled with its field name and data type. Write with pco_api_write: POST /people/v2/people/{person_id}/field_data to create, or PATCH /people/v2/field_data/{field_datum_id} to update.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1960,20 +1301,27 @@
             "pattern": "^[0-9]+$",
             "description": "Person id from search_people. The same id resolves in every Planning Center product."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1984,7 +1332,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "fields": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2019,10 +1367,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -2031,281 +1376,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "fields",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_forms",
-      "description": "List People forms with their submission counts and public URLs. Archived forms are excluded unless asked for.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "includeArchived": {
-            "type": "boolean",
-            "description": "Include archived forms."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "forms": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "active": {
-                  "type": "boolean"
-                },
-                "submission_count": {
-                  "type": "integer"
-                },
-                "public_url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "archived_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "forms",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_form_submissions",
-      "description": "List one form's submissions with each answer labeled by its field, newest first by default. Read-only; the API cannot submit a form.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "formId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Form id from list_forms."
-          },
-          "submittedAfter": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only submissions created at or after this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "order": {
-            "type": "string",
-            "enum": [
-              "created_at",
-              "-created_at"
-            ],
-            "description": "Sort attribute; a leading '-' reverses it."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [
-          "formId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "submissions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "person_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "person_name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "values": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "field": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "value": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      }
-                    },
-                    "required": []
-                  }
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "submissions",
+          "items",
           "page"
         ]
       },
@@ -2319,20 +1400,27 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -2341,7 +1429,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "serviceTypes": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2370,10 +1458,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -2382,32 +1467,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "serviceTypes",
+          "items",
           "page"
         ]
       },
@@ -2435,20 +1505,27 @@
             ],
             "description": "future (default) sorts soonest first; past sorts most recent first."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2459,7 +1536,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "plans": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2500,10 +1577,7 @@
                 "planning_center_url": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -2512,32 +1586,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "plans",
+          "items",
           "page"
         ]
       },
@@ -2547,7 +1606,7 @@
     },
     {
       "name": "get_plan",
-      "description": "Get one plan with its times, order of service, and scheduled team in a single call. Flags a section past 100 rows rather than dropping it silently.",
+      "description": "Get one plan with its times, order of service, and scheduled team in a single call. Reports truncated sections past 100 rows; the hatch pages the remaining items and team.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2561,9 +1620,15 @@
             "pattern": "^[0-9]+$",
             "description": "Plan id from list_plans."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2575,8 +1640,50 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "plan": {
-            "type": "object"
+          "id": {
+            "type": "string"
+          },
+          "service_type_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dates": {
+            "type": "string"
+          },
+          "sort_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total_length": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "needed_positions_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "planning_center_url": {
+            "type": "string"
+          },
+          "times": {
+            "type": "array"
           },
           "items": {
             "type": "array",
@@ -2625,10 +1732,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "teamMembers": {
@@ -2675,26 +1779,16 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
-          "itemsTruncated": {
-            "type": "boolean"
-          },
-          "teamMembersTruncated": {
-            "type": "boolean"
+          "truncated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
-        },
-        "required": [
-          "plan",
-          "items",
-          "teamMembers",
-          "itemsTruncated",
-          "teamMembersTruncated"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -2711,20 +1805,27 @@
             "pattern": "^[0-9]+$",
             "description": "Service type id from list_service_types."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2735,7 +1836,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "teams": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2755,10 +1856,7 @@
                 "positions": {
                   "type": "array"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -2767,32 +1865,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "teams",
+          "items",
           "page"
         ]
       },
@@ -2819,20 +1902,27 @@
             ],
             "description": "future (default) or past schedules."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -2843,7 +1933,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "schedules": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2890,10 +1980,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -2902,32 +1989,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "schedules",
+          "items",
           "page"
         ]
       },
@@ -3044,399 +2116,6 @@
       }
     },
     {
-      "name": "add_plan_item",
-      "description": "Add an item — a song, header, or other element — to a plan's order of service. A songId makes a song item; media_ids, set through pco_api_mutate, make a media item.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "serviceTypeId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Service type id from list_service_types."
-          },
-          "planId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Plan id from list_plans."
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Item title; for a song, usually the song title."
-          },
-          "itemType": {
-            "type": "string",
-            "enum": [
-              "item",
-              "header"
-            ],
-            "description": "header for a section header, fixed at creation; item (the default) for anything else. Song and media types follow from what is attached, never this."
-          },
-          "songId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Song id from list_songs, for a song item."
-          },
-          "arrangementId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Arrangement id from list_song_arrangements."
-          },
-          "keyId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Key id from list_song_arrangements keys[].id."
-          },
-          "length": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 86400,
-            "description": "Length in seconds."
-          },
-          "sequence": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Position in the order; omit to append."
-          },
-          "servicePosition": {
-            "type": "string",
-            "enum": [
-              "pre",
-              "during",
-              "post"
-            ],
-            "description": "Before, during, or after the service. Defaults to during."
-          },
-          "description": {
-            "type": "string",
-            "description": "Item description."
-          }
-        },
-        "required": [
-          "serviceTypeId",
-          "planId",
-          "title"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "sequence": {
-            "type": "integer"
-          },
-          "item_type": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "length": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "key_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "service_position": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "song_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "arrangement_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false
-      }
-    },
-    {
-      "name": "list_songs",
-      "description": "Search the Services song library by title, author, CCLI number, or theme. Lyrics and chord charts live on arrangements.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Song title; end it with % for a prefix match."
-          },
-          "author": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Author."
-          },
-          "ccliNumber": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "CCLI song number."
-          },
-          "theme": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Theme."
-          },
-          "order": {
-            "type": "string",
-            "enum": [
-              "title",
-              "-title",
-              "last_scheduled_at",
-              "-last_scheduled_at"
-            ],
-            "description": "Sort attribute; a leading '-' reverses it."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "songs": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "author": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "ccli_number": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "themes": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "hidden": {
-                  "type": "boolean"
-                },
-                "last_scheduled_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "songs",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_song_arrangements",
-      "description": "List one song's arrangements with tempo, meter, sequence, and keys. Supplies arrangementId and keyId for add_plan_item.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "songId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Song id from list_songs."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [
-          "songId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "arrangements": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "bpm": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "meter": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "length": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "chord_chart_key": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sequence_short": {
-                  "type": "array"
-                },
-                "keys": {
-                  "type": "array"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "arrangements",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
       "name": "list_groups",
       "description": "List Groups groups with type, schedule, and member count. Archived groups are excluded unless asked for; the API cannot create a group.",
       "inputSchema": {
@@ -3473,20 +2152,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -3495,7 +2181,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "groups": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -3539,10 +2225,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -3551,32 +2234,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "groups",
+          "items",
           "page"
         ]
       },
@@ -3617,20 +2285,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -3641,7 +2316,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "memberships": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -3667,10 +2342,7 @@
                 "last_name": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -3679,32 +2351,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "memberships",
+          "items",
           "page"
         ]
       },
@@ -3714,7 +2371,7 @@
     },
     {
       "name": "add_group_member",
-      "description": "Add a person to a group as a member or leader. Fails when they already belong; change a role or remove someone with pco_api_mutate.",
+      "description": "Add a person to a group as a member or leader. Fails when they already belong; change a role or remove someone with pco_api_write.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3783,928 +2440,6 @@
       }
     },
     {
-      "name": "list_group_events",
-      "description": "List Groups meetings in a date range, for one group or all groups. Read-only: the API cannot create events or record attendance.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "groupId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "One group's events. Omit for every group."
-          },
-          "startsAfter": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only events starting at or after this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "startsBefore": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only events starting before this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "includeCanceled": {
-            "type": "boolean",
-            "description": "Include canceled events."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "events": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "starts_at": {
-                  "type": "string"
-                },
-                "ends_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "canceled": {
-                  "type": "boolean"
-                },
-                "group_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "visitors_count": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "virtual_location_url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "events",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_check_in_events",
-      "description": "List Check-Ins events, the recurring things people check in to. Supplies eventId for event periods and check-ins.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Exact event name; end it with % for a prefix match."
-          },
-          "includeArchived": {
-            "type": "boolean",
-            "description": "Include archived events."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "events": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "frequency": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "archived_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "events",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_check_in_event_periods",
-      "description": "List one Check-Ins event's dated occurrences with regular, guest, and volunteer counts — the cheapest attendance answer. Newest first.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "eventId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Check-Ins event id from list_check_in_events."
-          },
-          "startsAfter": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only periods starting at or after this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "startsBefore": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only periods starting before this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [
-          "eventId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "periods": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "starts_at": {
-                  "type": "string"
-                },
-                "ends_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "regular_count": {
-                  "type": "integer"
-                },
-                "guest_count": {
-                  "type": "integer"
-                },
-                "volunteer_count": {
-                  "type": "integer"
-                },
-                "unique_total_count": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "note": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "periods",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_check_ins",
-      "description": "List individual check-ins, scoped by service date through the event period. Read-only: the API cannot check anyone in or out.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "eventId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Only this Check-Ins event. Omit for every event."
-          },
-          "serviceAfter": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only check-ins whose event period starts at or after this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "serviceBefore": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only check-ins whose event period starts before this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "regular",
-              "guest",
-              "volunteer"
-            ],
-            "description": "Only this kind of check-in."
-          },
-          "order": {
-            "type": "string",
-            "enum": [
-              "created_at",
-              "-created_at",
-              "last_name",
-              "-last_name",
-              "first_name",
-              "-first_name"
-            ],
-            "description": "Sort attribute; a leading '-' reverses it."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "checkIns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "first_name": {
-                  "type": "string"
-                },
-                "last_name": {
-                  "type": "string"
-                },
-                "kind": {
-                  "type": "string"
-                },
-                "number": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "security_code": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "checked_out_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "one_time_guest": {
-                  "type": "boolean"
-                },
-                "person_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "event_period_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "checkIns",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_calendar_event_instances",
-      "description": "List what is on the Calendar in a date range: each occurrence with times and location, recurrence expanded. Events cannot be written through the API.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "startsAfter": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only occurrences starting at or after this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "startsBefore": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$",
-            "description": "Only occurrences starting before this time. ISO 8601 date or date-time; a bare date is the organization's local day."
-          },
-          "eventName": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Exact event name; end it with % for a prefix match."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "instances": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "starts_at": {
-                  "type": "string"
-                },
-                "ends_at": {
-                  "type": "string"
-                },
-                "all_day_event": {
-                  "type": "boolean"
-                },
-                "location": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "kind": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "recurrence_description": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "event_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "church_center_url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "instances",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_signups",
-      "description": "List Registrations signups (registration events) with open, close, and capacity state. Read-only: the API cannot register anyone.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "archived": {
-            "type": "string",
-            "enum": [
-              "unarchived",
-              "archived",
-              "all"
-            ],
-            "description": "unarchived (default), archived, or all."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "signups": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "open": {
-                  "type": "boolean"
-                },
-                "closed": {
-                  "type": "boolean"
-                },
-                "open_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "close_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "maximum_capacity": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "at_maximum_capacity": {
-                  "type": "boolean"
-                },
-                "archived": {
-                  "type": "boolean"
-                },
-                "new_registration_url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "signups",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_signup_attendees",
-      "description": "List one signup's attendees with active, waitlisted, and canceled state. person_id joins them to People.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "signupId": {
-            "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Signup id from list_signups."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "waitlist",
-              "canceled"
-            ],
-            "description": "Only attendees in this state."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [
-          "signupId"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "attendees": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "active": {
-                  "type": "boolean"
-                },
-                "waitlisted": {
-                  "type": "boolean"
-                },
-                "canceled": {
-                  "type": "boolean"
-                },
-                "complete": {
-                  "type": "boolean"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "person_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "attendees",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
       "name": "list_donations",
       "description": "List Giving donations with their fund designations, newest first, by date, fund, or donor. Amounts are integer cents. Read-only.",
       "inputSchema": {
@@ -4746,20 +2481,27 @@
             ],
             "description": "Sort attribute; a leading '-' reverses it."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -4768,7 +2510,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "donations": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -4847,16 +2589,10 @@
                       "amount_cents": {
                         "type": "integer"
                       }
-                    },
-                    "required": [
-                      "amount_cents"
-                    ]
+                    }
                   }
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -4865,32 +2601,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "donations",
+          "items",
           "page"
         ]
       },
@@ -4904,20 +2625,27 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "Rows per page, at most 100.",
+            "default": 25
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -4926,7 +2654,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "funds": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -4955,10 +2683,7 @@
                     "null"
                   ]
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
@@ -4967,32 +2692,17 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "funds",
+          "items",
           "page"
         ]
       },
@@ -5001,309 +2711,102 @@
       }
     },
     {
-      "name": "list_batches",
-      "description": "List Giving batches with totals and commit state, most recently updated first. Committing a batch is pco_api_mutate.",
+      "name": "pco_api_search",
+      "description": "Find Planning Center API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "status": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
+          },
+          "method": {
             "type": "string",
             "enum": [
-              "committed",
-              "in_progress"
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
             ],
-            "description": "Only committed or in-progress batches."
+            "description": "Only operations with this method."
           },
-          "perPage": {
+          "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "batches": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "donations_count": {
-                  "type": "integer"
-                },
-                "total_cents": {
-                  "type": "integer"
-                },
-                "total_currency": {
-                  "type": "string"
-                },
-                "committed_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "batch_group_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "batches",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_pledge_campaigns",
-      "description": "List Giving pledge campaigns with goal and received totals in cents. Supplies pledgeCampaignId for list_pledges.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "campaigns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "starts_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "ends_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "goal_cents": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "received_total_from_pledges_cents": {
-                  "type": "integer"
-                },
-                "received_total_outside_of_pledges_cents": {
-                  "type": "integer"
-                },
-                "fund_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
-          }
-        },
-        "required": [
-          "campaigns",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_pledges",
-      "description": "List the pledges in one Giving pledge campaign with pledged and donated totals in cents per donor.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "pledgeCampaignId": {
+          "cursor": {
             "type": "string",
-            "pattern": "^[0-9]+$",
-            "description": "Pledge campaign id from list_pledge_campaigns."
-          },
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
           }
         },
         "required": [
-          "pledgeCampaignId"
+          "query"
         ],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "pledges": {
+          "operations": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "amount_cents": {
-                  "type": "integer"
-                },
-                "donated_total_cents": {
-                  "type": "integer"
-                },
-                "joint_giver_amount_cents": {
-                  "type": [
-                    "integer",
-                    "null"
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PATCH",
+                    "DELETE"
                   ]
                 },
-                "person_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "created_at": {
+                "path": {
                   "type": "string"
+                },
+                "operationId": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
+                },
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
+                },
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
                 }
               },
               "required": [
-                "id"
+                "method",
+                "path",
+                "operationId",
+                "summary"
               ]
+            }
+          },
+          "revision": {
+            "type": "string",
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; pco_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
             }
           },
           "page": {
@@ -5312,32 +2815,18 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+              "nextCursor": {
+                "type": "string"
               }
             },
             "required": [
-              "hasMore",
-              "nextOffset"
+              "hasMore"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "pledges",
+          "operations",
+          "revision",
           "page"
         ]
       },
@@ -5346,110 +2835,193 @@
       }
     },
     {
-      "name": "list_recurring_donations",
-      "description": "List Giving recurring donations with schedule, status, next occurrence, and fund designations. Read-only; amounts in cents.",
+      "name": "pco_api_details",
+      "description": "Read one Planning Center API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
       "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "pco_api_read",
+      "description": "Call a reviewed Planning Center API read. The operation index checks arguments before anything is sent. JSON:API records retain data, included and meta; named reads resolve common joins.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /people/v2/people/123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
         "type": "object",
         "properties": {
           "status": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Status as Planning Center reports it, e.g. active."
-          },
-          "perPage": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+            "description": "HTTP status."
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "recurringDonations": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "amount_cents": {
-                  "type": "integer"
-                },
-                "amount_currency": {
-                  "type": "string"
-                },
-                "schedule": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "next_occurrence": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "last_donation_received_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "person_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "designations": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "fund_id": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "fund": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "amount_cents": {
-                        "type": "integer"
-                      }
-                    },
-                    "required": [
-                      "amount_cents"
-                    ]
-                  }
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
           },
           "page": {
             "type": "object",
@@ -5457,33 +3029,31 @@
               "hasMore": {
                 "type": "boolean"
               },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
+              "nextCursor": {
+                "type": "string"
               },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
+              "param": {
+                "type": "string",
+                "description": "Put nextCursor in this vendor parameter, unchanged."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
                 ]
               }
             },
             "required": [
               "hasMore",
-              "nextOffset"
+              "param",
+              "in"
             ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
           }
         },
         "required": [
-          "recurringDonations",
-          "page"
+          "status",
+          "data"
         ]
       },
       "annotations": {
@@ -5491,98 +3061,73 @@
       }
     },
     {
-      "name": "list_webhook_subscriptions",
-      "description": "List the organization's webhook subscriptions: event name, URL, and active state. No tool returns a subscription's signing secret.",
+      "name": "pco_api_write",
+      "description": "Call a reviewed Planning Center API write; method and path are stated for approval, and the operation index checks arguments first. Bodies are JSON:API documents, not flat attributes.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "perPage": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, 1 to Planning Center's maximum of 100. Defaults to this connector's 25."
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
           },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Rows to skip. Pass page.nextOffset back unchanged; omit for the first page."
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /people/v2/people/123. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
-        "required": [],
+        "required": [
+          "method",
+          "path"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "subscriptions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "url": {
-                  "type": "string"
-                },
-                "active": {
-                  "type": "boolean"
-                },
-                "application_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "created_at": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id"
-              ]
-            }
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
           },
-          "page": {
-            "type": "object",
-            "properties": {
-              "hasMore": {
-                "type": "boolean"
-              },
-              "nextOffset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "description": "Pass back as offset while hasMore is true."
-              },
-              "totalCount": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "hasMore",
-              "nextOffset"
-            ]
-          },
-          "included": {
-            "type": "array",
-            "description": "Sideloaded resources, only with raw: true."
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
           }
         },
         "required": [
-          "subscriptions",
-          "page"
+          "status",
+          "data"
         ]
       },
       "annotations": {
-        "readOnlyHint": true
+        "readOnlyHint": false,
+        "destructiveHint": true
       }
     }
   ]

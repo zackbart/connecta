@@ -466,6 +466,26 @@ async function checkOpenApiIndex(provider, check, options) {
   } catch (error) {
     throw new EvidenceError(error instanceof Error ? error.message : String(error));
   }
+  if (source.documents) {
+    if (options.specSources.has(provider))
+      throw new EvidenceError("A composed index cannot use one source override for multiple documents");
+    const findings = [];
+    for (const entry of source.documents) {
+      const pin = await loadJson(`${provider}'s supplemental pin`, resolvePath(directory, "evidence", entry.pin));
+      const text = await loadPublished(
+        provider,
+        "published specification",
+        options.specSources.get(`${provider}/${entry.pin.slice(0, -5)}`) ?? pin.url,
+      );
+      const digest = sha256(new TextEncoder().encode(text));
+      if (digest !== pin.digest)
+        findings.push({
+          kind: "spec-drift",
+          detail: `${entry.pin}: pinned ${pin.digest} differs from ${pin.url} (${digest}). Review the supplemental pin and document together, then run providers:spec.`,
+        });
+    }
+    return { provider, specification: source.url, revision: source.revision, findings };
+  }
   const live = options.specSources.get(provider) ?? source.latest ?? source.url;
   const text = await loadPublished(provider, "published specification", live);
   let version;

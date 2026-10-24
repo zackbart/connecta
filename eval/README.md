@@ -295,6 +295,16 @@ cancellation that commits before answering HTTP 500. Their graders read only
 fake state, the HTTP ledger and the final answer, so they grade any Tithe.ly
 surface. `eval:selftest --tasks <ids>` checks a subset. The
 [before/after notes](baselines/notes-tithely-step2.md) record the runs.
+Seven [Planning Center tasks](tasks/planning-center.ts) exercise the real
+`planningCenter()` factory against an isolated loopback JSON:API fake: filtered
+People profiles, a Groups/People/Services join, plan items and team identities,
+137-person pagination, merger history through the hatch, one profile note,
+and reconciliation after a committed profile update answers HTTP 500. The same
+frozen prompts, state/HTTP-ledger graders and references support the legacy and
+standard surfaces. Structured answers require exact observed ids and facts;
+server-side filtering is an advisory efficiency check. No vendor account is used.
+The [paired notes](baselines/notes-planning-center-step2.md) preserve all final and diagnostic trials.
+
 Seven [Stripe step-2 tasks](tasks/stripe.ts) use an isolated extension of the
 REST fake: account/balance scope, filtered customers, a PaymentIntent/charge
 join, more than 100 customers over cursor pages, tax settings through the

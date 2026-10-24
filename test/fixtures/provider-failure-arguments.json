@@ -313,7 +313,7 @@
     "create_file": {
       "name": "notes.md",
       "parentId": "folder-1",
-      "content": "# Notes \u2014 caf\u00e9",
+      "content": "# Notes — café",
       "mimeType": "text/markdown"
     },
     "update_file_content": {
@@ -484,9 +484,9 @@
       "cc": [
         "Smith, Dana <dana@example.com>"
       ],
-      "subject": "R\u00e9union des anciens",
-      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
-      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
+      "subject": "Réunion des anciens",
+      "body": "Bonjour à tous,\nÀ mardi.",
+      "htmlBody": "<p>Bonjour à tous</p>"
     },
     "update_draft": {
       "draftId": "d1",
@@ -575,20 +575,14 @@
     }
   },
   "planning-center": {
-    "pco_api_get": {
+    "pco_api_read": {
       "path": "/publishing/v2/episodes",
-      "query": [
-        {
-          "name": "where[title]",
-          "value": "Easter"
-        },
-        {
-          "name": "per_page",
-          "value": 5
-        }
-      ]
+      "query": {
+        "where[search]": "Easter",
+        "per_page": 5
+      }
     },
-    "pco_api_mutate": {
+    "pco_api_write": {
       "method": "POST",
       "path": "/giving/v2/batches",
       "body": {
@@ -606,7 +600,7 @@
       "status": "active",
       "updatedSince": "2026-01-01",
       "order": "-updated_at",
-      "perPage": 1
+      "limit": 1
     },
     "get_person": {
       "personId": "7"
@@ -622,25 +616,6 @@
       "personId": "9",
       "status": "inactive",
       "nickname": null
-    },
-    "add_person_email": {
-      "personId": "9",
-      "address": "bob@example.com",
-      "primary": true
-    },
-    "add_person_phone_number": {
-      "personId": "9",
-      "number": "555-0199"
-    },
-    "list_lists": {
-      "name": "Volunteers%",
-      "order": "name"
-    },
-    "list_list_people": {
-      "listId": "3"
-    },
-    "run_list": {
-      "listId": "3"
     },
     "list_workflows": {},
     "list_workflow_cards": {
@@ -659,11 +634,6 @@
       "action": "snooze",
       "snoozeDays": 15
     },
-    "add_workflow_card_note": {
-      "personId": "7",
-      "cardId": "88",
-      "note": "Left a voicemail."
-    },
     "list_person_notes": {
       "personId": "7"
     },
@@ -674,11 +644,6 @@
     },
     "list_person_field_data": {
       "personId": "7"
-    },
-    "list_forms": {},
-    "list_form_submissions": {
-      "formId": "4",
-      "submittedAfter": "2026-01-01"
     },
     "list_service_types": {},
     "list_plans": {
@@ -701,21 +666,6 @@
       "teamId": "40",
       "teamPositionName": "Bass"
     },
-    "add_plan_item": {
-      "serviceTypeId": "10",
-      "planId": "20",
-      "title": "Amazing Grace",
-      "songId": "30",
-      "arrangementId": "31",
-      "length": 240
-    },
-    "list_songs": {
-      "title": "Amazing%",
-      "order": "title"
-    },
-    "list_song_arrangements": {
-      "songId": "30"
-    },
     "list_groups": {
       "name": "Young%",
       "archived": "include"
@@ -728,48 +678,19 @@
       "groupId": "8",
       "personId": "9"
     },
-    "list_group_events": {
-      "groupId": "8",
-      "startsAfter": "2026-01-01",
-      "startsBefore": "2026-02-01"
-    },
-    "list_check_in_events": {},
-    "list_check_in_event_periods": {
-      "eventId": "2",
-      "startsAfter": "2025-12-01"
-    },
-    "list_check_ins": {
-      "eventId": "2",
-      "serviceAfter": "2025-12-28",
-      "serviceBefore": "2025-12-29",
-      "kind": "guest"
-    },
-    "list_calendar_event_instances": {
-      "startsAfter": "2026-01-01",
-      "startsBefore": "2026-01-08"
-    },
-    "list_signups": {},
-    "list_signup_attendees": {
-      "signupId": "1801",
-      "status": "active"
-    },
     "list_donations": {
       "receivedAfter": "2025-12-01",
       "fundId": "61",
       "succeededOnly": true
     },
     "list_funds": {},
-    "list_batches": {
-      "status": "committed"
+    "pco_api_search": {
+      "query": "person mergers"
     },
-    "list_pledge_campaigns": {},
-    "list_pledges": {
-      "pledgeCampaignId": "2001"
-    },
-    "list_recurring_donations": {
-      "status": "active"
-    },
-    "list_webhook_subscriptions": {}
+    "pco_api_details": {
+      "method": "GET",
+      "path": "/people/v2/person_mergers"
+    }
   },
   "sheets": {
     "get_spreadsheet": {

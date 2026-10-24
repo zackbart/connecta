@@ -383,6 +383,15 @@ it(
         binding: { review: "", send: () => Effect.succeed({ status: 200, data: null }) },
       }),
     ).toThrow(/binding needs/);
+    expect(() => hatch({ name: "items", index, connection, verdicts: { "GET /missing": "read" } })).toThrow(
+      "Hatch verdict GET /missing is not in the API index.",
+    );
+    expect(() =>
+      hatch({ name: "items", index, connection, verdicts: VERDICTS, named: { "GET /missing": "missing" } }),
+    ).toThrow("Hatch named tool for GET /missing needs an indexed operation.");
+    expect(() =>
+      hatch({ name: "items", index, connection, verdicts: VERDICTS, pages: { "GET /missing": stripePage } }),
+    ).toThrow("Hatch paging for GET /missing needs an indexed read and a cursor adapter.");
     for (const bad of [{ "GET /missing": "read" }, { "GET /items": "unknown" }]) {
       expect(() => hatch({ name: "items", index, connection, verdicts: bad as never })).toThrow();
     }

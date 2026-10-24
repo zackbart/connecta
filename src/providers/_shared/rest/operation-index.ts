@@ -18,7 +18,8 @@ export type RestMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
  * One request-side schema, compacted: `t` type, `e` enum, `f` format (only
  * `binary`), `n` nullable, `d` description, `a` anyOf/oneOf, `p` properties,
  * `r` required, `i` items, `m` additionalProperties, `x` truncated at the
- * generation depth (unvalidated below), `$` a shared subtree.
+ * generation depth (unvalidated below), `$` a shared subtree, and opt-in
+ * `l`/`u` numeric minimum/maximum.
  */
 export interface SchemaNode {
   readonly t?: string | readonly string[];
@@ -33,6 +34,8 @@ export interface SchemaNode {
   readonly m?: SchemaNode;
   readonly x?: 1;
   readonly $?: number;
+  readonly l?: number;
+  readonly u?: number;
 }
 
 /** `[method, path template, operationId, summary, tag index, server index?]` */
@@ -586,6 +589,8 @@ export class OperationIndex {
     if (resolved.e !== undefined) out["enum"] = resolved.e;
     if (resolved.f !== undefined) out["format"] = resolved.f;
     if (resolved.n === 1) out["nullable"] = true;
+    if (resolved.l !== undefined) out["minimum"] = resolved.l;
+    if (resolved.u !== undefined) out["maximum"] = resolved.u;
     if (resolved.a) out["anyOf"] = resolved.a.map((branch) => this.#schema(branch));
     if (resolved.p) {
       out["properties"] = Object.fromEntries(
@@ -614,6 +619,28 @@ export class OperationIndex {
     if (schema.e?.length === 0) {
       issues.push({ path: at, code: "enum", expected: "no value: this field's combined constraints admit none" });
       return;
+    }
+    // Only newly opted-in bounded schemas enforce scalar numeric values;
+    // existing indexes retain their previous validation behavior. HTTP query
+    // strings may represent numbers, but must match the declared numeric type.
+    if (schema.l !== undefined || schema.u !== undefined) {
+      if (value === null && schema.n === 1) return;
+      const integer = typesOf(schema).includes("integer");
+      const syntax = integer ? /^-?\d+$/ : /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+      const numeric =
+        typeof value === "number"
+          ? value
+          : at.startsWith("/query/") && typeof value === "string" && syntax.test(value)
+            ? Number(value)
+            : NaN;
+      if (!Number.isFinite(numeric) || (integer && !Number.isSafeInteger(numeric))) {
+        issues.push({ path: at, code: "type", expected: integer ? "integer" : "finite number" });
+        return;
+      }
+      if (schema.l !== undefined && numeric < schema.l)
+        issues.push({ path: at, code: "minimum", expected: `at least ${schema.l}` });
+      if (schema.u !== undefined && numeric > schema.u)
+        issues.push({ path: at, code: "maximum", expected: `at most ${schema.u}` });
     }
     if (value === null || value === "") return;
     if (schema.a) {

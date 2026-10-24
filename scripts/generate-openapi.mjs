@@ -22,6 +22,8 @@
 // (`evidence/value-safety.json`, or `value-safety.candidates.json` beside a
 // legacy pin), the operations the vendor's reviewed value-safety table must
 // cover; every REST vendor sets it.
+// `options.numericBounds: true` keeps numeric minimum/maximum constraints for
+// pre-dispatch validation (including integer-valued query strings).
 //
 // `pnpm run providers:spec` fetches `url`, refuses bytes whose digest differs
 // from the pin, and writes `openapi.generated.ts` beside it: every
@@ -46,6 +48,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
 import { renderValueSafety, reviewedTable } from "./value-safety.mjs";
+import { supplementalDocument, validSupplementalPin, validOpenApiComposition } from "./drift-validate.mjs";
 
 /** Bump when the required generated shape changes, so every output reads as stale.
  * Response fields are optional additive metadata; existing v4 indexes remain valid. */
@@ -103,6 +106,14 @@ export async function readOpenApiSource(directory) {
   if (!names) return undefined;
   const path = join(directory, names.pin);
   const source = JSON.parse(await readFile(path, "utf8"));
+  if (source.documents !== undefined) {
+    if (names === LEGACY || !validOpenApiComposition(source))
+      throw new Error(
+        `${path} needs a revision and unique supplemental document pins with literal prefixes; no combined url`,
+      );
+    const composed = await composeOpenApi(directory, source);
+    return { ...source, url: composed.sources.map((pin) => pin.url).join(" ; "), digest: composed.digest };
+  }
   const nonempty = (value) => typeof value === "string" && value.trim() !== "";
   if (!nonempty(source?.url) || !nonempty(source.revision) || !/^sha256:[0-9a-f]{64}$/.test(source.digest ?? "")) {
     throw new Error(`${path} requires url, revision, and a sha256 digest`);
@@ -117,6 +128,110 @@ export async function readOpenApiSource(directory) {
     throw new Error(`${path} is vendored but ${STANDARD.document} is missing`);
   }
   return source;
+}
+
+/**
+ * Compose byte-pinned documents without changing any source file. References
+ * are namespaced before merge; paths are prefixed explicitly and must agree
+ * with each document's one server. Source URLs remain the actual vendor URLs.
+ */
+export async function composeOpenApi(directory, source) {
+  const paths = {},
+    components = {},
+    sources = [],
+    evidence = [];
+  let origin;
+  for (const entry of source.documents) {
+    const filename = supplementalDocument(entry.pin);
+    if (!filename) throw new Error("A composition needs simple supplemental pins.");
+    const pinBytes = await readFile(join(directory, "evidence", entry.pin));
+    const pin = JSON.parse(pinBytes);
+    if (!validSupplementalPin(pin)) throw new Error(`${entry.pin} is not a valid supplemental pin`);
+    const bytes = await readFile(join(directory, "evidence", filename));
+    if (sha256(bytes) !== pin.digest) throw new Error(`${filename} does not match the pinned ${pin.digest}`);
+    const document = JSON.parse(bytes);
+    const servers = document.servers;
+    let server;
+    try {
+      server = new URL(servers?.length === 1 ? servers[0].url : "");
+    } catch {
+      /* refused below */
+    }
+    if (
+      !server ||
+      server.protocol !== "https:" ||
+      server.username ||
+      server.password ||
+      server.search ||
+      server.hash ||
+      server.pathname.replace(/\/$/, "") !== entry.prefix ||
+      (origin !== undefined && server.origin !== origin)
+    )
+      throw new Error(`${entry.pin} needs one same-origin server matching ${entry.prefix}`);
+    origin = server.origin;
+    const namespace = entry.pin.slice(0, -5);
+    const rewrite = (value) => {
+      if (Array.isArray(value)) return value.map(rewrite);
+      if (value === null || typeof value !== "object") return value;
+      return Object.fromEntries(
+        Object.entries(value).map(([key, child]) => {
+          if (key === "$ref" && typeof child === "string" && child.startsWith("#/components/")) {
+            const match = /^#\/components\/([^/]+)\/(.+)$/.exec(child);
+            if (match) return [key, `#/components/${match[1]}/${namespace}_${match[2]}`];
+          }
+          return [key, rewrite(child)];
+        }),
+      );
+    };
+    const renamed = rewrite(document);
+    for (const [kind, definitions] of Object.entries(renamed.components ?? {})) {
+      components[kind] ??= {};
+      for (const [name, value] of Object.entries(definitions)) components[kind][`${namespace}_${name}`] = value;
+    }
+    for (const [path, item] of Object.entries(renamed.paths ?? {})) {
+      // An empty source path establishes no route. Prefixing it would invent
+      // a callable product root (Planning Center's send_verification artifact).
+      if (path === "") continue;
+      if (!path.startsWith("/")) throw new Error(`${entry.pin} has an invalid path ${path}`);
+      const full = `${entry.prefix}${path}`;
+      if (Object.hasOwn(paths, full)) throw new Error(`Composed OpenAPI path collision: ${full}`);
+      // Resource prose is on path items in APIs such as Planning Center.
+      // Put a useful summary on each operation, without generating tools.
+      for (const verb of VERBS) {
+        const operation = item[verb];
+        if (!operation || typeof operation !== "object") continue;
+        if (!operation.summary && !operation.description) {
+          const resource = item.summary ?? path.split("/").at(-1) ?? "resource";
+          const noun = String(resource)
+            .replace(/([a-z])([A-Z])/g, "$1 $2")
+            .replaceAll("_", " ");
+          const action =
+            verb === "get"
+              ? path.includes("{") && path.endsWith("}")
+                ? "Get"
+                : "List"
+              : { post: "Create or run", patch: "Update", put: "Replace", delete: "Delete", head: "Inspect" }[verb];
+          operation.summary = `${action} ${noun} — ${document.info?.title ?? namespace}`;
+          if (item.description) operation.description = item.description;
+        }
+      }
+      paths[full] = item;
+    }
+    sources.push(pin);
+    evidence.push([entry.pin, entry.prefix, sha256(pinBytes), sha256(bytes)]);
+  }
+  const digest = sha256(JSON.stringify(evidence));
+  return {
+    sources,
+    digest,
+    document: {
+      openapi: "3.1.0",
+      info: { title: source.title ?? "Composed vendor API", version: source.revision },
+      servers: [{ url: origin }],
+      paths,
+      components,
+    },
+  };
 }
 
 function plainText(text, limit) {
@@ -201,7 +316,13 @@ function mergeSchemas(a, b) {
       if (!(key in out) && key === "type") out.type = value;
       continue;
     }
-    if (key === "properties" && value && typeof value === "object") {
+    if ((key === "minimum" || key === "maximum") && Number.isFinite(value)) {
+      out[key] = Number.isFinite(out[key])
+        ? key === "minimum"
+          ? Math.max(out[key], value)
+          : Math.min(out[key], value)
+        : value;
+    } else if (key === "properties" && value && typeof value === "object") {
       const properties = { ...a.properties };
       for (const [name, schema] of Object.entries(value)) {
         properties[name] = properties[name] === undefined ? schema : { allOf: [properties[name], schema] };
@@ -278,6 +399,10 @@ function compactSchema(document, schema, shape, level) {
   if (values && values.length <= shape.maxEnum) out.e = values;
   if (node.format === "binary") out.f = "binary";
   if (node.nullable === true) out.n = 1;
+  if (shape.numericBounds && ["integer", "number"].includes(node.type)) {
+    if (Number.isFinite(node.minimum)) out.l = node.minimum;
+    if (Number.isFinite(node.maximum)) out.u = node.maximum;
+  }
   const description = level === 1 ? plainText(node.description, shape.describe) : undefined;
   if (description) out.d = description;
   const union = Array.isArray(node.anyOf) ? node.anyOf : Array.isArray(node.oneOf) ? node.oneOf : undefined;
@@ -508,6 +633,7 @@ export function buildOperationIndex(document, source) {
     depth: source.options?.depth ?? DEFAULT_DEPTH,
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
+    numericBounds: source.options?.numericBounds === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
   // `operationIds: false` drops ids that only restate the summary,
@@ -675,6 +801,7 @@ function generatedHeader(text) {
 
 /** The digest of a vendored pin's conversion document; undefined for any other pin. */
 async function documentDigest(directory, source) {
+  if (source.documents) return sha256(JSON.stringify((await composeOpenApi(directory, source)).document));
   return source.vendored === true ? sha256(await readFile(join(directory, STANDARD.document))) : undefined;
 }
 
@@ -730,7 +857,13 @@ export async function specProvider(provider, { file, record = false } = {}) {
   const source = await readOpenApiSource(provider.directory);
   if (!names || !source) throw new Error(`providers/${provider.name} has no OpenAPI pin`);
   let bytes;
-  if (source.vendored === true) {
+  if (source.documents) {
+    if (record || file)
+      throw new Error(
+        `providers/${provider.name}: a composed pin moves by review; update its supplemental pins and documents together`,
+      );
+    bytes = new TextEncoder().encode(JSON.stringify((await composeOpenApi(provider.directory, source)).document));
+  } else if (source.vendored === true) {
     if (record || file) {
       throw new Error(
         `providers/${provider.name}: a vendored pin moves by review; replace ${STANDARD.document} and the pin together`,
@@ -756,7 +889,7 @@ export async function specProvider(provider, { file, record = false } = {}) {
   }
   const document = JSON.parse(new TextDecoder().decode(bytes));
   const data = buildOperationIndex(document, source);
-  const conversion = source.vendored === true ? sha256(bytes) : undefined;
+  const conversion = source.vendored === true || source.documents ? sha256(bytes) : undefined;
   await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source, names.pin, conversion));
   // The operations whose responses may carry credentials or secret values,
   // for the provider's reviewed value-safety table (value-safety.mjs and

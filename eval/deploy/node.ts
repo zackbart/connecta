@@ -21,6 +21,7 @@ import { vercel } from "@zackbart/connecta/providers/vercel";
 import { ccb } from "@zackbart/connecta/providers/ccb";
 import { overflow } from "@zackbart/connecta/providers/overflow";
 import { breeze } from "@zackbart/connecta/providers/breeze";
+import { planningCenter } from "@zackbart/connecta/providers/planning-center";
 import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
@@ -103,6 +104,7 @@ export async function startNodeDeployment(
         if (spec.rest === "overflow")
           return overflow(spec.id, { ...options, environment: "staging", baseUrl: spec.url });
         if (spec.rest === "breeze") return breeze(spec.id, { ...options, subdomain: "church" });
+        if (spec.rest === "planning-center") return planningCenter(spec.id, { ...options, baseUrl: spec.url });
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
         if (spec.rest === "tithely")
           return tithely(spec.id, { ...options, environment: "live", baseUrl: `${spec.url}/api/v1` });
@@ -135,7 +137,12 @@ export async function startNodeDeployment(
   });
   for (const spec of connectors) {
     if (spec.rest !== "ccb" && spec.credential?.value) {
-      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely" || spec.rest === "overflow")
+      if (
+        spec.id === "cloudflare_legacy" ||
+        spec.rest === "tithely" ||
+        spec.rest === "planning-center" ||
+        spec.rest === "overflow"
+      )
         await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
       else await vault.set(spec.id, spec.credential.value, "operator");
     }

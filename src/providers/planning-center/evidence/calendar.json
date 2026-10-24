@@ -1,0 +1,7 @@
+{
+  "url": "https://api.planningcenteronline.com/calendar/v2/open_api/2026-06-22",
+  "documentation": "https://developer.planning.center/docs/#/calendar/2026-06-22",
+  "revision": "2026-06-22",
+  "digest": "sha256:7ed16e8dbd06141acdefd17c61921353acd3549a16ba67d13eb8e12931803fdb",
+  "vendored": true
+}
