@@ -11,6 +11,9 @@
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
+import { keyResendAdvice } from "../errors.js";
+import { IDEMPOTENCY_KEY_MAX_LENGTH } from "../call-recovery.js";
+import { providerFailureMessage } from "../write-outcome.js";
 import { redactionAltered } from "../redaction-marker.js";
 import {
   type Operation,
@@ -20,14 +23,15 @@ import {
   type RestMethod,
 } from "../providers/_shared/rest/operation-index.js";
 import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
-import { Refusal } from "./errors.js";
+import type { RestCall } from "../providers/_shared/rest/tools.js";
+import { Refusal, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
 import { Integer, isMaxChars, isMinChars } from "./json-schema.js";
 import { boundCursor, StandardPage } from "./paging.js";
-import { RequestSecrets } from "./services.js";
+import { Classification, Dispatches, IdempotencyKey, RequestSecrets, Signal, type CallServices } from "./services.js";
 import { read, write } from "./tools.js";
-import type { Connection } from "./vendor.js";
+import type { Connection, SendOptions } from "./vendor.js";
 import type { Parameters, WriteRequest } from "./write-request.js";
 
 type Verdict = "read" | "write" | "destructive" | "refuse";
@@ -37,8 +41,24 @@ interface CallArgs {
   readonly query?: Readonly<Record<string, unknown>>;
   readonly body?: unknown;
   readonly fields?: readonly string[];
+  readonly cursor?: string;
+  readonly idempotencyKey?: string;
 }
 type OperationKey = `${RestMethod} ${string}`;
+
+/** Reviewed vendor framing/origin routing; the shared hatch still owns admission and projection. */
+export interface HatchBinding {
+  readonly review: string;
+  readonly refuse?: (call: RestCall) => string | undefined;
+  readonly send: (
+    call: RestCall,
+    options?: SendOptions,
+  ) => Effect.Effect<
+    { readonly status: number; readonly data: unknown; readonly headers?: Readonly<Record<string, string>> },
+    HttpFailure,
+    CallServices
+  >;
+}
 
 /** 0014's starting discovery budgets, measured as serialized JSON bytes of the tool's own result. */
 export const SEARCH_BUDGET = { hits: 6, maxHits: 8, bytes: 16 * 1024, summaryChars: 300 } as const;
@@ -57,7 +77,11 @@ export interface HatchDeclaration {
   /** A concrete path for the path argument's description. */
   readonly pathExample?: string;
   /** Opt in only reviewed paged reads; existing provider surfaces do not inherit adapters. */
-  readonly pages?: Readonly<Partial<Record<OperationKey, HatchPageAdapter>>>;
+  readonly pages?: Readonly<Partial<Record<OperationKey, HatchPageAdapter | readonly HatchPageAdapter[]>>>;
+  /** Separate signed continuation from a vendor's raw first-request anchor. Legacy adapters use their parameter. */
+  readonly pageCursor?: "argument";
+  readonly binding?: HatchBinding;
+  readonly idempotency?: { readonly header: string; readonly methods: readonly RestMethod[] };
 }
 
 const text = (min: number, max: number) => Schema.String.check(isMinChars(min), isMaxChars(max));
@@ -179,6 +203,10 @@ export function hatch(
 ): ApiTool[] {
   const { name, index, connection } = options;
   const title = options.title ?? name;
+  if (options.binding && !options.binding.review.trim()) throw new Error("A hatch binding needs a vendor review.");
+  const idempotency = options.idempotency
+    ? { ...options.idempotency, methods: [...options.idempotency.methods] }
+    : undefined;
   if (!name.trim()) throw new Error("A hatch needs a nonempty tool prefix.");
   const known = (key: string) => index.ops.some((op) => `${op.method} ${op.path}` === key);
   // Snapshot reviews: a retained declaration cannot widen a served hatch.
@@ -195,31 +223,37 @@ export function hatch(
   }
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
   const pages = new Map(
-    Object.entries(options.pages ?? {}).map(([key, adapter]) => {
-      if (
-        !known(key) ||
-        verdicts.get(key) !== "read" ||
-        !adapter?.param.trim() ||
-        !["query", "body"].includes(adapter.in) ||
-        typeof adapter.next !== "function" ||
-        typeof adapter.decode !== "function"
-      ) {
-        throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
-      }
-      const op = index.ops.find((op) => `${op.method} ${op.path}` === key)!;
-      const contract = index.contract(op);
-      const body = contract.body?.schema as { properties?: Record<string, unknown> } | undefined;
-      if (
-        adapter.in === "query"
-          ? !contract.parameters.some((param) => param.in === "query" && param.name === adapter.param)
-          : !Object.hasOwn(body?.properties ?? {}, adapter.param)
-      ) {
-        throw new Error(`Hatch paging for ${key} must name a declared ${adapter.in} parameter.`);
-      }
-      return [
-        key,
-        Object.freeze({ ...adapter, ...(adapter.headers ? { headers: [...adapter.headers] } : {}) }),
-      ] as const;
+    Object.entries(options.pages ?? {}).map(([key, declared]) => {
+      const adapters: readonly HatchPageAdapter[] = Array.isArray(declared) ? declared : [declared as HatchPageAdapter];
+      if (!adapters.length) throw new Error(`Hatch paging for ${key} needs a cursor adapter.`);
+      const seen = new Set<string>();
+      const snapshot = adapters.map((adapter) => {
+        if (
+          !known(key) ||
+          verdicts.get(key) !== "read" ||
+          !adapter?.param.trim() ||
+          !["query", "body"].includes(adapter.in) ||
+          typeof adapter.next !== "function" ||
+          typeof adapter.decode !== "function"
+        ) {
+          throw new Error(`Hatch paging for ${key} needs an indexed read and a cursor adapter.`);
+        }
+        const location = `${adapter.in}:${adapter.param}`;
+        if (seen.has(location)) throw new Error(`Hatch paging for ${key} repeats a cursor parameter.`);
+        seen.add(location);
+        const op = index.ops.find((op) => `${op.method} ${op.path}` === key)!;
+        const contract = index.contract(op);
+        const body = contract.body?.schema as { properties?: Record<string, unknown> } | undefined;
+        if (
+          adapter.in === "query"
+            ? !contract.parameters.some((param) => param.in === "query" && param.name === adapter.param)
+            : !Object.hasOwn(body?.properties ?? {}, adapter.param)
+        ) {
+          throw new Error(`Hatch paging for ${key} must name a declared ${adapter.in} parameter.`);
+        }
+        return Object.freeze({ ...adapter, ...(adapter.headers ? { headers: [...adapter.headers] } : {}) });
+      });
+      return [key, snapshot] as const;
     }),
   );
   const envelope = pages.size
@@ -228,7 +262,12 @@ export function hatch(
         page: Schema.optionalKey(
           Schema.Struct({
             ...StandardPage.fields,
-            param: Schema.String.annotate({ description: "Put nextCursor in this vendor parameter, unchanged." }),
+            param: Schema.String.annotate({
+              description:
+                options.pageCursor === "argument"
+                  ? "Vendor parameter restored from cursor; pass nextCursor as the top-level cursor."
+                  : "Put nextCursor in this vendor parameter, unchanged.",
+            }),
             in: Schema.Literals(["query", "body"]),
           }),
         ),
@@ -330,6 +369,11 @@ export function hatch(
   const readMethods = methodsWith((verdict) => verdict === "read");
   const defaultRead: RestMethod = readMethods.includes("GET") || readMethods.length !== 1 ? "GET" : readMethods[0]!;
   const writeMethods = methodsWith((verdict) => verdict === "write" || verdict === "destructive");
+  if (
+    idempotency &&
+    (!idempotency.methods.length || idempotency.methods.some((method) => !writeMethods.includes(method)))
+  )
+    throw new Error("Hatch idempotency methods must name at least one admitted write method.");
   const Method = methodEnum(index.methods);
   const Path = text(2, 2048).annotate({
     description: `Concrete path from search with ids filled in${options.pathExample ? `, e.g. ${options.pathExample}` : ""}. No query string.`,
@@ -683,85 +727,115 @@ export function hatch(
         refuseWithheldValues(args.body, name);
       });
       const method = args.method ?? defaultRead;
-      const { op } = yield* checked(() => index.resolve(method, args.path));
+      const { op, params } = yield* checked(() => index.resolve(method, args.path));
+      const call = (): RestCall => ({ method, path: args.path, op, params, query, body });
+      let query = args.query ?? {};
+      let body = args.body;
       yield* checked(() => {
         const verdict = verdictOf(op);
-        if (verdict === "refuse") invalid(`Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`);
+        if (verdict === "refuse") {
+          invalid(
+            options.binding?.refuse?.(call()) ??
+              `Connecta refuses ${method} ${op.path}: it has no admitted hatch verdict.`,
+          );
+        }
         if ((verdict === "read") !== (kind === "read")) {
           invalid(`${method} ${op.path} must be called with ${tool(verdict === "read" ? "read" : "write")}.`);
         }
       });
-      const adapter = pages.get(`${method} ${op.path}`);
-      let query = args.query ?? {};
-      let body = args.body;
-      const withoutCursor = (values: Readonly<Record<string, unknown>>) =>
-        Object.fromEntries(Object.entries(values).filter(([key]) => key !== adapter?.param));
+      const adapters = pages.get(`${method} ${op.path}`) ?? [];
+      let adapter = adapters[0];
+      const at = (entry: HatchPageAdapter) =>
+        entry.in === "query" ? query[entry.param] : record(body) ? body[entry.param] : undefined;
+      const supplied = adapters.filter((entry) => at(entry) !== undefined);
+      const separateCursor = options.pageCursor === "argument";
+      yield* checked(() => {
+        if (supplied.length > 1) invalid("Choose one paging direction; do not combine cursor parameters.");
+        if (args.cursor !== undefined && (!adapter || supplied.length))
+          invalid("Pass cursor without a raw paging anchor.");
+      });
+      const withoutCursors = (values: Readonly<Record<string, unknown>>, location: "query" | "body") =>
+        Object.fromEntries(
+          Object.entries(values).filter(
+            ([key]) => !adapters.some((entry) => entry.in === location && entry.param === key),
+          ),
+        );
       const scope = adapter
         ? {
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method,
             path: args.path,
-            query: adapter.in === "query" ? withoutCursor(query) : query,
-            ...(adapter?.in === "body"
-              ? { body: withoutCursor(record(body) ? body : {}) }
+            query: withoutCursors(query, "query"),
+            ...(adapters.some((entry) => entry.in === "body")
+              ? { body: withoutCursors(record(body) ? body : {}, "body") }
               : body === undefined
                 ? {}
                 : { body }),
             ...(args.fields ? { fields: args.fields } : {}),
           }
         : {};
-      if (adapter) {
-        const value = adapter.in === "query" ? query[adapter.param] : record(body) ? body[adapter.param] : undefined;
-        if (value !== undefined) {
-          if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
-          const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
-          const decoded = yield* checked(() => {
-            let token: unknown;
-            try {
-              token = JSON.parse(cursor);
-            } catch {
-              invalid("This paging cursor contains no valid vendor value.");
-            }
-            if ((typeof token !== "string" && typeof token !== "number") || withheldCursor(token)) {
-              invalid("This paging cursor contains no usable vendor value; withheld values cannot be sent.");
-            }
-            const decoded = adapter.decode(token);
-            if (withheldCursor(decoded)) invalid("This paging cursor contains a withheld vendor value.");
-            return decoded;
-          });
-          if (adapter.in === "query") query = { ...query, [adapter.param]: decoded };
-          else body = { ...(record(body) ? body : {}), [adapter.param]: decoded };
-        }
+      if (supplied[0]) adapter = supplied[0];
+      const value = separateCursor ? args.cursor : adapter && at(adapter);
+      if (adapter && value !== undefined) {
+        if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
+        const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
+        const restored = yield* checked(() => {
+          let token: unknown;
+          try {
+            token = JSON.parse(cursor);
+          } catch {
+            invalid("This paging cursor contains no valid vendor value.");
+          }
+          if (separateCursor) {
+            if (!record(token)) invalid("This paging cursor contains no valid vendor parameter.");
+            const payload = token;
+            const selected = adapters.find((entry) => entry.param === payload["param"] && entry.in === payload["in"]);
+            if (!selected) invalid("This paging cursor belongs to a different vendor parameter.");
+            adapter = selected;
+            token = token["value"];
+          }
+          if ((typeof token !== "string" && typeof token !== "number") || withheldCursor(token)) {
+            invalid("This paging cursor contains no usable vendor value; withheld values cannot be sent.");
+          }
+          const decoded = adapter!.decode(token);
+          if (withheldCursor(decoded)) invalid("This paging cursor contains a withheld vendor value.");
+          return decoded;
+        });
+        if (adapter.in === "query") query = { ...query, [adapter.param]: restored };
+        else body = { ...(record(body) ? body : {}), [adapter.param]: restored };
+      } else if (separateCursor && supplied.length) {
+        yield* checked(() => {
+          if (!adapter?.initialAnchor) invalid("This vendor continuation is accepted only as an opaque cursor.");
+        });
       }
-      const request = yield* checked((): WriteRequest => {
-        // Admission must inspect restored vendor values, not just opaque input
-        // tokens: path/query reject containment; body values use the narrow rule.
+      const request = yield* checked((): WriteRequest | undefined => {
         refuseWithheldValues({ path: args.path, query }, name, true);
         refuseWithheldValues(body, name);
-        // The current path binding has one origin and JSON/form bodies. Do not
-        // silently send another server's operation or reinterpret an upload.
-        if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
+        const refusal = options.binding?.refuse?.(call());
+        if (refusal) invalid(refusal);
         const contentType = index.bodyType(op)?.split(";", 1)[0]!.trim().toLowerCase();
-        if (
-          contentType &&
-          contentType !== "application/x-www-form-urlencoded" &&
-          !/^application\/(?:[^/]+\+)?json$/.test(contentType)
-        ) {
-          invalid(
-            `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
-          );
+        if (!options.binding) {
+          if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
+          if (
+            contentType &&
+            contentType !== "application/x-www-form-urlencoded" &&
+            !/^application\/(?:[^/]+\+)?json$/.test(contentType)
+          ) {
+            invalid(
+              `${method} ${op.path} takes ${contentType}; this connection's path binding supports only JSON and form bodies.`,
+            );
+          }
         }
         if ((method === "GET" || method === "HEAD") && body !== undefined)
           invalid(`A ${method} operation takes query, not body.`);
         index.check(op, query, body);
-        // S5: a bad first segment is refused before anything is sent, against the
-        // declared success contract, never against whatever one answer happens to hold.
         if (args.fields?.length) {
           const roots = index.responseRoots(op);
           if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
           const problem = fieldsProblem(args.fields, roots, "data");
           if (problem) throw problem;
         }
+        if (options.binding) return undefined;
         return {
           method,
           path: args.path,
@@ -774,13 +848,39 @@ export function hatch(
               : { json: JSON.stringify(body) }),
         };
       });
-      const answer = yield* connection.sendPath(
-        request,
-        adapter?.headers ? { responseHeaders: adapter.headers } : undefined,
+      const key = kind === "write" ? (yield* IdempotencyKey)?.key : undefined;
+      const sendOptions = adapter?.headers ? { responseHeaders: adapter.headers } : undefined;
+      const send = options.binding
+        ? options.binding.send(call(), sendOptions)
+        : connection.sendPath(request!, sendOptions);
+      const answer = yield* send.pipe(
+        Effect.catch((failure) =>
+          Effect.gen(function* () {
+            if (!key || args.idempotencyKey) return yield* Effect.fail(failure);
+            const dispatches = yield* Dispatches;
+            const error = toConnectorCallError(failure, connection.errors, {
+              classification: yield* Classification,
+              dispatches,
+              withholds: connection.safety.withholdsErrors,
+              signal: yield* Signal,
+            });
+            const diagnostic = providerFailureMessage(error, `${error.message} ${idempotency!.header}: ${key}.`);
+            return yield* Effect.fail(
+              new Refusal({
+                error: dispatches.some((d) => d.request?.dispatched && d.request.key === key)
+                  ? keyResendAdvice(
+                      diagnostic,
+                      key,
+                      " Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
+                    )
+                  : diagnostic,
+              }),
+            );
+          }),
+        ),
       );
-      // Extract before fields can omit paging evidence, after connection safety.
       const next = adapter
-        ? yield* checked(() => adapter.next(answer.data, { path: args.path, query, headers: answer.headers ?? {} }))
+        ? yield* checked(() => adapter!.next(answer.data, { path: args.path, query, headers: answer.headers ?? {} }))
         : undefined;
       let page;
       if (adapter && next !== undefined) {
@@ -797,19 +897,22 @@ export function hatch(
           ...(next === null
             ? {}
             : {
-                nextCursor: yield* boundCursor.encode(tool(kind), scope, JSON.stringify(next), (json) =>
-                  secrets.encode(new TextEncoder().encode(json), { url: true, claims: true }),
+                nextCursor: yield* boundCursor.encode(
+                  tool(kind),
+                  scope,
+                  JSON.stringify(separateCursor ? { param: adapter.param, in: adapter.in, value: next } : next),
+                  (json) => secrets.encode(new TextEncoder().encode(json), { url: true, claims: true }),
                 ),
               }),
           param: adapter.param,
           in: adapter.in,
         };
       }
-      // Selection narrows the answer value safety and the privacy projection already made.
       return {
         status: answer.status,
         data: selectFields(answer.data === undefined ? null : answer.data, args.fields),
         ...(page ? { page } : {}),
+        ...(key ? { idempotencyKey: key } : {}),
       };
     });
 
@@ -836,6 +939,12 @@ export function hatch(
     );
   readFields["query"] = Schema.optionalKey(Query);
   readFields["fields"] = Schema.optionalKey(HATCH_FIELDS);
+  if (options.pageCursor === "argument")
+    readFields["cursor"] = Schema.optionalKey(
+      text(1, 4096).annotate({
+        description: "Opaque page.nextCursor from this same read; omit raw query anchors when continuing.",
+      }),
+    );
   const readSpec = {
     name: tool("read"),
     description: `Call a reviewed ${title} API read${nonGetReads.length ? `, including reviewed read-only ${nonGetReads.join(" and ")}` : ""}. The operation index checks arguments before anything is sent.${note(options.notes?.read)}`,
@@ -848,25 +957,45 @@ export function hatch(
   // Let the Schema infer the program arguments rather than the shared field declarations.
   tools.push(read(connection, { ...readSpec, run: (args) => run("read", args as unknown as CallArgs) }));
   if (writeMethods.length > 0) {
+    const writeFields: Record<string, Schema.Top & { readonly DecodingServices: never }> = {
+      method: methodEnum(writeMethods).annotate({ description: "The operation's HTTP method." }),
+      path: Path,
+      query: Schema.optionalKey(Query),
+      body: Schema.optionalKey(
+        Schema.Union([ObjectValue, Schema.Array(Schema.Unknown)]).annotate({
+          description: "Request body as JSON fields, named as details lists them; form operations are encoded for you.",
+        }),
+      ),
+      fields: Schema.optionalKey(HATCH_FIELDS),
+    };
+    if (idempotency)
+      writeFields["idempotencyKey"] = Schema.optionalKey(
+        text(1, IDEMPOTENCY_KEY_MAX_LENGTH).annotate({
+          description:
+            "Reuse this key with the exact original arguments; a key is generated and returned when omitted for a supported method.",
+        }),
+      );
     tools.push(
       write(connection, {
         name: tool("write"),
         description: `Call a reviewed ${title} API write; method and path are stated for approval, and the operation index checks arguments first.${note(options.notes?.write)}`,
-        input: Schema.Struct({
-          method: methodEnum(writeMethods).annotate({ description: "The operation's HTTP method." }),
-          path: Path,
-          query: Schema.optionalKey(Query),
-          body: Schema.optionalKey(
-            Schema.Union([ObjectValue, Schema.Array(Schema.Unknown)]).annotate({
-              description:
-                "Request body as JSON fields, named as details lists them; form operations are encoded for you.",
-            }),
-          ),
-          fields: Schema.optionalKey(HATCH_FIELDS),
-        }),
-        output: Envelope,
+        input: Schema.Struct(writeFields),
+        output: idempotency
+          ? Schema.Struct({ ...Envelope.fields, idempotencyKey: Schema.optionalKey(Schema.String) })
+          : Envelope,
+        ...(idempotency
+          ? {
+              idempotency: {
+                header: idempotency.header,
+                key: (args: Readonly<Record<string, unknown>>) =>
+                  idempotency.methods.includes(args["method"] as RestMethod)
+                    ? ((args["idempotencyKey"] as string | undefined) ?? crypto.randomUUID())
+                    : undefined,
+              },
+            }
+          : {}),
         destructive: true,
-        run: (args) => run("write", args),
+        run: (args) => run("write", args as unknown as CallArgs),
       }),
     );
   }

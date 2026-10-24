@@ -32,6 +32,51 @@ Run the deployment's typecheck, restart Node or redeploy the Worker, and use
 `connecta doctor` and a bounded read from each intended pool to verify the new
 configuration. See [deployment upgrades](./deploying.md#upgrade-an-existing-deployment).
 
+## Stripe
+
+The six tool names, factory options, credentials and pinned API version remain
+the same: `stripe_api_search`, `stripe_api_details`, `stripe_api_read`,
+`stripe_api_write`, `get_stripe_account_info` and `get_balance_summary`.
+Update saved programs and deployment instructions using these contracts:
+
+| Before                                                                        | After                                                                                                            |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `select` on `stripe_api_read`/`stripe_api_write`                              | `fields`, validated against declared response roots before dispatch                                              |
+| —                                                                             | Both named reads accept `fields` into their projected records                                                    |
+| `page.next` returned a raw vendor token                                       | `page.nextCursor` returns an authenticated continuation; pass it as top-level `cursor`                           |
+| Continuation in `query.starting_after`, `query.ending_before` or `query.page` | Omit raw anchors/tokens and pass `cursor`, retaining the same path, filters and fields                           |
+| Search `limit` default 10, maximum 50                                         | Default 6, maximum 8; follow its `page.nextCursor` as search's `cursor`                                          |
+| Search entries carry `tag` and always a `tool`                                | Compact entries omit `tag`, omit `tool` for refused operations, and can carry `named` or `matched`               |
+| One details result                                                            | Large contracts page/chunk without losing required parameters; follow details' `page.nextCursor` as its `cursor` |
+| HTTP 409 → `invalid_args`                                                     | HTTP 409 → `conflict`, matching Stripe's documented request-conflict meaning                                     |
+
+A raw record-id `query.starting_after` or `query.ending_before` remains valid
+on the **first request without `cursor`**, for example listing charges after
+`ch_example`. The anchor passes ordinary parameter validation and placeholder
+refusal. A signed cursor combined with any raw anchor, or both directions at
+once, is refused before dispatch. Raw vendor continuation tokens are never
+accepted in place of `cursor`. Previously returned raw tokens require a new
+first request. A cursor is bound to its connection, credential owner, index
+content, method, path, filters and selected fields.
+
+Hatch pages now always include `param` and `in`; `nextCursor` appears only
+while `hasMore` is true. Forward, backward, v1 search and v2 pagination remain
+available. v2 next-page URLs supply only a confined page token; Connecta never
+follows the URL or changes the original request path and filters.
+
+Whole withheld marker values and withheld links are refused on writes; paths
+and queries refuse any containment. Longer prose can mention the marker.
+An invalid `fields` root is refused before any write leaves. Operations without
+declared response roots, including quote PDFs, cannot accept nonempty `fields`.
+Existing reviewed secret withholding and guest-Checkout rules still apply.
+
+An oversized HTTP 424 now retains its dependency-failure meaning, including an
+unknown unkeyed write outcome. A failed response-body read is described as a
+read failure rather than malformed JSON. Standard 5xx failures can retain a
+declared Retry-After hint. POST keys and once-only dispatch remain in effect;
+DELETE and the reviewed invoice-preview read send no idempotency key. See
+[Stripe setup and paging examples](./providers.md#stripe).
+
 ## Tithe.ly
 
 Tithe.ly's agent-facing tools move to the standard provider surface. The

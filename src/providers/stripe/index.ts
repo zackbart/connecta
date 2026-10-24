@@ -1,5 +1,6 @@
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
+import type { ProviderGuideInput } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   authenticate,
@@ -13,7 +14,9 @@ import {
   stripeErrors,
   StripeApi,
   stripeIndex,
-  usageGuide,
+  stripeBinding,
+  STRIPE_PAGES,
+  STRIPE_VERDICTS,
 } from "./api.js";
 import { stripeTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
@@ -99,6 +102,29 @@ const STRIPE_OPTIONS = variants(
   ["oauth"],
 );
 
+function usageGuide(options: Readonly<StripeOptions>): ProviderGuideInput {
+  const copy = MODE_COPY[options.mode];
+  const account = connectedAccount(options);
+  return {
+    heading: "Stripe usage",
+    summary:
+      options.mode === "production"
+        ? "PRODUCTION: real money. One live-mode key over REST; resolve ids and account scope before acting."
+        : "Sandbox: test data only. One test-mode key over REST; resolve ids and account scope before acting.",
+    context: [
+      `Mode: ${options.mode}. Connector purpose: ${options.purpose}`,
+      copy.warning,
+      ...(account
+        ? [
+            `Connected account: ${account}. Every call acts as this Connect account; the platform account's own objects are out of reach here.`,
+          ]
+        : []),
+      ...(options.readOnly === true ? ["This connection is read-only: every write is refused."] : []),
+    ],
+    required: true,
+  };
+}
+
 export const stripe = defineApiProvider<StripeOptions>({
   name: "stripe",
   title: "Stripe",
@@ -117,6 +143,7 @@ export const stripe = defineApiProvider<StripeOptions>({
   displayTitle: (options) => MODE_COPY[options.mode].title,
   description: (options) => `Stripe payments (${MODE_COPY[options.mode].blurb}) — ${options.purpose}`,
   maxResponseBytes: MAX_RESPONSE_BYTES,
+  idempotencyKey: true,
   timeoutMs: READ_CAP_MS,
   headers: { "Stripe-Version": stripeIndex.version },
   defaultCallAdmission: (options) => STRIPE_ADMISSION[options.mode],
@@ -134,5 +161,22 @@ export const stripe = defineApiProvider<StripeOptions>({
   result,
   probe,
   guide: usageGuide,
+  hatch: {
+    name: "stripe",
+    title: "Stripe",
+    index: stripeIndex,
+    verdicts: STRIPE_VERDICTS,
+    named: { "GET /v1/account": "get_stripe_account_info", "GET /v1/balance": "get_balance_summary" },
+    pathExample: "/v1/customers/cus_123",
+    pages: STRIPE_PAGES,
+    pageCursor: "argument",
+    binding: stripeBinding,
+    idempotency: { header: "Idempotency-Key", methods: ["POST"] },
+    notes: () => ({
+      read: "Pass page.nextCursor as cursor; starting_after or ending_before record-id anchors are allowed only on the first request, without cursor. v1 parameters use bracketed form encoding; v2 bodies are JSON. Quote PDFs use the confined files origin.",
+      write:
+        "POST sends an Idempotency-Key; DELETE sends none. v1 bodies are form-encoded, including nested fields; v2 bodies are JSON. Upload files in the Stripe Dashboard.",
+    }),
+  },
   tools: stripeTools,
 });

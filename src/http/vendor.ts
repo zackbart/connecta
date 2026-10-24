@@ -294,7 +294,7 @@ interface Answer {
   readonly headers?: Readonly<Record<string, string>>;
 }
 
-interface SendOptions {
+export interface SendOptions {
   /** Internal consumers may request protocol metadata, never the raw response. */
   readonly responseHeaders?: readonly string[];
   /** Success-only bounded streaming, without exposing a response or bypassing safety. */
@@ -497,7 +497,7 @@ export function connect<R>(
             ),
           );
         }
-        if (!parsed) return yield* Effect.fail(new UnreadableBody());
+        if (!parsed) return yield* Effect.fail(new UnreadableBody(reply.readFailed ? { readFailed: true } : {}));
         const withheld = options.safety.withholdsErrors(operation);
         const kept = options.result
           ? yield* Effect.suspend(() =>
