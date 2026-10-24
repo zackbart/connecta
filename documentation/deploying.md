@@ -276,7 +276,28 @@ For an existing Node deployment, add the Node entry's pinned optional peer
 before starting the upgraded package: `npm install --save-exact undici@6.29.1`.
 The current Node template already declares this dependency.
 
-- [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for the pending consolidated release, including removal of Infisical, Notion, and Mixpanel factories.
+For 0.35.0, serve Node with `listen` from `@zackbart/connecta/node`, as the
+current template does. Remote MCP writes served through another host's
+`connecta.fetch` are refused before dispatch. The owned write transport connects
+directly, ignoring environment proxies and host dispatchers; deployments that
+require an outbound proxy must keep those connectors read-only until approved
+direct egress or a Workers deployment is available. See [Start on Node](#start-on-node).
+
+After a dispatched write reports an unknown outcome, read the target before
+making another write. Programs retain that outcome even when guest code catches
+the error; see [Writes](./code-mode.md#writes). Provider
+continuations now bind their connection, credential owner and read arguments;
+connections with caller-dependent downstream identities also bind the admitted
+caller and pool owner. Follow each provider's migration rules for old cursors.
+No database conversion or agent-token rotation is required solely for 0.35.0.
+
+Native pools and code-off result paging are optional; existing pools keep the
+meta-tool surface. See [Native tool surface](./meta-tools.md#native-tool-surface).
+Vercel workload admission and the separate Eve helper are also opt-in; existing
+agent tokens keep working. See [Vercel workload credentials](./auth.md#vercel-workload-credentials)
+and [Eve agents](./meta-tools.md#eve-agents).
+
+- [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for 0.35.0, including removal of Infisical, Notion, and Mixpanel factories.
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.

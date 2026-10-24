@@ -1,7 +1,13 @@
 # Provider migration for 0.35
 
-This guide collects provider upgrade actions for the pending consolidated
-0.35.0 release. Each breaking provider change will add its own section here.
+This guide collects provider upgrade actions for 0.35.0. Update saved programs,
+pool grants, classification entries and deployment instructions using the exact
+tool and argument mappings below. Restart pre-upgrade provider continuations
+where the provider section requires a new first page.
+
+For Node transport requirements, write-outcome recovery, native pools, Vercel
+workload credentials and the Eve helper, follow
+[Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment).
 
 For hosted MCP removals, follow [Migrate hosted MCP presets](./hosted-mcp-migration.md).
 
@@ -23,8 +29,10 @@ them. Number parameters also accept decimal fractions with trailing zeros. Cloud
 require at least 1. String ids retain their pinned contracts. Compound telemetry
 segments remain callable when the index cannot extract their individual values.
 
-Vercel environment `value` inputs are writeOnly on the named upsert/update tools;
+Vercel environment `value` inputs are `writeOnly` on the named upsert/update tools;
 the raw project/shared-env writes register the same private values before sending.
+Hosts and generated clients must treat these inputs as private write arguments;
+they cannot be recovered from a read or a write reply.
 Echoes in ids, keys, codes and successful metadata are withheld. Project-env POST
 and shared-env POST, PATCH and DELETE withhold failed[].error.message before
 fields selection. Named partial-write reports retain safe created ids/keys and

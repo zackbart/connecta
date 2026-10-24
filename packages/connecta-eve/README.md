@@ -55,6 +55,23 @@ again for each request, so rotation requires no process restart. A `getToken`
 callback can return a string or a promise of one; it overrides the environment.
 No user's identity is forwarded.
 
+## Eve 0.83.0 dependency override
+
+Eve 0.83.0 pins undici 8.10.2. Connecta's development/test override does not ship
+with this helper, so the Eve app must apply its own override to 8.12.3 before
+installing. For an npm app, add this to its `package.json`, then reinstall and
+commit the lockfile:
+
+```json
+{ "overrides": { "eve": { "undici": "8.12.3" } } }
+```
+
+For a pnpm app, add `overrides: { "eve@0.83.0>undici": "8.12.3" }` to its
+`pnpm-workspace.yaml`. Check the resolved dependency graph and audit the app.
+Remove this override after upgrading to an Eve release that pins a fixed version
+and validating compatibility. The server's optional undici 6.29.1 peer is a
+separate dependency and keeps its exact pin.
+
 ## Approval and writes
 
 The default policy is Eve's `never()`: authorized writes run unattended. Use a

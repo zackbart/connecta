@@ -2379,17 +2379,13 @@ the admitted caller, and the private token exchange keeps its in-memory
 cache, so only token strings and expiries cross requests. Each product
 declares its operations, and a value-safety resolver refuses any path it does
 not declare. Revision-guarded writes set the
-`revisionGuarded` request flag that Google's error table reads. For step 1, a
-catalog bridge builds kit `read` and `write` tools that keep each legacy
-declaration's annotations and schema bytes. `api()` validates every call
-against that exact input schema before the handler runs, so the bridge decodes
-arguments permissively; step 2 replaces those schemas with Effect declarations.
-The bridge also forwards optional fixed write steps, which the kit snapshots
-at construction. Docs declares a create and its optional initial-text edit as
-separate steps, each sent at most once.
+`revisionGuarded` request flag that Google's error table reads. The completed product migrations use Effect-declared named tools and indexed
+hatches. Fixed write steps are snapshotted at construction. Docs declares a
+create and its optional initial-text edit as separate steps, each sent at most
+once.
 
-The shared Google step-2 support is opt-in; the six legacy product surfaces
-remain pending their own migrations. `scripts/google-discovery.mjs` converts
+All six Google Workspace products use the shared standard-surface support.
+`scripts/google-discovery.mjs` converts
 archived exact-byte official Discovery documents into deterministic OpenAPI.
 The primary vendored pin retains the official URL, revision and source digest;
 its `discovery` relation names the sibling source pin and normalizer format.
