@@ -572,9 +572,13 @@ describe("cloudflare() over a key", () => {
       });
       for (const [query, method, path] of [
         ["DNS records", "GET", "/zones/{zone_id}/dns_records"],
+        ["list DNS records", "GET", "/zones/{zone_id}/dns_records"],
         ["set DNS TTL", "PATCH", "/zones/{zone_id}/dns_records/{dns_record_id}"],
+        ["update DNS record", "PATCH", "/zones/{zone_id}/dns_records/{dns_record_id}"],
         ["purge cache URL", "POST", "/zones/{zone_id}/purge_cache"],
+        ["purge URL", "POST", "/zones/{zone_id}/purge_cache"],
         ["Workers scripts", "GET", "/accounts/{account_id}/workers/scripts"],
+        ["deploy Worker script", "PUT", "/accounts/{account_id}/workers/scripts/{script_name}"],
         ["R2 buckets", "GET", "/accounts/{account_id}/r2/buckets"],
         ["R2 objects", "GET", "/accounts/{account_id}/r2/buckets/{bucket_name}/objects"],
         ["KV keys", "GET", "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/keys"],
@@ -701,7 +705,7 @@ describe("cloudflare() over a key", () => {
         expect(sent).toHaveLength(1);
         if (tool.endsWith("write")) expect(error.retryable).toBe(false);
       }
-    });
+    }, 15_000);
 
     it("holds GraphQL to pinned tags and refuses unscoped or negated filters", async () => {
       const connector = pinned();

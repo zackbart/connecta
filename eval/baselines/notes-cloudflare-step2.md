@@ -99,3 +99,15 @@ repeated after final metadata polish. Static/build checks and the Node-24 Eve ch
 packed-consumer smoke pass. The builder intentionally does not run the full
 `pnpm run check` under the brief's load policy; PR CI and independent Opus review
 are left to the orchestrator.
+
+
+## Integration with main 09258a7f
+
+Merged #996/#998 using a merge commit and regenerated Cloudflare's guide to pick
+up the shared confirmation wording. The local R2 bucket-list summary restores a
+rank-3 regression to rank 1 without changing shared ranking. All 12 regression
+phrases with and without method filters rank first (24/24), perform zero I/O,
+and stay within 1,502 serialized bytes. A broader bare "domains" query still
+favors literal-domain APIs over /zones; that limit is retained explicitly.
+The paired model results above predate this integration. A fresh complete AFTER
+arm is being recorded against the merged surface; earlier artifacts remain intact.

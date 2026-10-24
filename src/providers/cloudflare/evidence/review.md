@@ -85,3 +85,17 @@ claimed as signed adapter continuations: guessing a metadata location would
 block a valid cursor without supplying a replacement. DNS, account/zone, KV and
 R2 reads with the documented envelope remain eligible. This eligibility audit
 changes no evaluated task route or result.
+
+Integration with main 09258a7f retains #996's shared ranking and #998's shared
+approval/discovery/unreadable-body wording unchanged. The original R2 bucket
+query slipped to rank 3 without a method filter; the Cloudflare-local summary
+"List R2 buckets for an account" restores rank 1. All twelve regression phrases
+(DNS records/list/update/TTL, purge cache URL/purge URL, Workers scripts/deploy,
+R2 buckets/objects, KV keys and zones), each with and without a method filter,
+rank first: 24/24, no I/O, maximum serialized search answer 1,502 B. Extra rows
+remain assertions in the existing case; its timeout accommodates the larger
+index/query matrix under load. A broader bare "domains" probe does not return
+/zones in the first six: shared literal-path focus favors domain APIs. This is
+a disclosed discovery limit, not a reason to fork shared ranking. The named
+list_zones tool still describes domains explicitly. Shared write-aware unreadable
+body wording is inherited from #998; no independent Cloudflare H5 change is added.
