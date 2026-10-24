@@ -57,7 +57,7 @@
         "revision": "755ee33b4a81d51f6f07a902cce26cbec3b822f2",
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMTU4NTY1OTNhMmQ4M2VlOWNiZTYzMTkxZTgwODU0OTAiLCJjIjoiNiIsIm0iOiJlUzJIUnpwbnNUemRxT21hMWswak5SMVdtZVdaY3htRGtWcGlHSXNUaktNIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiMDNjOWIyY2QzMWFkZjAxMmNlZWRmZTcwNDUxZGNkNGYiLCJjIjoiNiIsIm0iOiJLNms5SHZ2Tl9uUnRSeHBzQTB1clNrZVRKQUozZ2FrUXJIWks3YTM4SnVrIn0"
         }
       }
     }
@@ -388,6 +388,631 @@
             "title": "Golden issue"
           }
         ],
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "nested contents",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/contents/src/index.ts",
+      "query": {
+        "ref": "feature/x"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "contents": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/contents/src%2Findex.ts?ref=feature%2Fx",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_contents-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "name": "index.ts",
+          "path": "src/index.ts",
+          "encoding": "base64",
+          "content": "ZXhwb3J0IHt9"
+        }
+      }
+    }
+  },
+  {
+    "label": "root contents",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/contents",
+      "fields": [
+        "name",
+        "path",
+        "type",
+        "download_url"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "contents": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/contents",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_contents-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": [
+          {
+            "name": "src",
+            "path": "src",
+            "type": "dir",
+            "download_url": "[redacted]"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "commit slash ref",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/commits/feature%2Fx"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "contents": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/commits/feature%2Fx",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_contents-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "files": []
+        },
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "compare slash ref",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/compare/main...feature%2Fx"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "contents": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/compare/main...feature%2Fx",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_contents-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "files": []
+        },
         "page": {
           "hasMore": false,
           "param": "page",
@@ -745,7 +1370,7 @@
         ],
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMGI0Y2Y2YWVjMTUzYzI2MjdiYzk1M2NhODBlMDFhNmUiLCJjIjoie1wicGFydGl0aW9uXCI6MSxcInBhZ2VcIjoxLFwiaW5jb21wbGV0ZVwiOmZhbHNlfSIsIm0iOiJOT3VGZURZYjNydGZmdGx5UzljR1Q4RnlfY2dKREpMUHRiUG5PY3pxczNRIn0"
+          "nextCursor": "eyJ2IjoyLCJkIjoiMGI0Y2Y2YWVjMTUzYzI2MjdiYzk1M2NhODBlMDFhNmUiLCJjIjoie1wicGFydGl0aW9uXCI6MSxcInBhZ2VcIjoxLFwiaW5jb21wbGV0ZVwiOmZhbHNlLFwibGltaXRcIjozMH0iLCJtIjoiTTdOSVJPRkYwSUhQU3k2Szh4N3h4RjNPT1dEbnJFdnk0TXF0U3gzWkUwUSJ9"
         },
         "incomplete_results": false
       }

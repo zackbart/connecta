@@ -434,13 +434,15 @@ Release creation previously used a non-destructive write tool; every write hatch
 call is destructive, and the host may ask for confirmation. It is still sent
 once. Release hatch results are `{status,data}`; an empty delete has data:null.
 The `merge_pull_request` name and expected-SHA/same-repository/workflow-write guard
-remain. Its raw PUT route is refused and points back to the named tool. Its PR
+remain. Its raw PUT route is refused by the write hatch's method schema;
+operation search/details and the write-tool description name `merge_pull_request`. Its PR
 lookup is auxiliary: a failed lookup sends no merge and reports no unknown write
 outcome. A `merged:false` answer now fails instead of returning successful data.
 
 `list_scopes` and `search_scoped` replace top-level per_page with limit, and
 page/pages with opaque cursor from page.nextCursor. Supply the same filters and
-limit on continuation. Scopes defaults change from 100 to 30; search stays at 30;
+limit on continuation. A changed or omitted continuation limit is refused;
+explicitly pass limit:30 when the first call used the default. Scopes defaults change from 100 to 30; search stays at 30;
 both cap limit at 100. Old numeric page values and partition-to-page maps are
 refused. Configure the same persistent deployment storage across requests so signed
 cursors can be checked.
@@ -472,8 +474,13 @@ parameter. Raw query.page is refused on paged hatch operations. Vendor query nam
 such as per_page remain inside query, bounded by their documented contract.
 Owner/repo path segments must be canonical GitHub names; URL spellings, escaped
 separators and traversal are refused. Contents paths are canonical relative Git
-paths, including a reviewed final encoded slash where needed, without dot segments,
-control characters, backslashes or nested escapes. No Link or redirect URL is followed.
+paths: `/repos/alice/widget/contents/src/index.ts` reads a nested file, while
+`/repos/alice/widget/contents` lists the root. Empty/dot segments, control
+characters, backslashes and encoded traversal are refused. In `commits/{ref}`
+and `compare/{basehead}`, encode branch-name slashes as `%2F`, for example
+`commits/feature%2Fx` or `compare/main...feature%2Fx`. Owner-prefixed refs and
+cross-repository compares are refused before authentication. No Link or redirect
+URL is followed. Echoes of the configured App private key are withheld too.
 
 Inline UTF-8 contents keep GitHub's base64 encoding. Decoded file text and patch
 values are redacted before cuts at 32,768 characters, with paths such as

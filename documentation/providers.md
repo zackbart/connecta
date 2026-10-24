@@ -345,11 +345,19 @@ corresponding raw routes are refused. Native tools present these same operations
 and enforcement. Each named list defaults to 30 items, maximum 100. Search
 continuation visits one partition page per call, at most twenty partitions and
 ten vendor pages per partition; incomplete_results preserves capped/incomplete
-searches. Cursors bind the configured grants, arguments and deployment storage.
+searches. Cursors bind the configured grants, arguments, limit and deployment storage.
+Repeat the original explicit limit with a cursor; use limit:30 if the first call
+used the default. Changed or omitted continuation limits are refused.
 
 The transport reads at most 4 MiB per response. Inline UTF-8 file text and patch
 values are redacted before a 32,768-character cut, with dot paths in truncated.
 File contents retain base64 encoding; the character bound applies after decoding.
+Use `/repos/alice/widget/contents/src/index.ts` for a nested file and
+`/repos/alice/widget/contents` for the root directory. Contents paths must be
+canonical relative paths, without dot/empty segments, backslashes or encoded
+traversal. Encode branch-name slashes as `%2F` in `commits/{ref}` and
+`compare/{basehead}`. Owner-prefixed refs and cross-repository compares are refused
+before authentication. Configured App private keys are withheld from echoed content.
 Identifiers remain beside cut patches. Raw diffs, binary files, log downloads,
 archives, uploads and secret/admin operations are unavailable. Download URLs and
 credentials remain withheld. fields narrows safe output and does not reduce the

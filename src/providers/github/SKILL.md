@@ -15,6 +15,8 @@ Use `search_scoped` for literal-word data search across installations. Each item
 carries its partition and verified repository. Search completeness can be false
 at GitHub's search limit; narrow the selected scopes or terms when that matters.
 Installation tokens do not override GitHub's own code-search restrictions.
+Repeat the original explicit `limit` with every named-list cursor, including
+`limit:30` when the first call used the default.
 
 ## Join the right identifiers
 
@@ -26,7 +28,14 @@ Reviews join by pull request number; their `commit_id` identifies the reviewed
 revision. Compare review and head commit IDs when deciding whether feedback is
 current. Issue comments and pull-request review comments are different resources.
 
-Read files at an explicit Git ref when a stable revision matters. Contents are
+Read files at an explicit Git ref when a stable revision matters. Nested contents
+paths are relative: `/repos/alice/widget/contents/lib/index.ts` reads that file,
+and `/repos/alice/widget/contents` lists the root directory. No dot segments,
+empty segments, backslashes or encoded traversal are accepted. In `commits/{ref}`
+and `compare/{basehead}`, encode branch-name slashes as `%2F`, for example
+`commits/feature%2Fx` or `compare/main...feature%2Fx`. Refs stay inside the selected
+repository; owner-prefixed refs and cross-repository compares are unavailable.
+Contents are
 base64 encoded; decode the inline content before interpreting it. Directory
 listings have a vendor cap and are not recursive. Missing inline content or a
 missing patch does not establish an empty file or an unchanged diff. Raw diff,

@@ -19,7 +19,7 @@ import { checked } from "../_shared/rest/kit.js";
 import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 import { githubConnection, rejectedToken } from "./api.js";
 import { AppAuth, type Permissions } from "./lib/auth.js";
-import { githubIndex, GITHUB_HATCH } from "./lib/discovery.js";
+import { contentsPath, githubIndex, GITHUB_HATCH } from "./lib/discovery.js";
 import { READ_PERMISSIONS, RELEASE_PERMISSIONS, hatchRefusal } from "./lib/operations.js";
 import { ScopePolicy, target, workflowPath, type GitHubScope, type Target } from "./lib/scope.js";
 
@@ -47,7 +47,7 @@ const SearchRow = optional({
 const common = {
   limit: Schema.optionalKey(
     Integer.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({
-      description: "Maximum returned items, default 30; at most 100.",
+      description: "Maximum returned items, default 30; at most 100. Repeat the same explicit limit with cursor.",
       default: 30,
     }),
   ),
@@ -244,22 +244,37 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
     name: string,
     args: Record<string, unknown>,
     items: unknown[],
-    next: unknown,
+    next: Record<string, unknown> | undefined,
     extra: Record<string, unknown> = {},
   ) =>
     Effect.gen(function* () {
       const page =
         next === undefined
           ? { hasMore: false }
-          : { hasMore: true, nextCursor: yield* boundCursor.encode(name, cursorArgs(args), JSON.stringify(next)) };
+          : {
+              hasMore: true,
+              nextCursor: yield* boundCursor.encode(
+                name,
+                cursorArgs(args),
+                JSON.stringify({ ...next, limit: args.limit }),
+              ),
+            };
       return {
         items: selectFields(items, args.fields as string[] | undefined) as Record<string, unknown>[],
         page,
         ...extra,
       };
     });
-  const parse = (cursor: string | undefined) =>
-    cursor === undefined ? {} : (JSON.parse(cursor) as Record<string, any>);
+  const parse = (cursor: string | undefined, limit: number, suppliedLimit: number | undefined) => {
+    if (cursor === undefined) return {};
+    const position = JSON.parse(cursor) as Record<string, any>;
+    if (suppliedLimit === undefined || position.limit !== limit)
+      throw new ConnectorCallError(
+        "invalid_args",
+        "This cursor requires the original explicit limit; repeat that limit or start a new listing.",
+      );
+    return position;
+  };
   const namesCheck = (fields: readonly string[] | undefined, names: ReadonlySet<string>) =>
     checked(() => {
       const bad = fieldsProblem(fields, names, "an item");
@@ -276,9 +291,8 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         yield* namesCheck(args.fields, scopeNames);
         const limit = args.limit ?? 30,
           normalized = { ...args, limit };
-        const position = yield* checked(() => parse(undefined));
         const raw = yield* decode("list_scopes", normalized);
-        Object.assign(position, yield* checked(() => parse(raw)));
+        const position = yield* checked(() => parse(raw, limit, args.limit));
         const page = position.page ?? 1;
         if (!Number.isSafeInteger(page) || page < 1 || page > 1000)
           return yield* checked(() => {
@@ -387,7 +401,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           limit = args.limit ?? 30,
           normalized = { ...args, limit };
         const raw = yield* decode("search_scoped", normalized),
-          at = yield* checked(() => parse(raw));
+          at = yield* checked(() => parse(raw, limit, args.limit));
         const partitionIndex = at.partition ?? 0,
           page = at.page ?? 1;
         if (
@@ -544,6 +558,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
     review:
       "Repository-ID-bound App tokens and per-operation documented permissions; all unreviewed operations, raw search and merge refuse before authentication.",
     truncated: true,
+    path: contentsPath,
     refuse: (call) => {
       const key = `${call.method} ${call.op.path}`,
         refusal = hatchRefusal(key);
@@ -551,7 +566,29 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       const { params } = githubIndex.resolve(call.method, call.path),
         t = target(params.owner, params.repo);
       policy.scope(t, Boolean(RELEASE_PERMISSIONS[key]));
-      if (params.path !== undefined) workflowPath(decodeURIComponent(params.path));
+      if (params.path !== undefined && params.path !== "") workflowPath(decodeURIComponent(params.path));
+      // Only compare and PR head document owner-prefixed forms. Refuse those
+      // and the same spelling in every other admitted ref/commitish input.
+      const refs = [
+        params.ref,
+        params.basehead,
+        params.tag,
+        ...["ref", "sha", "head", "base", "branch", "head_sha"].map((name) => call.query[name]),
+        ...["target_commitish", "tag_name"].map((name) => row(call.body)[name]),
+      ];
+      for (const ref of refs) {
+        if (typeof ref !== "string") continue;
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(ref);
+        } catch {
+          return "Use a literal repository-local ref, without malformed percent-encoding.";
+        }
+        if (/[:%]/.test(decoded))
+          return params.basehead !== undefined
+            ? "Compare refs within this repository; cross-repository compare is unavailable."
+            : "Use refs within this repository; owner-prefixed and encoded repository aliases are unavailable.";
+      }
       const perPage = call.query.per_page;
       if (
         perPage !== undefined &&
@@ -600,7 +637,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           connection,
           binding,
           notes: {
-            read: "Only the reviewed repository reads are available. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
+            read: "Only the reviewed repository reads are available. Nested contents paths such as /repos/alice/widget/contents/src/index.ts and the root /repos/alice/widget/contents are accepted. In commits/{ref} and compare/{basehead}, encode branch-name slashes as %2F. Owner-prefixed refs are refused. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
             write: "Only release create/update/delete are available here. Use merge_pull_request for merges.",
           },
         }),

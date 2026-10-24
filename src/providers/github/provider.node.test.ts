@@ -152,6 +152,23 @@ describe("GitHub App provider", () => {
       "/repos/acme/one%2f..%2flocked/issues",
       "/repos/acme%2fone/two/issues",
       "/repos/acme/one/contents/%252e%252e%252fsecret",
+      "/repos/outside/public/contents",
+      "/repos/acme%2Foutside/one/contents",
+      "/repos/acme/one%2Foutside/contents",
+      "/repos/acme/one/contents/src/index.ts?ref=outside",
+      "/repos/acme/one/contents/src/index.ts#fragment",
+      "/repos/acme/one/contents/{path}",
+      "/repos/acme/one/contents/src/../secret",
+      "/repos/acme/one/contents/src/%2e%2e/secret",
+      "/repos/acme/one/contents/src%2F..%2Fsecret",
+      "/repos/acme/one/contents/src//index.ts",
+      "/repos/acme/one/contents/src\\index.ts",
+      "/repos/acme/one/contents/src%5Cindex.ts",
+      "/repos/acme/one/contents/",
+      "/repos/acme/one/commits/feature%2F..%2Foutside",
+      "/repos/acme/one/compare/main...outsider:feature",
+      "/repos/acme/one/compare/main...outsider%3Afeature",
+      "/repos/acme/one/compare/main...outsider%253Afeature",
       "/repos/acme/one/actions/secrets",
       "/repos/acme/one/keys",
       "/repos/acme/one/actions/runs/1/logs",
@@ -161,11 +178,32 @@ describe("GitHub App provider", () => {
         code: "invalid_args",
       });
     }
+    for (const [path, query] of [
+      ["/repos/acme/one/commits/outsider%3Afeature", {}],
+      ["/repos/acme/one/contents/settings.json", { ref: "outsider:feature" }],
+      ["/repos/acme/one/contents", { ref: "outsider%253Afeature" }],
+      ["/repos/acme/one/commits", { sha: "outsider:feature" }],
+      ["/repos/acme/one/pulls", { head: "outsider:feature" }],
+      ["/repos/acme/one/pulls", { base: "outsider:feature" }],
+      ["/repos/acme/one/actions/runs", { branch: "outsider:feature" }],
+      ["/repos/acme/one/actions/workflows/1/runs", { head_sha: "outsider:feature" }],
+      ["/repos/acme/one/releases/tags/outsider%3Av1", {}],
+      ["/repos/acme/one/contents/settings.json", { ref: "%broken" }],
+    ] as const)
+      await expect(connector.callTool("github_api_read", { path, query }, ctx)).rejects.toMatchObject({
+        code: "invalid_args",
+      });
     for (const args of [
       { method: "POST", path: "/app/installations/11/access_tokens", body: {} },
       { method: "PUT", path: "/repos/acme/one/pulls/7/merge", body: { sha: "a".repeat(40) } },
       { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1" }, fields: ["missing"] },
       { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "[redacted]" } },
+      {
+        method: "POST",
+        path: "/repos/acme/one/releases",
+        body: { tag_name: "v1", target_commitish: "outsider:feature" },
+      },
+      { method: "PATCH", path: "/repos/acme/one/releases/1", body: { tag_name: "outsider:v1" } },
     ])
       await expect(connector.callTool("github_api_write", args, ctx)).rejects.toMatchObject({ code: "invalid_args" });
     for (const [query, targetOp] of [
@@ -176,6 +214,8 @@ describe("GitHub App provider", () => {
       ["commits", "GET /repos/{owner}/{repo}/commits"],
       ["file contents", "GET /repos/{owner}/{repo}/contents/{path}"],
       ["releases", "GET /repos/{owner}/{repo}/releases"],
+      ["latest release", "GET /repos/{owner}/{repo}/releases/latest"],
+      ["publish a release", "PATCH /repos/{owner}/{repo}/releases/{release_id}"],
       ["workflows", "GET /repos/{owner}/{repo}/actions/workflows"],
       ["actions runs", "GET /repos/{owner}/{repo}/actions/runs"],
       ["labels", "GET /repos/{owner}/{repo}/labels"],
@@ -186,7 +226,7 @@ describe("GitHub App provider", () => {
       const result = value(await connector.callTool("github_api_search", { query, limit: 8 }, ctx));
       const rank = result.operations.findIndex((op: any) => `${op.method} ${op.path}` === targetOp) + 1;
       expect(rank, query).toBeGreaterThan(0);
-      if (query!.startsWith("create") || query!.startsWith("merge")) {
+      if (/^(create|merge|latest|publish)/.test(query!)) {
         expect(rank, query).toBeLessThanOrEqual(2);
         const filtered = value(
           await connector.callTool("github_api_search", { query, method: targetOp!.split(" ")[0], limit: 8 }, ctx),
@@ -236,6 +276,58 @@ describe("GitHub App provider", () => {
         .filter((request) => request.url.pathname === "/search/issues")
         .map((request) => request.url.searchParams.get("q")),
     ).toEqual(["org:acme bug is:issue", "repo:other/one repo:other/readonly bug is:issue"]);
+    for (const limit of [undefined, 3]) {
+      const before = fixture.requests.length;
+      await expect(
+        connector.callTool(
+          "search_scoped",
+          { terms: "bug", kind: "issues", ...(limit === undefined ? {} : { limit }), cursor: first.page.nextCursor },
+          ctx,
+        ),
+      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringMatching(/original explicit limit.*\.$/) });
+      expect(fixture.requests).toHaveLength(before);
+    }
+    // An omitted first-page limit is 30; continuation must explicitly repeat it.
+    const defaults = value(await connector.callTool("search_scoped", { terms: "bug", kind: "issues" }, ctx));
+    const beforeDefault = fixture.requests.length;
+    await expect(
+      connector.callTool("search_scoped", { terms: "bug", kind: "issues", cursor: defaults.page.nextCursor }, ctx),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(fixture.requests).toHaveLength(beforeDefault);
+    await connector.callTool(
+      "search_scoped",
+      { terms: "bug", kind: "issues", limit: 30, cursor: defaults.page.nextCursor },
+      ctx,
+    );
+    fixture.respond((request) =>
+      request.url.pathname === "/installation/repositories"
+        ? Response.json(
+            { repositories: [{ id: 101, full_name: "acme/one" }] },
+            {
+              headers: { link: '<https://api.github.com/installation/repositories?page=2&per_page=1>; rel="next"' },
+            },
+          )
+        : undefined,
+    );
+    for (const args of [{}, { owner: "acme" }]) {
+      const listing = value(await connector.callTool("list_scopes", { ...args, limit: 1 }, ctx));
+      expect(listing.page.hasMore).toBe(true);
+      for (const limit of [undefined, 2]) {
+        const before = fixture.requests.length;
+        await expect(
+          connector.callTool(
+            "list_scopes",
+            { ...args, ...(limit === undefined ? {} : { limit }), cursor: listing.page.nextCursor },
+            ctx,
+          ),
+        ).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringMatching(/original explicit limit.*\.$/),
+        });
+        expect(fixture.requests).toHaveLength(before);
+      }
+      await connector.callTool("list_scopes", { ...args, limit: 1, cursor: listing.page.nextCursor }, ctx);
+    }
   });
 
   it("INV-4: rejects public-repository search escapes from both configuration and selected subset", async () => {
@@ -464,6 +556,40 @@ describe("GitHub App provider", () => {
     expect(secretContent.truncated).toBeUndefined();
     expect(JSON.stringify(secretContent)).not.toContain("ghs_");
     expect(JSON.stringify(secretContent)).not.toContain(SENTINEL);
+    for (const [path, sent] of [
+      ["/repos/acme/one/contents/src/index.ts", "/repos/acme/one/contents/src%2Findex.ts"],
+      ["/repos/acme/one/contents/src%2Findex.ts", "/repos/acme/one/contents/src%2Findex.ts"],
+      ["/repos/acme/one/contents", "/repos/acme/one/contents"],
+      ["/repos/acme/one/commits/feature%2Fx", "/repos/acme/one/commits/feature%2Fx"],
+      ["/repos/acme/one/compare/main...feature%2Fx", "/repos/acme/one/compare/main...feature%2Fx"],
+    ]) {
+      fixture.respond((request) => (request.url.pathname === sent ? Response.json({ id: 42 }) : undefined));
+      const before = fixture.requests.length;
+      expect(value(await connector.callTool("github_api_read", { path }, context()))).toMatchObject({
+        data: { id: 42 },
+      });
+      expect(fixture.requests.slice(before).filter((request) => request.url.pathname === sent)).toHaveLength(1);
+    }
+    for (const text of [PRIVATE_KEY, PRIVATE_KEY.split("\n")[1]!.slice(120, 220)]) {
+      fixture.respond((request) =>
+        request.url.pathname.endsWith("/contents/settings.json")
+          ? Response.json({ encoding: "base64", content: btoa(`prefix ${text} suffix`) })
+          : request.url.pathname.endsWith("/issues/1")
+            ? Response.json({ id: 1, body: `prefix ${text} suffix` })
+            : undefined,
+      );
+      for (const path of ["/repos/acme/one/contents/settings.json", "/repos/acme/one/issues/1"]) {
+        const reply = value(await connector.callTool("github_api_read", { path }, context()));
+        const display =
+          reply.data.content === "[redacted]"
+            ? "[redacted]"
+            : reply.data.content
+              ? atob(reply.data.content)
+              : JSON.stringify(reply);
+        expect(display).toContain("[redacted]");
+        expect(display).not.toContain(PRIVATE_KEY.split("\n")[1]!.slice(120, 160));
+      }
+    }
     for (const [key, permissions] of Object.entries(READ_PERMISSIONS)) {
       const path = key
         .slice(4)

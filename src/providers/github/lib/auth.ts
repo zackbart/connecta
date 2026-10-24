@@ -10,6 +10,7 @@ import { errors, rejectedToken } from "../api.js";
 import type { ConnectorContext } from "../../../types.js";
 import { appJwt, privateKeyDer } from "./key.js";
 import { ScopePolicy, target, type Target } from "./scope.js";
+import { sentSecretsFor } from "../../../sent-secrets.js";
 
 export interface GitHubApp {
   appId: string | number;
@@ -98,6 +99,7 @@ export class AppAuth {
 
   private async key(ctx: ConnectorContext): Promise<{ der: Uint8Array<ArrayBuffer>; fingerprint: string }> {
     ctx.signal?.throwIfAborted();
+    if (this.app.privateKey !== undefined) sentSecretsFor(ctx).add(this.app.privateKey);
     let der = this.configuredDer;
     if (!der) {
       const pem = await ctx.credential?.get("privateKey");

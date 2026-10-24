@@ -41,9 +41,33 @@ and [JWT reference](https://docs.github.com/en/apps/creating-github-apps/authent
 own private authentication operations, which never enter the public resource
 connection. AppAuth preserves exact/org grant precedence, name-to-ID pinning,
 replacement refusal, installation checks and completed-data-only caches.
-Owner/repo segments cannot escape confinement; only content path supports
-canonical nested segments. Resource requests retain the original authorized
+Owner/repo segments cannot escape confinement; only the contents path consumes
+multiple literal segments. Its canonical relative suffix is validated before
+encoding; empty/dot segments, backslashes, encoded traversal and nested escapes
+refuse before authentication. Commit ref and compare basehead support branch-name
+slashes encoded as `%2F`, only in their final parameter. Resource requests retain the original authorized
 owner/repo path when Link paging extracts a numeric page. URLs are never followed.
+
+The [contents reference](https://docs.github.com/en/rest/repos/contents#get-repository-content)
+documents that omitting path returns the root directory. GET
+`/repos/{owner}/{repo}/contents` is a reviewed omission alias of the pinned
+contents operation: it reuses the same fields, query, safety and Contents-read
+permission; it adds no operation to the immutable 1,204-row pin. Fixed owner/repo
+segments still pass the index matcher and scope policy, and the sent URL omits
+the final path. Directory entries retain the normal secret/URL withholding.
+
+The [compare reference](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
+documents cross-repository `USERNAME:BASE...USERNAME:HEAD`; the
+[PR list reference](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests)
+documents the head filter's `user:ref-name`. Both owner-prefixed forms are refused
+before key lookup or token minting. The remaining admitted ref/commitish inputs
+are path ref/tag, contents query ref, commits query sha, PR query base, Actions
+query branch/head_sha, and release body target_commitish/tag_name. They also
+refuse colons and latent encoded aliases; names, bodies, labels and timestamps
+retain their documented colon semantics. No other admitted parameter selects
+another repository. The explicit 31-read and three-write permission tables stay
+unchanged. Configured App PEMs join the call's credential withholding set even
+when an installation token is cached.
 
 A 401 or non-rate-limited 403 invalidates only its exact bearer, including failed
 body reads/cancellation. No inline replay is added. The private mapper now uses
@@ -77,7 +101,8 @@ are unavailable. No caller-supplied media/header escape exists.
 
 Named lists use items/page, limit/cursor/fields. Search visits one partition page
 per call, at most 20 partitions and ten pages each, carrying incompleteness in
-its signed continuation. Local scope listing performs no I/O. Named and hatch
+its signed continuation. Named cursors carry the fixed limit and refuse a changed
+or omitted limit, including omission after the default first page. Local scope listing performs no I/O. Named and hatch
 continuations use distinct bindings. Hatch fields run after safety and paging.
 
 Release writes and merge remain once-only. Merge requires expected SHA,

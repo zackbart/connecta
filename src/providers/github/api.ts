@@ -65,7 +65,7 @@ export const errors: VendorErrors = {
     unknownId: "connector_call_failed",
     provesAbsence: false,
     conflicts: [
-      "HTTP 409 is a conflict; a merged:false response and the expected-SHA/same-repository preflight also refuse a merge.",
+      "HTTP 409 is a conflict; a merged:false response and the expected-SHA/same-repository preflight also refuse a merge",
     ],
   },
   classify: [

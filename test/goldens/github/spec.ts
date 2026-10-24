@@ -111,6 +111,24 @@ export default defineGoldenSpec({
       args: { path: "/repos/acme/one/issues", fields: ["id", "title"] },
       replies: [{ body: [{ id: 9001, title: "Golden issue", state: "open" }] }],
     },
+    {
+      label: "nested contents",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/contents/src/index.ts", query: { ref: "feature/x" } },
+      replies: [{ body: { name: "index.ts", path: "src/index.ts", encoding: "base64", content: "ZXhwb3J0IHt9" } }],
+    },
+    {
+      label: "root contents",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/contents", fields: ["name", "path", "type", "download_url"] },
+      replies: [{ body: [{ name: "src", path: "src", type: "dir", download_url: "https://example.com/private" }] }],
+    },
+    ...["/repos/acme/one/commits/feature%2Fx", "/repos/acme/one/compare/main...feature%2Fx"].map((path) => ({
+      label: path.includes("/compare/") ? "compare slash ref" : "commit slash ref",
+      tool: "github_api_read",
+      args: { path },
+      replies: [{ body: { sha: "a".repeat(40), files: [] } }],
+    })),
     { label: "list_scopes configuration", tool: "list_scopes" },
     {
       tool: "list_scopes",
