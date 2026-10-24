@@ -1,8 +1,13 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { apiFixture, context, SENTINEL } from "./fixtures/github-api.js";
 import { deferred } from "./fixtures/misc.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

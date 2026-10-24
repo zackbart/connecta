@@ -2909,8 +2909,14 @@ compiling and configuring the real thing.
   request again after a 421 (even under `redirect: "manual"`) and after an
   HTTP/2 `REFUSED_STREAM`, both of which servers define as not processed, and
   an operator-installed dispatcher such as undici's `RetryAgent` can retry
-  further. A refusal on the last attempt says nothing about the earlier ones,
-  so connecta never reports a transport-failed write as known failed. A write
+  further. A refusal on the last attempt says nothing about the earlier ones.
+  Remote MCP writes on Node use the owned runtime sender installed by
+  `listen` from `/node`, selected before recording dispatch. Without it they
+  are refused before sending. Reads retain native fetch; Workers uses native
+  fetch with manual redirects. The owned Node sender bypasses the global
+  dispatcher and fetch's 421 replay, preserving the SDK's JSON/SSE bodies and
+  abort signals. A reset or unconfirmed server failure remains unknown.
+  Connecta never reports a transport-failed write as known failed. A write
   is a known failure only on refusal provenance recorded where the evidence is
   observed, never inferred from an error code: (a) the ledger proves it never
   left, or (b) the downstream served an HTTP refusal, a 4xx other than 408

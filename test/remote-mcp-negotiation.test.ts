@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { attachCaller } from "../src/connector-caller.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { NEGOTIATION_TTL_SECONDS } from "../src/storage/keys.js";
 import { connectorContext } from "./fixtures/misc.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

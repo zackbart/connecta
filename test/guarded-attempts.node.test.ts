@@ -315,6 +315,23 @@ it("INV-9 INV-11: Node without /node refuses writes before dispatch and permits 
   vi.stubGlobal("fetch", replacement);
   await guardedTransport(true).send(new URL("https://tickets.example"), {});
   expect(replacement).toHaveBeenCalledTimes(1);
+  // Fetch fakes can return a Response synchronously. The owned sender still
+  // owes Effect.tryPromise a Promise or the 401 is lost as a transport failure.
+  const unauthorized = Response.json({}, { status: 401 });
+  vi.stubGlobal("fetch", () => unauthorized);
+  const synchronous = guardedTransport(true).send(new URL("https://tickets.example"), {});
+  expect(synchronous).toBeInstanceOf(Promise);
+  expect(await synchronous).toBe(unauthorized);
+  // Keep actual fetch promises by identity: an async wrapper adds a turn and
+  // changes the remote 401/abort ordering this fixture must preserve.
+  const promised = Promise.resolve(unauthorized);
+  vi.stubGlobal("fetch", () => promised);
+  expect(guardedTransport(true).send(new URL("https://tickets.example"), {})).toBe(promised);
+  const failure = new TypeError("fixture fetch failed");
+  vi.stubGlobal("fetch", () => {
+    throw failure;
+  });
+  await expect(guardedTransport(true).send(new URL("https://tickets.example"), {})).rejects.toBe(failure);
   outer.restore();
   inner.restore();
   expect(() => guardedTransport(true)).toThrow("Guarded writes on Node require the owned transport");

@@ -202,6 +202,20 @@ failure also reports an unknown outcome with no retry or wait advice; a proven
 unsent failure retains its own recovery advice. Connector `readOnly` remains
 optional and composes with endpoint policy.
 
+On Node, serve with `listen` from `@zackbart/connecta/node`: it installs the
+owned transport that prevents native fetch or a host-configured dispatcher
+from silently resending a remote MCP write. Without that transport, Node
+refuses remote writes before dispatch. Read calls keep native fetch. Workers
+use their native fetch with manual redirects; transport failures after
+dispatch remain unknown and non-retryable.
+
+Like kit writes, Node remote MCP writes connect directly: the owned transport
+ignores `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, and host proxy
+dispatchers. Remote MCP reads retain native fetch's proxy behavior. Operators
+behind a mandatory outbound proxy must run writes on a host with approved direct
+egress or an approved Workers deployment; the owned sender has no supported proxy
+override. Keep affected connectors `readOnly` until that egress is available.
+
 Remote catalogs evolve. Discovery, direct calls, and programs enforce the
 current annotations and `ConnectaConfig.classification` overrides. A leftover
 `classify` option throws at construction and names that map. Provider reviews,

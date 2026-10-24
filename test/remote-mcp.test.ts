@@ -1,7 +1,9 @@
 import { StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
+import { probeRemoteAttempt } from "./fixtures/remote-mcp-attempts.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
@@ -23,7 +25,30 @@ import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js
 import { mcpRpc } from "./fixtures/http.js";
 import { seedGrant } from "./fixtures/oauth.js";
 
+beforeEach(() => {
+  if (typeof WebSocketPair === "undefined") installOwnedTransport();
+});
+
 const BASE = "https://connecta.test";
+
+for (const challenge of ["421-closed", "421-open", "reset"])
+  it(`INV-9: physical remote MCP attempts after ${challenge}`, { timeout: 30_000 }, async () => {
+    // Node's fake owned slot is a deliberate native-fetch replay control.
+    // Workerd uses the real production fallback with no installed sender.
+    const workerd = typeof WebSocketPair !== "undefined";
+    for (const operation of ["write", "read", "resource"] as const) {
+      const probe = await probeRemoteAttempt(challenge, operation);
+      expect(probe.received, operation).toHaveLength(challenge === "421-open" && !workerd ? 2 : 1);
+      expect(new Set(probe.received).size).toBe(1);
+      if (challenge === "421-open" && !workerd) expect(probe.error).toBeUndefined();
+      else expect(probe.error).toBeDefined();
+      if (operation === "write" && probe.error)
+        expect(probe.error).toMatchObject({
+          retryable: false,
+          ...(workerd && challenge.startsWith("421") ? {} : { writeOutcome: "unknown" }),
+        });
+    }
+  });
 
 /** Build a downstream MCP server exposing echo + fail tools, wired in-process. */
 async function connectServer() {

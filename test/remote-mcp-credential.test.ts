@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -17,6 +18,10 @@ import {
   required,
   silentLogger,
 } from "./helpers.js";
+
+beforeEach(() => {
+  installOwnedTransport();
+});
 
 const BASE = "https://connecta.test";
 const URL_UNDER_TEST = "https://downstream.test/mcp";

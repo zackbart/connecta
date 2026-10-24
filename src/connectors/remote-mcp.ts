@@ -117,6 +117,7 @@ import { retryAfterMs } from "../http-policy.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
+import { guardedTransport } from "../guarded-transport.js";
 import { sourceClassification } from "../tool-safety.js";
 import {
   dispatchProviderRequest,
@@ -2433,6 +2434,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ? flights.get(toolCall.id)
           : undefined;
       if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
+      // Native Node fetch can replay below this guard (421 or a host retry
+      // dispatcher). Resolve the owned sender before claiming dispatch, so
+      // a Node deployment without /node refuses the write while still unsent.
+      const sender = flight?.write ? guardedTransport(true) : undefined;
       if (flight?.write) {
         if (flight.sent) {
           // The SDK renewed the grant and tried to send again: a renewal of
@@ -2459,9 +2464,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
       }
       trackSentRequest(ctx, input, init);
-      const response = writeContinuation
-        ? await fetch(input, { ...init, redirect: "manual" })
-        : await fetch(input, init);
+      const response = sender
+        ? await sender.send(new URL(input instanceof Request ? input.url : String(input)), {
+            ...init,
+            redirect: "manual",
+          })
+        : writeContinuation
+          ? await fetch(input, { ...init, redirect: "manual" })
+          : await fetch(input, init);
       if (entry) recordProviderResponse(entry, response.status);
       if (flight?.write) {
         if (response.status === 401) flight.unauthorized = true;
