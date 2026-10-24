@@ -755,7 +755,7 @@ function verdict(
         : vendor.unreadable;
       return new ConnectorCallError(
         "connector_call_failed",
-        options.classification === "write"
+        options.classification === "write" && dispatch?.request?.auxiliary !== true
           ? (vendor.unreadableWrite ??
               `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`)
           : unreadable,

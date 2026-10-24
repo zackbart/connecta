@@ -431,6 +431,14 @@ describe("search_tools", () => {
     expect(guidance).toContain("Scope by connector and browse with an empty query");
     expect(guidance).toContain("gifts.crm_api_search");
     expect(guidance.indexOf('connector "inventory"')).toBeLessThan(guidance.indexOf("API operation indexes"));
+    for (const safety of ["readOnly", "approvalRequired"] as const) {
+      for (const connectors of [[warehouse], [hatch("gifts"), warehouse]]) {
+        const result = textOf(
+          await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query: "warehouse pallets", safety }),
+        ) as SearchResult;
+        expect(result.queryAnalysis!.guidance!.match(/Change safety to inspect the other tools\./g)).toHaveLength(1);
+      }
+    }
     for (const readOnly of [false, true]) {
       const endpoint = createMetaTools(makeRegistry([hatch("limited", { readOnly: true })]), BASE, { readOnly });
       const filtered = textOf(

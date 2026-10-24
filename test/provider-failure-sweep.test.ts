@@ -236,6 +236,34 @@ describe("API provider failure sweep", () => {
                 });
               }
             }
+            if (failure === "503" && address === "gmail.update_draft") {
+              const sent: string[] = [];
+              const lookup = await sweepCall(
+                provider,
+                tool.name,
+                address,
+                args,
+                "write",
+                (request) => {
+                  sent.push(request.method);
+                  return new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
+                },
+                {},
+                { failAuxiliary: true },
+              );
+              expect(sent).toEqual(["GET"]);
+              expect(lookup.structuredContent).toMatchObject({
+                ok: false,
+                error: {
+                  code: "connector_call_failed",
+                  retryable: false,
+                  message: "Gmail returned a successful response that is not JSON.",
+                },
+              });
+              expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(
+                "writeOutcome",
+              );
+            }
           });
           // A write answered 401 is an unknown outcome unless its provider
           // declares reviewed authBeforeExecution evidence; a read keeps its
@@ -367,6 +395,7 @@ async function sweepCall(
   classification: "read" | "write",
   fail: (request: Request) => Response,
   handoffs: Parameters<typeof createMetaTools>[2] = {},
+  options: { failAuxiliary?: boolean } = {},
 ) {
   if (provider.name === "github") {
     const fake = apiFixture();
@@ -405,7 +434,7 @@ async function sweepCall(
             expires_in: 7200,
             scope: "read:individuals",
           });
-        if (provider.name === "gmail" && tool === "update_draft") {
+        if (provider.name === "gmail" && tool === "update_draft" && !options.failAuxiliary) {
           // Let the auxiliary lookup succeed so the sweep refuses the draft
           // replacement itself, rather than a write that was never sent.
           if (request.method === "GET")

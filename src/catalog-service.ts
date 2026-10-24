@@ -1311,7 +1311,7 @@ export class CatalogService {
             identityConnectorIds.length === 1 ? "" : "s"
           } ${namedIdentityConnectors}${
             unnamedIdentityConnectors > 0 ? ` and ${unnamedIdentityConnectors} more` : ""
-          }. Scope by connector and browse with an empty query to list the tools there.${filterRecovery}`;
+          }. Scope by connector and browse with an empty query to list the tools there.`;
     // Catalog matching cannot search operations that exist only in an API
     // index. Point at already-loaded visible tools, in stable connector order.
     // The caller's safety filter is not a visibility boundary: a read search
@@ -1396,7 +1396,9 @@ export class CatalogService {
             : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`;
         }
         if (identityGuidance || apiSearchGuidance)
-          return [identityGuidance, apiSearchGuidance].filter(Boolean).join(" ");
+          return (
+            [identityGuidance, apiSearchGuidance].filter(Boolean).join(" ") + (apiSearchGuidance ? "" : filterRecovery)
+          );
         return unavailableCatalogs === 0
           ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
           : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;
