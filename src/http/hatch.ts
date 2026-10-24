@@ -19,7 +19,7 @@ import {
   type OperationIndex,
   type RestMethod,
 } from "../providers/_shared/rest/operation-index.js";
-import { refuseWithheldLinks } from "../providers/_shared/rest/value-safety.js";
+import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import { Refusal } from "./errors.js";
 import { fieldsInput, fieldsProblem, selectFields } from "./fields.js";
 import type { HatchPageAdapter } from "./hatch-paging.js";
@@ -87,18 +87,6 @@ function checked<A>(run: () => A) {
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/** Object order is not an argument change; array order and scalar types are. */
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  return record(value)
-    ? Object.fromEntries(
-        Object.keys(value)
-          .sort()
-          .map((key) => [key, canonical(value[key])]),
-      )
-    : value;
 }
 
 function withheldCursor(value: string | number): boolean {
@@ -400,10 +388,15 @@ export function hatch(
       }),
       run: (args) =>
         Effect.gen(function* () {
-          const scope = { query: args.query, ...(args.method ? { method: args.method } : {}) };
-          const offset =
-            args.cursor === undefined ? 0 : Number(yield* boundCursor.decode(searchTool, scope, args.cursor));
-          if (!Number.isSafeInteger(offset) || offset < 0)
+          const scope = {
+            revision: yield* Effect.promise(() => index.cursorRevision()),
+            query: args.query,
+            ...(args.method ? { method: args.method } : {}),
+          };
+          const continuation =
+            args.cursor === undefined ? undefined : yield* boundCursor.decode(searchTool, scope, args.cursor);
+          const offset = continuation === undefined ? 0 : Number(continuation);
+          if (!Number.isSafeInteger(offset) || (continuation !== undefined && !/^[1-9][0-9]*$/.test(continuation)))
             return yield* Effect.fail(
               new Refusal({
                 error: new ConnectorCallError("invalid_args", "This search cursor is not one search returned."),
@@ -418,6 +411,13 @@ export function hatch(
             ...primary.map((op) => ({ op })),
             ...byField(args.query, args.method, new Set(primary)),
           ];
+          const reachable = ranked.filter(({ op }) => [...op.path].length <= 2048).length;
+          if (continuation !== undefined && offset >= reachable)
+            return yield* Effect.fail(
+              new Refusal({
+                error: new ConnectorCallError("invalid_args", "This search cursor is not one search returned."),
+              }),
+            );
           // Search entries are compact: long labels are cut (details serves them whole), and a
           // path the read and write tools cannot take (over 2,048 characters) is never routed.
           const truncated: string[] = [];
@@ -444,7 +444,6 @@ export function hatch(
                     : {}),
               };
             });
-          const reachable = ranked.filter(({ op }) => [...op.path].length <= 2048).length;
           // The budget holds for the whole answer, page and cursor included, before it leaves the tool;
           // what it cuts stays reachable by cursor.
           const answer = function* () {
@@ -527,7 +526,12 @@ export function hatch(
           if (args.cursor === undefined && bytes(whole) <= DETAILS_BUDGET_BYTES) return whole;
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
-          const scope = { method: args.method, path: args.path, ...(args.param ? { param: args.param } : {}) };
+          const scope = {
+            revision: yield* Effect.promise(() => index.cursorRevision()),
+            method: args.method,
+            path: args.path,
+            ...(args.param ? { param: args.param } : {}),
+          };
           let at = { i: 0, o: 0 };
           if (args.cursor !== undefined) {
             const decoded = yield* boundCursor.decode(detailsTool, scope, args.cursor);
@@ -547,7 +551,13 @@ export function hatch(
             !Number.isSafeInteger(at?.o) ||
             at.i < 0 ||
             at.o < 0 ||
-            at.i >= pieces.length
+            at.i >= pieces.length ||
+            (args.cursor !== undefined && at.i === 0 && at.o === 0) ||
+            (at.o > 0 &&
+              (() => {
+                const json = JSON.stringify(pieces[at.i]!.value);
+                return at.o >= json.length || /[\uD800-\uDBFF]/.test(json[at.o - 1]!);
+              })())
           )
             return yield* Effect.fail(
               new Refusal({
@@ -668,6 +678,10 @@ export function hatch(
 
   const run = (kind: "read" | "write", args: CallArgs) =>
     Effect.gen(function* () {
+      yield* checked(() => {
+        refuseWithheldValues({ path: args.path, query: args.query }, name, true);
+        refuseWithheldValues(args.body, name);
+      });
       const method = args.method ?? defaultRead;
       const { op } = yield* checked(() => index.resolve(method, args.path));
       yield* checked(() => {
@@ -684,15 +698,15 @@ export function hatch(
         Object.fromEntries(Object.entries(values).filter(([key]) => key !== adapter?.param));
       const scope = adapter
         ? {
-            revision: index.revision,
+            revision: yield* Effect.promise(() => index.cursorRevision()),
             method,
             path: args.path,
-            query: canonical(adapter?.in === "query" ? withoutCursor(query) : query),
+            query: adapter.in === "query" ? withoutCursor(query) : query,
             ...(adapter?.in === "body"
-              ? { body: canonical(withoutCursor(record(body) ? body : {})) }
+              ? { body: withoutCursor(record(body) ? body : {}) }
               : body === undefined
                 ? {}
-                : { body: canonical(body) }),
+                : { body }),
             ...(args.fields ? { fields: args.fields } : {}),
           }
         : {};
@@ -720,6 +734,10 @@ export function hatch(
         }
       }
       const request = yield* checked((): WriteRequest => {
+        // Admission must inspect restored vendor values, not just opaque input
+        // tokens: path/query reject containment; body values use the narrow rule.
+        refuseWithheldValues({ path: args.path, query }, name, true);
+        refuseWithheldValues(body, name);
         // The current path binding has one origin and JSON/form bodies. Do not
         // silently send another server's operation or reinterpret an upload.
         if (op.server) invalid(`${method} ${op.path} uses a different server; this connection cannot send it.`);
@@ -735,7 +753,6 @@ export function hatch(
         }
         if ((method === "GET" || method === "HEAD") && body !== undefined)
           invalid(`A ${method} operation takes query, not body.`);
-        if (kind === "write") refuseWithheldLinks({ path: args.path, query, body }, name);
         index.check(op, query, body);
         // S5: a bad first segment is refused before anything is sent, against the
         // declared success contract, never against whatever one answer happens to hold.

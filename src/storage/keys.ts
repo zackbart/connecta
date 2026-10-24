@@ -114,6 +114,20 @@ export const resultKeys = {
 
 // --- root families --------------------------------------------------------
 
+/** A deployment's random HMAC key for bound continuation cursors; never expires or leaves storage. */
+export const continuationKeys = {
+  family: {
+    name: "continuation-key",
+    scope: "root",
+    prefixes: ["continuation-key:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  signingKey: "continuation-key:v1:signing",
+} as const satisfies Keyed;
+
 /**
  * The runtime-wide result stash ledger: every live stash entry's reservation
  * id, byte charge, and expiry. One record, swapped by compare-and-set, so the
@@ -470,6 +484,7 @@ export const inputRetryKeys = {
  * namespace, and are not listed here.
  */
 export const KEY_FAMILIES: readonly KeyFamily[] = [
+  continuationKeys.family,
   resultKeys.family,
   stashLedgerKeys.family,
   stashExpiryKeys.family,

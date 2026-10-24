@@ -31,6 +31,8 @@ import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as OpenApi from "effect/http-api/OpenApi";
 import { redactionAltered } from "../redaction-marker.js";
+import { ConnectorCallError } from "../errors.js";
+import { refuseWithheldValues } from "../providers/_shared/rest/value-safety.js";
 import { parameterPairs } from "./write-request.js";
 import type { SentSecrets } from "../sent-secrets.js";
 import type { GuardedClient, SuccessPrefix, PrefixResult } from "./client.js";
@@ -40,6 +42,7 @@ import {
   withClassifierFacts,
   isHttpFailure,
   RequestRefused,
+  Refusal,
   ResendRefused,
   StatusFailure,
   UnreadableBody,
@@ -552,6 +555,16 @@ export function connect<R>(
       );
     });
 
+  const admitAddress = (value: unknown) =>
+    Effect.try({
+      try: () => refuseWithheldValues(value, guarded.provider, true),
+      catch: (error) => error,
+    }).pipe(
+      Effect.catch((error) =>
+        error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
+      ),
+    );
+
   const connection: Connection<R | CallServices> = {
     provider: guarded.provider,
     errors: options.errors,
@@ -564,20 +577,27 @@ export function connect<R>(
         template: declared.path,
         ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}),
       };
-      return settle(
-        ref,
-        client.pipe(
-          Effect.flatMap((methods) => {
-            const method = methods[operation.identifier];
-            return method
-              ? method({ ...request, responseMode: "response-only" })
-              : Effect.fail(new RequestRefused({ message: "This operation is not a named vendor endpoint." }));
-          }),
-          // The guarded client fails only with HttpFailure. Anything else is a
-          // request the vendor's own Schemas could not encode: a provider bug.
-          Effect.catch((error: unknown) => (isHttpFailure(error) ? Effect.fail(error) : Effect.die(error))),
-        ),
-        sendOptions,
+      return Effect.flatMap(
+        admitAddress({
+          params: (request as { params?: unknown }).params,
+          query: (request as { query?: unknown }).query,
+        }),
+        () =>
+          settle(
+            ref,
+            client.pipe(
+              Effect.flatMap((methods) => {
+                const method = methods[operation.identifier];
+                return method
+                  ? method({ ...request, responseMode: "response-only" })
+                  : Effect.fail(new RequestRefused({ message: "This operation is not a named vendor endpoint." }));
+              }),
+              // The guarded client fails only with HttpFailure. Anything else is a
+              // request the vendor's own Schemas could not encode: a provider bug.
+              Effect.catch((error: unknown) => (isHttpFailure(error) ? Effect.fail(error) : Effect.die(error))),
+            ),
+            sendOptions,
+          ),
       );
     },
     sendItem: (step, item) =>
@@ -599,37 +619,40 @@ export function connect<R>(
         return Effect.fail(
           new RequestRefused({ message: "A raw body cannot accompany a bulk item or another body encoding." }),
         );
-      return Effect.flatMap(options.safety.resolve(method, path), (operation) =>
-        settle(
-          { ...operation, ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}) },
-          Effect.suspend(() => {
-            let built = HttpClientRequest.make(method)(
-              path,
-              request.query ? { urlParams: parameterPairs(request.query) } : {},
-            );
-            if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
-            if (request.form !== undefined && (Object.keys(request.form).length > 0 || request.emptyForm === true)) {
-              built = HttpClientRequest.bodyText(
-                built,
-                new URLSearchParams(parameterPairs(request.form)).toString(),
-                "application/x-www-form-urlencoded",
+      return Effect.flatMap(admitAddress({ path, query: request.query }), () =>
+        Effect.flatMap(options.safety.resolve(method, path), (operation) =>
+          settle(
+            { ...operation, ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}) },
+            Effect.suspend(() => {
+              let built = HttpClientRequest.make(method)(
+                path,
+                request.query ? { urlParams: parameterPairs(request.query) } : {},
               );
-            }
-            if (request.json !== undefined) built = HttpClientRequest.bodyText(built, request.json, "application/json");
-            if (request.rawBody !== undefined) {
-              const type = new Headers(request.headers).get("content-type") ?? undefined;
-              built =
-                typeof request.rawBody === "string"
-                  ? HttpClientRequest.bodyText(built, request.rawBody, type)
-                  : request.rawBody instanceof Uint8Array
-                    ? HttpClientRequest.bodyUint8Array(built, request.rawBody, type)
-                    : HttpClientRequest.bodyFormData(built, request.rawBody);
-              // Body combinators supply defaults; an explicit reviewed media type wins.
-              if (type !== undefined) built = HttpClientRequest.setHeader(built, "content-type", type);
-            }
-            return guarded.client.execute(built);
-          }),
-          sendOptions,
+              if (request.headers) built = HttpClientRequest.setHeaders(built, request.headers);
+              if (request.form !== undefined && (Object.keys(request.form).length > 0 || request.emptyForm === true)) {
+                built = HttpClientRequest.bodyText(
+                  built,
+                  new URLSearchParams(parameterPairs(request.form)).toString(),
+                  "application/x-www-form-urlencoded",
+                );
+              }
+              if (request.json !== undefined)
+                built = HttpClientRequest.bodyText(built, request.json, "application/json");
+              if (request.rawBody !== undefined) {
+                const type = new Headers(request.headers).get("content-type") ?? undefined;
+                built =
+                  typeof request.rawBody === "string"
+                    ? HttpClientRequest.bodyText(built, request.rawBody, type)
+                    : request.rawBody instanceof Uint8Array
+                      ? HttpClientRequest.bodyUint8Array(built, request.rawBody, type)
+                      : HttpClientRequest.bodyFormData(built, request.rawBody);
+                // Body combinators supply defaults; an explicit reviewed media type wins.
+                if (type !== undefined) built = HttpClientRequest.setHeader(built, "content-type", type);
+              }
+              return guarded.client.execute(built);
+            }),
+            sendOptions,
+          ),
         ),
       );
     },

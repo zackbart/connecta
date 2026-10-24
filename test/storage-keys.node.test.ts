@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   accessTokenKeys,
   catalogKeys,
+  continuationKeys,
   responseCacheKeys,
   credentialKeys,
   familyOfKey,
@@ -78,6 +79,7 @@ describe("storage key families", () => {
       [personal(`${scopes.results}${resultKeys.chunk("id", 0)}`), "result"],
       [stashLedgerKeys.ledger, "result-stash-ledger"],
       [stashExpiryKeys.deadline(123), "result-stash-expiry"],
+      [continuationKeys.signingKey, "continuation-key"],
       [catalogKeys.manifest("svc"), "catalog"],
       [responseCacheKeys.generation("svc"), "response-cache"],
       [

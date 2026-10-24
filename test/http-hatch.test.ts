@@ -9,6 +9,11 @@ import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
 import { cloudflarePage, githubPage, stripePage, vercelPage, type HatchPageAdapter } from "../src/http/hatch-paging.js";
+import { boundCursor } from "../src/http/paging.js";
+import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
+import { Registry } from "../src/registry.js";
+import { runEdge } from "../src/runtime/run.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { Integer } from "../src/http/json-schema.js";
 import { restSafety, resultSafety } from "../src/http/safety.js";
 import { connect, form, get, post, Summary, vendor } from "../src/http/vendor.js";
@@ -116,8 +121,10 @@ const ERRORS: VendorErrors = {
 
 let sent: Array<{ url: string; method: string; body: unknown }>;
 let response: () => Response;
+let storage: ReturnType<typeof memoryStorage>;
 beforeEach(() => {
   sent = [];
+  storage = memoryStorage();
   response = () => Response.json({ id: "i1" });
   installOwnedTransport();
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -130,13 +137,17 @@ afterEach(() => vi.unstubAllGlobals());
 function setup(
   options: {
     deny?: boolean;
+    revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
     data?: OpenApiData;
     context?: ReturnType<typeof connectorContext>;
   } = {},
 ) {
-  const index = new OperationIndex(options.data ?? DATA, { vendor: "items", title: "Items" });
+  const index = new OperationIndex(
+    { ...(options.data ?? DATA), revision: options.revision ?? (options.data ?? DATA).revision },
+    { vendor: "items", title: "Items" },
+  );
   const reviewed = valueSafety(
     { title: "Items", operations: { "GET /items": { verdict: "safe", reason: "Only item metadata is returned." } } },
     () => index,
@@ -171,8 +182,9 @@ function setup(
     connection,
   });
   const connector = tracksEveryRequest(apiConnector("items", { tools }));
-  const context = options.context ?? connectorContext();
-  const call = (kind: string, args: Record<string, unknown>) => connector.callTool(`items_api_${kind}`, args, context);
+  const context = options.context ?? connectorContext(storage);
+  const call = (kind: string, args: Record<string, unknown>) =>
+    connector.callTool(`items_api_${kind}`, args, options.context ?? connectorContext(storage));
   return { index, tools, connection, call, sendPath, authenticate, admit, context };
 }
 
@@ -209,6 +221,89 @@ it(
     expect(first.operations.map(({ path }) => path)).toEqual(["/items", "/items", "/items/{item}"]);
     await expect(call("search", { query: "item", limit: 9 })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call("search", { query: "item", cursor: "e30" })).rejects.toMatchObject({ code: "invalid_args" });
+    const searchPage = (await call("search", { query: "item", limit: 1 })) as { page: { nextCursor: string } };
+    await expect(
+      setup({ revision: "r2" }).call("search", { query: "item", cursor: searchPage.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    // Same declared label, different operation content: the old continuation is stale.
+    await expect(
+      setup({ data: { ...DATA, ops: [...DATA.ops].reverse() } }).call("search", {
+        query: "item",
+        cursor: searchPage.page.nextCursor,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      apiConnector("other_items", { tools }).callTool(
+        "items_api_search",
+        {
+          query: "item",
+          cursor: searchPage.page.nextCursor,
+        },
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    const personal = apiConnector("items", { tools, authScope: "personal" });
+    const registry = new Registry([personal], { storage, logger: connectorContext(storage).logger });
+    const personalContext = (owner: string) =>
+      registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
+    const alicePage = (await personal.callTool(
+      "items_api_search",
+      { query: "item", limit: 1 },
+      personalContext("alice"),
+    )) as { page: { nextCursor: string } };
+    await expect(
+      personal.callTool(
+        "items_api_search",
+        { query: "item", cursor: alicePage.page.nextCursor },
+        personalContext("bob"),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      personal.callTool(
+        "items_api_search",
+        { query: "item", cursor: alicePage.page.nextCursor },
+        personalContext("alice"),
+      ),
+    ).resolves.toHaveProperty("operations");
+    // A wrapper keeps the registry's configured id rather than its inner adapter id.
+    const inner = apiConnector("items", { tools });
+    const aliases = new Registry([{ ...inner, id: "alias_items" }], {
+      storage,
+      logger: connectorContext(storage).logger,
+    });
+    await expect(
+      inner.callTool(
+        "items_api_search",
+        { query: "item", cursor: searchPage.page.nextCursor },
+        aliases.contextFor("alias_items", "https://connecta.example", {}),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    const originalStore = storage;
+    for (const get of [
+      async () => {
+        throw new Error("database offline");
+      },
+      async () => "corrupt-private-material",
+    ]) {
+      storage = { ...originalStore, get };
+      await expect(call("search", { query: "item", limit: 1 })).rejects.toMatchObject({
+        code: "unavailable",
+        retryable: true,
+        message: expect.stringContaining("cursor signing key"),
+      });
+    }
+    storage = originalStore;
+    for (const offset of ["", "0", "-1", "1.5", "01", "11", "999999999999999999999"]) {
+      const cursor = await runEdge(
+        boundCursor
+          .encode("items_api_search", { revision: await index.cursorRevision(), query: "item" }, offset)
+          .pipe(
+            Effect.provideService(ContinuationStorage, storage),
+            Effect.provideService(ContinuationBinding, { connection: "items", principal: null }),
+          ),
+      );
+      await expect(call("search", { query: "item", cursor })).rejects.toMatchObject({ code: "invalid_args" });
+    }
     for (const [method, path, verdict, tool] of [
       ["GET", "/items", "read", "items_api_read"],
       ["GET", "/touch", "write", "items_api_write"],
@@ -326,7 +421,7 @@ it(
       }),
     );
     const formsCall = (kind: string, args: Record<string, unknown>) =>
-      forms.callTool(`forms_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>;
+      forms.callTool(`forms_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>;
     expect((await formsCall("search", { query: "thing" })).operations).toEqual([
       {
         method: "POST",
@@ -364,6 +459,41 @@ it(
         cursor = page["page"]?.hasMore ? page["page"].nextCursor : undefined;
       } while (cursor && pages.length < 400);
       expect(cursor).toBeUndefined();
+      const firstCursor = pages[0]?.["page"]?.nextCursor;
+      if (firstCursor) {
+        const claims = JSON.parse(atob(firstCursor.replace(/-/g, "+").replace(/_/g, "/")));
+        const tampered = btoa(JSON.stringify({ ...claims, c: '{"i":0,"o":1}' }))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+        await expect(call("details", { ...args, cursor: tampered })).rejects.toMatchObject({ code: "invalid_args" });
+        const label = derived.revision;
+        const scope = { revision: await derived.cursorRevision(), ...args };
+        if (call === formsCall) {
+          Object.defineProperty(derived, "revision", { value: "v2", configurable: true });
+          await expect(call("details", { ...args, cursor: firstCursor })).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          Object.defineProperty(derived, "revision", { value: label, configurable: true });
+          for (const at of [
+            { i: 0, o: 0 },
+            { i: -1, o: 0 },
+            { i: 0, o: 0.5 },
+            { i: 0, o: 999999999 },
+            { i: 9999, o: 0 },
+          ]) {
+            const cursor = await runEdge(
+              boundCursor
+                .encode("forms_api_details", scope, JSON.stringify(at))
+                .pipe(
+                  Effect.provideService(ContinuationStorage, storage),
+                  Effect.provideService(ContinuationBinding, { connection: "forms", principal: null }),
+                ),
+            );
+            await expect(call("details", { ...args, cursor })).rejects.toMatchObject({ code: "invalid_args" });
+          }
+        }
+      }
       const labels: Record<string, string> = {};
       const parameters: unknown[] = [];
       const schema: Record<string, any> = {};
@@ -443,7 +573,7 @@ it(
       return {
         index,
         call: (kind: string, args: Record<string, unknown>) =>
-          connector.callTool(`heavy_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>,
+          connector.callTool(`heavy_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
       };
     };
     // An irreducibly large required contract pages every required property.
@@ -457,7 +587,28 @@ it(
     );
     expect((await walk(many.call, { method: "POST", path: "/heavy" })).contract).toEqual(original(many.index));
     // A property larger than an answer arrives as chunks and keeps its requiredness, through param too.
-    const big = heavy({ must: Schema.String.annotate({ description: "x".repeat(40000) }), other: Schema.String });
+    const big = heavy({
+      must: Schema.String.annotate({ description: `${"x".repeat(40000)}😀` }),
+      other: Schema.String,
+    });
+    const property = (original(big.index).body!.schema as { properties: { must: unknown } }).properties.must;
+    const splitPair = JSON.stringify(property).indexOf("😀") + 1;
+    expect(splitPair).toBeGreaterThan(0);
+    const splitCursor = await runEdge(
+      boundCursor
+        .encode(
+          "heavy_api_details",
+          { revision: await big.index.cursorRevision(), method: "POST", path: "/heavy" },
+          JSON.stringify({ i: 1, o: splitPair }),
+        )
+        .pipe(
+          Effect.provideService(ContinuationStorage, storage),
+          Effect.provideService(ContinuationBinding, { connection: "heavy", principal: null }),
+        ),
+    );
+    await expect(big.call("details", { method: "POST", path: "/heavy", cursor: splitCursor })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     const whole = await walk(big.call, { method: "POST", path: "/heavy" });
     expect(whole.pages.some((page) => page["chunk"]?.of === "body.schema.properties.must")).toBe(true);
     expect(whole.contract).toEqual(original(big.index));
@@ -496,7 +647,7 @@ it(
       apiConnector("framed", { tools: hatch({ name: "framed", index: framed, verdicts: {}, connection }) }).callTool(
         `framed_api_${kind}`,
         args,
-        connectorContext(),
+        connectorContext(storage),
       ) as Promise<Record<string, any>>;
     const framedPages = await walk(framedCall, { method: "POST", path: "/framed" });
     expect(framedPages.pages.some((page) => page["chunk"]?.of === "body.schema")).toBe(true);
@@ -517,7 +668,7 @@ it(
     const searchLong = (args: Record<string, unknown>) =>
       tracksEveryRequest(
         apiConnector("long", { tools: hatch({ name: "long", index: long, verdicts: {}, connection }) }),
-      ).callTool("long_api_search", args, connectorContext()) as Promise<Record<string, any>>;
+      ).callTool("long_api_search", args, connectorContext(storage)) as Promise<Record<string, any>>;
     const trimmed = await searchLong({ query: "xxx", limit: 8 });
     expect(trimmed["operations"].length).toBeLessThan(8);
     expect(size(trimmed)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
@@ -535,14 +686,16 @@ it(
       { vendor: "label", title: "Label" },
     );
     const labelled = apiConnector("label", { tools: hatch({ name: "label", index: label, verdicts: {}, connection }) });
-    const found = (await labelled.callTool("label_api_search", { query: "things" }, connectorContext())) as Record<
-      string,
-      any
-    >;
+    const found = (await labelled.callTool(
+      "label_api_search",
+      { query: "things" },
+      connectorContext(storage),
+    )) as Record<string, any>;
     expect(size(found)).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
     expect(found["truncated"]).toEqual(["operations[0].operationId"]);
     const labels = await walk(
-      (kind, args) => labelled.callTool(`label_api_${kind}`, args, connectorContext()) as Promise<Record<string, any>>,
+      (kind, args) =>
+        labelled.callTool(`label_api_${kind}`, args, connectorContext(storage)) as Promise<Record<string, any>>,
       { method: "GET", path: "/things" },
     );
     expect(labels.pages[0]!["truncated"]).toEqual(["operationId"]);
@@ -590,6 +743,60 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       args: { method: "POST", path: "/form", body: { name: "alice", tag: ["a", "b"] } },
       body: "name=alice&tag=a&tag=b",
     },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "unredacted" } },
+      body: '{"name":"unredacted"}',
+    },
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "the log says: Authorization: Bearer [redacted]" } },
+      body: JSON.stringify({ name: "the log says: Authorization: Bearer [redacted]" }),
+    },
+    ...[
+      ["[redacted]", true],
+      ["pre[redacted]", false],
+      ["sk_live_[redacted]", false],
+      ["[redacted][redacted]", false],
+      ["%5Bredacted%5D", true],
+      ["%5bredacted%5d", true],
+      ["%255Bredacted%255D", true],
+      ["%25255Bredacted%25255D", true],
+      ["&#91;redacted&#93;", true],
+      ["&#x5b;redacted&#x5d;", true],
+      ["&lbrack;redacted&rbrack;", true],
+      ["&amp;#91;redacted&amp;#93;", true],
+      ["\\[redacted\\]", true],
+      ["\\u005bredacted\\u005d", true],
+      ["https://x.test/a?token=[redacted]", true],
+      ["https://hooks.test/[redacted]", true],
+      ["Bearer [redacted]", false],
+    ].flatMap(([text, whole]) => {
+      const marker = String(text);
+      const body = { name: marker };
+      const keyed = { name: "alice", payload: { [marker]: "x" } };
+      return [
+        {
+          kind: "write",
+          args: { method: "POST", path: "/items", body },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(body) }),
+        },
+        {
+          kind: "write",
+          args: { method: "POST", path: "/items", body: keyed },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(keyed) }),
+        },
+        {
+          kind: "write",
+          args: { method: "DELETE", path: `/items/${encodeURIComponent(marker)}` },
+          message: "withheld",
+        },
+        { kind: "write", args: { method: "DELETE", path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { [marker]: "x" } }, message: "withheld" },
+      ];
+    }),
     { kind: "read", args: { path: "/touch" }, message: "items_api_write" },
     { kind: "write", args: { method: "GET", path: "/items" }, message: "items_api_read" },
     { kind: "read", args: { path: "/blocked" }, message: "refuses" },
@@ -727,6 +934,10 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     const args = { path: "/items", query: { limit: 2, tag: ["active", "a b"] }, fields: ["id"] };
     const first = (await paged.call("read", args)) as any;
     expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String), param: adapter.param, in: "query" });
+    expect(JSON.parse(atob(first.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")))).toMatchObject({
+      v: 2,
+      m: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    });
     expect(first.page.nextCursor).not.toBe(row.raw);
     expect(first.data).toEqual(Array.isArray(row.first) ? [{ id: "i1" }] : {});
     // A continuation belongs to the path, method, filters, fields and revision.
@@ -747,6 +958,15 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     });
     for (const replay of [
       { data: { ...data, revision: "r2" }, method: "GET" },
+      {
+        data: {
+          ...data,
+          ops: data.ops.map((op, position) =>
+            position === 0 ? ([op[0], op[1], op[2], "Changed contract content", op[4]] as const) : op,
+          ),
+        },
+        method: "GET",
+      },
       { data, method: "POST" },
     ]) {
       const other = setup({
@@ -774,6 +994,34 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     expect(last.page).toEqual({ hasMore: false, param: adapter.param, in: "query" });
     expect(new URL(sent[1]!.url).searchParams.get(adapter.param)).toBe(row.raw);
     expect(new URL(sent[1]!.url).pathname).toBe("/v1/items");
+    // The same durable root key still cannot authorize another connection or
+    // personal credential owner; only the admitted context supplies that binding.
+    const continuation = { ...args, query: { ...args.query, [adapter.param]: first.page.nextCursor } };
+    const beforeAlias = sent.length;
+    await expect(
+      apiConnector("other_items", { tools: paged.tools }).callTool(
+        "items_api_read",
+        continuation,
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(beforeAlias);
+    const personal = apiConnector("items", { tools: paged.tools, authScope: "personal" });
+    const registry = new Registry([personal], { storage, logger: paged.context.logger });
+    const personalContext = (owner: string) =>
+      registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
+    response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
+    const alice = (await personal.callTool("items_api_read", args, personalContext("alice"))) as any;
+    const personalContinuation = { ...args, query: { ...args.query, [adapter.param]: alice.page.nextCursor } };
+    const beforeOwner = sent.length;
+    await expect(
+      personal.callTool("items_api_read", personalContinuation, personalContext("bob")),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(beforeOwner);
+    response = () => Response.json(row.last);
+    expect(await personal.callTool("items_api_read", personalContinuation, personalContext("alice"))).toMatchObject({
+      page: { hasMore: false },
+    });
   }
   // Body continuations use the same binding, without ever dispatching the opaque bytes.
   const bodyAdapter: HatchPageAdapter = { ...stripePage, param: "after", in: "body" };
@@ -912,22 +1160,28 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
   ).rejects.toMatchObject({ code: "invalid_args" });
   expect(sent).toHaveLength(count);
   // A valid cursor still cannot be restored to a placeholder by its adapter.
-  const changedDecoder = setup({
-    data: {
-      ...DATA,
-      details: JSON.stringify(details),
-      fields: JSON.stringify({ p: ["data", "id"], d: [[0, 1]], o: DATA.ops.map(() => 0) }),
-    },
-    context: paged.context,
-    pages: {
-      "GET /items": { ...stripePage, decode: () => "[redacted]" },
-    },
-  });
-  await expect(
-    changedDecoder.call("read", { path: "/items", fields: ["data"], query: { starting_after: safe.page.nextCursor } }),
-  ).rejects.toMatchObject({ code: "invalid_args" });
-  expect(changedDecoder.sendPath).not.toHaveBeenCalled();
-  expect(changedDecoder.authenticate).not.toHaveBeenCalled();
+  for (const decoded of ["[redacted]", "&#91;redacted&#93;", "prefix&#91;redacted&#93;tail"]) {
+    const changedDecoder = setup({
+      data: {
+        ...DATA,
+        details: JSON.stringify(details),
+        fields: JSON.stringify({ p: ["data", "id"], d: [[0, 1]], o: DATA.ops.map(() => 0) }),
+      },
+      context: paged.context,
+      pages: {
+        "GET /items": { ...stripePage, decode: () => decoded },
+      },
+    });
+    await expect(
+      changedDecoder.call("read", {
+        path: "/items",
+        fields: ["data"],
+        query: { starting_after: safe.page.nextCursor },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(changedDecoder.sendPath).not.toHaveBeenCalled();
+    expect(changedDecoder.authenticate).not.toHaveBeenCalled();
+  }
   // Protocol headers are opt-in, sent-secret redacted, and never copied to the tool result.
   const headerPaged = setup({
     data: { ...DATA, details: JSON.stringify(details) },

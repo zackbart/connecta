@@ -28,7 +28,13 @@ import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
-import { operationView, settleOnClose } from "./runtime/call.js";
+import {
+  ContinuationBinding,
+  ContinuationStorage,
+  operationView,
+  setViewService,
+  settleOnClose,
+} from "./runtime/call.js";
 import { runEdge } from "./runtime/run.js";
 import { type Storage } from "./runtime/services.js";
 import { SharedRead } from "./runtime/shared-read.js";
@@ -130,6 +136,8 @@ export interface RegistryOptions {
   oauthClientName?: string | undefined;
   classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>> | undefined;
   storage: KVStorage;
+  /** Internal deployment root, preserved when a personal registry partitions storage. */
+  rootStorage?: KVStorage;
   catalogStorage?: KVStorage;
   logger: Logger;
   credentialVault?: CredentialVault | undefined;
@@ -522,6 +530,7 @@ export class Registry implements RegistryView {
           Object.entries(this.classification).filter(([id]) => this.connectors.get(id)?.authScope === "personal"),
         ),
         storage: namespaced(this.opts.storage, scopes.principal(principalKey)),
+        rootStorage: this.opts.rootStorage ?? this.opts.storage,
         credentialOwner: principalKey,
         catalogStorage: this.opts.catalogStorage ?? this.opts.storage,
         constructionChecks: false,
@@ -729,6 +738,8 @@ export class Registry implements RegistryView {
       },
       scope?.caller,
     );
+    setViewService(context, ContinuationStorage, this.opts.rootStorage ?? this.opts.storage);
+    setViewService(context, ContinuationBinding, { connection: id, principal: this.opts.credentialOwner ?? null });
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),

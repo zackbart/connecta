@@ -1,3 +1,4 @@
+import { canonicalJson } from "../../../canonical-json.js";
 // The pinned operation index a REST connector validates against before it
 // sends anything. `scripts/generate-openapi.mjs` compiles a vendor's OpenAPI
 // document into `OpenApiData` (search rows plus request-side details as one
@@ -258,6 +259,14 @@ export class OperationIndex {
     });
     this.#segments = this.ops.map((op) => op.path.slice(1).split("/"));
     this.methods = [...METHODS].filter((method) => this.ops.some((op) => op.method === method)) as RestMethod[];
+  }
+
+  /** Content binding for discovery continuations; labels alone never identify an index. */
+  async cursorRevision(): Promise<string> {
+    const bytes = new TextEncoder().encode(canonicalJson([this.#data, this.revision, [...this.#slashParams].sort()]));
+    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
   }
 
   /** The request and response properties this operation declares; none when the index carries no fields. */

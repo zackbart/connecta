@@ -9,6 +9,7 @@ import type { InvocationOutcome } from "../../src/invocation.js";
 import type { Registry as RegistryType } from "../../src/registry.js";
 import type { Connector, ConnectorContext, ToolDef } from "../../src/types.js";
 import { goldenSources, type SourceState } from "./sources.js";
+import { continuationKeys } from "../../src/storage/keys.js";
 export { GOLDEN_NOW } from "./sources.js";
 const SPEC_BASE = Symbol.for("connecta.golden.spec-base");
 
@@ -691,6 +692,8 @@ function fromReplies(replies: Replies | undefined): (request: SeenRequest, index
 
 async function registryFor(spec: GoldenSpec, connector: Connector): Promise<RegistryType> {
   const storage = memoryStorage();
+  // Offline fixtures pin the durable key, so authenticated cursor bytes are reproducible.
+  await storage.set(continuationKeys.signingKey, "42".repeat(32));
   const credentialVault = new CredentialVault(storage, SEAL_KEY);
   if (spec.credential !== undefined) {
     const values = typeof spec.credential === "string" ? { value: spec.credential } : spec.credential;
