@@ -25,7 +25,7 @@ in dollars. Contribution and saved-method charge `amount` have no stated unit
 in the public schema: establish it from a known gift before reporting a sum
 or authorizing a charge. Do not assume every numeric amount uses the same unit.
 
-A gift is final at `PAID_OUT` for cash, `CONFIRMED` for manual cash or crypto,
+A gift is final at `PAID_OUT` for `CASH`, `CONFIRMED` for manual cash or crypto,
 `CONTRIBUTION_RECEIVED` or `BILLED` for stock, and `CONTRIBUTION_RECEIVED` for
 DAF. A status bucket is coarser than those asset-specific states. Polling by
 updated date finds later state changes; initiated date identifies when a donor gave.
@@ -36,6 +36,7 @@ Find the bank payout, inspect its summary totals, then its line items.
 Each line item's `referenceId` names a contribution, refund or chargeback
 according to its type; contributions can also carry a `depositId`.
 Keep gross, fee and net cent amounts separate and convert only for presentation.
+An eligible cash gift under $1,000 is refunded with `POST /contributions/{contributionId}/initiate-refund`, which takes no body; its string acknowledgement means the refund started.
 A refund request starts processing; verify the gift or refund before claiming
 that funds have reached the donor. Canceling a recurring gift stops future
 payments and does not refund earlier gifts.

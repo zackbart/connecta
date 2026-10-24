@@ -6,9 +6,21 @@ import type { AgentTrace } from "../agent/trace.js";
 import { saveGradeInputs, restoreGradeInputs, type SavedGradeInputs } from "../agent/saved.js";
 import { ACCOUNT_B, OLD_ENV, ZONE, FakeRestService, restState } from "../fakes/rest.js";
 import { Ledger } from "../fakes/service.js";
+import { FakeOverflow, overflowState } from "../fakes/overflow.js";
+import { overflow } from "@zackbart/connecta/providers/overflow";
+import { connectorGuide } from "../../src/skills.js";
+import { sentSecretsForRequest, redactAgentOutput } from "../../src/sent-secrets.js";
 
 /** Concurrent trials must never share a credential route or reach a real vendor. */
 export async function restTransportControls() {
+  // Fake credentials must not withhold public tool addresses or guide text.
+  const connector = overflow("overflow", { purpose: "Fake overflow REST", environment: "staging" });
+  const fake = new FakeOverflow("overflow", new Ledger(), overflowState());
+  const surface = JSON.stringify({ id: connector.id, tools: connector.staticTools, guide: connectorGuide(connector) });
+  const sent = sentSecretsForRequest({});
+  for (const value of Object.values(JSON.parse(fake.credential) as Record<string, string>)) sent.secret(value);
+  if (redactAgentOutput(sent, surface) !== surface)
+    throw new Error("Overflow fake credentials withhold public catalog or guide text");
   const before = globalThis.fetch;
   const ledgers = [new Ledger(), new Ledger()];
   const services = ledgers.map((ledger) => new FakeRestService("stripe_sandbox", "stripe", ledger, restState()));

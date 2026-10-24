@@ -144,6 +144,32 @@ describe("overflow() standard surface", () => {
       ).toBe(true);
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
     }
+    for (const query of [
+      "refund a gift",
+      "refund gift",
+      "refund donation",
+      "refund a donation",
+      "issue a refund",
+      "refund a cash gift",
+      "refund duplicate gift",
+    ]) {
+      for (const method of [undefined, "POST"]) {
+        const found = await call(connector, "overflow_api_search", { query, ...(method ? { method } : {}) }, ctx);
+        expect(found.operations[0], `${query} (${method ?? "any method"})`).toMatchObject({
+          method: "POST",
+          path: "/contributions/{contributionId}/initiate-refund",
+        });
+      }
+    }
+    for (const [query, method, path] of [
+      ["cancel recurring gift", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
+      ["stop a recurring donation", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
+      ["edit donor phone", "PATCH", "/donors/{donorId}"],
+      ["charge saved card", "POST", "/contributions"],
+    ]) {
+      const found = await call(connector, "overflow_api_search", { query }, ctx);
+      expect(found.operations[0], query).toMatchObject({ method, path });
+    }
     const details = await call(
       connector,
       "overflow_api_details",
@@ -156,6 +182,8 @@ describe("overflow() standard surface", () => {
     // Fields and withheld values fail before auth or dispatch, including on writes.
     for (const [tool, args] of [
       ["get_donor", { donorId: id, fields: ["not_a_property"] }],
+      ["list_donors", { fields: ["phone"] }],
+      ["list_donors", { fields: ["address"] }],
       [
         "overflow_api_write",
         { method: "PATCH", path: `/donors/${id}`, body: { phone: "new" }, fields: ["not_a_property"] },
@@ -299,12 +327,32 @@ describe("overflow() standard surface", () => {
       { data: { id, signingSecret: "private-signing-value" } },
       [{ id, secret: "private-signing-value" }],
       { data: [{ id, signingKey: "private-signing-value" }] },
+      {
+        data: [
+          {
+            id,
+            Secret: "private-signing-value",
+            secretKey: "private-signing-value",
+            signing_key: "private-signing-value",
+            delivery: { hmacSecret: "private-signing-value", HMAC_KEY: "private-signing-value" },
+          },
+        ],
+      },
     ]) {
       queue({ body });
       expect(
         JSON.stringify(await call(connector, "overflow_api_read", { path: `/webhooks/${id}` }, ctx)),
       ).not.toContain("private-signing-value");
     }
+    queue({ body: { data: { id, metadata: { secretKey: "ordinary-operator-data" } } } });
+    expect(await call(connector, "get_contribution", { contributionId: id, fields: ["metadata"] }, ctx)).toEqual({
+      metadata: { secretKey: "ordinary-operator-data" },
+    });
+    queue({ body: { data: { id, phone: "+15555550123", address: { city: "Example" } } } });
+    expect(await call(connector, "get_donor", { donorId: id, fields: ["phone", "address"] }, ctx)).toEqual({
+      phone: "+15555550123",
+      address: { city: "Example" },
+    });
 
     queue({ text: "ok", headers: { "content-type": "text/plain" } });
     expect(await call(connector, "overflow_api_read", { path: "/health" }, ctx)).toEqual({ status: 200, data: "ok" });
@@ -317,6 +365,20 @@ describe("overflow() standard surface", () => {
         ctx,
       ),
     ).toEqual({ status: 202, data: "Refund initiated" });
+    queue({ status: 202, text: "Refund initiated", headers: { "content-type": "text/html; charset=utf-8" } });
+    const beforeRefund = calls.length;
+    expect(
+      await call(
+        connector,
+        "overflow_api_write",
+        {
+          method: "POST",
+          path: `/contributions/${id}/initiate-refund`,
+        },
+        ctx,
+      ),
+    ).toEqual({ status: 202, data: "Refund initiated" });
+    expect(calls).toHaveLength(beforeRefund + 1);
     queue({ status: 204 });
     expect(
       await call(

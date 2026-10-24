@@ -231,11 +231,11 @@ tokens for the new surface. Payment-method lists gain `limit` and `cursor` even
 though the vendor answers them in one bounded response. A missing vendor count
 may require an empty terminal page; it never creates an estimated `page.total`.
 
-`GET /health` still returns its text. Documented JSON-string write responses
-and empty acknowledgements remain valid; unexpected non-health, non-JSON
-successes are refused. Webhook `secret`, `signingSecret`, `signingKey`,
-`webhookSecret` and `signing_secret` fields are permanently removed from every
-webhook reply shape. Removing `raw` introduces no configurable PII policy:
+`GET /health` still returns its text. Refund initiation accepts its documented
+JSON string or a plain-text acknowledgement; empty write acknowledgements
+remain valid. Other unexpected non-JSON successes are refused. Webhook keys
+matching `secret|signing|hmac` case-insensitively are permanently removed from
+every webhook reply shape, including nested delivery payloads. Removing `raw` introduces no configurable PII policy:
 the existing lean/full-contact choices remain and the sensitive set is empty.
 
 HTTP 422 now uses standard `invalid_args` rather than `connector_call_failed`;

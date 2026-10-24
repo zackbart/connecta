@@ -161,7 +161,7 @@ export const overflow = defineApiProvider<OverflowOptions>({
     notes: () => ({
       read: "Paths are relative to /api/v3. Array query filters use bracketed names and repeated values; GET /health returns text.",
       write:
-        "JSON-string and empty acknowledgements are valid. Resolve donor and payment-method ids first; money units differ by field.",
+        "Refund acknowledgements can be JSON strings or plain text; empty write acknowledgements are valid. Resolve donor and payment-method ids first; money units differ by field.",
     }),
   },
   defaultCallAdmission: OVERFLOW_ADMISSION,

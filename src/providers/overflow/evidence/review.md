@@ -40,7 +40,9 @@ argument names stay unchanged.
 
 The health operation is explicitly text; errors may be JSON or bounded text.
 Refund initiation documents a JSON string and several writes document empty
-acknowledgements. `bodyFormat` distinguishes those from an unexpected non-JSON
+acknowledgements. That one refund operation also accepts a bounded plain-text
+acknowledgement, since a NestJS string handler may return text/html; this is
+explicit compatibility behavior, not a claim that a live reply was observed. `bodyFormat` distinguishes those from an unexpected non-JSON
 success; no argument can select a raw transport. Existing unreadable-body
 wording is retained under H5's deferral to shared cause/phase plumbing.
 
@@ -71,9 +73,11 @@ privacy policy. Fields selection follows safety and projection.
 
 The old webhook fixture includes an extra `secret` absent from the public
 response schema. Removing its wrapper must not expose that value through the
-replacement hatch. Webhook operations recursively remove `secret`,
-`signingSecret`, `signingKey`, `webhookSecret` and `signing_secret` from bare,
-wrapped and list objects before selection, and withhold vendor error text.
+replacement hatch. Webhook operations recursively remove keys matching `/secret|signing|hmac/i`
+from bare, wrapped and list objects before selection, including nested delivery
+payloads, and withhold vendor error text. Case variants and names such as
+`secretKey`, `signing_key` and `hmacSecret` are included; other operations do
+not inherit this key pattern.
 Ordinary free text and operator/customer delivery payloads are not parsed as
 credentials. Existing sent-secret redaction and shared withheld-marker/link
 admission remain on every kit/hatch path. No generic transport opt-out exists.

@@ -482,7 +482,7 @@ export const getContributions = get("getContributions", "/contributions", {
 export const chargeCashPaymentMethod = post("chargeCashPaymentMethod", "/contributions", {
   payload: ChargeCashPaymentMethodParams,
   success: ChargeCashPaymentMethodResponse,
-}).annotate(Summary, "Charge a donor's saved payment method for a cash gift");
+}).annotate(Summary, "Charge a donor's saved card, bank or wallet payment method for a cash gift");
 
 export const getContributionById = get("getContributionById", "/contributions/:contributionId", {
   params: { "contributionId": Schema.String.pipe(Schema.annotateKey({ description: "contribution id." })) },
@@ -494,7 +494,10 @@ export const initiateRefund = post("initiateRefund", "/contributions/:contributi
     "contributionId": Schema.String.pipe(Schema.annotateKey({ description: "The Id of the contribution to refund." })),
   },
   success: Schema.String,
-}).annotate(Summary, "Initiate a refund for an eligible cash contribution under $1,000");
+}).annotate(
+  Summary,
+  "Issue a refund for an eligible cash gift (contribution or donation) under $1,000, including duplicate gifts",
+);
 
 export const getDeposits = get("getDeposits", "/deposits", {
   query: {
@@ -744,7 +747,7 @@ export const updateDonorProfile = patch("updateDonorProfile", "/donors/:donorId"
   params: { "donorId": Schema.String.pipe(Schema.annotateKey({ description: "The ID of the donor to update." })) },
   payload: UpdateDonorProfileParams,
   success: Schema.Unknown,
-}).annotate(Summary, "Update a donor's name, email or phone");
+}).annotate(Summary, "Update (edit) a donor's name, email or phone");
 
 export const createSubscription = post("createSubscription", "/subscriptions/:donorId", {
   params: {
@@ -866,7 +869,7 @@ export const cancelSubscription = del("cancelSubscription", "/subscriptions/:don
   },
   payload: DeleteSubscriptionRequest,
   success: Schema.Unknown,
-}).annotate(Summary, "Cancel a recurring gift (subscription); does not refund past gifts");
+}).annotate(Summary, "Cancel (stop) a recurring gift or donation (subscription); past gifts stay charged");
 
 export const getPaymentMethods = get("getPaymentMethods", "/payment-methods/:donorId", {
   params: {
@@ -1170,13 +1173,15 @@ export const OverflowApi: Vendor = {
   ),
   textBodies: {
     review:
-      "Overflow errors can be JSON or text; only GET /health declares a text success. JSON-string write responses and empty acknowledgements remain distinct.",
+      "Overflow errors can be JSON or text; GET /health declares text and refund initiation accepts a JSON or plain-text string acknowledgement. Empty acknowledgements remain distinct.",
     forResponse: (status, operation) =>
       status < 200 || status > 299
         ? "json-or-text"
         : operation.method === "GET" && operation.template === "/health"
           ? "text"
-          : undefined,
+          : isRefund(operation)
+            ? "json-or-text"
+            : undefined,
   },
 };
 // Drift keeps /api/v3; the same operations' runtime index uses paths relative to that confined base.
@@ -1439,12 +1444,17 @@ export const errors: VendorErrors = {
     }),
   },
 };
-/** JSON strings and empty acknowledgements are valid; only the declared health operation accepts text. */
+function isRefund(operation: { method: string; template: string }): boolean {
+  return operation.method === "POST" && operation.template === "/contributions/{contributionId}/initiate-refund";
+}
+/** Health text, JSON/plain-text refund acknowledgements and empty write acknowledgements are reviewed. */
 export const result = (
   body: unknown,
   answer: { bodyFormat: "json" | "text" | "empty"; operation: { method: string; template: string } },
 ): Effect.Effect<unknown, HttpFailure> =>
-  answer.bodyFormat === "text" && !(answer.operation.method === "GET" && answer.operation.template === "/health")
+  answer.bodyFormat === "text" &&
+  !(answer.operation.method === "GET" && answer.operation.template === "/health") &&
+  !isRefund(answer.operation)
     ? Effect.fail(
         new Refusal({
           error: new ConnectorCallError(
@@ -1457,13 +1467,13 @@ export const result = (
     : Effect.succeed(body);
 
 /** Remove webhook signing secrets from bare, wrapped and list replies, never just a named projection. */
-const WEBHOOK_SECRETS = new Set(["secret", "signingSecret", "signingKey", "webhookSecret", "signing_secret"]);
+const WEBHOOK_SECRETS = /secret|signing|hmac/i;
 function withoutWebhookSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutWebhookSecrets);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([name]) => !WEBHOOK_SECRETS.has(name))
+      .filter(([name]) => !WEBHOOK_SECRETS.test(name))
       .map(([name, child]) => [name, withoutWebhookSecrets(child)]),
   );
 }

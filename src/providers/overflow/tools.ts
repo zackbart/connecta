@@ -37,15 +37,15 @@ function reference(value: unknown): JsonRecord | undefined {
 
 const REFERENCE = Schema.Struct({ "id": Schema.optionalKey(Schema.String), "name": Schema.optionalKey(Schema.String) });
 const CONTRIBUTION_SCHEMA = Schema.Struct({
-  "anonymous": Schema.optionalKey(Schema.Unknown),
-  "donorCoveredFees": Schema.optionalKey(Schema.Unknown),
-  "givingLinkId": Schema.optionalKey(Schema.Unknown),
-  "pledgeId": Schema.optionalKey(Schema.Unknown),
-  "dedication": Schema.optionalKey(Schema.Unknown),
-  "donorNotes": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
-  "type": Schema.String,
+  "anonymous": Schema.optionalKey(Schema.Boolean),
+  "donorCoveredFees": Schema.optionalKey(Schema.Boolean),
+  "givingLinkId": Schema.optionalKey(Schema.String),
+  "pledgeId": Schema.optionalKey(Schema.String),
+  "dedication": Schema.optionalKey(Schema.String),
+  "donorNotes": Schema.optionalKey(Schema.String),
+
+  "type": Schema.Literals(["CASH", "CRYPTO", "DAF", "MANUAL_CASH", "STOCK"]),
   "status": Schema.String,
   "amount": Schema.Finite,
   "frequency": Schema.optionalKey(Schema.String),
@@ -63,26 +63,30 @@ const CONTRIBUTION_SCHEMA = Schema.Struct({
   "createdAt": Schema.optionalKey(Schema.String),
   "updatedAt": Schema.optionalKey(Schema.String),
 });
-const DONOR_SCHEMA = Schema.Struct({
+const DONOR_LIST_FIELDS = {
   "id": Schema.String,
   "firstName": Schema.optionalKey(Schema.String),
   "lastName": Schema.optionalKey(Schema.String),
   "email": Schema.optionalKey(Schema.String),
-  "phone": Schema.optionalKey(Schema.String),
-  "address": Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   "locationIds": Schema.optionalKey(Schema.Array(Schema.String)),
   "totalContributionsCount": Schema.optionalKey(Schema.Finite),
   "activeRecurringCount": Schema.optionalKey(Schema.Finite),
   "latestContributionDate": Schema.optionalKey(Schema.String),
   "createdAt": Schema.optionalKey(Schema.String),
   "updatedAt": Schema.optionalKey(Schema.String),
+};
+const DONOR_LIST_SCHEMA = Schema.Struct(DONOR_LIST_FIELDS);
+const DONOR_SCHEMA = Schema.Struct({
+  ...DONOR_LIST_FIELDS,
+  phone: Schema.optionalKey(Schema.String),
+  address: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
 });
 const DEPOSIT_SCHEMA = Schema.Struct({
-  "statementDescriptor": Schema.optionalKey(Schema.Unknown),
-  "startingBalanceInCents": Schema.optionalKey(Schema.Unknown),
-  "endingBalanceInCents": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
+  "statementDescriptor": Schema.optionalKey(Schema.String),
+  "startingBalanceInCents": Schema.optionalKey(Schema.Finite),
+  "endingBalanceInCents": Schema.optionalKey(Schema.Finite),
+
   "status": Schema.String,
   "type": Schema.optionalKey(Schema.String),
   "amountInCents": Schema.Finite,
@@ -115,9 +119,9 @@ const REFUND_SCHEMA = Schema.Struct({
   "updatedAt": Schema.optionalKey(Schema.String),
 });
 const CHARGEBACK_SCHEMA = Schema.Struct({
-  "feeValueInCents": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
+  "feeValueInCents": Schema.optionalKey(Schema.Finite),
+
   "contributionId": Schema.String,
   "status": Schema.String,
   "type": Schema.optionalKey(Schema.String),
@@ -129,11 +133,11 @@ const CHARGEBACK_SCHEMA = Schema.Struct({
   "updatedAt": Schema.optionalKey(Schema.String),
 });
 const SUBSCRIPTION_SCHEMA = Schema.Struct({
-  "anonymous": Schema.optionalKey(Schema.Unknown),
-  "donorCoveredFees": Schema.optionalKey(Schema.Unknown),
-  "metadata": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
+  "anonymous": Schema.optionalKey(Schema.Boolean),
+  "donorCoveredFees": Schema.optionalKey(Schema.Boolean),
+  "metadata": Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+
   "donorId": Schema.String,
   "status": Schema.String,
   "amount": Schema.Finite,
@@ -156,10 +160,10 @@ const PAYMENT_METHOD_SCHEMA = Schema.Struct({
   "updatedAt": Schema.optionalKey(Schema.String),
 });
 const CAMPAIGN_SCHEMA = Schema.Struct({
-  "hideFromDonors": Schema.optionalKey(Schema.Unknown),
-  "archivedAt": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
+  "hideFromDonors": Schema.optionalKey(Schema.Boolean),
+  "archivedAt": Schema.optionalKey(Schema.String),
+
   "name": Schema.String,
   "status": Schema.String,
   "isSubcampaign": Schema.optionalKey(Schema.Boolean),
@@ -174,9 +178,9 @@ const CAMPAIGN_SCHEMA = Schema.Struct({
   "uniqueDonorCount": Schema.optionalKey(Schema.Finite),
 });
 const LOCATION_SCHEMA = Schema.Struct({
-  "updatedAt": Schema.optionalKey(Schema.Unknown),
-
   "id": Schema.String,
+  "updatedAt": Schema.optionalKey(Schema.String),
+
   "name": Schema.String,
   "isDefaultLocation": Schema.optionalKey(Schema.Boolean),
   "hideFromDonors": Schema.optionalKey(Schema.Boolean),
@@ -798,7 +802,7 @@ export function overflowTools({ connection, pageSize }: { connection: Connection
           Schema.Literals(["ASC", "DESC"]).annotate({ description: "Defaults to DESC." }),
         ),
       },
-      row: DONOR_SCHEMA,
+      row: DONOR_LIST_SCHEMA,
       limit,
       cursor: "bound",
       total: true,

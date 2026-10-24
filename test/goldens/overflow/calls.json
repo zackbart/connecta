@@ -12,10 +12,10 @@
       "value": {
         "operations": [
           {
-            "method": "DELETE",
-            "path": "/subscriptions/{donorId}/{subscriptionId}",
-            "operationId": "cancelSubscription",
-            "summary": "Cancel a recurring gift (subscription); does not refund past gifts",
+            "method": "POST",
+            "path": "/contributions/{contributionId}/initiate-refund",
+            "operationId": "initiateRefund",
+            "summary": "Issue a refund for an eligible cash gift (contribution or donation) under $1,000, including duplicate gifts",
             "tool": "overflow_api_write"
           },
           {
@@ -1291,7 +1291,7 @@
         },
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiNzgyOWRhODBmMWQ1MDE4YjM0NjkxNGUxNGM1MTMyNGYiLCJjIjoiXCJjMlwiIiwibSI6Il9vU1ZjQzlHdllEbDdQN2tjR1hPd3dvUEx2NFh3VGFzSVJ5TVdpX2dfVHcifQ",
+          "nextCursor": "eyJ2IjoyLCJkIjoiOWM0YWE0OTU0ODVjNjk3MmEwN2M5NjRhZDMwYWJkZjEiLCJjIjoiXCJjMlwiIiwibSI6ImVaY0ZJQmJLRFVXemFpa2Q0eW9xTGY5UU5ReTRkaDdDM1dGcDFTLUxGQ0UifQ",
           "param": "cursor",
           "in": "query"
         }
