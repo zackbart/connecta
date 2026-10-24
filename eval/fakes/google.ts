@@ -164,6 +164,77 @@ interface GoogleAccount {
   uploads: Row[];
   mutations: Row[];
 }
+/** Selectors use slash, dotted or nested field-mask spelling. */
+function selectsField(mask: string | undefined, field: string): boolean {
+  return mask === undefined || mask === "*" || new RegExp(`(?:^|[/,(.])${field}(?:[/(),.]|$)`).test(mask);
+}
+
+function valuesForSheet(a: GoogleAccount, title: string): any[][] {
+  return title === "People"
+    ? [
+        ["record1", "Alice"],
+        ["record2", "Bob"],
+      ]
+    : a.values;
+}
+
+/** The exact grid view served by the fake and reused by equivalent-read controls. */
+export function googleSpreadsheet(a: GoogleAccount, includeGrid: boolean, ranges: readonly string[] = []): Row {
+  const requested = ranges.map((range) => {
+    const named = a.spreadsheet.namedRanges.find((entry: Row) => entry.name === range);
+    if (named) return named.range;
+    const title = range.includes("!") ? range.slice(0, range.lastIndexOf("!")) : range;
+    const unquoted = title.startsWith("'") ? title.slice(1, -1).replaceAll("''", "'") : title;
+    const sheet =
+      a.spreadsheet.sheets.find((entry: Row) => entry.properties.title === unquoted) ??
+      (!range.includes("!") ? a.spreadsheet.sheets[0] : undefined);
+    const a1 = range.includes("!") ? range.slice(range.lastIndexOf("!") + 1) : range;
+    const match = /^\$?([A-Z]+)([0-9]*)(?::\$?([A-Z]+)([0-9]*))?$/.exec(a1);
+    const column = (letters: string) => [...letters].reduce((n, char) => n * 26 + char.charCodeAt(0) - 64, 0) - 1;
+    return {
+      sheetId: sheet?.properties.sheetId,
+      ...(match
+        ? {
+            startRowIndex: match[2] ? Number(match[2]) - 1 : 0,
+            ...(match[4] ? { endRowIndex: Number(match[4]) } : {}),
+            startColumnIndex: column(match[1]!),
+            endColumnIndex: column(match[3] ?? match[1]!) + 1,
+          }
+        : {}),
+    };
+  });
+  return {
+    ...a.spreadsheet,
+    sheets: a.spreadsheet.sheets
+      .filter((sheet: Row) => !requested.length || requested.some((r) => r.sheetId === sheet.properties.sheetId))
+      .map((sheet: Row) =>
+        !includeGrid
+          ? sheet
+          : {
+              ...sheet,
+              data: (requested.length ? requested.filter((r) => r.sheetId === sheet.properties.sheetId) : [{}]).map(
+                (range: Row) => {
+                  const startRow = range.startRowIndex ?? 0,
+                    startColumn = range.startColumnIndex ?? 0;
+                  return {
+                    startRow,
+                    startColumn,
+                    rowData: valuesForSheet(a, sheet.properties.title)
+                      .slice(startRow, range.endRowIndex)
+                      .map((row, rowIndex) => ({
+                        values: row.slice(startColumn, range.endColumnIndex).map((value, columnIndex) => ({
+                          ...sheet.data?.[0]?.rowData?.[startRow + rowIndex]?.values?.[startColumn + columnIndex],
+                          userEnteredValue: typeof value === "number" ? { numberValue: value } : { stringValue: value },
+                        })),
+                      })),
+                  };
+                },
+              ),
+            },
+      ),
+  };
+}
+
 export function googleState() {
   const account = (owner: string): GoogleAccount => {
     let position = 1;
@@ -826,7 +897,12 @@ export class FakeGoogle {
         if (path.endsWith("/permissions")) return page(a.permissions, "permissions");
         if (/\/permissions\/perm/.test(path)) return a.permissions.find((p) => p.id === path.split("/").at(-1));
         if (path.endsWith("/revisions")) return page(a.revisions, "revisions");
-        if (/^\/files\/[^/]+$/.test(path)) return a.files.find((f) => f.id === path.split("/")[2]) ?? {};
+        if (/^\/files\/[^/]+$/.test(path)) {
+          const file = a.files.find((f) => f.id === path.split("/")[2]) ?? {};
+          return query.fields !== undefined && selectsField(query.fields, "permissions")
+            ? { ...file, permissions: a.permissions }
+            : file;
+        }
       }
       if (method === "POST" && path === "/files") {
         mutate();
@@ -834,7 +910,7 @@ export class FakeGoogle {
           id: "upload1",
           name: body.name ?? "evidence.bin",
           mimeType: body.mimeType ?? "application/octet-stream",
-          parents: body.parents ?? ["folder1"],
+          parents: body.parents ?? ["root"],
         };
         a.created.push(file);
         a.uploads.push({ ...(call.args.upload as Row), contentType: call.args.contentType, file });
@@ -907,33 +983,18 @@ export class FakeGoogle {
     }
     if (product === "sheets") {
       const spreadsheet = (includeGrid: boolean) =>
-        !includeGrid
-          ? a.spreadsheet
-          : {
-              ...a.spreadsheet,
-              sheets: a.spreadsheet.sheets.map((sheet: Row, i: number) =>
-                i !== 0
-                  ? sheet
-                  : {
-                      ...sheet,
-                      data: [
-                        {
-                          startRow: 0,
-                          startColumn: 0,
-                          rowData: a.values.map((row, rowIndex) => ({
-                            values: row.map((value, columnIndex) => ({
-                              ...sheet.data?.[0]?.rowData?.[rowIndex]?.values?.[columnIndex],
-                              userEnteredValue:
-                                typeof value === "number" ? { numberValue: value } : { stringValue: value },
-                            })),
-                          })),
-                        },
-                      ],
-                    },
-              ),
-            };
-      if (method === "GET" && path === "/spreadsheets/sheets1")
-        return spreadsheet(query.includeGridData === "true" || /data/.test(query.fields ?? ""));
+        googleSpreadsheet(
+          a,
+          includeGrid,
+          query.ranges ? (Array.isArray(query.ranges) ? query.ranges : [query.ranges]) : [],
+        );
+      if (method === "GET" && path === "/spreadsheets/sheets1") {
+        const result = spreadsheet(
+          query.includeGridData === "true" || (query.fields !== undefined && selectsField(query.fields, "data")),
+        );
+        if (!selectsField(query.fields, "developerMetadata")) delete result.developerMetadata;
+        return result;
+      }
       if ((method === "GET" && path.includes("/values")) || path.endsWith(":batchGetByDataFilter")) {
         const ranges =
           body.dataFilters?.map((d: Row) => d.a1Range) ??
@@ -943,12 +1004,7 @@ export class FakeGoogle {
               : [query.ranges]
             : [path.split("/values/")[1] ?? "'Alice''s costs'!A1:D7"]);
         const values = ranges.map((range: string) => {
-          const table: unknown[][] = range.includes("People")
-            ? [
-                ["record1", "Alice"],
-                ["record2", "Bob"],
-              ]
-            : a.values;
+          const table: unknown[][] = valuesForSheet(a, range.includes("People") ? "People" : "Alice's costs");
           const selected = /!\$?([A-Z]+)([0-9]*)?(?::\$?([A-Z]+)([0-9]*)?)?$/.exec(range);
           const column = (letters: string) =>
             [...letters].reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0) - 1;
@@ -1026,8 +1082,8 @@ export class FakeGoogle {
     if (product === "slides") {
       if (method === "GET" && path === "/presentations/slides1") return a.presentation;
       if (method === "GET" && path.includes("/pages/"))
-        return a.presentation.slides
-          .flatMap((s: Row) => [s, s.slideProperties.notesPage])
+        return [...a.presentation.slides, ...a.presentation.layouts]
+          .flatMap((s: Row) => [s, s.slideProperties?.notesPage])
           .filter(Boolean)
           .find((s: Row) => s.objectId === path.split("/").at(-1));
       if (method === "POST" && path.endsWith(":batchUpdate")) {

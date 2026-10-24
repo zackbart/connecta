@@ -1113,6 +1113,13 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
       await writeFile(live, JSON.stringify(value));
       expect(run()).toEqual([expect.objectContaining({ kind: "spec-drift" })]);
     }
+    await rm(join(evidence, "discovery.document.json"));
+    expect(run()).toEqual([
+      expect.objectContaining({
+        kind: "evidence-invalid",
+        detail: expect.stringContaining("evidence/discovery.document.json"),
+      }),
+    ]);
   });
 });
 

@@ -86,6 +86,32 @@ describe("standard authored tool surfaces on both runtimes (decision 0011)", () 
       type: "boolean",
     };
     expect(surfaceViolations(mutable)).toContain("S2: list_charges pages with limit and cursor");
+    for (const [label, fields, read, accepted] of [
+      ["fields-enabled read with optional nested page", true, true, true],
+      ["read without fields still requires hasMore", false, true, false],
+      ["write with fields still requires hasMore", true, false, false],
+    ] as const) {
+      const fixture = {
+        name: "inspect_document",
+        annotations: read ? READ : DESTRUCTIVE,
+        inputSchema: object(fields ? { fields: strings } : {}),
+        outputSchema: object({ page: object(page().properties) }),
+      };
+      const findings = surfaceViolations([fixture]);
+      expect(findings, label).toEqual(
+        accepted
+          ? []
+          : ["S2: inspect_document page requires hasMore: boolean, with nextCursor?: string and total?: integer"],
+      );
+    }
+    for (const name of ["list_charges", "acme_api_read"])
+      expect(
+        surfaceViolations(
+          changed(name, (tool) => {
+            tool.outputSchema.properties.page.required = [];
+          }),
+        ),
+      ).toContain(`S2: ${name} page requires hasMore: boolean, with nextCursor?: string and total?: integer`);
   });
 
   it.each([

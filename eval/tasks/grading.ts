@@ -34,7 +34,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
               ...(task === 3 ? ["full-pages"] : []),
               ...(task === 2 && ["docs", "sheets", "slides"].includes(product) ? ["joined"] : []),
               ...(product === "drive" && task === 4 ? ["revisions"] : []),
-              ...(product === "sheets" && task === 7 ? ["read-post"] : []),
+              ...(product === "sheets" && task === 7 ? ["metadata-read"] : []),
               ...(product === "forms" && task === 7 ? ["fresh-revision"] : []),
               ...(product === "gmail" && task === 7 ? ["attachments-preserved"] : []),
               "hatch-diagnostic",
@@ -62,6 +62,28 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
     ["update-once", "update-recovery"].map((s) => [
       `ccb-${s}`,
       { route: [], outcome: ["state", "only-requested-writes", "reconciled"] },
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      "filtered-deployments",
+      "team-project-alias",
+      "deployment-paging",
+      "domain-hatch",
+      "bounded-logs",
+      "env-once",
+      "env-recovery",
+    ].map((suffix) => [
+      `vercel-step2-${suffix}`,
+      {
+        route: [],
+        outcome: [
+          "secret-safe",
+          ...(suffix.startsWith("env-")
+            ? ["state", "once", ...(suffix === "env-recovery" ? ["reconciled"] : [])]
+            : ["reads-only"]),
+        ],
+      },
     ]),
   ),
   ...Object.fromEntries(

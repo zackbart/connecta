@@ -29,7 +29,7 @@ export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set<string>(),
   /** Agent-facing surface and guide not yet standard. Always contains step1. */
-  step2: new Set(["docs", "drive", "gmail", "sheets", "slides", "vercel"]),
+  step2: new Set(["docs", "drive", "gmail", "sheets", "slides"]),
 } as const;
 
 /** Independent of optional H-convention metadata; omission must never skip the S checks. */
@@ -166,6 +166,22 @@ export function evidenceViolations(provider: ProviderFacts, _today: string): str
   const source = parse(provider.read("evidence/openapi.json"));
   if (record(source) && validOpenApiComposition(source))
     for (const entry of source["documents"] as { pin: string }[]) names.push(entry.pin);
+  if (record(source) && source["discovery"] !== undefined) {
+    const relation = source["discovery"];
+    if (
+      source["vendored"] !== true ||
+      !record(relation) ||
+      relation["format"] !== "google-discovery-v1" ||
+      relation["pin"] !== "discovery.json"
+    )
+      found.push("E3: Discovery conversion needs vendored: true and google-discovery-v1 discovery.json evidence");
+    else {
+      names.push(relation["pin"]);
+      const original = parse(provider.read("evidence/discovery.json"));
+      if (!record(original) || ["url", "revision", "digest"].some((key) => source[key] !== original[key]))
+        found.push("E3: Discovery source pin must match the primary url, revision and digest");
+    }
+  }
   if (record(drift) && Array.isArray(drift["checks"])) {
     for (const check of drift["checks"]) {
       if (!record(check) || !record(check["specification"])) continue;
@@ -465,6 +481,9 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
       found.push(`S2: ${tool.name} cursor is a string`);
     }
     const rows = !isHatch && /^(?:list|search)_/.test(tool.name);
+    // read({ fields: true }) can omit nested page members. Lists project
+    // items only, and hatch envelopes retain their required paging metadata.
+    const sparseRead = !isHatch && !rows && tool.annotations?.readOnlyHint === true && stringArray(input["fields"]);
     const hasMore = properties(output["page"])["hasMore"];
     // A capped, non-pageable vendor list can declare only a terminal page.
     const fixedLast =
@@ -493,7 +512,7 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
         !hasType(schema, "object") ||
         (!hasType(page["hasMore"], "boolean") && !fixedLast) ||
         (!fixedLast && !hasType(page["nextCursor"], "string")) ||
-        !required(schema, "hasMore") ||
+        (!sparseRead && !required(schema, "hasMore")) ||
         ("total" in page && !hasType(page["total"], "integer"))
       ) {
         found.push(`S2: ${tool.name} page requires hasMore: boolean, with nextCursor?: string and total?: integer`);

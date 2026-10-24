@@ -119,6 +119,10 @@ of an opt-in index's discovery cursor binding.
 construction. Pass that same index to the binding; a hatch refuses a binding
 constructed for another index. Google bindings also reject encoded unreserved
 characters and encoded action separators before dispatch.
+Standard Google clients require an index. Each product's hatch uses
+`googleHatchBinding(connection, { index, review })` with the same connection
+and index as the hatch; the provider-standard suite checks actual hatch
+construction through every Google product fixture, including those awaiting step 2.
 
 Google Discovery conversions declare `discovery: { pin: "discovery.json",
 format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
