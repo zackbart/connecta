@@ -114,6 +114,34 @@ export default defineGoldenSpec({
     body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
+    { label: "indexed form grading", tool: "forms_api_search", args: { query: "quiz answer key" }, replies: [] },
+    { tool: "forms_api_details", args: { method: "POST", path: "/forms/{formId}:batchUpdate" }, replies: [] },
+    {
+      label: "full form with fields",
+      tool: "forms_api_read",
+      args: { path: "/forms/form-1", fields: ["formId", "items", "settings"] },
+      replies: [{ body: FORM }],
+    },
+    {
+      label: "paged response envelope",
+      tool: "forms_api_read",
+      args: { path: "/forms/form-1/responses", query: { pageSize: 5 }, fields: ["responses"] },
+      replies: [{ body: { responses: [RESPONSE], nextPageToken: "page-2" } }],
+    },
+    {
+      label: "revision-guarded hatch edit",
+      tool: "forms_api_write",
+      args: {
+        method: "POST",
+        path: "/forms/form-1:batchUpdate",
+        body: {
+          requests: [{ deleteItem: { location: { index: 4 } } }],
+          writeControl: { requiredRevisionId: "00000042" },
+        },
+        fields: ["writeControl"],
+      },
+      replies: [{ body: { replies: [{}], writeControl: { requiredRevisionId: "00000043" } } }],
+    },
     { tool: "get_form", args: { formId: "form-1" }, replies: [{ body: FORM }] },
     {
       tool: "create_form",

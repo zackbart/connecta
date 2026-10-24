@@ -1,22 +1,21 @@
-// Google Forms' tools on the provider kit (C.7 step 1) and their projections.
-// Catalog bytes, request bytes, cursors and every projection stay as shipped,
-// `raw` included; each program runs on the kit through the shared Google
-// layer and reads the call's own context for sent-secret-aware cuts.
-import { Effect } from "effect";
+// Forms projections and revision-checked workflows on the standard provider kit.
+import { Effect, Option, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connection } from "../../http/vendor.js";
-import type { ConnectorContext, JsonSchema } from "../../types.js";
+import type { ConnectorContext } from "../../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
-import {
-  googleClient,
-  googleFailureMessage,
-  googleOutcomeOf,
-  googleTool,
-  type GoogleToolDeclaration,
-} from "../_shared/google/kit.js";
+import { googleClient, googleFailureMessage, googleOutcomeOf } from "../_shared/google/kit.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 import { FORMS } from "./api.js";
+import { Integer, isMaxChars, isMinChars } from "../../http/json-schema.js";
+import { boundCursor, StandardPage } from "../../http/paging.js";
+import { read, write } from "../../http/tools.js";
+import { fieldsInput, fieldsProblem, selectFields } from "../../http/fields.js";
+import { Refusal } from "../../http/errors.js";
+import { Operation } from "../../runtime/call.js";
+import { formsIndex, FORMS_REQUEST_KINDS } from "./lib/hatch.js";
+import { googleBatchGuard } from "../_shared/google/hatch.js";
 
 /** Google's own response page maximum is 5,000; a page an agent reads is not. */
 const MAX_PAGE_SIZE = 100;
@@ -29,7 +28,7 @@ const DESCRIPTION_CHARS = 2_000;
 const DESCRIPTION_BYTES = 8 * 1024;
 /** Options shown per choice question; a long dropdown says how many it hid. */
 const MAX_OPTIONS = 100;
-/** An option or grid row is cut here; raw: true reads it whole. */
+/** An option or grid row is cut here; forms_api_read reads it whole. */
 const MAX_LABEL_CHARS = 300;
 const MAX_LABEL_BYTES = 1024;
 /** One answer value in get_response, before it would crowd out the rest. */
@@ -88,13 +87,13 @@ function capped(ctx: ConnectorContext, whole: string | undefined, max: number, r
  * escapes counted — so a run of control characters cannot outgrow its place.
  */
 function bounded(ctx: ConnectorContext, value: string | undefined, chars: number, bytes: number): string | undefined {
-  const cut = capped(ctx, value, chars, "pass raw: true to read it");
+  const cut = capped(ctx, value, chars, "use forms_api_read to read it");
   if (cut === undefined || jsonBytes(cut) <= bytes) return cut;
   return clampText(
     ctx,
     value!,
     bytes,
-    (dropped) => `\n[… ${dropped} more characters truncated; pass raw: true to read it]`,
+    (dropped) => `\n[… ${dropped} more characters truncated; use forms_api_read to read it]`,
   );
 }
 
@@ -122,8 +121,15 @@ async function digestOf(bound: readonly unknown[]): Promise<string> {
  * it must send back, redacted ({@link redactSentSecrets}); a value it only
  * compares, by {@link claimOf}.
  */
-function encodeCursor(ctx: ConnectorContext, cursor: JsonRecord): string {
-  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
+function encodeCursor(
+  ctx: ConnectorContext,
+  tool: string,
+  args: Readonly<Record<string, unknown>>,
+  cursor: JsonRecord,
+) {
+  return boundCursor.encode(tool, args, JSON.stringify(cursor), (json) =>
+    encodeForAgent(ctx, json, { url: true, claims: true }),
+  );
 }
 
 /** A downstream value a cursor only compares: itself, or its digest when it holds a sent value. */
@@ -144,9 +150,7 @@ function decodeCursor(
 ): JsonRecord {
   let cursor: JsonRecord;
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-    cursor = asRecord(JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)))));
+    cursor = asRecord(JSON.parse(value));
   } catch {
     cursor = {};
   }
@@ -548,7 +552,7 @@ function projectBatch(formId: string, value: unknown): JsonRecord {
     formId,
     revisionId,
     replies: replies.map((reply) => compact({ createdItemId: reply["createdItemId"] })),
-    truncated: true,
+    truncated: ["replies[].createdQuestionIds"],
     note,
   });
   if (jsonBytes(idsOnly) <= RESULT_BUDGET_BYTES) return idsOnly;
@@ -558,283 +562,171 @@ function projectBatch(formId: string, value: unknown): JsonRecord {
     replies: [],
     replyCount: replies.length,
     createdItemCount: replies.filter((reply) => reply["createdItemId"] !== undefined).length,
-    truncated: true,
+    truncated: ["replies[]", ...(revisionId && jsonBytes(revisionId) > 1024 ? ["revisionId"] : [])],
     note: revisionId && jsonBytes(revisionId) <= 1024 ? note : `${note} Read its revisionId there too.`,
   });
 }
 
-// --- Schemas ----------------------------------------------------------------------
-
-function input(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
-  return { type: "object", properties, required, additionalProperties: false };
-}
-
-const ID_PATTERN = "^[A-Za-z0-9_-]+$";
-
-function idProperty(description: string): JsonSchema {
-  return { type: "string", minLength: 1, maxLength: 256, pattern: ID_PATTERN, description };
-}
-
-const FORM_ID_PROPERTY = idProperty(
-  "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link.",
+// --- Effect schemas: catalog and runtime decoding share these declarations. ---
+const pattern = (source: string) =>
+  Schema.makeFilter((value: string) => new RegExp(source).test(value), { toJsonSchema: () => ({ pattern: source }) });
+const string = (description: string, max = 256) =>
+  Schema.String.check(isMinChars(1), isMaxChars(max)).annotate({ description });
+const id = (description: string) => string(description).check(pattern("^[A-Za-z0-9_-]+$"));
+const formId = id("Form id from its /forms/d/<formId>/edit URL or Drive; not the /forms/d/e/ responder link.");
+const revision = string("Current revisionId from a read or preceding edit; re-read and rebuild after conflict.").check(
+  pattern("^\\S+$"),
+);
+const cursor = Schema.optionalKey(string("Opaque page.nextCursor from this same tool and arguments.", 16384));
+const optional = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.Struct(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Schema.optionalKey(value)])));
+const Truncated = Schema.Array(Schema.String);
+const File = optional({ fileId: Schema.String, fileName: Schema.String, mimeType: Schema.String });
+const Feedback = optional({
+  text: Schema.String,
+  links: Schema.Array(optional({ uri: Schema.String, displayText: Schema.String, video: Schema.Boolean })),
+});
+const Answer = optional({
+  questionId: Schema.String,
+  title: Schema.String,
+  values: Schema.Array(Schema.String),
+  files: Schema.Array(File),
+  score: Schema.Number,
+  correct: Schema.Boolean,
+  feedback: Feedback,
+});
+const ResponseRecord = optional({
+  responseId: Schema.String,
+  createTime: Schema.String,
+  lastSubmittedTime: Schema.String,
+  respondentEmail: Schema.String,
+  totalScore: Schema.Number,
+  omittedQuestionIds: Schema.Array(Schema.String),
+  answers: Schema.Array(Answer),
+  truncated: Truncated,
+});
+const choice = { options: Schema.Array(Schema.String), hasOther: Schema.Boolean };
+const Question = optional({
+  questionId: Schema.String,
+  type: Schema.String,
+  rowTitle: Schema.String,
+  required: Schema.Boolean,
+  points: Integer,
+  ...choice,
+  scale: optional({ low: Integer, high: Integer, lowLabel: Schema.String, highLabel: Schema.String }),
+  includesYear: Schema.Boolean,
+  includesTime: Schema.Boolean,
+  duration: Schema.Boolean,
+});
+const Item = optional({
+  itemId: Schema.String,
+  kind: Schema.String,
+  title: Schema.String,
+  description: Schema.String,
+  gridType: Schema.String,
+  ...choice,
+  questions: Schema.Array(Question),
+  questionsFrom: Integer,
+});
+const FormRecord = optional({
+  formId: Schema.String,
+  title: Schema.String,
+  documentTitle: Schema.String,
+  description: Schema.String,
+  revisionId: Schema.String,
+  responderUri: Schema.String,
+  editUrl: Schema.String,
+  linkedSheetId: Schema.String,
+  isQuiz: Schema.Boolean,
+  emailCollection: Schema.String,
+  published: Schema.Boolean,
+  acceptingResponses: Schema.Boolean,
+  itemCount: Integer,
+  questionCount: Integer,
+  page: StandardPage,
+  items: Schema.Array(Item),
+  truncated: Truncated,
+});
+const BatchRecord = optional({
+  formId: Schema.String,
+  revisionId: Schema.String,
+  replies: Schema.Array(optional({ createdItemId: Schema.String, createdQuestionIds: Schema.Array(Schema.String) })),
+  truncated: Truncated,
+  note: Schema.String,
+  replyCount: Integer,
+  createdItemCount: Integer,
+});
+const contextOf = Effect.gen(function* () {
+  const operation = yield* Effect.serviceOption(Operation);
+  if (Option.isNone(operation) || !operation.value) return yield* Effect.die(new Error("Missing Forms call context."));
+  return operation.value;
+});
+const knownFailures = Effect.catchDefect((error: unknown) =>
+  error instanceof ConnectorCallError ? Effect.fail(new Refusal({ error })) : Effect.die(error),
 );
 
-const REVISION_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 256,
-  pattern: "^\\S+$",
-  description:
-    "revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry.",
-};
-
-function cursorProperty(same: string): JsonSchema {
-  return {
-    type: "string",
-    minLength: 1,
-    maxLength: 4096,
-    description: `Opaque page.nextCursor from the previous page. Pass it back unchanged with the same ${same}.`,
+/** Convert internal continuation counts and text markers into S3 paths. */
+function standardResult(value: JsonRecord): JsonRecord {
+  const truncated = new Set<string>(Array.isArray(value["truncated"]) ? value["truncated"] : []);
+  const visit = (entry: unknown, path: string): unknown => {
+    if (typeof entry === "string") {
+      if (/\[… .*truncated;/.test(entry)) truncated.add(path);
+      return entry;
+    }
+    if (Array.isArray(entry)) return entry.map((item) => visit(item, `${path}[]`));
+    if (!entry || typeof entry !== "object") return entry;
+    const out: JsonRecord = {};
+    for (const [key, child] of Object.entries(entry)) {
+      if (key === "truncated") continue;
+      if (key === "moreOptions" || key === "moreQuestions") {
+        if (child) truncated.add(`${path ? `${path}.` : ""}${key === "moreOptions" ? "options" : "questions"}[]`);
+        continue;
+      }
+      if (key === "omittedQuestionIds" && Array.isArray(child) && child.length)
+        truncated.add(`${path ? `${path}.` : ""}answers[]`);
+      out[key] = visit(child, path ? `${path}.${key}` : key);
+    }
+    return out;
   };
+  const result = visit(value, "") as JsonRecord;
+  return { ...result, ...(truncated.size ? { truncated: [...truncated] } : {}) };
 }
 
-const LIMIT_PROPERTY: JsonSchema = {
-  type: "integer",
-  minimum: 1,
-  maximum: MAX_PAGE_SIZE,
-  description: `Responses per page, 1 to ${MAX_PAGE_SIZE}; defaults to ${DEFAULT_PAGE_SIZE}. Connecta's cap, far below Google's 5,000; page with the cursor.`,
-};
-
-const RFC3339_UTC = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$";
-
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-
-const FILE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    fileId: { type: "string" },
-    fileName: { type: "string" },
-    mimeType: { type: "string" },
-  },
-};
-
-const FEEDBACK_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    text: { type: "string" },
-    links: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          uri: { type: "string" },
-          displayText: { type: "string" },
-          video: { type: "boolean" },
-        },
-      },
-    },
-  },
-};
-
-const RESPONSE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    responseId: { type: "string" },
-    createTime: { type: "string" },
-    lastSubmittedTime: { type: "string" },
-    respondentEmail: { type: "string" },
-    totalScore: { type: "number" },
-    omittedQuestionIds: { type: "array", items: { type: "string" } },
-    answers: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          questionId: { type: "string" },
-          title: { type: "string" },
-          values: { type: "array", items: { type: "string" } },
-          files: { type: "array", items: FILE_SCHEMA },
-          score: { type: "number" },
-          correct: { type: "boolean" },
-          feedback: FEEDBACK_SCHEMA,
-        },
-      },
-    },
-  },
-};
-
-/** A choice question's, or a grid's shared, options. */
-const CHOICE_PROPERTIES: Record<string, JsonSchema> = {
-  options: { type: "array", items: { type: "string" } },
-  moreOptions: { type: "integer" },
-  hasOther: { type: "boolean" },
-};
-
-const QUESTION_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    questionId: { type: "string" },
-    type: { type: "string" },
-    rowTitle: { type: "string" },
-    required: { type: "boolean" },
-    points: { type: "integer" },
-    ...CHOICE_PROPERTIES,
-    scale: {
-      type: "object",
-      properties: {
-        low: { type: "integer" },
-        high: { type: "integer" },
-        lowLabel: { type: "string" },
-        highLabel: { type: "string" },
-      },
-    },
-    includesYear: { type: "boolean" },
-    includesTime: { type: "boolean" },
-    duration: { type: "boolean" },
-  },
-};
-
-/**
- * get_form's result. Only `formId` is required, because `raw: true` returns
- * Google's own Form resource instead, where ProtoJSON omits every empty field —
- * an empty form has no `items` at all. The projection always carries `items`.
- */
-const FORM_SCHEMA: JsonSchema = {
-  type: "object",
-  description:
-    "The projection; with raw: true, Google's Form resource (formId, info, settings, publishSettings, items, revisionId), empty fields omitted.",
-  properties: {
-    formId: { type: "string" },
-    title: { type: "string" },
-    documentTitle: { type: "string" },
-    description: { type: "string" },
-    revisionId: { type: "string" },
-    responderUri: { type: "string" },
-    editUrl: { type: "string" },
-    linkedSheetId: { type: "string" },
-    isQuiz: { type: "boolean" },
-    emailCollection: { type: "string" },
-    published: { type: "boolean" },
-    acceptingResponses: { type: "boolean" },
-    itemCount: { type: "integer" },
-    questionCount: { type: "integer" },
-    page: PAGE_SCHEMA,
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          itemId: { type: "string" },
-          kind: { type: "string" },
-          title: { type: "string" },
-          description: { type: "string" },
-          gridType: { type: "string" },
-          ...CHOICE_PROPERTIES,
-          questions: { type: "array", items: QUESTION_SCHEMA },
-          questionsFrom: { type: "integer" },
-          moreQuestions: { type: "integer" },
-        },
-      },
-    },
-  },
-  required: ["formId"],
-};
-
-/**
- * One Forms `Request`: exactly one of Google's six kinds, each shaped as
- * Google documents it. The kind is closed here; its body is Google's.
- */
-function requestKind(description: string): JsonSchema {
-  return { type: "object", description };
-}
-
-const REQUEST_SCHEMA: JsonSchema = {
-  type: "object",
-  minProperties: 1,
-  maxProperties: 1,
-  additionalProperties: false,
-  properties: {
-    createItem: requestKind("{ item, location: { index } }"),
-    updateItem: requestKind("{ item, location: { index }, updateMask }"),
-    deleteItem: requestKind("{ location: { index } }"),
-    moveItem: requestKind("{ originalLocation, newLocation }"),
-    updateFormInfo: requestKind("{ info: { title?, description? }, updateMask }"),
-    updateSettings: requestKind("{ settings: { quizSettings?, emailCollectionType? }, updateMask }"),
-  },
-};
-
-// --- Tools ------------------------------------------------------------------------
-
-/** Forms' six tools, in catalog order. Every answer has already passed the connection's value safety. */
 export function formsTools({ connection }: { connection: Connection }): ApiTool[] {
-  const client = googleClient(connection, FORMS.provider);
-  const readOnly = { readOnlyHint: true } as const;
+  const client = googleClient(connection, FORMS.provider, { standard: true, index: formsIndex });
   const formPath = (formId: string) => `/forms/${encodeURIComponent(formId)}`;
-  // A tool that reads the form beside another request names a step for each,
-  // so a deployment that serves it as a write sends each request once.
   const readForm = (formId: string, step?: string) =>
-    client.json({ method: "GET", path: formPath(formId) }, step ? { step } : undefined);
+    client.json({ method: "GET", path: formPath(formId), template: "/forms/{formId}" }, step ? { step } : undefined);
   const pairedReads = { form: "once", answers: "once" } as const;
-  const batch = (formId: string, requests: unknown[], revisionId: string | undefined) =>
-    Effect.map(
-      client.json(
-        {
-          method: "POST",
-          path: `${formPath(formId)}:batchUpdate`,
-          body: compact({
-            requests,
-            writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined,
-          }),
-        },
-        // A named revision makes Google's refused precondition mean "the form
-        // moved on", which the shared table reports as `conflict`.
+  const batch = (formId: string, requests: readonly unknown[], revisionId: string | undefined) =>
+    Effect.gen(function* () {
+      const body = compact({ requests, writeControl: revisionId ? { requiredRevisionId: revisionId } : undefined });
+      const problem = googleBatchGuard(body, { kinds: FORMS_REQUEST_KINDS, revision: revisionId !== undefined });
+      if (problem) return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", problem) }));
+      const reply = yield* client.json(
+        { method: "POST", path: `${formPath(formId)}:batchUpdate`, template: "/forms/{formId}:batchUpdate", body },
         { revisionGuarded: revisionId !== undefined },
-      ),
-      (reply) => projectBatch(formId, reply),
-    );
-
-  const declarations: GoogleToolDeclaration[] = [
-    {
+      );
+      return projectBatch(formId, reply);
+    });
+  return [
+    read(connection, {
       name: "get_form",
       description:
         "Get one Google Form: title, description, quiz and publish state, revisionId, and its items with question ids, types, and options, paged when large. Never lists forms.",
-      annotations: readOnly,
-      inputSchema: input(
-        {
-          formId: FORM_ID_PROPERTY,
-          raw: {
-            type: "boolean",
-            description:
-              "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them. Not paged: a form too large for one result is refused.",
-          },
-          cursor: cursorProperty("formId"),
-        },
-        ["formId"],
-      ),
-      outputSchema: FORM_SCHEMA,
-      run: (args, ctx) =>
+      input: Schema.Struct({
+        formId,
+        cursor,
+        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in the form; page and cut metadata is preserved.")),
+      }),
+      output: FormRecord,
+      run: (args) =>
         Effect.gen(function* () {
+          const ctx = yield* contextOf;
+          const problem = fieldsProblem(args.fields, new Set(Object.keys(FormRecord.fields)), "the form");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
-          if (args["raw"] === true && args["cursor"] !== undefined) {
-            throw new ConnectorCallError("invalid_args", "raw: true is not paged; omit cursor.");
-          }
           const form = yield* readForm(formId);
-          if (args["raw"] === true) {
-            const size = jsonBytes(form);
-            if (size > RESULT_BUDGET_BYTES) {
-              throw new ConnectorCallError(
-                "invalid_args",
-                `This form's raw resource is ${size} bytes, more than one result carries (${RESULT_BUDGET_BYTES}). Read the projection, which pages its items with page.nextCursor, or edit with the item indexes it lists.`,
-              );
-            }
-            return form;
-          }
           const { items, ...header } = projectForm(ctx, form);
           const all = asArray(items).map(asRecord);
           const revision = yield* Effect.promise(() => claimOf(ctx, text(asRecord(form)["revisionId"]) ?? ""));
@@ -846,7 +738,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
           let from = 0;
           if (typeof args["cursor"] === "string") {
             const cursor = decodeCursor(
-              args["cursor"],
+              yield* boundCursor.decode("get_form", { formId }, args["cursor"]),
               digest,
               ["d", "i", "q", "r"],
               (c) => isIndex(c["i"]) && isIndex(c["q"]) && typeof c["r"] === "string",
@@ -884,31 +776,36 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             // A grid cut short ends the page: the cursor continues inside it.
             if (item["moreQuestions"]) break;
           }
-          const build = () => {
-            const lastIndex = start + kept.length - 1;
-            const last = kept[kept.length - 1];
-            let next: JsonRecord | undefined;
-            if (last?.["moreQuestions"]) {
-              const before = lastIndex === start ? from : 0;
-              next = { d: digest, i: lastIndex, q: before + asArray(last["questions"]).length, r: revision };
-            } else if (lastIndex + 1 < all.length) {
-              next = { d: digest, i: lastIndex + 1, q: 0, r: revision };
-            }
-            const nextCursor = next ? encodeCursor(ctx, next) : null;
-            return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
-          };
+          const build = () =>
+            Effect.gen(function* () {
+              const lastIndex = start + kept.length - 1;
+              const last = kept[kept.length - 1];
+              let next: JsonRecord | undefined;
+              if (last?.["moreQuestions"]) {
+                const before = lastIndex === start ? from : 0;
+                next = { d: digest, i: lastIndex, q: before + asArray(last["questions"]).length, r: revision };
+              } else if (lastIndex + 1 < all.length) {
+                next = { d: digest, i: lastIndex + 1, q: 0, r: revision };
+              }
+              const nextCursor = next ? yield* encodeCursor(ctx, "get_form", { formId }, next) : undefined;
+              return {
+                ...header,
+                page: { hasMore: nextCursor !== undefined, ...(nextCursor ? { nextCursor } : {}) },
+                items: kept,
+              };
+            });
           // The estimate above reserved room; the complete result, cursor and
           // all, is what has to fit.
-          let result = build();
+          let result = yield* build();
           while (jsonBytes(result) > RESULT_BUDGET_BYTES && kept.length > 1) {
             kept.pop();
-            result = build();
+            result = yield* build();
           }
           if (jsonBytes(result) > RESULT_BUDGET_BYTES && kept.length === 1) {
             // Measured with the longest cursor this page could carry.
             const room = RESULT_BUDGET_BYTES - jsonBytes({ ...result, items: [] }) - 64;
             kept[0] = fitItem(piece(start), room);
-            result = build();
+            result = yield* build();
           }
           // A page must move forward: a continued grid that cannot fit even one
           // row would hand back the cursor it was given.
@@ -921,58 +818,44 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               { retryable: false },
             );
           }
-          return result;
-        }),
-    },
-    {
+          const safe = standardResult(result);
+          return {
+            ...(selectFields(safe, args.fields) as JsonRecord),
+            page: result.page,
+            ...(safe["truncated"] ? { truncated: safe["truncated"] } : {}),
+          };
+        }).pipe(knownFailures),
+    }),
+    write(connection, {
       name: "create_form",
       description:
         "Create an empty Google Form with a title in the user's Drive. Google sets only the title here: add questions and a description with batch_update_form.",
-      // Additive: a new, empty form changes nothing that existed. Not
-      // read-only: program calls require a writable endpoint; other writes use
-      // call_destructive_tool. The host controls approval.
-      annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: input(
-        {
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1_000,
-            description: "Title responders see.",
-          },
-          documentTitle: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1_000,
+      input: Schema.Struct({
+        title: string("Title responders see.", 1000),
+        documentTitle: Schema.optionalKey(string("Drive file name; defaults to title.", 1000)),
+        unpublished: Schema.optionalKey(
+          Schema.Boolean.annotate({
             description:
-              "File name in Drive; defaults to the title. It cannot be changed through this connection later.",
-          },
-          unpublished: {
-            type: "boolean",
-            description:
-              "Create it not accepting responses. This connection cannot publish it later; the owner does, in Forms. Omit to publish.",
-          },
-        },
-        ["title"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          formId: { type: "string" },
-          title: { type: "string" },
-          documentTitle: { type: "string" },
-          revisionId: { type: "string" },
-          responderUri: { type: "string" },
-          editUrl: { type: "string" },
-        },
-        required: ["formId"],
-      },
+              "Create without accepting responses; only the owner can publish it later. Omit for Google default publishing.",
+          }),
+        ),
+      }),
+      output: optional({
+        formId: Schema.String,
+        title: Schema.String,
+        documentTitle: Schema.String,
+        revisionId: Schema.String,
+        responderUri: Schema.String,
+        editUrl: Schema.String,
+      }),
+      destructive: false,
       run: (args) =>
         Effect.gen(function* () {
           const created = yield* client
             .json({
               method: "POST",
               path: "/forms",
+              template: "/forms",
               query: { unpublished: args["unpublished"] === true ? true : undefined },
               body: { info: compact({ title: args["title"], documentTitle: args["documentTitle"] }) },
             })
@@ -1008,39 +891,39 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             responderUri: text(form["responderUri"]),
             editUrl: formId ? editUrl(formId) : undefined,
           });
-        }),
-    },
-    {
+        }).pipe(knownFailures),
+    }),
+    read(connection, {
       name: "list_responses",
       description:
         "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response reads one whole.",
-      annotations: readOnly,
+      input: Schema.Struct({
+        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in each response item; only narrows safe data.")),
+        formId,
+        submittedAfter: Schema.optionalKey(
+          Schema.String.check(pattern("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$")).annotate({
+            description: "Exclusive submitted-after UTC instant, e.g. 2026-10-01T00:00:00Z.",
+          }),
+        ),
+        limit: Schema.optionalKey(
+          Integer.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE_SIZE })).annotate({
+            description: "Maximum responses; default 25, at most 100.",
+            default: 25,
+          }),
+        ),
+        cursor,
+      }),
+      output: Schema.Struct({
+        items: Schema.Array(ResponseRecord),
+        page: StandardPage,
+        truncated: Schema.optionalKey(Truncated),
+      }),
       writeSteps: pairedReads,
-      inputSchema: input(
-        {
-          formId: FORM_ID_PROPERTY,
-          submittedAfter: {
-            type: "string",
-            pattern: RFC3339_UTC,
-            description:
-              "Only responses submitted after this UTC instant (exclusive), e.g. 2026-10-01T00:00:00Z or the newest lastSubmittedTime already read.",
-          },
-          limit: LIMIT_PROPERTY,
-          cursor: cursorProperty("formId and submittedAfter"),
-        },
-        ["formId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          formId: { type: "string" },
-          responses: { type: "array", items: RESPONSE_SCHEMA },
-          page: PAGE_SCHEMA,
-        },
-        required: ["formId", "responses", "page"],
-      },
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
+          const ctx = yield* contextOf;
+          const problem = fieldsProblem(args.fields, new Set(Object.keys(ResponseRecord.fields)), "a response item");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const limit: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
           const digest = yield* Effect.promise(() =>
@@ -1057,7 +940,11 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
           const resume =
             typeof args["cursor"] === "string"
               ? decodeCursor(
-                  args["cursor"],
+                  yield* boundCursor.decode(
+                    "list_responses",
+                    { formId, submittedAfter: args["submittedAfter"] },
+                    args["cursor"],
+                  ),
                   digest,
                   ["d", "t", "a", "h", "n"],
                   (c) =>
@@ -1083,6 +970,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
                 {
                   method: "GET",
                   path: `${formPath(formId)}/responses`,
+                  template: "/forms/{formId}/responses",
                   query: {
                     filter: args["submittedAfter"] ? `timestamp > ${args["submittedAfter"]}` : undefined,
                     pageSize: size,
@@ -1126,34 +1014,58 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             responses.push(response);
             used += jsonBytes(response) + 1;
           }
-          const google = text(page["nextPageToken"]);
+          const rawToken = page["nextPageToken"];
+          if (
+            rawToken !== undefined &&
+            (typeof rawToken !== "string" ||
+              (rawToken &&
+                (!rawToken.trim() ||
+                  /^[a-z][a-z0-9+.-]*:/i.test(rawToken) ||
+                  [...rawToken].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))))
+          )
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "Google returned malformed response paging metadata.",
+            );
+          const google = text(rawToken);
           const googleNext = google === undefined ? null : redactSentSecrets(ctx, google);
-          const build = () => {
-            const last = start + responses.length - 1;
-            // Rows left on Google's page: continue after the last one returned.
-            // A page that ended on an anchor with nothing after it has no
-            // response of its own to anchor on, and moves to Google's next page.
-            let next: JsonRecord | undefined;
-            if (start + responses.length < rows.length && responses.length > 0) {
-              const after = idOf(rows[last]) === undefined ? undefined : claims[last];
-              if (after === undefined) {
-                throw new ConnectorCallError(
-                  "connector_call_failed",
-                  "Google returned a response without an id, so this page cannot be continued safely.",
-                  { retryable: false },
-                );
+          if (googleNext && (googleNext !== google || googleNext.includes("[redacted]")))
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "Google returned a withheld response page token; continuation is unavailable.",
+            );
+          const build = () =>
+            Effect.gen(function* () {
+              const last = start + responses.length - 1;
+              // Rows left on Google's page: continue after the last one returned.
+              // A page that ended on an anchor with nothing after it has no
+              // response of its own to anchor on, and moves to Google's next page.
+              let next: JsonRecord | undefined;
+              if (start + responses.length < rows.length && responses.length > 0) {
+                const after = idOf(rows[last]) === undefined ? undefined : claims[last];
+                if (after === undefined) {
+                  throw new ConnectorCallError(
+                    "connector_call_failed",
+                    "Google returned a response without an id, so this page cannot be continued safely.",
+                    { retryable: false },
+                  );
+                }
+                next = { d: digest, t: token, a: after, h: pageHash, n: size };
+              } else if (googleNext) {
+                next = { d: digest, t: googleNext, a: null, h: null, n: limit };
               }
-              next = { d: digest, t: token, a: after, h: pageHash, n: size };
-            } else if (googleNext) {
-              next = { d: digest, t: googleNext, a: null, h: null, n: limit };
-            }
-            const nextCursor = next ? encodeCursor(ctx, next) : null;
-            return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
-          };
-          let result = build();
+              const nextCursor = next
+                ? yield* encodeCursor(ctx, "list_responses", { formId, submittedAfter: args["submittedAfter"] }, next)
+                : undefined;
+              return {
+                items: responses,
+                page: { hasMore: nextCursor !== undefined, ...(nextCursor ? { nextCursor } : {}) },
+              };
+            });
+          let result = yield* build();
           while (jsonBytes(result) > RESULT_BUDGET_BYTES && responses.length > 1) {
             responses.pop();
-            result = build();
+            result = yield* build();
           }
           if (jsonBytes(result) > RESULT_BUDGET_BYTES && responses.length === 1) {
             responses[0] = fitResponse(
@@ -1162,9 +1074,9 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               labels,
               [LIST_ANSWER_CHARS, 200],
               remedy,
-              RESULT_BUDGET_BYTES - jsonBytes({ ...result, responses: [] }) - 1,
+              RESULT_BUDGET_BYTES - jsonBytes({ ...result, items: [] }) - 1,
             );
-            result = build();
+            result = yield* build();
           }
           if (jsonBytes(result) > RESULT_BUDGET_BYTES) {
             throw new ConnectorCallError(
@@ -1173,33 +1085,37 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               { retryable: false },
             );
           }
-          return result;
-        }),
-    },
-    {
+          const safe = standardResult(result);
+          return {
+            items: selectFields(result.items, args.fields) as JsonRecord[],
+            page: result.page,
+            ...(safe["truncated"] ? { truncated: safe["truncated"] } : {}),
+          };
+        }).pipe(knownFailures),
+    }),
+    read(connection, {
       name: "get_response",
       description:
         "Get one Google Form response whole, each answer labeled with its question's title, plus file ids, quiz grades, and feedback. questionIds narrows a large one.",
-      annotations: readOnly,
+      input: Schema.Struct({
+        formId,
+        responseId: id("Response id from list_responses."),
+        questionIds: Schema.optionalKey(
+          Schema.Array(id("Question id from get_form or omittedQuestionIds."))
+            .check(Schema.isMinLength(1), Schema.isMaxLength(MAX_QUESTION_IDS), Schema.isUnique())
+            .annotate({ description: "Return only these questions for a large response." }),
+        ),
+        fields: Schema.optionalKey(
+          fieldsInput("Dot paths to keep in the response; cut and recovery metadata is preserved."),
+        ),
+      }),
+      output: ResponseRecord,
       writeSteps: pairedReads,
-      inputSchema: input(
-        {
-          formId: FORM_ID_PROPERTY,
-          responseId: idProperty("Response id from list_responses."),
-          questionIds: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_QUESTION_IDS,
-            uniqueItems: true,
-            items: idProperty("Question id from get_form, or from omittedQuestionIds."),
-            description: "Return only these questions' answers, for a response too large to read whole in one result.",
-          },
-        },
-        ["formId", "responseId"],
-      ),
-      outputSchema: { ...RESPONSE_SCHEMA, required: ["responseId", "answers"] },
-      run: (args, ctx) =>
+      run: (args) =>
         Effect.gen(function* () {
+          const ctx = yield* contextOf;
+          const problem = fieldsProblem(args.fields, new Set(Object.keys(ResponseRecord.fields)), "the response");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const [form, response] = yield* Effect.all(
             [
@@ -1208,6 +1124,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
                 {
                   method: "GET",
                   path: `${formPath(formId)}/responses/${encodeURIComponent(args["responseId"])}`,
+                  template: "/forms/{formId}/responses/{responseId}",
                 },
                 { step: "answers" },
               ),
@@ -1242,39 +1159,30 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               "This response cannot be returned inside one result even with its answers cut; pass fewer questionIds.",
             );
           }
-          return result;
-        }),
-    },
-    {
+          const safe = standardResult(result);
+          return {
+            ...(selectFields(safe, args.fields) as JsonRecord),
+            ...(safe["truncated"] ? { truncated: safe["truncated"] } : {}),
+            ...(safe["omittedQuestionIds"] ? { omittedQuestionIds: safe["omittedQuestionIds"] } : {}),
+          };
+        }).pipe(knownFailures),
+    }),
+    write(connection, {
       name: "update_form_info",
       description:
         "Replace a Google Form's title, description, or both; what is omitted is kept. The old text is gone. Questions and settings need batch_update_form.",
-      // Destructive: the title or description it replaces is not recoverable
-      // through this connection.
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          formId: FORM_ID_PROPERTY,
-          title: {
-            type: "string",
-            minLength: 1,
-            maxLength: 1_000,
-            description: "New title responders see; omit to keep it.",
-          },
-          description: {
-            type: "string",
-            maxLength: 20_000,
-            description: "New description; an empty string clears it. Omit to keep it.",
-          },
-          requiredRevisionId: { ...REVISION_PROPERTY, description: `Optional. ${REVISION_PROPERTY.description}` },
-        },
-        ["formId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: { formId: { type: "string" }, revisionId: { type: "string" } },
-        required: ["formId"],
-      },
+      input: Schema.Struct({
+        formId,
+        title: Schema.optionalKey(string("New title; omit to preserve.", 1000)),
+        description: Schema.optionalKey(
+          Schema.String.check(isMaxChars(20000)).annotate({
+            description: "New description; empty clears, omission preserves.",
+          }),
+        ),
+        requiredRevisionId: Schema.optionalKey(revision),
+      }),
+      output: optional({ formId: Schema.String, revisionId: Schema.String }),
+      destructive: true,
       run: (args) =>
         Effect.gen(function* () {
           const fields = (["title", "description"] as const).filter((field) => args[field] !== undefined);
@@ -1294,53 +1202,43 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             args["requiredRevisionId"],
           );
           return compact({ formId, revisionId });
-        }),
-    },
-    {
+        }).pipe(knownFailures),
+    }),
+    write(connection, {
       name: "batch_update_form",
       description:
         "Apply Forms API batchUpdate requests to a Google Form, all or none: create, update, move, or delete items, and change info or quiz settings. The host may ask the user to confirm this write.",
-      // Destructive whatever it carries: a deleteItem or an updateItem loses
-      // what it replaces, and the requests are Google's to interpret.
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          formId: FORM_ID_PROPERTY,
-          requests: {
-            type: "array",
-            minItems: 1,
-            maxItems: MAX_REQUESTS,
-            items: REQUEST_SCHEMA,
-            description: `1 to ${MAX_REQUESTS} Forms API Request objects, each exactly one kind, applied in order as Google documents them. Locations are item indexes.`,
-          },
-          requiredRevisionId: REVISION_PROPERTY,
-        },
-        ["formId", "requests", "requiredRevisionId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          formId: { type: "string" },
-          revisionId: { type: "string" },
-          replies: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                createdItemId: { type: "string" },
-                createdQuestionIds: { type: "array", items: { type: "string" } },
-              },
-            },
-          },
-          truncated: { type: "boolean" },
-          note: { type: "string" },
-          replyCount: { type: "integer" },
-          createdItemCount: { type: "integer" },
-        },
-        required: ["formId", "replies"],
-      },
-      run: (args) => batch(args["formId"], args["requests"], args["requiredRevisionId"]),
-    },
+      input: Schema.Struct({
+        formId,
+        requests: Schema.Array(
+          Schema.Struct(
+            Object.fromEntries(
+              FORMS_REQUEST_KINDS.map((kind) => [
+                kind,
+                Schema.optionalKey(
+                  Schema.Record(Schema.String, Schema.Unknown).annotate({
+                    description: `Forms ${kind} request body; use forms_api_details for nested properties.`,
+                  }),
+                ),
+              ]),
+            ),
+          ).check(
+            Schema.makeFilter((value) => Object.keys(value).length === 1, {
+              expected: "exactly one reviewed request kind",
+              toJsonSchema: () => ({ minProperties: 1, maxProperties: 1 }),
+            }),
+          ),
+        )
+          .check(Schema.isMinLength(1), Schema.isMaxLength(MAX_REQUESTS))
+          .annotate({
+            description:
+              "1–100 reviewed Forms requests, each exactly one kind. Locations are item indexes; use forms_api_details for nested request contracts.",
+          }),
+        requiredRevisionId: revision,
+      }),
+      output: BatchRecord,
+      destructive: true,
+      run: (args) => batch(args["formId"], args["requests"], args["requiredRevisionId"]).pipe(knownFailures),
+    }),
   ];
-  return declarations.map((declaration) => googleTool(connection, declaration));
 }
