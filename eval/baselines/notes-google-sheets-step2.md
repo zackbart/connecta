@@ -17,7 +17,7 @@ BEFORE product source is clean main
 `src/` tree equals main; this snapshot is preserved in the branch's merge history.
 AFTER is clean `535ce06584b83ef8d1036c1301fdd78e92feec2b`, source tree
 `407307124b301b7aaf810b4f8cc465d7b0e9cbd2`. The evaluation-artifact and provenance commits preserve that product source.
-The later main merge brings Docs changes and refreshes Sheets bundle facts.
+The later main merges bring Docs and Forms changes and refresh Sheets bundle facts.
 The round-1 fixes below subsequently change Sheets discovery, guidance and refused-kind
 messages; the paid trials measure the frozen source above, before those fixes. Both arms include H1 (#1008), the
 route-neutral graders/checker fixes (#1011) and delegated-caller binding (#1013).
@@ -233,3 +233,63 @@ both surfaces and both grading modes, including the expected Drive D4 capability
 gap and committed network/body recovery variants. The final byte audit again
 confirms all **65** non-Sheets golden files match main. The original four paid
 JSON hashes still match, test delta remains **0**, and no review fixes are applied.
+
+## Round-1 fixes and Forms #1014 merge
+
+The review fixes are committed on top of 6e9f9e07, followed by a merge of main
+`84fb4eee` (the full commit is recorded in JSON). Both products' documentation,
+pending-list removals, reference entries, eval fixtures and hatch failure coverage
+are retained. The inherited `google-controls.ts` envelope-control fix is exactly
+main's #1014 version; this product adds no local shared-control change. Forms and
+Docs source and all 65 non-Sheets golden files match this main byte for byte.
+
+The batch summary uses the reviewer's exact first sentence. A Sheets-local
+`spreadsheets ranges headers` discovery category supplies the nouns missing from
+the 120-character summary, without changing method/path/schema/verdict admission
+or the shared ranker. Sort range, merge cells, delete rows, rename sheet and freeze
+header row now rank batchUpdate first. A 42-query surface probe loses no prior
+top-two batch match. These rows, sort rows, and assertions for all ten actual
+refusal reasons on named and hatch batches are folded into existing test cases.
+The guide and id parameter accept a supplied `sheets1` as is, name
+`get_spreadsheet` and `append_values`, and reserve Drive searches for names.
+Migration notes disclose the shared builder's omission of create/add/append
+`destructiveHint:false` (#1017); approval routing is unchanged. Unrelated fixture
+Unicode escaping is restored. No paid trials are rerun for these fixes; the scored
+table and all 56 saved trial grades remain the original frozen comparison.
+
+The post-Forms merge task-definition hash is
+`1a4f873d0aba4e7cb50a8b02a5743d4dc2cabf24f5f4e609004a62a88c48e923`;
+the harness hash remains
+`6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca`.
+This is a validation fingerprint, not the paid-run task fingerprint. The merged
+source includes the review changes to discovery, guidance and refusal messages.
+
+Matched Node 22.23.3/esbuild 0.28.1/gzip-9 measurements against clean main
+84fb4eee are Sheets **353,251 → 395,008 B (+41,757 B)** including bundle facts;
+the all-six Google entry is **448,880 → 481,506 B (+32,626 B)**. Docs stays
+**370,111 B** and Forms stays **372,171 B**. The refreshed report-only Sheets
+baseline is **394,998 B** before embedding the new facts. Other providers'
+approved baselines and all caps are retained. These measurements supersede the
+pre-Forms bundle report for the current head.
+
+Merged validation passes all **679 non-Forms selected Node cases**, including
+Sheets, Docs, standards/conventions, the shared failure sweep, delegation and
+content-cut safety. Sheets deterministic Node goldens, all **16** workerd provider
+goldens, `check:static`, `check:build`, Node 24 Eve checks and packed-consumer smoke
+pass with `VITEST_MAX_WORKERS=2`. The affected collection is **445 → 445**, test
+delta **0**. No full local `check` or additional paid trial is run.
+
+An extra run of the unchanged Forms suite exposes an inherited local failure:
+its large-form paging test exceeds its explicit 30-second timeout. It also times
+out on clean main 84fb4eee under the same Node 22 environment. The first expanded
+run's following anchor-deletion assertion fails; that cursor test passes in the
+isolated Forms rerun (**4 pass, 1 timeout**). No Forms source, tests or goldens
+are edited to address this upstream timing issue. All non-Sheets golden bytes
+remain identical to main.
+
+The final all-Google selftest matches expected outcomes for all **42 tasks** on
+both surfaces and both grading modes (**168 combinations**, plus transport and
+12 committed network/body recovery controls; **182** successful control rows).
+Drive D4 retains its expected BEFORE capability gap and failed task outcome.
+No trial result is reclassified by this validation. The final byte audit confirms
+all **65** non-Sheets golden files remain identical to main 84fb4eee.

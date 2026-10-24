@@ -1,0 +1,62 @@
+{
+  "format": 5,
+  "digest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+  "options": {},
+  "candidates": {
+    "GET /forms/{formId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /forms/{formId}/responses": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "POST /forms/{formId}/watches": {
+      "fields": [],
+      "named": true
+    },
+    "POST /forms/{formId}/watches/{watchId}:renew": {
+      "fields": [],
+      "named": true
+    },
+    "POST /forms/{formId}:batchUpdate": {
+      "fields": [],
+      "named": true
+    },
+    "POST /forms/{formId}:setPublishSettings": {
+      "fields": [],
+      "named": true
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /forms/{formId}": [
+        "items[].imageItem.image.contentUri",
+        "items[].questionGroupItem.grid.columns.options[].image.contentUri",
+        "items[].questionGroupItem.image.contentUri",
+        "items[].questionGroupItem.questions[].choiceQuestion.options[].image.contentUri",
+        "items[].questionItem.image.contentUri",
+        "items[].questionItem.question.choiceQuestion.options[].image.contentUri"
+      ],
+      "POST /forms": [
+        "items[].imageItem.image.contentUri",
+        "items[].questionGroupItem.grid.columns.options[].image.contentUri",
+        "items[].questionGroupItem.image.contentUri",
+        "items[].questionGroupItem.questions[].choiceQuestion.options[].image.contentUri",
+        "items[].questionItem.image.contentUri",
+        "items[].questionItem.question.choiceQuestion.options[].image.contentUri"
+      ],
+      "POST /forms/{formId}:batchUpdate": [
+        "form.items[].imageItem.image.contentUri",
+        "form.items[].questionGroupItem.grid.columns.options[].image.contentUri",
+        "form.items[].questionGroupItem.image.contentUri",
+        "form.items[].questionGroupItem.questions[].choiceQuestion.options[].image.contentUri",
+        "form.items[].questionItem.image.contentUri",
+        "form.items[].questionItem.question.choiceQuestion.options[].image.contentUri"
+      ],
+      "GET /forms/{formId}/responses": ["nextPageToken"]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

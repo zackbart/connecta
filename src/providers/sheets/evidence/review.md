@@ -141,9 +141,15 @@ nine exact-range failures as a frozen-grader defect. Its range-neutral
 the scored 12/28 → 17/28 table, trial grades and frozen grader are unchanged.
 
 The 42-query surface probe loses no previously top-two batchUpdate match;
-all five requested queries rank it first. The same 541 selected Node cases
-pass. Against main f9bf5afb, matched Node 22.23.3/esbuild 0.28.1/gzip-9
-measurements are standalone Sheets 353,251 → 394,992 B (+41,741 B) and all
-six Google providers 434,797 → 472,684 B (+37,887 B). Docs stays 370,111 B.
-The report-only Sheets baseline is the 394,984 B snapshot before refreshing
-the embedded bundle facts; caps and other providers' entries are unchanged.
+all five requested queries rank it first. The 541 selected pre-Forms Node
+cases pass. Main 84fb4eee (Forms #1014) is subsequently merged without rebasing,
+preserving both products' shared-file content and inheriting the shared surface
+control fix from that main commit, with no local edit to google-controls.ts.
+
+Against clean main 84fb4eee, matched Node 22.23.3/esbuild 0.28.1/gzip-9
+measurements are standalone Sheets 353,251 → 395,008 B (+41,757 B) and all
+six Google providers 448,880 → 481,506 B (+32,626 B). Docs stays 370,111 B
+and Forms stays 372,171 B. The report-only Sheets baseline is the 394,998 B
+snapshot before refreshing the embedded bundle facts; caps and every other
+provider's approved entry are unchanged. These supersede the pre-Forms
+measurements for the current merged source.
