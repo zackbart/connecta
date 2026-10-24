@@ -2144,8 +2144,9 @@ field-only matches need half-noun coverage across text and declared field
 names. Verb-less noun phrases retain their broader rule: any noun in the
 path/id, or all nouns in the text. A leading create/add/update/edit/make/set/apply/change/rename/send/delete/remove/cancel/stop
 with an object sets write intent and retains later read words as nouns. Make,
-set, apply, change, edit and rename share update synonyms. Raw `make a`,
-`make an`, `make new` and `set up` phrases instead select create synonyms;
+set, apply, change, edit and rename share update synonyms. `make a`,
+`make an`, `make new` and `set up` phrases instead select create synonyms,
+including after leading conversational framing such as `please` or `i want to`;
 `make text bold` retains update intent. Otherwise, a read
 word anywhere sets read intent, including after refund/charge/issue/process.
 Short function words and id-shaped tokens do not contribute to noun coverage.
@@ -2237,11 +2238,13 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-Separate-cursor paging also contributes to the single Paging convention in generated
-Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
-into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
-the declaration retains the existing guide bytes. An unsafe continuation keeps
-the safe page data with `hasMore: true` and no `nextCursor`.
+The generated Paging convention follows the read tool's input schema: tools
+that take `cursor` restore `page.nextCursor` as that top-level argument; tools
+without it restore the token in `query[page.param]` or `body[page.param]`, as
+`page.in` specifies. `kit.hatch.paging` still validates declared mode values as
+a sanity check; it does not select the generated continuation instruction.
+An unsafe continuation keeps the safe page data with `hasMore: true` and no
+`nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.

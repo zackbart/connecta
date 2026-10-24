@@ -549,8 +549,8 @@ export function hatch(
         nouns,
         suppliedValue: object.length > 1 && !nouns.length,
         verbWords:
-          (first === "make" && /^\s*make\s+(?:an?|new)\b/i.test(query)) ||
-          (first === "set" && /^\s*set\s+up\b/i.test(query))
+          (first === "make" && /\bmake\s+(?:an?|new)\b/i.test(query)) ||
+          (first === "set" && /\bset\s+up\b/i.test(query))
             ? verbs.create
             : verbs[first],
         intent: "write" as const,
