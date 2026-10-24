@@ -117,26 +117,25 @@ export default defineGoldenSpec({
     },
   }),
   calls: [
-    // --- Hatches ---
+    // --- Hatches: discovery is metadata-only; reads and writes use pinned paths. ---
+    { tool: "pco_api_search", args: { query: "person mergers", method: "GET" } },
+    { tool: "pco_api_details", args: { method: "GET", path: "/people/v2/person_mergers" } },
     {
-      tool: "pco_api_get",
+      tool: "pco_api_read",
       args: {
         path: "/publishing/v2/episodes",
-        query: [
-          { name: "where[title]", value: "Easter" },
-          { name: "per_page", value: 5 },
-        ],
+        query: { "where[search]": "Easter", per_page: 5 },
       },
       replies: page([resource("Episode", "71", { title: "Easter Sunday", published_to_library_at: null })]),
     },
     {
-      label: "pco_api_get version override",
-      tool: "pco_api_get",
-      args: { path: "/people/v2/campuses", version: "2025-11-10" },
+      label: "pco_api_read pinned People",
+      tool: "pco_api_read",
+      args: { path: "/people/v2/campuses" },
       replies: page([resource("Campus", "501", { name: "Downtown" })]),
     },
     {
-      tool: "pco_api_mutate",
+      tool: "pco_api_write",
       args: {
         method: "POST",
         path: "/giving/v2/batches",
@@ -145,8 +144,8 @@ export default defineGoldenSpec({
       replies: one(resource("Batch", "81", { description: "Sunday offering", status: "in_progress" }), 201),
     },
     {
-      label: "pco_api_mutate DELETE",
-      tool: "pco_api_mutate",
+      label: "pco_api_write DELETE",
+      tool: "pco_api_write",
       args: { method: "DELETE", path: "/people/v2/emails/101" },
       replies: [{ status: 204 }],
     },
@@ -167,7 +166,7 @@ export default defineGoldenSpec({
     },
     {
       tool: "search_people",
-      args: { search: "alice", status: "active", updatedSince: "2026-01-01", order: "-updated_at", perPage: 1 },
+      args: { search: "alice", status: "active", updatedSince: "2026-01-01", order: "-updated_at", limit: 1 },
       replies: page([ALICE], { included: ALICE_INCLUDED.slice(0, 3), total: 2, next: 1 }),
     },
     {
@@ -185,53 +184,6 @@ export default defineGoldenSpec({
       args: { personId: "9", status: "inactive", nickname: null },
       replies: one({ ...BOB, attributes: { ...BOB.attributes, status: "inactive" } }),
     },
-    {
-      tool: "add_person_email",
-      args: { personId: "9", address: "bob@example.com", primary: true },
-      replies: one(
-        resource(
-          "Email",
-          "103",
-          { address: "bob@example.com", location: "Home", primary: true },
-          { person: ref("Person", "9") },
-        ),
-        201,
-      ),
-    },
-    {
-      tool: "add_person_phone_number",
-      args: { personId: "9", number: "555-0199" },
-      replies: one(
-        resource(
-          "PhoneNumber",
-          "203",
-          { number: "(555) 019-9000", location: "Mobile", primary: false },
-          { person: ref("Person", "9") },
-        ),
-        201,
-      ),
-    },
-    {
-      tool: "list_lists",
-      args: { name: "Volunteers%", order: "name" },
-      replies: page([
-        resource("List", "3", {
-          name: "Volunteers",
-          description: "Everyone serving this quarter",
-          total_people: 42,
-          status: "complete",
-          refreshed_at: "2026-01-01T12:00:00Z",
-          auto_refresh: true,
-          automations_active: false,
-        }),
-      ]),
-    },
-    {
-      tool: "list_list_people",
-      args: { listId: "3" },
-      replies: page([ALICE], { included: ALICE_INCLUDED.slice(0, 3) }),
-    },
-    { tool: "run_list", args: { listId: "3" }, replies: [{ status: 201, body: {} }] },
     {
       tool: "list_workflows",
       replies: page(
@@ -314,14 +266,6 @@ export default defineGoldenSpec({
       replies: one(resource("WorkflowCard", "88", { stage: "ready" })),
     },
     {
-      tool: "add_workflow_card_note",
-      args: { personId: "7", cardId: "88", note: "Left a voicemail." },
-      replies: one(
-        resource("WorkflowCardNote", "91", { note: "Left a voicemail.", created_at: "2026-01-02T03:04:05Z" }),
-        201,
-      ),
-    },
-    {
       tool: "list_person_notes",
       args: { personId: "7" },
       replies: page(
@@ -373,47 +317,6 @@ export default defineGoldenSpec({
           ),
         ],
         { included: [resource("FieldDefinition", "711", { name: "Favorite color", data_type: "string" })] },
-      ),
-    },
-    {
-      tool: "list_forms",
-      replies: page([
-        resource("Form", "4", {
-          name: "Connection card",
-          description: "Tell us about yourself",
-          active: true,
-          submission_count: 17,
-          public_url: "https://grace.example/people/forms/4",
-          archived_at: null,
-        }),
-      ]),
-    },
-    {
-      tool: "list_form_submissions",
-      args: { formId: "4", submittedAfter: "2026-01-01" },
-      replies: page(
-        [
-          resource(
-            "FormSubmission",
-            "801",
-            { created_at: "2026-01-01T16:00:00Z" },
-            { person: ref("Person", "7"), form_submission_values: refs("FormSubmissionValue", "811", "812") },
-          ),
-        ],
-        {
-          included: [
-            ALICE,
-            resource(
-              "FormSubmissionValue",
-              "811",
-              { value: "m", display_value: "Medium" },
-              { form_field: ref("FormField", "821") },
-            ),
-            resource("FormSubmissionValue", "812", { value: "Yes" }, { form_field: ref("FormField", "822") }),
-            resource("FormField", "821", { label: "T-shirt size" }),
-            resource("FormField", "822", { label: "Interested in serving?" }),
-          ],
-        },
       ),
     },
 
@@ -572,70 +475,6 @@ export default defineGoldenSpec({
         201,
       ),
     },
-    {
-      tool: "add_plan_item",
-      args: {
-        serviceTypeId: "10",
-        planId: "20",
-        title: "Amazing Grace",
-        songId: "30",
-        arrangementId: "31",
-        length: 240,
-      },
-      replies: one(
-        resource(
-          "Item",
-          "903",
-          {
-            sequence: 3,
-            item_type: "song",
-            title: "Amazing Grace",
-            length: 240,
-            key_name: null,
-            service_position: "during",
-          },
-          { song: ref("Song", "30"), arrangement: ref("Arrangement", "31") },
-        ),
-        201,
-      ),
-    },
-    {
-      tool: "list_songs",
-      args: { title: "Amazing%", order: "title" },
-      replies: page([
-        resource("Song", "30", {
-          title: "Amazing Grace",
-          author: "John Newton",
-          ccli_number: 22025,
-          themes: "Grace, Salvation",
-          hidden: false,
-          last_scheduled_at: "2025-12-21T15:00:00Z",
-        }),
-      ]),
-    },
-    {
-      tool: "list_song_arrangements",
-      args: { songId: "30" },
-      replies: page(
-        [
-          resource(
-            "Arrangement",
-            "31",
-            {
-              name: "Default",
-              bpm: 72,
-              meter: "3/4",
-              length: 240,
-              chord_chart_key: "G",
-              sequence_short: ["V1", "V2", "C"],
-              lyrics: "Amazing grace…",
-            },
-            { keys: refs("Key", "32") },
-          ),
-        ],
-        { included: [resource("Key", "32", { name: "Default", starting_key: "G", ending_key: "G" })] },
-      ),
-    },
 
     // --- Groups ---
     {
@@ -690,130 +529,6 @@ export default defineGoldenSpec({
         [BOB],
       ),
     },
-    {
-      tool: "list_group_events",
-      args: { groupId: "8", startsAfter: "2026-01-01", startsBefore: "2026-02-01" },
-      replies: page([
-        resource(
-          "Event",
-          "1401",
-          {
-            name: "Weekly meeting",
-            starts_at: "2026-01-06T01:00:00Z",
-            ends_at: "2026-01-06T02:30:00Z",
-            canceled: false,
-            visitors_count: 2,
-            virtual_location_url: null,
-          },
-          { group: ref("Group", "8") },
-        ),
-      ]),
-    },
-
-    // --- Check-Ins ---
-    {
-      tool: "list_check_in_events",
-      replies: page([resource("Event", "2", { name: "Sunday Kids", frequency: "Weekly", archived_at: null })]),
-    },
-    {
-      tool: "list_check_in_event_periods",
-      args: { eventId: "2", startsAfter: "2025-12-01" },
-      replies: page([
-        resource("EventPeriod", "1501", {
-          starts_at: "2025-12-28T15:00:00Z",
-          ends_at: "2025-12-28T17:00:00Z",
-          regular_count: 48,
-          guest_count: 5,
-          volunteer_count: 12,
-          unique_total_count: 65,
-          note: null,
-        }),
-      ]),
-    },
-    {
-      tool: "list_check_ins",
-      args: { eventId: "2", serviceAfter: "2025-12-28", serviceBefore: "2025-12-29", kind: "guest" },
-      replies: page([
-        resource(
-          "CheckIn",
-          "1601",
-          {
-            first_name: "Carol",
-            last_name: "Smith",
-            kind: "Guest",
-            number: 14,
-            security_code: "X7K",
-            created_at: "2025-12-28T14:55:00Z",
-            checked_out_at: "2025-12-28T16:40:00Z",
-            one_time_guest: true,
-          },
-          { person: { data: null }, event_period: ref("EventPeriod", "1501") },
-        ),
-      ]),
-    },
-
-    // --- Calendar ---
-    {
-      tool: "list_calendar_event_instances",
-      args: { startsAfter: "2026-01-01", startsBefore: "2026-01-08" },
-      replies: page([
-        resource(
-          "EventInstance",
-          "1701",
-          {
-            name: "Staff meeting",
-            starts_at: "2026-01-05T15:00:00Z",
-            ends_at: "2026-01-05T16:00:00Z",
-            all_day_event: false,
-            location: "Room 101",
-            kind: "Standard",
-            recurrence_description: "Weekly on Monday",
-            church_center_url: "https://grace.example/calendar/1701",
-          },
-          { event: ref("Event", "1702") },
-        ),
-      ]),
-    },
-
-    // --- Registrations ---
-    {
-      tool: "list_signups",
-      replies: page([
-        resource("Signup", "1801", {
-          name: "Winter retreat",
-          open: true,
-          closed: false,
-          open_at: "2025-11-01T00:00:00Z",
-          close_at: "2026-01-31T00:00:00Z",
-          maximum_capacity: 80,
-          at_maximum_capacity: false,
-          archived: false,
-          new_registration_url: "https://grace.example/registrations/1801",
-        }),
-      ]),
-    },
-    {
-      tool: "list_signup_attendees",
-      args: { signupId: "1801", status: "active" },
-      replies: page(
-        [
-          resource(
-            "Attendee",
-            "1811",
-            {
-              name: "Alice Smith",
-              active: true,
-              waitlisted: false,
-              canceled: false,
-              complete: true,
-              created_at: "2025-11-03T12:00:00Z",
-            },
-            { person: ref("Person", "7") },
-          ),
-        ],
-        { included: [ALICE] },
-      ),
-    },
 
     // --- Giving ---
     {
@@ -848,7 +563,7 @@ export default defineGoldenSpec({
     {
       label: "list_donations by donor",
       tool: "list_donations",
-      args: { personId: "7", perPage: 1, offset: 1 },
+      args: { personId: "7", limit: 1 },
       replies: page(
         [
           resource(
@@ -885,101 +600,9 @@ export default defineGoldenSpec({
         }),
       ]),
     },
-    {
-      tool: "list_batches",
-      args: { status: "committed" },
-      replies: page([
-        resource(
-          "Batch",
-          "81",
-          {
-            description: "Sunday offering",
-            status: "committed",
-            donations_count: 32,
-            total_cents: 412500,
-            total_currency: "USD",
-            committed_at: "2025-12-22T10:00:00Z",
-            created_at: "2025-12-21T18:00:00Z",
-          },
-          { batch_group: { data: null } },
-        ),
-      ]),
-    },
-    {
-      tool: "list_pledge_campaigns",
-      replies: page([
-        resource(
-          "PledgeCampaign",
-          "2001",
-          {
-            name: "Building fund",
-            starts_at: "2025-09-01T00:00:00Z",
-            ends_at: "2026-08-31T00:00:00Z",
-            goal_cents: 50000000,
-            received_total_from_pledges_cents: 12000000,
-            received_total_outside_of_pledges_cents: 800000,
-          },
-          { fund: ref("Fund", "63") },
-        ),
-      ]),
-    },
-    {
-      tool: "list_pledges",
-      args: { pledgeCampaignId: "2001" },
-      replies: page([
-        resource(
-          "Pledge",
-          "2011",
-          {
-            amount_cents: 120000,
-            donated_total_cents: 40000,
-            joint_giver_amount_cents: null,
-            created_at: "2025-09-07T16:00:00Z",
-          },
-          { person: ref("Person", "7") },
-        ),
-      ]),
-    },
-    {
-      tool: "list_recurring_donations",
-      args: { status: "active" },
-      replies: page(
-        [
-          resource(
-            "RecurringDonation",
-            "2101",
-            {
-              amount_cents: 10000,
-              amount_currency: "USD",
-              schedule: "Monthly on the 1st",
-              status: "active",
-              next_occurrence: "2026-02-01",
-              last_donation_received_at: "2026-01-01T12:00:00Z",
-            },
-            { person: ref("Person", "7"), designations: refs("Designation", "2111") },
-          ),
-        ],
-        { included: [designated("2111", "62", 10000), FUNDS[1]] },
-      ),
-    },
-
-    // --- Webhooks ---
-    {
-      tool: "list_webhook_subscriptions",
-      replies: page([
-        resource("WebhookSubscription", "2201", {
-          name: "people.v2.events.person.created",
-          url: "https://hooks.example.com/people",
-          active: true,
-          application_id: "2202",
-          authenticity_secret: "golden-webhook-signing-secret",
-          created_at: "2025-06-01T00:00:00Z",
-        }),
-      ]),
-    },
   ],
   echo: {
-    tool: "pco_api_get",
+    tool: "pco_api_read",
     args: { path: "/publishing/v2/episodes/71" },
     replies: (text) => [{ body: { data: resource("Episode", "71", { title: text }) } }],
   },

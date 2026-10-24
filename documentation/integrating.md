@@ -118,47 +118,11 @@ For Stripe API-key setup, see [Stripe setup](./provider-auth-migration.md).
 Prefer a restricted `rk_` key with only read permissions for read-only access;
 Stripe enforces it too.
 
-Planning Center's `excludeApps` removes whole products from a connection, for
-example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
-deployment that keeps agents away from donor and financial data. Excluded
-products lose their named tools, guide text, and version pins, and the
-`pco_api_get` and `pco_api_mutate` hatches refuse their paths before sending.
-The check reads the exact URL the transport would fetch, and while any product
-is excluded a hatch path must be literal: dot segments, empty segments,
-backslashes, whitespace, and percent-encoded `/`, `\`, `?`, `#`, or `%` are
-refused rather than normalized.
-
-Exclusion also closes the routes through which the excluded product's data is
-reachable through another product. While any product is excluded the connection removes
-`list_lists`, `list_list_people`, and `run_list` and refuses every People list,
-list result, rule, and condition, by path or `include`, because a list's
-conditions can draw on any product, such as a donor list built from Giving
-donations, and lists can depend on other lists. Planning Center publishes a
-list's conditions, but a reliable check would have to follow every nested list,
-so the connection does not attempt one. It refuses webhook event and delivery
-payloads, since a payload can carry any product's records, and every change to
-an existing webhook subscription by id, since the id does not name its product.
-A new subscription must name a reachable product's event. People cannot be
-excluded.
-
-What exclusion guarantees is that agents reach none of the excluded product's
-endpoints, no live cross-product query such as a People list, and no webhook
-payload or change to an existing subscription. It does not hide records that the church's own
-automations or staff have copied into a reachable product. A
-[Giving automation](https://help.planningcenter.com/en/144355-automations-in-giving.html)
-can add first-time donors to a People workflow, and those workflow cards stay
-readable, as do donor details recorded in notes, custom fields, or form
-answers. Those are People data once written, so the connection does not refuse
-them by guessing at their origin.
-
-For a hard boundary, give the connection a personal access token belonging to a
-Planning Center user with No Access in the excluded product. Planning Center
-sets permissions per product for each user, does not grant Giving to
-organization administrators automatically, and lets People workflows be shared
-per workflow; a token carries its user's permissions, so Planning Center itself
-refuses what that user cannot see. `excludeApps` is defense in depth on top of
-that boundary: it narrows what Connecta exposes, not what the token can do
-elsewhere.
+For Planning Center construction, token permissions, product exclusions,
+per-product versions and rate/admission limits, see
+[Planning Center setup](./providers.md#planning-center). Its `pco_api_search`
+and `pco_api_details` discover reviewed operations; `pco_api_read` reads them,
+and `pco_api_write` sends approved writes.
 
 Church Community Builder drops sensitive fields from every result by
 default: allergies, giving numbers and dates, envelope ids, statement dates,
@@ -189,12 +153,6 @@ wherever it appears in a result. The drop removes fields from results only.
 CCB's advanced search can still filter on them, so a value can be inferred
 from which rows match; where that matters, leave `read:advanced_searches` out
 of `scopes`.
-
-Planning Center withholds the credentials its bodies can carry, in every
-mode and on every path: a webhook subscription's signing secret
-(`authenticity_secret`, also in a create or `rotate_secret` reply) and an
-organization's `secret`. No tool argument or option returns them; an operator
-reads them in Planning Center.
 
 ## Another remote MCP server
 

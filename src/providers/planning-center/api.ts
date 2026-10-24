@@ -5,11 +5,18 @@ import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.
 import type { CallServices } from "../../http/services.js";
 import { Credentials } from "../../http/services.js";
 import type { SafetyOptions } from "../../http/safety.js";
-import { get, post, patch, vendor, type Connection } from "../../http/vendor.js";
+import { get, type Connection } from "../../http/vendor.js";
+import { indexedVendor } from "../_shared/rest/kit.js";
+import { OperationIndex } from "../_shared/rest/operation-index.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { restSafety } from "../../http/safety.js";
+import type { HatchPageAdapter } from "../../http/hatch-paging.js";
+import { openapi } from "./openapi.generated.js";
+import { TABLE } from "./safety.js";
 import type { ConnectorCredentialConfig } from "../../types.js";
 import type { PlanningCenterOptions } from "./index.js";
 import { excludedApps, series } from "./lib/guide.js";
-import { asRecord, asArray, resources, attribute, type Query } from "./lib/json-api.js";
+import { asRecord, asArray, resources, attribute, pageOf, type Query } from "./lib/json-api.js";
 import {
   PLANNING_CENTER_API_BASE_URL,
   PLANNING_CENTER_APPS,
@@ -84,8 +91,6 @@ export interface PlanningCenterRequest {
   path: string;
   query?: Query;
   body?: unknown;
-  /** Only the hatches override the pinned version. */
-  version?: string;
 }
 
 const APP_PATH = /^\/([a-z-]+)\/v2(?:\/|$)/;
@@ -169,9 +174,6 @@ function literalSegments(path: string): string[] {
  * of them is read, by path or by `include`.
  */
 const LIST_RESOURCES: ReadonlySet<string> = new Set(["lists", "list_results", "rules", "conditions"]);
-
-/** The People tools that read or refresh a list, removed with any exclusion. */
-export const LIST_TOOLS: ReadonlySet<string> = new Set(["list_lists", "list_list_people", "run_list"]);
 
 /** The webhook subscription collections, current and 2018-08-01. */
 const SUBSCRIPTION_COLLECTIONS: ReadonlySet<string> = new Set(["webhook_subscriptions", "subscriptions"]);
@@ -295,10 +297,17 @@ function errorDetail(payload: unknown, status: number): string {
     const text = [title, detail].filter(Boolean).join(": ");
     if (text) parts.push(`${text}${at}`);
   }
-  return parts.length > 0 ? `Planning Center: ${parts.join("; ")}` : `Planning Center returned HTTP ${status}.`;
+  return parts.length > 0
+    ? `Planning Center: ${parts.join("; ").replace(/[.!?]+$/, "")}.`
+    : `Planning Center returned HTTP ${status}.`;
 }
 
 export const errors: VendorErrors = {
+  meanings: { unknownId: "not_found", provesAbsence: true, conflicts: ["HTTP 409 for duplicate records in People"] },
+  classify: [
+    ({ status, operation }) =>
+      status === 409 && operation.template.startsWith("/people/v2/") ? { code: "conflict" } : undefined,
+  ],
   numericFacts: {
     retryAfterMs: {
       header: "retry-after",
@@ -328,309 +337,85 @@ export const errors: VendorErrors = {
         `${detail} Confirm the id with its list tool. A person id that used to resolve was probably merged: look it up in /people/v2/person_mergers with where[person_to_remove_id].`,
     }),
     409: () => ({ code: "invalid_args" }),
-    429: ({ retryAfterMs }) => ({
-      code: "rate_limited",
-      retryAfterMs,
-      words: (detail) =>
-        `${detail} Planning Center allows 100 requests per 20 seconds per user, shared by every integration that user's tokens run.`,
-    }),
-    serverError: ({ retryAfterMs }) => ({
-      code: "unavailable",
-      retryAfterMs,
-      words: (detail) => `${detail} Planning Center is failing upstream.`,
-    }),
   },
 };
 
-// Each product owns a separate pinned public operation document (drift.json).
+/** All ten product pins retain their own public URL and version. */
+export const PCO_PREFIX = "pco";
+export const PCO_INDEX = new OperationIndex(openapi, { vendor: PCO_PREFIX, title: "Planning Center" });
 export const getPeopleMe = get("getPeopleMe", "/people/v2/me", {
   success: Schema.Unknown,
   query: { include: Schema.String },
   headers: { "X-PCO-API-Version": Schema.String },
 });
-export const getPeoplePeople = get("getPeoplePeople", "/people/v2/people", { success: Schema.Unknown });
-export const postPeoplePeople = post("postPeoplePeople", "/people/v2/people", { success: Schema.Unknown });
-export const getPeoplePeopleByPersonId = get("getPeoplePeopleByPersonId", "/people/v2/people/:person_id", {
-  success: Schema.Unknown,
-  params: { "person_id": Schema.String },
-});
-export const patchPeoplePeopleByPersonId = patch("patchPeoplePeopleByPersonId", "/people/v2/people/:person_id", {
-  success: Schema.Unknown,
-  params: { "person_id": Schema.String },
-});
-export const postPeoplePeopleByPersonIdEmails = post(
-  "postPeoplePeopleByPersonIdEmails",
-  "/people/v2/people/:person_id/emails",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdPhoneNumbers = post(
-  "postPeoplePeopleByPersonIdPhoneNumbers",
-  "/people/v2/people/:person_id/phone_numbers",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const getPeoplePeopleByPersonIdNotes = get(
-  "getPeoplePeopleByPersonIdNotes",
-  "/people/v2/people/:person_id/notes",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdNotes = post(
-  "postPeoplePeopleByPersonIdNotes",
-  "/people/v2/people/:person_id/notes",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const getPeoplePeopleByPersonIdFieldData = get(
-  "getPeoplePeopleByPersonIdFieldData",
-  "/people/v2/people/:person_id/field_data",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdGoBack = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdGoBack",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/go_back",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdNotes = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdNotes",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/notes",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdPromote = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdPromote",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/promote",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRemove = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRemove",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/remove",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRestore = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRestore",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/restore",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSkipStep = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSkipStep",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/skip_step",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSnooze = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSnooze",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/snooze",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdUnsnooze = post(
-  "postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdUnsnooze",
-  "/people/v2/people/:person_id/workflow_cards/:workflow_card_id/unsnooze",
-  { success: Schema.Unknown, params: { "person_id": Schema.String, "workflow_card_id": Schema.String } },
-);
-export const getPeopleLists = get("getPeopleLists", "/people/v2/lists", { success: Schema.Unknown });
-export const getPeopleListsByListIdPeople = get("getPeopleListsByListIdPeople", "/people/v2/lists/:list_id/people", {
-  success: Schema.Unknown,
-  params: { "list_id": Schema.String },
-});
-export const postPeopleListsByListIdRun = post("postPeopleListsByListIdRun", "/people/v2/lists/:list_id/run", {
-  success: Schema.Unknown,
-  params: { "list_id": Schema.String },
-});
-export const getPeopleWorkflows = get("getPeopleWorkflows", "/people/v2/workflows", { success: Schema.Unknown });
-export const getPeopleWorkflowsByWorkflowIdCards = get(
-  "getPeopleWorkflowsByWorkflowIdCards",
-  "/people/v2/workflows/:workflow_id/cards",
-  { success: Schema.Unknown, params: { "workflow_id": Schema.String } },
-);
-export const postPeopleWorkflowsByWorkflowIdCards = post(
-  "postPeopleWorkflowsByWorkflowIdCards",
-  "/people/v2/workflows/:workflow_id/cards",
-  { success: Schema.Unknown, params: { "workflow_id": Schema.String } },
-);
-export const getPeopleForms = get("getPeopleForms", "/people/v2/forms", { success: Schema.Unknown });
-export const getPeopleFormsByFormIdFormSubmissions = get(
-  "getPeopleFormsByFormIdFormSubmissions",
-  "/people/v2/forms/:form_id/form_submissions",
-  { success: Schema.Unknown, params: { "form_id": Schema.String } },
-);
-export const getServicesServiceTypes = get("getServicesServiceTypes", "/services/v2/service_types", {
-  success: Schema.Unknown,
-});
-export const getServicesServiceTypesByServiceTypeIdPlans = get(
-  "getServicesServiceTypesByServiceTypeIdPlans",
-  "/services/v2/service_types/:service_type_id/plans",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String } },
-);
-export const getServicesServiceTypesByServiceTypeIdPlansByPlanId = get(
-  "getServicesServiceTypesByServiceTypeIdPlansByPlanId",
-  "/services/v2/service_types/:service_type_id/plans/:plan_id",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String, "plan_id": Schema.String } },
-);
-export const getServicesServiceTypesByServiceTypeIdPlansByPlanIdItems = get(
-  "getServicesServiceTypesByServiceTypeIdPlansByPlanIdItems",
-  "/services/v2/service_types/:service_type_id/plans/:plan_id/items",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String, "plan_id": Schema.String } },
-);
-export const postServicesServiceTypesByServiceTypeIdPlansByPlanIdItems = post(
-  "postServicesServiceTypesByServiceTypeIdPlansByPlanIdItems",
-  "/services/v2/service_types/:service_type_id/plans/:plan_id/items",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String, "plan_id": Schema.String } },
-);
-export const getServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers = get(
-  "getServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers",
-  "/services/v2/service_types/:service_type_id/plans/:plan_id/team_members",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String, "plan_id": Schema.String } },
-);
-export const postServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers = post(
-  "postServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers",
-  "/services/v2/service_types/:service_type_id/plans/:plan_id/team_members",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String, "plan_id": Schema.String } },
-);
-export const getServicesServiceTypesByServiceTypeIdTeams = get(
-  "getServicesServiceTypesByServiceTypeIdTeams",
-  "/services/v2/service_types/:service_type_id/teams",
-  { success: Schema.Unknown, params: { "service_type_id": Schema.String } },
-);
-export const getServicesPeopleByPersonIdSchedules = get(
-  "getServicesPeopleByPersonIdSchedules",
-  "/services/v2/people/:person_id/schedules",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const getServicesSongs = get("getServicesSongs", "/services/v2/songs", { success: Schema.Unknown });
-export const getServicesSongsBySongIdArrangements = get(
-  "getServicesSongsBySongIdArrangements",
-  "/services/v2/songs/:song_id/arrangements",
-  { success: Schema.Unknown, params: { "song_id": Schema.String } },
-);
-export const getGroupsGroups = get("getGroupsGroups", "/groups/v2/groups", { success: Schema.Unknown });
-export const getGroupsGroupsByGroupIdMemberships = get(
-  "getGroupsGroupsByGroupIdMemberships",
-  "/groups/v2/groups/:group_id/memberships",
-  { success: Schema.Unknown, params: { "group_id": Schema.String } },
-);
-export const postGroupsGroupsByGroupIdMemberships = post(
-  "postGroupsGroupsByGroupIdMemberships",
-  "/groups/v2/groups/:group_id/memberships",
-  { success: Schema.Unknown, params: { "group_id": Schema.String } },
-);
-export const getGroupsGroupsByGroupIdEvents = get(
-  "getGroupsGroupsByGroupIdEvents",
-  "/groups/v2/groups/:group_id/events",
-  { success: Schema.Unknown, params: { "group_id": Schema.String } },
-);
-export const getGroupsEvents = get("getGroupsEvents", "/groups/v2/events", { success: Schema.Unknown });
-export const getCheckInsEvents = get("getCheckInsEvents", "/check-ins/v2/events", { success: Schema.Unknown });
-export const getCheckInsEventsByEventIdEventPeriods = get(
-  "getCheckInsEventsByEventIdEventPeriods",
-  "/check-ins/v2/events/:event_id/event_periods",
-  { success: Schema.Unknown, params: { "event_id": Schema.String } },
-);
-export const getCheckInsEventsByEventIdCheckIns = get(
-  "getCheckInsEventsByEventIdCheckIns",
-  "/check-ins/v2/events/:event_id/check_ins",
-  { success: Schema.Unknown, params: { "event_id": Schema.String } },
-);
-export const getCheckInsCheckIns = get("getCheckInsCheckIns", "/check-ins/v2/check_ins", { success: Schema.Unknown });
-export const getCalendarEventInstances = get("getCalendarEventInstances", "/calendar/v2/event_instances", {
-  success: Schema.Unknown,
-});
-export const getRegistrationsSignups = get("getRegistrationsSignups", "/registrations/v2/signups", {
-  success: Schema.Unknown,
-});
-export const getRegistrationsSignupsBySignupIdAttendees = get(
-  "getRegistrationsSignupsBySignupIdAttendees",
-  "/registrations/v2/signups/:signup_id/attendees",
-  { success: Schema.Unknown, params: { "signup_id": Schema.String } },
-);
-export const getGivingDonations = get("getGivingDonations", "/giving/v2/donations", { success: Schema.Unknown });
-export const getGivingPeopleByPersonIdDonations = get(
-  "getGivingPeopleByPersonIdDonations",
-  "/giving/v2/people/:person_id/donations",
-  { success: Schema.Unknown, params: { "person_id": Schema.String } },
-);
-export const getGivingFunds = get("getGivingFunds", "/giving/v2/funds", { success: Schema.Unknown });
-export const getGivingBatches = get("getGivingBatches", "/giving/v2/batches", { success: Schema.Unknown });
-export const getGivingPledgeCampaigns = get("getGivingPledgeCampaigns", "/giving/v2/pledge_campaigns", {
-  success: Schema.Unknown,
-});
-export const getGivingPledgeCampaignsByPledgeCampaignIdPledges = get(
-  "getGivingPledgeCampaignsByPledgeCampaignIdPledges",
-  "/giving/v2/pledge_campaigns/:pledge_campaign_id/pledges",
-  { success: Schema.Unknown, params: { "pledge_campaign_id": Schema.String } },
-);
-export const getGivingRecurringDonations = get("getGivingRecurringDonations", "/giving/v2/recurring_donations", {
-  success: Schema.Unknown,
-});
-export const getWebhooksWebhookSubscriptions = get(
-  "getWebhooksWebhookSubscriptions",
-  "/webhooks/v2/webhook_subscriptions",
-  { success: Schema.Unknown },
-);
-export const PlanningCenterApi = vendor(
-  "Planning Center",
-  getPeopleMe,
-  getPeoplePeople,
-  postPeoplePeople,
-  getPeoplePeopleByPersonId,
-  patchPeoplePeopleByPersonId,
-  postPeoplePeopleByPersonIdEmails,
-  postPeoplePeopleByPersonIdPhoneNumbers,
-  getPeoplePeopleByPersonIdNotes,
-  postPeoplePeopleByPersonIdNotes,
-  getPeoplePeopleByPersonIdFieldData,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdGoBack,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdNotes,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdPromote,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRemove,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdRestore,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSkipStep,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdSnooze,
-  postPeoplePeopleByPersonIdWorkflowCardsByWorkflowCardIdUnsnooze,
-  getPeopleLists,
-  getPeopleListsByListIdPeople,
-  postPeopleListsByListIdRun,
-  getPeopleWorkflows,
-  getPeopleWorkflowsByWorkflowIdCards,
-  postPeopleWorkflowsByWorkflowIdCards,
-  getPeopleForms,
-  getPeopleFormsByFormIdFormSubmissions,
-  getServicesServiceTypes,
-  getServicesServiceTypesByServiceTypeIdPlans,
-  getServicesServiceTypesByServiceTypeIdPlansByPlanId,
-  getServicesServiceTypesByServiceTypeIdPlansByPlanIdItems,
-  postServicesServiceTypesByServiceTypeIdPlansByPlanIdItems,
-  getServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers,
-  postServicesServiceTypesByServiceTypeIdPlansByPlanIdTeamMembers,
-  getServicesServiceTypesByServiceTypeIdTeams,
-  getServicesPeopleByPersonIdSchedules,
-  getServicesSongs,
-  getServicesSongsBySongIdArrangements,
-  getGroupsGroups,
-  getGroupsGroupsByGroupIdMemberships,
-  postGroupsGroupsByGroupIdMemberships,
-  getGroupsGroupsByGroupIdEvents,
-  getGroupsEvents,
-  getCheckInsEvents,
-  getCheckInsEventsByEventIdEventPeriods,
-  getCheckInsEventsByEventIdCheckIns,
-  getCheckInsCheckIns,
-  getCalendarEventInstances,
-  getRegistrationsSignups,
-  getRegistrationsSignupsBySignupIdAttendees,
-  getGivingDonations,
-  getGivingPeopleByPersonIdDonations,
-  getGivingFunds,
-  getGivingBatches,
-  getGivingPledgeCampaigns,
-  getGivingPledgeCampaignsByPledgeCampaignIdPledges,
-  getGivingRecurringDonations,
-  getWebhooksWebhookSubscriptions,
-);
-
-/** Legacy global review: hatches reach unindexed products and versions. Every response
- * drops the two documented stored-credential names at any depth; JSON:API error
- * prose retains the same sent-secret redaction as before this mechanical migration. */
+export const PlanningCenterApi = indexedVendor("Planning Center", PCO_INDEX, [getPeopleMe]);
+const reviewedSafety = valueSafety(TABLE, () => PCO_INDEX);
 export const safety: SafetyOptions = {
-  review:
-    "Planning Center's legacy hatches permit unindexed product paths and version overrides. Webhook authenticity_secret and Services secret are always removed from result bodies.",
-  sensitiveFields: { names: ["authenticity_secret", "secret"], choice: "drop" },
+  reviewed: restSafety(reviewedSafety, PCO_INDEX),
+  // These are permanently omitted, independent of any tool or deployment argument.
+  sensitiveFields: { names: ["authenticity_secret", "secret", "ical_code"], choice: "drop" },
 };
+
+export { PCO_VERDICTS } from "./lib/verdicts.js";
+
+export const PCO_NAMED = {
+  "GET /people/v2/me": "get_me",
+  "GET /people/v2/people": "search_people",
+  "GET /people/v2/people/{person_id}": "get_person",
+  "POST /people/v2/people": "create_person",
+  "PATCH /people/v2/people/{person_id}": "update_person",
+  "GET /people/v2/workflows": "list_workflows",
+  "GET /people/v2/workflows/{workflow_id}/cards": "list_workflow_cards",
+  "POST /people/v2/workflows/{workflow_id}/cards": "add_workflow_card",
+  "GET /people/v2/people/{person_id}/notes": "list_person_notes",
+  "POST /people/v2/people/{person_id}/notes": "add_person_note",
+  "GET /people/v2/people/{person_id}/field_data": "list_person_field_data",
+  "GET /services/v2/service_types": "list_service_types",
+  "GET /services/v2/service_types/{service_type_id}/plans": "list_plans",
+  "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}": "get_plan",
+  "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/items": "get_plan",
+  "GET /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": "get_plan",
+  "GET /services/v2/service_types/{service_type_id}/teams": "list_teams",
+  "GET /services/v2/people/{person_id}/schedules": "list_person_schedules",
+  "POST /services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members": "schedule_plan_person",
+  "GET /groups/v2/groups": "list_groups",
+  "GET /groups/v2/groups/{group_id}/memberships": "list_group_memberships",
+  "POST /groups/v2/groups/{group_id}/memberships": "add_group_member",
+  "GET /giving/v2/donations": "list_donations",
+  "GET /giving/v2/people/{person_id}/donations": "list_donations",
+  "GET /giving/v2/funds": "list_funds",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/promote": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/go_back": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/skip_step": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/snooze": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/unsnooze": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/remove": "apply_workflow_card_action",
+  "POST /people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/restore": "apply_workflow_card_action",
+} as const;
+
+/** Native collection offset metadata, read only after response safety. */
+export const pcoPage: HatchPageAdapter = {
+  param: "offset",
+  in: "query",
+  decode: (value) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+      throw new ConnectorCallError("invalid_args", "This Planning Center cursor contains no valid offset.");
+    return value;
+  },
+  next: (data, call) => {
+    const document = asRecord(data);
+    if (document["meta"] === undefined) return undefined;
+    return pageOf(document, Number(call.query["offset"] ?? 0)).nextOffset;
+  },
+};
+export const PCO_PAGES = Object.fromEntries(
+  PCO_INDEX.ops
+    .filter(
+      (op) =>
+        op.method === "GET" && PCO_INDEX.contract(op).parameters.some((p) => p.in === "query" && p.name === "offset"),
+    )
+    .map((op) => [`GET ${op.path}`, pcoPage]),
+);
 
 export function transport(options: Readonly<PlanningCenterOptions>) {
   const userAgent = options.userAgent?.trim() ?? DEFAULT_USER_AGENT;
@@ -696,7 +481,7 @@ export function planningCenterCall(connection: Connection, options: Readonly<Pla
               }
             : {}),
           ...(request.body === undefined ? {} : { json: JSON.stringify(request.body) }),
-          headers: { "X-PCO-API-Version": request.version ?? PLANNING_CENTER_API_VERSIONS[app] },
+          headers: { "X-PCO-API-Version": PLANNING_CENTER_API_VERSIONS[app] },
         },
         step === undefined ? undefined : { step },
       );

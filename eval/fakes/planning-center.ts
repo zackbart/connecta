@@ -12,8 +12,8 @@ export const PLAN = "4001";
 export const CATEGORY = "6001";
 export const REMOVED = "2999";
 export const NOTE = "Called about volunteering.";
-export const ref = (type: string, id: string) => ({ data: { type, id } });
-export const resource = (type: string, id: string, attributes: Row, relationships: Row = {}) => ({
+const ref = (type: string, id: string) => ({ data: { type, id } });
+const resource = (type: string, id: string, attributes: Row, relationships: Row = {}) => ({
   type,
   id,
   attributes,

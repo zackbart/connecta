@@ -1,0 +1,55 @@
+{
+  "title": "Planning Center",
+  "revision": "people@2026-06-04,services@2018-11-01,groups@2023-07-10,check-ins@2025-05-28,calendar@2026-06-22,registrations@2025-05-01,giving@2019-10-18,publishing@2024-03-25,webhooks@2022-10-20,api@2026-09-24",
+  "documents": [
+    {
+      "pin": "people.json",
+      "prefix": "/people/v2"
+    },
+    {
+      "pin": "services.json",
+      "prefix": "/services/v2"
+    },
+    {
+      "pin": "groups.json",
+      "prefix": "/groups/v2"
+    },
+    {
+      "pin": "check-ins.json",
+      "prefix": "/check-ins/v2"
+    },
+    {
+      "pin": "calendar.json",
+      "prefix": "/calendar/v2"
+    },
+    {
+      "pin": "registrations.json",
+      "prefix": "/registrations/v2"
+    },
+    {
+      "pin": "giving.json",
+      "prefix": "/giving/v2"
+    },
+    {
+      "pin": "publishing.json",
+      "prefix": "/publishing/v2"
+    },
+    {
+      "pin": "webhooks.json",
+      "prefix": "/webhooks/v2"
+    },
+    {
+      "pin": "api.json",
+      "prefix": "/api/v2"
+    }
+  ],
+  "options": {
+    "depth": 4,
+    "descriptions": 160,
+    "maxEnum": 50,
+    "operationIds": false,
+    "pathParams": "typed",
+    "opBudget": 24000,
+    "valueSafety": true
+  }
+}

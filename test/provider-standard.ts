@@ -38,7 +38,6 @@ export const PENDING = {
     "github",
     "gmail",
     "overflow",
-    "planning-center",
     "sheets",
     "slides",
     "stripe",

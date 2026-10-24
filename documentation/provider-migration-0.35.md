@@ -136,3 +136,80 @@ requested limit and narrowing the date range. 400/422/429/5xx diagnostics use
 the provider's standalone detail sentence or HTTP-status fallback through
 the kit; reviewed key/absence meanings and write-once behavior
 remain. Operator setup is in [Maintained provider setup](./providers.md#breeze-chms).
+
+## Planning Center
+
+The factory, PAT credential and product-version constants remain. Update
+saved programs, deployment instructions, pool tool grants and classification
+entries that name the old tools or arguments before upgrading.
+
+| Before                                                        | After                                                                                                                                |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `pco_api_get`                                                 | `pco_api_read`                                                                                                                       |
+| `pco_api_mutate`                                              | `pco_api_write` (always destructive and approval-gated)                                                                              |
+| No operation discovery                                        | `pco_api_search` and `pco_api_details` (no account-data reads)                                                                       |
+| Hatch `query: [{name,value}]`                                 | `query: { name: value }`; repeated names use the indexed array form where declared                                                   |
+| Per-call `version`                                            | Removed; request a reviewed product-pin update for another version                                                                   |
+| Any unindexed path                                            | Only the ten reviewed product pins' indexed operations; no host/query/path shorthand                                                 |
+| Hatch `{result}`                                              | `{status,data,page?}`; the JSON:API body remains inside `data`                                                                       |
+| Every `raw` argument                                          | Removed; use the indexed read for safe vendor fields missing from a named projection                                                 |
+| Named-list `perPage`, `offset`                                | `limit`, then the returned opaque `cursor`                                                                                           |
+| Named-list noun keys                                          | `items` (including people, workflows, cards, notes, fields, serviceTypes, plans, teams, schedules, memberships, donations and funds) |
+| `page.nextOffset`                                             | `page.nextCursor`, present only when `hasMore` is true                                                                               |
+| `page.totalCount`                                             | Removed from named results for now; the hatch retains vendor `data.meta.total_count`                                                 |
+| `get_plan.plan`                                               | Projected plan properties at the top level, with `id` and `service_type_id`                                                          |
+| `itemsTruncated`, `teamMembersTruncated`                      | `truncated` contains `items[]` and/or `teamMembers[]`                                                                                |
+| `apply_workflow_card_action` result `{cardId,action,applied}` | `{ok:true}` on acknowledgement                                                                                                       |
+| People duplicate HTTP 409 → `invalid_args`                    | `conflict`; other products retain their own status meaning                                                                           |
+| Named reads had no projection argument                        | `fields` only narrows projected results; both call hatches also support it where the pin declares response properties                |
+
+Every removed wrapper below is replaced by the indexed method/path. Put GET
+parameters in the hatch's query object. A write body is
+`{data:{type:"<type>",attributes:{...}}}`; the table names the type and
+attributes. Substitute each old id argument into its path slot. For every
+removed paged read, `perPage` becomes query `per_page`; start without `offset`,
+then use the returned signed `page.nextCursor` as query `offset`. Unlike a
+raw offset, that cursor is bound to the original read and its other arguments.
+Legacy `raw` and `version` are gone on these routes too. Use operation details
+for current required fields and declared filter spelling.
+
+| Removed tool                    | Indexed replacement                                                         | Old arguments / join recipe                                                                                                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_person_email`              | POST `/people/v2/people/{personId}/emails`                                  | JSON:API `Email`; `address`, `location` (Home default), `primary` attributes.                                                                                                                                                         |
+| `add_person_phone_number`       | POST `/people/v2/people/{personId}/phone_numbers`                           | `PhoneNumber`; `number`, `location` (Mobile default), `primary`.                                                                                                                                                                      |
+| `list_lists`                    | GET `/people/v2/lists`                                                      | `name` → `where[name]`; `order` unchanged.                                                                                                                                                                                            |
+| `list_list_people`              | GET `/people/v2/lists/{listId}/people`                                      | `include=emails,phone_numbers`.                                                                                                                                                                                                       |
+| `run_list`                      | POST `/people/v2/lists/{listId}/run`                                        | No body; refresh can fire automations.                                                                                                                                                                                                |
+| `add_workflow_card_note`        | POST `/people/v2/people/{personId}/workflow_cards/{cardId}/notes`           | `WorkflowCardNote`; `note` attribute.                                                                                                                                                                                                 |
+| `list_forms`                    | GET `/people/v2/forms`                                                      | `filter=not_archived` unless old `includeArchived` was true.                                                                                                                                                                          |
+| `list_form_submissions`         | GET `/people/v2/forms/{formId}/form_submissions`                            | `submittedAfter` → `where[created_at][gte]`; `order` (default `-created_at`); `include=form_submission_values,form_fields,person`.                                                                                                    |
+| `add_plan_item`                 | POST `/services/v2/service_types/{serviceTypeId}/plans/{planId}/items`      | `Item`; `title`, `length`, `sequence`, `description`; `songId`, `arrangementId`, `keyId`, `servicePosition` → `song_id`, `arrangement_id`, `key_id`, `service_position`. `itemType: header` → `item_type: header`; otherwise omit it. |
+| `list_songs`                    | GET `/services/v2/songs`                                                    | `title`, `author`, `ccliNumber`, `theme` → `where[title]`, `where[author]`, `where[ccli_number]`, `where[themes]`; `order` unchanged.                                                                                                 |
+| `list_song_arrangements`        | GET `/services/v2/songs/{songId}/arrangements`                              | `include=keys`.                                                                                                                                                                                                                       |
+| `list_group_events`             | GET `/groups/v2/events` or `/groups/v2/groups/{groupId}/events`             | `startsAfter`/`startsBefore` → `where[starts_at][gte]`/`[lt]`; `filter=not_canceled` unless `includeCanceled` was true; `order=starts_at`.                                                                                            |
+| `list_check_in_events`          | GET `/check-ins/v2/events`                                                  | `name` → `where[name]`; `filter=not_archived` unless `includeArchived` was true.                                                                                                                                                      |
+| `list_check_in_event_periods`   | GET `/check-ins/v2/events/{eventId}/event_periods`                          | `startsAfter`/`startsBefore` → `where[starts_at][gte]`/`[lt]`; `order=-starts_at`.                                                                                                                                                    |
+| `list_check_ins`                | GET `/check-ins/v2/check_ins` or `/check-ins/v2/events/{eventId}/check_ins` | `serviceAfter`/`serviceBefore` → `where[event_period][starts_at][gte]`/`[lt]`; `kind` → `filter`; `order` unchanged.                                                                                                                  |
+| `list_calendar_event_instances` | GET `/calendar/v2/event_instances`                                          | `startsAfter`/`startsBefore` → `where[starts_at][gte]`/`[lt]`; `eventName` → `where[event_name]`; `order=starts_at`.                                                                                                                  |
+| `list_signups`                  | GET `/registrations/v2/signups`                                             | `archived` → `filter` (`unarchived` default; omit for all).                                                                                                                                                                           |
+| `list_signup_attendees`         | GET `/registrations/v2/signups/{signupId}/attendees`                        | `status` → `filter`; `include=person`.                                                                                                                                                                                                |
+| `list_batches`                  | GET `/giving/v2/batches`                                                    | `status` → `filter`; `order=-updated_at`.                                                                                                                                                                                             |
+| `list_pledge_campaigns`         | GET `/giving/v2/pledge_campaigns`                                           | `order=-starts_at`.                                                                                                                                                                                                                   |
+| `list_pledges`                  | GET `/giving/v2/pledge_campaigns/{pledgeCampaignId}/pledges`                | Person identity remains in relationships; amounts remain cents.                                                                                                                                                                       |
+| `list_recurring_donations`      | GET `/giving/v2/recurring_donations`                                        | `status` → `where[status]`; `include=designations,designations.fund`.                                                                                                                                                                 |
+| `list_webhook_subscriptions`    | GET `/webhooks/v2/webhook_subscriptions`                                    | Use `data` attributes for event name, URL and active state; signing keys remain absent.                                                                                                                                               |
+
+Moving an additive named write to `pco_api_write` changes its annotation to
+destructive: every hatch write requires host approval. Paths remain concrete
+`/<app>/v2/...` paths. Metadata-only search/details are reads; a guessed write
+on a read-only endpoint remains refused.
+
+Stored credential names remain permanently removed. Private Services calendar
+codes and private attachment/download destinations, opaque webhook event
+payloads and delivery bodies/headers now remain withheld too, including nested
+or included forms. There is no `sensitiveFields` widening option. Documented
+ordinary musical keys and person email signatures remain data. Product
+exclusions still close live People-list and webhook cross-product routes.
+Standard fallback diagnostics replace redundant rate-limit/upstream wording;
+JSON:API diagnostics are complete sentences. Writes are sent once; reconcile
+unknown outcomes with a read.
