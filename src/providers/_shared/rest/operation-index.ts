@@ -424,6 +424,12 @@ export class OperationIndex {
       for (const word of set) {
         if (options.partial && ((term === "person" && word === "people") || (term === "people" && word === "person")))
           return 2;
+        if (
+          options.partial &&
+          ((term.endsWith("y") && word === `${term.slice(0, -1)}ies`) ||
+            (word.endsWith("y") && term === `${word.slice(0, -1)}ies`))
+        )
+          return 2;
         if (word === `${term}s` || term === `${word}s` || word === `${term}es` || term === `${word}es`) return 2;
         if (term.length >= 3 && word.startsWith(term)) return 1;
       }

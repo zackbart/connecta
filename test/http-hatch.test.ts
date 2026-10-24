@@ -260,6 +260,53 @@ it(
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(SEARCH_BUDGET.bytes);
       expect(await connector.callTool(`${prefix}_api_search`, args, searchContext)).toEqual(found);
     }
+    for (const query of [
+      "Show All",
+      "please show all",
+      "delete dns record",
+      "please list all of the dns records for the zone by name",
+    ]) {
+      const found = await fixtures.get("planning-center")!.callTool("pco_api_search", { query }, connectorContext());
+      expect(found, query).toMatchObject({ operations: [], page: { hasMore: false } });
+    }
+    // Nouns survive verb ambiguity; common inflections share one root key.
+    const nounOps: OpenApiData["ops"] = [
+      ["GET", "/issues", "ListIssues", "List issues", 0],
+      ["GET", "/issues/{issue}", "GetIssue", "Get issue", 0],
+      ["PATCH", "/issues/{issue}", "CloseIssue", "Close issue", 0],
+      ["POST", "/refunds", "IssueRefund", "Issue a refund", 0],
+      ...["campuses", "batches", "categories", "processes"].flatMap((noun): OpenApiData["ops"] => [
+        ["GET", `/${noun}`, `List${noun}`, `List ${noun}`, 0],
+        ["GET", `/items/{item}/${noun}`, `Related${noun}`, `Related ${noun}`, 0],
+      ]),
+    ];
+    const nouns = setup({
+      data: { ...DATA, ops: nounOps, details: JSON.stringify({ d: [], o: nounOps.map(() => 0) }), fields: [] },
+      verdicts: Object.fromEntries(
+        nounOps.map(([method, path]) => [`${method} ${path}`, method === "GET" ? "read" : "write"]),
+      ),
+    });
+    for (const [query, method, path] of [
+      ["issue", "GET", "/issues"],
+      ["get issue 42", "GET", "/issues/{issue}"],
+      ["close issue", "PATCH", "/issues/{issue}"],
+      ["issue a refund", "POST", "/refunds"],
+      ...["campus", "campuses", "batch", "batches", "category", "categories", "process"].map((noun) => [
+        noun,
+        "GET",
+        noun.startsWith("campus")
+          ? "/campuses"
+          : noun.startsWith("batch")
+            ? "/batches"
+            : noun.startsWith("categor")
+              ? "/categories"
+              : "/processes",
+      ]),
+    ]) {
+      const found = (await nouns.call("search", { query })) as { operations: Array<{ method: string; path: string }> };
+      expect(found.operations[0], query).toMatchObject({ method, path });
+    }
+    expect(await nouns.call("search", { query: "constructor" })).toMatchObject({ operations: [] });
     // A broad person lookup ranks all five People profile operations first,
     // then continues into other products and relationships without losing any.
     const pco = fixtures.get("planning-center")!;

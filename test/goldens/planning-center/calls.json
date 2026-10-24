@@ -28,13 +28,6 @@
           },
           {
             "method": "GET",
-            "path": "/calendar/v2/me",
-            "operationId": "",
-            "summary": "List Person — Planning Center Calendar",
-            "tool": "pco_api_read"
-          },
-          {
-            "method": "GET",
             "path": "/calendar/v2/people",
             "operationId": "",
             "summary": "List Person — Planning Center Calendar",
@@ -42,16 +35,23 @@
           },
           {
             "method": "GET",
-            "path": "/check-ins/v2/me",
+            "path": "/check-ins/v2/people",
             "operationId": "",
             "summary": "List Person — Planning Center Check-Ins",
             "tool": "pco_api_read"
           },
           {
             "method": "GET",
-            "path": "/check-ins/v2/people",
+            "path": "/giving/v2/people",
             "operationId": "",
-            "summary": "List Person — Planning Center Check-Ins",
+            "summary": "List Person — Planning Center Giving",
+            "tool": "pco_api_read"
+          },
+          {
+            "method": "GET",
+            "path": "/groups/v2/people",
+            "operationId": "",
+            "summary": "List Person — Planning Center Groups",
             "tool": "pco_api_read"
           }
         ],

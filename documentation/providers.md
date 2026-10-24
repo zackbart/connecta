@@ -8,9 +8,17 @@ procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
 Standard API operation search accepts resource nouns, actions and conversational
-phrasing. A bare noun ranks its root collection before nested routes; action
-queries prefer the corresponding reviewed read or write and can match some
-terms when no operation contains every word. Search order is deterministic.
+phrasing. Read words anywhere in a query prefer reviewed reads; action queries
+then prefer the requested verb or a synonym in an operation's summary or id.
+A single resource noun ranks its root collection before nested routes.
+Partial lexical matches are included even when other operations match every
+term. They must match a resource word in the path or operation id, or every
+content noun in the operation's text. Action/read queries use the first
+content noun as their resource, so a generic modifier cannot supply a loose
+match for an unrelated resource.
+Queries containing only conversational filler return no matches. Search order
+is deterministic; multi-word noun phrases retain lexical relevance, and
+authored tools break otherwise equal collection ties.
 For example, search a configured `crm` connection's API index for `person`,
 then follow `page.nextCursor` to reach operations beyond the leading profile
 results. Responses contain at most eight compact hits within 16 KiB; fetch
