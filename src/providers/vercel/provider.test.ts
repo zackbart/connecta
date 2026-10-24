@@ -407,6 +407,20 @@ describe("vercel() over an access token", () => {
 
   it("INV-3 INV-4 INV-5 INV-9: routes selectors and confines fields, continuations and secret-bearing writes before dispatch", async () => {
     const connector = vercel("hosting", TOKEN);
+    const discoverySends = sent.length;
+    for (const [query, method, path] of [
+      ["redeploy", "POST", "/v13/deployments"],
+      ["create environment variable", "POST", "/v10/projects/{idOrName}/env"],
+      ["add environment variable", "POST", "/v10/projects/{idOrName}/env"],
+      ["update environment variable", "PATCH", "/v9/projects/{idOrName}/env/{id}"],
+      ["delete environment variable", "DELETE", "/v9/projects/{idOrName}/env/{id}"],
+    ]) {
+      for (const filter of [{}, { method }]) {
+        const found = await call(connector, "vercel_api_search", { query, limit: 8, ...filter });
+        expect(found.operations.slice(0, 2), query).toContainEqual(expect.objectContaining({ method, path }));
+      }
+    }
+    expect(sent).toHaveLength(discoverySends);
     const refused = await refusal(
       call(connector, "vercel_api_write", {
         method: "PATCH",
