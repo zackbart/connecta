@@ -977,8 +977,14 @@ omit its field: do not copy `{ "token": "[redacted]" }` from a read into a write
 These rules check agent arguments; a body composed later from internal reads
 is not rescanned as a whole. Legacy tools and remote MCP keep their own rules.
 
-Pass hatch search/details cursors back unchanged. They authenticate the
-continuation and bind its connection, personal owner, arguments and index content; an altered cursor
+Pass signed hatch and named-list cursors back unchanged. They authenticate the
+continuation and bind its connection, personal owner and arguments; hatch
+search/details cursors also bind the index content.
+When the connection acts as a different downstream identity per caller, the
+signature also binds the admitted caller and pool owner. These identities are
+not included in the readable cursor. Fixed shared identities keep the shared
+binding. For example, a cursor issued to `alice` on a caller-mapped connection
+is refused when `bob` presents it, before any downstream request. An altered cursor
 or changed scope/index is `invalid_args`. Start discovery again after that
 refusal. Cursors survive restarts with persistent storage. A signing-key load failure is retryable `unavailable`; operators can follow [cursor-key recovery](./deploying.md#recover-a-cursor-signing-key).
 

@@ -5,6 +5,7 @@ import { Effect, Schema } from "effect";
 import { kitInputDisagreements } from "./helpers/kit-schema.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
+import { tagCallerIdentity, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { guardedClient } from "../src/http/client.js";
@@ -1172,6 +1173,10 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   googleNamedOperation(collisionIndex, "GET", "/items/ordinary", "/items/{item}");
   const defaults = setup();
   expect(() => googleClient(google.connection, "Google", { index: google.index })).not.toThrow();
+  expect(() => googleClient(google.connection, "Google", { standard: true })).toThrow("reviewed operation index");
+  expect(() =>
+    googleHatchBinding(google.connection, { review: "Missing index" } as Parameters<typeof googleHatchBinding>[1]),
+  ).toThrow("reviewed operation index");
   expect(() => googleClient(defaults.connection, "Google", { index: defaults.index })).toThrow("uri-template");
   expect(() => googleHatchBinding(defaults.connection, { index: defaults.index, review: "Refuse defaults" })).toThrow(
     "uri-template",
@@ -1190,6 +1195,8 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   expect(googlePageToken.prepareQuery!({ fields: "data/nextPageToken" })).toEqual({
     fields: "data/nextPageToken,nextPageToken",
   });
+  for (const fields of ["nextPageToken/x", "nextPageToken(x)", "data(id),nextPageToken/x"])
+    expect(googlePageToken.prepareQuery!({ fields })).toEqual({ fields: `${fields},nextPageToken` });
   for (const row of [
     {
       adapter: stripePage,
@@ -1313,6 +1320,44 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
     // The same durable root key still cannot authorize another connection or
     // personal credential owner; only the admitted context supplies that binding.
     const continuation = { ...args, query: { ...args.query, [adapter.param]: first.page.nextCursor } };
+    // A generic caller-dependent connector gets the same binding as a named
+    // list. The same agent in another owner's pool is a different identity.
+    for (const perCaller of [false, true]) {
+      const base = apiConnector("items", { tools: paged.tools });
+      const shared = perCaller ? Object.create(tagCallerIdentity(base)) : base;
+      const registry = new Registry([shared], { storage, logger: paged.context.logger });
+      const caller: ConnectorCaller = {
+        authenticated: true,
+        identity: { actor: { kind: "test-users", id: "alice" }, interactive: true },
+        pool: "research",
+        poolOwner: "alice@example.com",
+      };
+      const scopedContext = (caller: ConnectorCaller) =>
+        registry.scoped({ connectorIds: "all", caller }).contextFor("items", "https://connecta.example");
+      response = () => Response.json(row.first, { headers: "link" in row ? { link: row.link! } : {} });
+      const issued = (await shared.callTool("items_api_read", args, scopedContext(caller))) as any;
+      const resumed = { ...args, query: { ...args.query, [adapter.param]: issued.page.nextCursor } };
+      response = () => Response.json(row.last);
+      for (const other of [
+        { ...caller, identity: { ...caller.identity, actor: { kind: "test-users", id: "bob" } } },
+        { ...caller, pool: "other" },
+        { ...caller, poolOwner: "bob@example.com" },
+      ]) {
+        const before = sent.length;
+        if (perCaller) {
+          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).rejects.toMatchObject({
+            code: "invalid_args",
+          });
+          expect(sent).toHaveLength(before);
+        } else {
+          await expect(shared.callTool("items_api_read", resumed, scopedContext(other))).resolves.toHaveProperty(
+            "page",
+          );
+        }
+      }
+      await expect(shared.callTool("items_api_read", resumed, scopedContext(caller))).resolves.toHaveProperty("page");
+      if (!perCaller) expect(issued.page.nextCursor).toBe(first.page.nextCursor);
+    }
     const beforeAlias = sent.length;
     await expect(
       apiConnector("other_items", { tools: paged.tools }).callTool(

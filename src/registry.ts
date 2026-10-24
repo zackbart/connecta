@@ -20,7 +20,8 @@ import {
 import { carryCatalogFreshness, markCatalogFreshness } from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import type { ConnectorCaller } from "./connector-caller.js";
+import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
+import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { storedCredentialShape } from "./credential-rules.js";
 import { ConnectorCallError } from "./errors.js";
@@ -705,7 +706,8 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): ConnectorContext {
-    const credentialConfig = this.connectors.get(id)?.credential;
+    const connector = this.connectors.get(id);
+    const credentialConfig = connector?.credential;
     let credentialAccess: ConnectorContext["credential"];
     if (this.opts.credentialVault && credentialConfig) {
       const vault = this.opts.credentialVault;
@@ -739,7 +741,13 @@ export class Registry implements RegistryView {
       scope?.caller,
     );
     setViewService(context, ContinuationStorage, this.opts.rootStorage ?? this.opts.storage);
-    setViewService(context, ContinuationBinding, { connection: id, principal: this.opts.credentialOwner ?? null });
+    const owner = this.opts.credentialOwner ?? null;
+    setViewService(context, ContinuationBinding, {
+      connection: id,
+      // Include every admitted input a subject mapping can inspect, including
+      // the pool owner for an agent. This value enters only the HMAC claims.
+      principal: connector && usesCallerIdentity(connector) ? canonicalJson([owner, scope?.caller ?? null]) : owner,
+    });
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
       partition: this.catalogPartition(scope),

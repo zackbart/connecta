@@ -17,7 +17,7 @@ import { slides } from "../src/providers/slides/index.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
-import { attachCaller } from "../src/connector-caller.js";
+import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
 import { callClassification, attachCallClassification } from "../src/call-classification.js";
 import { Context, Effect, Schema } from "effect";
 import {
@@ -36,6 +36,7 @@ import { DRIVE, DriveApi, driveContentClient, result as driveResult } from "../s
 import { guardedClient } from "../src/http/client.js";
 import { StatusFailure, UnreadableBody, toConnectorCallError, type HttpFailure } from "../src/http/errors.js";
 import { bearer, Grant, refreshOnce } from "../src/http/oauth.js";
+import { boundCursor } from "../src/http/paging.js";
 import { resultSafety } from "../src/http/safety.js";
 import {
   Classification,
@@ -280,6 +281,28 @@ function bytesOf(segment: string): Uint8Array {
 
 const labels = (connector: Connector, ctx: ConnectorContext, args: Record<string, unknown> = {}) =>
   connector.callTool("list_labels", args, ctx) as Promise<any>;
+
+// Exercise the signed paging seam against the real delegated send path.
+// The paging suites cover named-list and hatch adapters through api().
+async function continuedLabels(
+  registry: ReturnType<typeof makeRegistry>,
+  caller: ConnectorCaller,
+  cursor?: string,
+): Promise<string> {
+  const ctx = registry.scoped({ connectorIds: "all", caller }).contextFor("mail", "https://connecta.example");
+  const lease = fromConnectorContext(ctx, "read");
+  try {
+    return await runEdge(
+      Effect.gen(function* () {
+        if (cursor) yield* boundCursor.decode("list_labels", {}, cursor);
+        yield* Effect.promise(() => labels(registry.getConnector("mail")!, ctx));
+        return yield* boundCursor.encode("list_labels", {}, "next");
+      }).pipe(Effect.provideContext(lease.services)),
+    );
+  } finally {
+    lease.close();
+  }
+}
 
 // Exercise the shared adapter with the production Drive binary/text projection.
 // Extra methods and the guarded batch path cover shared transport semantics
@@ -719,6 +742,28 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     const subjects = tokenCalls.map((entry) => decodeSegment(entry.assertion.split(".")[1]!).sub);
     expect(subjects).toEqual(["alice@org.example", "bob@org.example"]);
     expect(JSON.stringify(subjects)).not.toContain("ceo");
+
+    for (const subject of [(who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""], "shared@org.example"]) {
+      const registry = makeRegistry([mailbox({ subject })]);
+      const alice: ConnectorCaller = { identity: identity("alice"), authenticated: true };
+      const cursor = await continuedLabels(registry, alice);
+      const before = { tokens: tokenCalls.length, requests: apiCalls.length };
+      const bob: ConnectorCaller = { identity: identity("bob"), authenticated: true };
+      if (typeof subject === "function") {
+        const refused = await continuedLabels(registry, bob, cursor).catch((error) => error);
+        expect(refused.error).toMatchObject({ code: "invalid_args" });
+        expect(tokenCalls).toHaveLength(before.tokens);
+        expect(apiCalls).toHaveLength(before.requests);
+        expect(JSON.stringify(decodeSegment(cursor))).not.toContain("alice");
+      } else {
+        expect(await continuedLabels(registry, bob, cursor)).toBe(cursor);
+      }
+      // Object property order is not part of the identity.
+      expect(await continuedLabels(registry, { authenticated: true, identity: identity("alice") }, cursor)).toBe(
+        cursor,
+      );
+    }
+    await connecta.close();
   });
 
   const labelsOver = async (connecta: { fetch(request: Request): Promise<Response> }, token?: string) =>
@@ -793,6 +838,28 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     await labels(shared, inPool(agent("assistant"), "team"));
     expect(tokenCalls.map((_, index) => sub(index))).toEqual(["shared-inbox@org.example"]);
     expect(apiCalls).toHaveLength(3);
+
+    for (const connector of [shared, mailbox()]) {
+      const registry = makeRegistry([connector]);
+      const alice: ConnectorCaller = {
+        identity: agent("assistant"),
+        authenticated: true,
+        pool: "assistant-alice",
+        poolOwner: "alice@org.example",
+      };
+      const cursor = await continuedLabels(registry, alice);
+      const bob = { ...alice, pool: "assistant-bob", poolOwner: "bob@org.example" };
+      const before = { tokens: tokenCalls.length, requests: apiCalls.length };
+      if (connector === shared) {
+        expect(await continuedLabels(registry, bob, cursor)).toBe(cursor);
+      } else {
+        const refused = await continuedLabels(registry, bob, cursor).catch((error) => error);
+        expect(refused.error).toMatchObject({ code: "invalid_args" });
+        expect(tokenCalls).toHaveLength(before.tokens);
+        expect(apiCalls).toHaveLength(before.requests);
+      }
+      expect(await continuedLabels(registry, alice, cursor)).toBe(cursor);
+    }
   });
 
   describe("over MCP", () => {
