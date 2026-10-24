@@ -13,6 +13,7 @@ import type { GuardedTransport } from "../guarded-transport.js";
 export const nodeGuardedTransport: GuardedTransport = {
   async send(url, init) {
     const framed = new Request(url, init);
+    if (!framed.headers.has("user-agent")) framed.headers.set("user-agent", "connecta");
     const client = new Client(url.origin, {
       allowH2: false,
       pipelining: 0,
@@ -23,7 +24,14 @@ export const nodeGuardedTransport: GuardedTransport = {
         path: `${url.pathname}${url.search}`,
         method: framed.method as Parameters<Client["request"]>[0]["method"],
         headers: Object.fromEntries(framed.headers),
-        body: framed.body ? Readable.fromWeb(framed.body as Parameters<typeof Readable.fromWeb>[0]) : null,
+        // Keep serialized SDK/provider bodies sized: undici computes their exact
+        // UTF-8 Content-Length instead of using chunked transfer encoding.
+        body:
+          typeof init.body === "string"
+            ? init.body
+            : framed.body
+              ? Readable.fromWeb(framed.body as Parameters<typeof Readable.fromWeb>[0])
+              : null,
         signal: framed.signal,
         idempotent: false,
         maxRedirections: 0,

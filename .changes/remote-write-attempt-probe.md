@@ -1,8 +1,12 @@
 ---
-type: fixed
+type: changed
+breaking: true
 ---
 
 Send remote MCP writes through the owned Node transport so HTTP 421 responses
 and host retry dispatchers cannot silently repeat them. Node deployments must
-serve with `listen` from `@zackbart/connecta/node` to send remote writes;
-unconfirmed dispatched writes retain an unknown outcome.
+serve with `listen` from `@zackbart/connecta/node` to send remote writes. Node
+hosts serving `connecta.fetch` without `listen` lose remote writes that worked
+in 0.34; those writes are now refused before dispatch. The owned transport
+connects directly, ignoring outbound proxy settings and host dispatchers.
+Unconfirmed dispatched writes retain an unknown, non-retryable outcome.

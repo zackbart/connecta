@@ -34,7 +34,7 @@ export default async function setup(project: TestProject) {
     const downstream = createMcpHandler(() => {
       const mcp = new McpServer({ name: "attempt-probe", version: "1.0.0" });
       for (const name of ["create_item", "list_items"]) {
-        mcp.registerTool(name, { inputSchema: z.object({}), annotations: { readOnlyHint: name === "list_items" } }, async () => ({
+        mcp.registerTool(name, { inputSchema: z.object({ label: z.string().optional() }), annotations: { readOnlyHint: name === "list_items" } }, async () => ({
           content: [{ type: "text", text: "ok" }],
         }));
       }
@@ -47,11 +47,41 @@ export default async function setup(project: TestProject) {
       const chunks: Buffer[] = [];
       for await (const chunk of incoming) chunks.push(chunk as Buffer);
       const body = Buffer.concat(chunks).toString();
+      if (key === "401") {
+        const json = (value: unknown, status = 200) => outgoing.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
+        if (incoming.url!.startsWith("/.well-known/oauth-protected-resource")) {
+          json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
+          return;
+        }
+        if (incoming.url!.startsWith("/.well-known/")) {
+          json({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code", "refresh_token"],
+            code_challenge_methods_supported: ["S256"],
+            token_endpoint_auth_methods_supported: ["none"],
+          });
+          return;
+        }
+        if (incoming.url === "/token") {
+          json({ error: "invalid_grant" }, 400);
+          return;
+        }
+      }
       const rpc = body ? (JSON.parse(body) as { method?: string }) : undefined;
       if (rpc?.method === "tools/call" || rpc?.method === "resources/read") {
         received.push(body);
         wire.push({ method: incoming.method, headers: incoming.headers, body });
         outgoing.once("close", () => { probe.closed++; });
+        if (key === "401") {
+          outgoing.writeHead(401, {
+            "content-type": "application/json",
+            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+          }).end("{}");
+          return;
+        }
         if (received.length === 1 && ["421-closed", "421-open", "reset", "retry-reset", "retry-503"].includes(key)) {
           if (key === "421-closed") server.close();
           if (key === "reset" || key === "retry-reset") {

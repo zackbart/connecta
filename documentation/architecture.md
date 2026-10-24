@@ -2869,8 +2869,8 @@ compiling and configuring the real thing.
   request again after a 421 (even under `redirect: "manual"`) and after an
   HTTP/2 `REFUSED_STREAM`, both of which servers define as not processed, and
   an operator-installed dispatcher such as undici's `RetryAgent` can retry
-  further. A refusal on the last attempt says nothing about the earlier ones,
-  so remote MCP writes on Node use the owned runtime sender installed by
+  further. A refusal on the last attempt says nothing about the earlier ones.
+  Remote MCP writes on Node use the owned runtime sender installed by
   `listen` from `/node`, selected before recording dispatch. Without it they
   are refused before sending. Reads retain native fetch; Workers uses native
   fetch with manual redirects. The owned Node sender bypasses the global
