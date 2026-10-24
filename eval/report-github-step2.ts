@@ -27,8 +27,8 @@ const runs = ["before-final-luna", "before-final-sonnet", "after-luna", "after-s
     const selectedTools: Record<string, number> = {};
     for (const program of programs)
       for (const call of program.calls)
-        if (call.name === "connecta.call" && typeof call.args[1] === "string")
-          selectedTools[call.args[1]] = (selectedTools[call.args[1]] ?? 0) + 1;
+        if (call.name === "connecta.call" && typeof call.args[0] === "string")
+          selectedTools[call.args[0]] = (selectedTools[call.args[0]] ?? 0) + 1;
     for (const use of uses.values()) {
       const input = use.input as { tool?: unknown; address?: unknown };
       const tool = input.tool ?? input.address;
