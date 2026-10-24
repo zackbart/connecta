@@ -671,7 +671,7 @@ export function docsTools({ connection }: { connection: Connection }): ApiTool[]
     };
     return isRead
       ? read(connection, spec)
-      : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+      : write(connection, { ...spec, destructive: tool.annotations.destructiveHint !== false });
   });
 }
 
@@ -877,7 +877,7 @@ function toolDefinitions(connection: Connection, client: GoogleClient): DocsTool
                   const sentence = /[.!?]$/.test(detail.trim()) ? detail.trim() : `${detail.trim()}.`;
                   return ["refused", "not-sent"].includes(writeOutcome(cause))
                     ? `Created document ${documentId}, but Google refused its initial text: ${sentence} Do not create it again; add the text with append_text on ${documentId}.`
-                    : `Created document ${documentId}, but whether its initial text was written is unknown: ${sentence} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+                    : `Created document ${documentId}, but its initial text was not confirmed: ${sentence} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
                 });
               }),
             );

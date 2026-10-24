@@ -16,6 +16,11 @@
 // logical call: one boundary, one write sent, carrying that key.
 import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
+import { Effect, Schema } from "effect";
+import { guardedClient } from "../src/http/client.js";
+import { resultSafety } from "../src/http/safety.js";
+import { write } from "../src/http/tools.js";
+import { connect, vendor, get, post } from "../src/http/vendor.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { recordRecovery } from "../src/call-recovery.js";
@@ -36,6 +41,7 @@ import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
+import { writeStateOf } from "../src/program-writes.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { googleOptions } from "./fixtures/provider-options.js";
 import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
@@ -221,6 +227,154 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
             expect(requests, label).toEqual(["GET", "GET"]);
           }
         }
+      }
+    }
+
+    // A kit auxiliary POST (or method override) is physical write work even
+    // though its declaration calls it a read. Non-timeout failures agree too.
+    for (const method of ["POST", "override"] as const) {
+      for (const status of [503, 400]) {
+        const sends: string[] = [];
+        vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+          sends.push(init?.method ?? "GET");
+          return Response.json({}, { status: sends.length % 2 === 1 ? 200 : status });
+        });
+        const connection = connect(
+          vendor("tickets", get("lookup", "/lookup"), post("send", "/items")),
+          guardedClient({
+            provider: "Tickets",
+            baseUrl: "https://tickets.test",
+            maxResponseBytes: 1024,
+            authenticate: Effect.succeed({}),
+          }),
+          {
+            errors: {
+              provider: "Tickets",
+              facts: () => ({}),
+              detail: ({ status }) => `Tickets returned HTTP ${status}.`,
+              unreadable: "Tickets returned an unreadable response.",
+              statuses: {
+                400: () => ({ code: "unavailable", retryable: true }),
+                401: () => ({ code: "auth_required" }),
+                403: () => ({ code: "provider_permission_denied" }),
+                404: () => ({ code: "not_found" }),
+              },
+            },
+            safety: resultSafety({
+              review: "Fixture responses contain no credentials.",
+              sensitiveFields: { names: [], choice: "drop" },
+            }),
+          },
+        );
+        const tool = write(connection, {
+          name: "send",
+          description: "Look up, then send an auxiliary-labelled request.",
+          destructive: false,
+          input: Schema.Struct({}),
+          output: Schema.Unknown,
+          writeSteps: { lookup: "once", write: "once" },
+          run: () =>
+            connection
+              .sendPath({ method: "GET", path: "/lookup", template: "/lookup" }, { effect: "read", step: "lookup" })
+              .pipe(
+                Effect.flatMap(() =>
+                  connection.sendPath(
+                    method === "POST"
+                      ? { method: "POST", path: "/items", template: "/items" }
+                      : {
+                          method: "GET",
+                          path: "/lookup",
+                          template: "/lookup",
+                          headers: { "X-HTTP-Method-Override": "POST" },
+                        },
+                    { effect: "read", step: "write" },
+                  ),
+                ),
+              ),
+        });
+        const registry = makeRegistry([tracksEveryRequest(api("tickets", { tools: [tool] }))]);
+        const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+          "tickets.send",
+          {},
+          { source: "call_destructive_tool" },
+        );
+        if (served.ok) throw new Error("Expected an auxiliary write failure.");
+        expect(served.error).toMatchObject({
+          code: "connector_call_failed",
+          retryable: false,
+          writeOutcome: "unknown",
+        });
+        expect(classifyWriteOutcome(served)).toBe("unknown");
+        const program = await catchingProgram(registry, "tickets.send");
+        expect(program.structuredContent).toMatchObject({ error: { writes: { succeeded: 0, failed: 0, unknown: 1 } } });
+        expect(sends).toEqual(["GET", method === "POST" ? "POST" : "GET", "GET", method === "POST" ? "POST" : "GET"]);
+      }
+    }
+
+    // A proven auth refusal of the call's own write stays failed in both
+    // the direct recovery advice and program accounting.
+    for (const complete of [true, false]) {
+      const untracked: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        untracked.push(String(input));
+        return Response.json({ applied: true });
+      });
+      const authRefusal = guardedFetch({
+        provider: "Tickets",
+        baseUrl: "https://tickets.test",
+        authenticate: () => ({}),
+        maxResponseBytes: 1024,
+        fetch: async () => Response.json({}, { status: 403 }),
+      });
+      const boundary = api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send",
+            annotations: { readOnlyHint: false },
+            handler: async (_args, ctx) => {
+              // This untracked write makes the following refused resource request
+              // only part of the call: it cannot prove the whole call failed.
+              if (!complete) await fetch("https://untracked.test/items", { method: "POST" });
+              return authRefusal({ method: "POST", path: "/items" }, ctx, () => {
+                throw new ConnectorCallError("auth_required", "Credential refused.");
+              });
+            },
+          },
+        ],
+      });
+      const refused = complete ? tracksEveryRequest(boundary) : boundary;
+      const refusedRegistry = makeRegistry([refused]);
+      const refusal = await new InvocationService(refusedRegistry, new CatalogService(refusedRegistry, BASE)).invoke(
+        "tickets.send",
+        {},
+        { source: "call_destructive_tool" },
+      );
+      if (refusal.ok) throw new Error("Expected an auth refusal.");
+      expect(classifyWriteOutcome(refusal)).toBe(complete ? "failed" : "unknown");
+      expect(refusal.error.reconciliationRequired).toBe(complete ? undefined : true);
+      expect(refusal.error.retry).toBe(
+        complete
+          ? "Fix the credentials, then retry tickets.send."
+          : "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+      );
+      const refusedProgram = await catchingProgram(refusedRegistry, "tickets.send");
+      if (complete) {
+        expect(writeStateOf(refusal)).toBe("failed");
+        expect(refusedProgram.structuredContent).toMatchObject({
+          result: "caught and continued",
+          hostCalls: { failed: 1 },
+        });
+        expect(refusedProgram.structuredContent).not.toHaveProperty("error");
+        expect(untracked).toEqual([]);
+      } else {
+        expect(refusedProgram.structuredContent).toMatchObject({
+          error: {
+            reconciliationRequired: true,
+            writes: { succeeded: 0, failed: 0, unknown: 1 },
+          },
+        });
+        expect(untracked).toHaveLength(2);
       }
     }
 
@@ -560,6 +714,43 @@ describe("a remote MCP write that was sent: no JSON-RPC error or output verdict 
     expect(classifyWriteOutcome(served)).toBe("failed");
     expect(calls).not.toContain("tools/call");
     await connector.closeScope?.(ctx);
+
+    // Hold the warmed catalog, then force reconnect inside callTool to
+    // receive a 401 before tools/call. An empty ledger supplies no auth proof.
+    let deny = false;
+    const authCalls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rpc = typeof init?.body === "string" ? (JSON.parse(init.body) as { method?: string }) : {};
+      if (deny) {
+        if (rpc.method) authCalls.push(rpc.method);
+        return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+      }
+      return downstream.fetch(String(input), init);
+    });
+    const authConnector = remoteMcp("auth_tickets", { url: downstream.url, versionNegotiation: "legacy" });
+    const authRegistry = makeRegistry([authConnector], { toolCacheTtlSeconds: 3600 });
+    Object.assign(authConnector, {
+      staticTools: await authConnector.listTools(authRegistry.contextFor("auth_tickets", BASE)),
+    });
+    await authConnector.closeScope?.(authRegistry.contextFor("auth_tickets", BASE));
+    deny = true;
+    const authFailure = await new InvocationService(authRegistry, new CatalogService(authRegistry, BASE)).invoke(
+      "auth_tickets.create_item",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    if (authFailure.ok) throw new Error("Expected a reconnect auth failure.");
+    expect(authFailure.dispatched, JSON.stringify(authFailure)).toBe(true);
+    expect(authFailure.error).toMatchObject({
+      writeOutcome: "unknown",
+      retryable: false,
+      reconciliationRequired: true,
+    });
+    expect(classifyWriteOutcome(authFailure)).toBe("unknown");
+    const authProgram = await catchingProgram(authRegistry, "auth_tickets.create_item");
+    expect(authProgram.structuredContent).toMatchObject({ error: { writes: { succeeded: 0, failed: 0, unknown: 1 } } });
+    expect(authCalls).not.toContain("tools/call");
+    await authConnector.closeScope?.(authRegistry.contextFor("auth_tickets", BASE));
   });
 
   it("INV-9: control: an HTTP 4xx refusal of the tools/call stays known; a 408 is unknown", async () => {
