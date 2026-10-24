@@ -32,6 +32,54 @@ export function counterexamples(
   const cases: { name: string; world?: World; trace?: AgentTrace }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
+  if (task.id.startsWith("pco-step2-")) {
+    const changedCalls = (calls: World["ledger"]["calls"]): World =>
+      Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+      });
+    cases.push({
+      name: "fabricated answer facts",
+      trace: { ...trace, finalAnswer: 'ANSWER: {"source":"Planning Center","count":9999}' },
+    });
+    cases.push({ name: "no source HTTP evidence", world: changedCalls([]) });
+    if (task.id === "pco-step2-people-paging")
+      cases.push({
+        name: "first page only",
+        world: changedCalls(world.ledger.calls.filter((c) => Number((c.args.query as any)?.offset ?? 0) < 100)),
+      });
+    if (task.id === "pco-step2-group-services-join")
+      cases.push({
+        name: "missing second leader schedule",
+        world: changedCalls(world.ledger.calls.filter((c) => c.args.path !== "/services/v2/people/1003/schedules")),
+      });
+    if (task.id === "pco-step2-note-once" || task.id === "pco-step2-update-recovery") {
+      const write = world.ledger.calls.find((c) => c.kind === "write");
+      if (write)
+        cases.push({
+          name: "duplicate dispatched write",
+          world: changedCalls([...world.ledger.calls, { ...write, seq: 9999 }]),
+        });
+      if (write && task.id === "pco-step2-update-recovery")
+        cases.push({
+          name: "no reconciliation after failed write",
+          world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
+        });
+    } else
+      cases.push({
+        name: "attempted write on read task",
+        trace: {
+          ...trace,
+          toolUses: [
+            ...trace.toolUses,
+            {
+              turn: 1,
+              tool: "call_destructive_tool",
+              input: { address: "pco.update_person", args: { personId: "1001", nickname: "bad" } },
+            },
+          ],
+        },
+      });
+  }
   if (task.id === "p5-read-only-program-refusal") {
     for (const errorCode of ["invalid_args", "downstream_error"]) {
       cases.push({

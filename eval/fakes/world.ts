@@ -3,6 +3,7 @@
  * ledger and one clock, started fresh and thrown away afterwards.
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
+import { FakePlanningCenter, planningCenterState } from "./planning-center.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
@@ -44,7 +45,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze";
+  rest?: RestVendor | "tithely" | "breeze" | "planning-center";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -52,6 +53,7 @@ export interface ConnectorSpec {
 export interface WorldOptions {
   restVendor?: RestVendor;
   breeze?: { fault?: "update-500" };
+  planningCenter?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
   tithely?: { fault?: TithelyFault };
   refundFault?: boolean;
@@ -78,8 +80,9 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze> = [];
+  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakePlanningCenter> = [];
   readonly breeze = breezeState();
+  readonly pco = planningCenterState();
   readonly tithely = tithelyState();
   readonly now = Date.now();
   readonly ledger = new Ledger();
@@ -105,6 +108,8 @@ export class World {
     if (options.tithely)
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
+    if (options.planningCenter)
+      this.restServices = [new FakePlanningCenter("pco", this.ledger, this.pco, options.planningCenter.fault)];
     this.tracker = trackerState(this.now);
     this.chat = chatState(this.now);
     const clock = () => Date.now();
@@ -140,7 +145,7 @@ export class World {
   }
 
   connectorSpecs(): ConnectorSpec[] {
-    if (this.options.restVendor || this.options.tithely || this.options.breeze)
+    if (this.options.restVendor || this.options.tithely || this.options.breeze || this.options.planningCenter)
       return this.restServices.map((service) => ({
         id: service.name,
         title: service.name,

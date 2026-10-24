@@ -12,6 +12,7 @@ export interface SavedGradeInputs {
   world: {
     rest?: World["rest"];
     breeze?: World["breeze"];
+    pco?: World["pco"];
     tithely?: World["tithely"];
     ci?: World["ci"];
     tracker: TrackerState;
@@ -31,6 +32,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       rest: world.rest,
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
+      ...(world.options.planningCenter ? { pco: world.pco } : {}),
       ci: world.ci,
       tracker: world.tracker,
       chat: world.chat,
@@ -140,6 +142,13 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.breeze, structuredClone(state.breeze));
   } else if (state.calls.some((c) => c.service === "breeze"))
     throw new Error("Incomplete saved grading evidence: breeze");
+  if (state.pco) {
+    for (const key of ["people", "notes", "updated"] as const)
+      requireEvidence(Array.isArray(state.pco[key]), `pco.${key}`);
+    for (const person of world.pco.people)
+      requireEvidence(state.pco.people.filter((p) => p.id === person.id).length === 1, `pco.${person.id}`);
+    Object.assign(world.pco, structuredClone(state.pco));
+  } else if (state.calls.some((c) => c.service === "pco")) throw new Error("Incomplete saved grading evidence: pco");
   world.ci.splice(0, world.ci.length, ...state.ci!);
   Object.assign(world.tracker, saved.world.tracker);
   Object.assign(world.chat, saved.world.chat);

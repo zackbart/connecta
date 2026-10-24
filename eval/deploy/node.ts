@@ -19,6 +19,7 @@ import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
 import { breeze } from "@zackbart/connecta/providers/breeze";
+import { planningCenter } from "@zackbart/connecta/providers/planning-center";
 import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
@@ -91,6 +92,7 @@ export async function startNodeDeployment(
       ...connectors.map((spec) => {
         const options = { purpose: spec.description };
         if (spec.rest === "breeze") return breeze(spec.id, { ...options, subdomain: "church" });
+        if (spec.rest === "planning-center") return planningCenter(spec.id, { ...options, baseUrl: spec.url });
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
         if (spec.rest === "tithely")
           return tithely(spec.id, { ...options, environment: "live", baseUrl: `${spec.url}/api/v1` });
@@ -123,7 +125,7 @@ export async function startNodeDeployment(
   });
   for (const spec of connectors) {
     if (spec.credential?.value) {
-      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely")
+      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely" || spec.rest === "planning-center")
         await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
       else await vault.set(spec.id, spec.credential.value, "operator");
     }
