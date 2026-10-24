@@ -6,4 +6,4 @@ Restore explicit additive-write annotations across Breeze and Google named tools
 
 Align auth recovery advice with program write accounting for proven resource refusals. Auth failures after entering a write with no call-owned dispatch, including credential refusals, static-OAuth refresh failures, and remote MCP connect/initialize 401s, report unknown outcomes and require reconciliation. Count kit auxiliary requests without physical read proof as call-owned when settling failures, including 503 and unavailable responses.
 
-Treat undefined object properties as absent during input validation, without mutating caller arguments. An evaluation failure no longer disables a cached validator for later calls.
+Treat undefined plain-object properties as absent during input validation, without mutating caller arguments or copying dates, byte arrays and class instances. A throwing input getter is a validation refusal. An evaluation failure no longer disables a cached validator for later calls. Omitted destructive hints keep the conservative default.

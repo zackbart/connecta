@@ -671,7 +671,7 @@ export function docsTools({ connection }: { connection: Connection }): ApiTool[]
     };
     return isRead
       ? read(connection, spec)
-      : write(connection, { ...spec, destructive: tool.annotations.destructiveHint === true });
+      : write(connection, { ...spec, destructive: tool.annotations.destructiveHint !== false });
   });
 }
 

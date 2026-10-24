@@ -395,23 +395,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       if (!tool) {
         throw knownProviderFailure(new Error(`Unknown tool "${name}" on connector "${id}"`));
       }
-      const input = normalizeToolInput(args ?? {});
-      if (validateArgs && tool.inputSchema) {
-        const invalid = validateCatalogToolInput(
-          tool.inputSchema,
-          input,
-          {
-            address: `${id}.${name}`,
-            logger: ctx.logger,
-            // Always: the schema compiled at construction, so anything that
-            // fails here is a schema that cannot be enforced, and a surface we
-            // wrote ourselves does not get to admit unvalidated input quietly.
-            failClosed: true,
-          },
-          { connector: id, tool },
-        );
-        if (invalid) throw knownProviderFailure(invalid);
-      }
       // `await` (not a bare promise return) so a handler that throws before
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
@@ -432,7 +415,26 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         principal: serviceFor(ctx, ContinuationBinding)?.principal ?? null,
       });
       let result: unknown;
+      let handlerStarted = false;
       try {
+        const input = normalizeToolInput(args ?? {});
+        if (validateArgs && tool.inputSchema) {
+          const invalid = validateCatalogToolInput(
+            tool.inputSchema,
+            input,
+            {
+              address: `${id}.${name}`,
+              logger: ctx.logger,
+              // Always: the schema compiled at construction, so anything that
+              // fails here is a schema that cannot be enforced, and a surface we
+              // wrote ourselves does not get to admit unvalidated input quietly.
+              failClosed: true,
+            },
+            { connector: id, tool },
+          );
+          if (invalid) throw knownProviderFailure(invalid);
+        }
+        handlerStarted = true;
         // The opaque handler may await a helper, swallow its rejection, or
         // wait elsewhere. Its boundary remains call-owned; auxiliary helpers
         // retain their separate request ownership. Ledger settlement below
@@ -442,6 +444,16 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         // Settled before anything is decided or reported: a request that has
         // not left by now (a sibling awaiting its credential) never will.
         closeProviderCall(callCtx);
+        if (!handlerStarted) {
+          throw knownProviderFailure(
+            error instanceof ConnectorCallError
+              ? error
+              : new ConnectorCallError(
+                  "invalid_args",
+                  `Cannot validate arguments for "${id}.${name}": its inputSchema could not be evaluated`,
+                ),
+          );
+        }
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
         const settle = (failure: unknown) =>

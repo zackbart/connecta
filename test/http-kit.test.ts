@@ -97,6 +97,7 @@ import { valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { googleErrors } from "../src/providers/_shared/google/kit.js";
+import { buildTool as driveTool } from "../src/providers/drive/tools.js";
 import { stripeErrors } from "../src/providers/stripe/api.js";
 import { cloudflareErrors } from "../src/providers/cloudflare/api.js";
 import { errors as githubErrors } from "../src/providers/github/api.js";
@@ -1108,6 +1109,17 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", NODE, () => {
     await expect(
       orderedConnector.callTool("ordered", { first: "one", second: 2, rows: [] }, context()),
     ).rejects.toBeDefined();
+    const throwing = {
+      get first(): string {
+        throw new Error("Input getter failed.");
+      },
+      second: "two",
+      rows: [],
+    };
+    const failure = await orderedConnector.callTool("ordered", throwing, context()).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ConnectorCallError);
+    expect(failure).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: failure as never })).toBe("failed");
     await expect(
       orderedConnector.callTool(
         "ordered",
@@ -1464,6 +1476,17 @@ describe("kit construction (decision 0010, B.4)", () => {
           { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
         ],
         [() => write(connection, { ...spec, destructive: true }), { readOnlyHint: false, destructiveHint: true }],
+        [
+          () =>
+            driveTool(connection, {
+              name: "create_folder",
+              description: spec.description,
+              annotations: { readOnlyHint: false },
+              contract: { input: spec.input, output: spec.output },
+              run: spec.run,
+            }),
+          { readOnlyHint: false, destructiveHint: true },
+        ],
         [() => action(connection, spec), { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
       ] as const)
         expect(build().annotations).toEqual(annotations);

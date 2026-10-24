@@ -260,8 +260,9 @@ keeps its code. Failures before
 the handler runs stay ordinary refusals: argument validation against
 `inputSchema` and missing authorization. Declare input constraints in
 `inputSchema` so a malformed write is refused before the handler starts. In-process
-calls treat undefined object properties as absent during validation, including
-nested records. For example, `{ title: "Minutes", cursor: undefined }` validates
+calls treat undefined properties of plain objects as absent during validation,
+including records nested in arrays. Other objects, such as dates, byte arrays
+and class instances, retain their identity. For example, `{ title: "Minutes", cursor: undefined }` validates
 like `{ title: "Minutes" }`. Validation leaves the caller's arguments intact;
 handlers receive the normalized input. One input evaluation failure cannot
 disable validation for later calls. A

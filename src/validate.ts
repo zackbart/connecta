@@ -43,6 +43,13 @@ const validators = new WeakMap<JsonSchema, Validator | null>();
 const evaluationWarnings = new WeakSet<JsonSchema>();
 const REQUIRED_PROPERTY_RE = /^Instance does not have required property "([^"]+)"\.$/;
 
+function plainContainer(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return true;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 /** Optional in-process properties have the same absence semantics as JSON input. Never mutate the caller. */
 export function normalizeToolInput<A>(value: A): A {
   // Keep unchanged inputs and their pass-through subtrees by identity. JSON
@@ -52,7 +59,7 @@ export function normalizeToolInput<A>(value: A): A {
   let needed = false;
   while (remaining.length > 0) {
     const item = remaining.pop();
-    if (item === null || typeof item !== "object" || seen.has(item)) continue;
+    if (!plainContainer(item) || seen.has(item)) continue;
     seen.add(item);
     for (const child of Object.values(item)) {
       if (child === undefined && !Array.isArray(item)) needed = true;
@@ -63,10 +70,10 @@ export function normalizeToolInput<A>(value: A): A {
   const copies = new WeakMap<object, object>();
   const pending: Array<[object, object]> = [];
   const copy = (item: unknown): unknown => {
-    if (item === null || typeof item !== "object") return item;
+    if (!plainContainer(item)) return item;
     const existing = copies.get(item);
     if (existing) return existing;
-    const target = Array.isArray(item) ? [] : {};
+    const target = Array.isArray(item) ? [] : Object.create(Object.getPrototypeOf(item));
     if (Array.isArray(item)) (target as unknown[]).length = item.length;
     copies.set(item, target);
     pending.push([item, target]);
