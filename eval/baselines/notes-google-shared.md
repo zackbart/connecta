@@ -120,15 +120,16 @@ TASKS=$(node -e 'console.log(["gmail","drive","docs","sheets","slides","forms"].
 VITEST_MAX_WORKERS=2 pnpm run eval:selftest --tasks "$TASKS"
 ```
 
-Frozen source SHA-256 values after the #1011 review fixes:
+Frozen source SHA-256 values after the #1011 final fixes and merge of main
+`aeae16f7` (#1006):
 
 | File | SHA-256 |
 | --- | --- |
-| `eval/fakes/google.ts` | `5167e7e86cb98aae738ac217d6f53cbea281550c041e85650bd703912dac6c23` |
-| `eval/tasks/google.ts` | `87a14f3ff9d28fcab5f1e9348d9dacec0549463e56b77ea406751f5ffccb9ad8` |
-| `eval/tasks/google-controls.ts` | `c9664a7abec02436330b4800a34a9c02f7028ae7d5835332c8d54c605334674d` |
-| `eval/tasks/grading.ts` | `fb4616e6b534e25fcd2192e31316505be659e5fd7a037ad0e1e364b9ce84ed5f` |
-| `eval/tasks/counterexamples.ts` | `ec2c69ac7ec40206b1106a226d096c69a7351f35a18c6f5e967db277335de642` |
+| `eval/fakes/google.ts` | `4891b752d39e03543e3deb29e8dfb49162e7bb6416dabe54ca52cd8be2cc7ce5` |
+| `eval/tasks/google.ts` | `fcdf659aaf51e3dd66750ede493f2c5a71ab37abeeba3cde12bfcdcbf1c12a9f` |
+| `eval/tasks/google-controls.ts` | `cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75` |
+| `eval/tasks/grading.ts` | `07384fc95f2957c8bf60225b5bfeae7c8ec5c82c38c6b5004522d5dda535b5f1` |
+| `eval/tasks/counterexamples.ts` | `8835585eecfb0f94c7111c4a4278236af97a57d0b61adef4c87b94cd5b1f0518` |
 | `eval/selftest.ts` | `8f7e18297abe762c90bff872052a037ced841c9cb1588ceb7315389cc0db3578` |
 
 ## Prerequisite implementation verification
@@ -285,3 +286,32 @@ provider-standard/convention suites pass 97 tests; all-provider Node goldens
 pass 16. Static checks, typechecking and build/declaration/bundle checks pass.
 No production module, provider surface, golden or Vitest case changed in this
 review fix; the Vitest test-count delta remains zero.
+
+
+## #1011 final fixes and main integration
+
+D5 verifies the uploaded file's exact `folder1` parent and
+`application/octet-stream` MIME type as well as the attachment bytes. The fake
+defaults omitted upload parents to `root`. Controls reject explicit root
+parents, omitted parents and `text/plain` uploads through the state check.
+
+O5 and O7 require the requested created-document title. F5 requires the new
+optional Reviewer text question at index 1. Separate controls reject the wrong
+title, position and required flag, plus the reviewer's combined Wrong/required/
+index-0 item. Quoted sheet-only grid ranges resolve the named sheet, including
+`'People'` and the escaped apostrophe in `'Alice''s costs'`.
+
+Main `aeae16f7` was integrated by merge, without rebasing. The frozen hashes
+above include its additive Vercel changes to `counterexamples.ts` and
+`grading.ts`, together with every Google source file changed in this fix.
+
+Final verification on the merged tree used `VITEST_MAX_WORKERS=2`: all 42
+tasks completed on both surfaces in both grading modes, with 164 supported
+outcomes, four expected Drive D4 gap checks and 12 successful network/body
+recoveries. All 342 negative controls were rejected (including all 42 sibling
+controls and nine new state controls); all 17 equivalent-read positives passed.
+The 100 targeted eval/parser/provider-standard/convention/hatch tests and all
+16 provider Node goldens passed. Final static, typecheck, build, declaration
+and bundle checks passed. All six frozen hashes match the source bytes.
+The final fix changes only eval files; Vitest test-count delta is zero.
+No full check or live model trials were run.

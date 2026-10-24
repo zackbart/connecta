@@ -180,6 +180,16 @@ export async function googleBoundaryControls(): Promise<void> {
   );
   if (grid.sheets[1]?.data?.[0]?.rowData?.[1]?.values?.[1]?.userEnteredValue?.stringValue !== "Bob")
     throw new Error("Google fake omitted People grid data");
+  for (const [range, sheetId] of [
+    ["'People'", 1],
+    ["'Alice''s costs'", 0],
+  ] as const) {
+    const url = new URL("https://sheets.googleapis.com/v4/spreadsheets/sheets1?includeGridData=true");
+    url.searchParams.set("ranges", range);
+    const selected = await fakeRead(url, "spreadsheets");
+    if (selected.sheets.length !== 1 || selected.sheets[0].properties.sheetId !== sheetId)
+      throw new Error(`Google fake ignored quoted sheet-only range ${range}`);
+  }
   const selectedGrid = await fakeRead(
     "https://sheets.googleapis.com/v4/spreadsheets/sheets1?includeGridData=true&ranges=People!B2:B2",
     "spreadsheets",

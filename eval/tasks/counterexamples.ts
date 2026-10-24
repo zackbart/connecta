@@ -82,6 +82,64 @@ export function counterexamples(
       });
     const { product, task: step } = task.world!.google!;
     const account = world.google.state.accounts[ALICE];
+    const changedState = (change: (a: typeof account, calls: World["ledger"]["calls"]) => void): World => {
+      const variant = changedCalls(structuredClone(world.ledger.calls));
+      const state = structuredClone(world.google.state);
+      change(state.accounts[ALICE], variant.ledger.calls);
+      Object.defineProperty(variant, "google", {
+        value: Object.assign(Object.create(Object.getPrototypeOf(world.google)), world.google, { state }),
+      });
+      return variant;
+    };
+    if (task.id === "google-drive-5")
+      for (const mistake of ["parents root", "omitted parents", "text/plain MIME"])
+        cases.push({
+          name: `Google D5 upload ${mistake}`,
+          check: "state",
+          world: changedState((a, calls) => {
+            const file = a.uploads[0]!.file;
+            if (mistake === "text/plain MIME") file.mimeType = "text/plain";
+            else file.parents = ["root"];
+            for (const call of calls)
+              if (call.service === "drive" && call.kind === "write") {
+                if (mistake === "omitted parents") delete (call.args.body as any).parents;
+                else Object.assign(call.args.body as object, { parents: file.parents, mimeType: file.mimeType });
+                call.args.returned = structuredClone(file);
+              }
+          }),
+        });
+    if (product === "docs" && [5, 7].includes(step))
+      cases.push({
+        name: "Google created document has the wrong title",
+        check: "state",
+        world: changedState((a, calls) => {
+          a.created[0]!.title = "Wrong title";
+          for (const call of calls)
+            if (call.service === "docs" && call.args.path === "/documents" && call.kind === "write")
+              (call.args.body as any).title = "Wrong title";
+        }),
+      });
+    if (task.id === "google-forms-5")
+      for (const mistake of ["title", "index", "required", "all"])
+        cases.push({
+          name: `Google created question has wrong ${mistake}`,
+          check: "state",
+          world: changedState((a, calls) => {
+            const item = a.form.items.find((i: any) => i.itemId === "item-new")!;
+            if (mistake === "title" || mistake === "all") item.title = "Wrong";
+            if (mistake === "required" || mistake === "all") item.questionItem.question.required = true;
+            if (mistake === "index" || mistake === "all") {
+              a.form.items = a.form.items.filter((i: any) => i.itemId !== "item-new");
+              a.form.items.unshift(item);
+            }
+            for (const call of calls)
+              if (call.service === "forms" && call.kind === "write") {
+                const create = (call.args.body as any).requests[0].createItem;
+                create.item = structuredClone(item);
+                create.location.index = a.form.items.indexOf(item);
+              }
+          }),
+        });
     // Preserve the expected answer, writes and final state. Only the read's
     // resource changes, with a sibling/decoy carrying otherwise plausible data.
     const readProduct = product === "drive" && step === 5 ? "gmail" : product;

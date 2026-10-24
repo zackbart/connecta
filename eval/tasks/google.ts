@@ -464,10 +464,12 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
               )
             : a.created.length === 1 &&
               a.uploads.length === 1 &&
-              a.uploads[0]?.base64 === ATTACHMENT.toString("base64");
+              a.uploads[0]?.base64 === ATTACHMENT.toString("base64") &&
+              subset(a.uploads[0]?.file, { parents: ["folder1"], mimeType: "application/octet-stream" });
     if (product === "docs")
       state = [5, 7].includes(task)
         ? a.created.length === 1 &&
+          subset(a.created[0], { title: task === 5 ? "Review minutes" : "Recovered minutes" }) &&
           JSON.stringify(a.created).includes(task === 5 ? "Meeting opened." : "Recovered opening.")
         : task === 6
           ? JSON.stringify(a.document).split("Review complete.").length === 2
@@ -496,7 +498,13 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
         task === 6 || task === 7
           ? a.form.info.title === (task === 6 ? "Reviewed form" : "Concurrent review")
           : task === 5
-            ? a.form.items.filter((i: Row) => i.itemId === "item-new").length === 1
+            ? a.form.items.filter((i: Row) => i.itemId === "item-new").length === 1 &&
+              subset(a.form.items[1], {
+                itemId: "item-new",
+                title: "Reviewer",
+                questionItem: { question: { textQuestion: {} } },
+              }) &&
+              a.form.items[1]?.questionItem?.question?.required !== true
             : JSON.stringify(a.form.items[0]).includes("later") &&
               JSON.stringify(a.form.items[0]).includes("SUBMIT_FORM") &&
               JSON.stringify(a.form.items[0]).includes("correctAnswers");

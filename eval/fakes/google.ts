@@ -183,11 +183,11 @@ export function googleSpreadsheet(a: GoogleAccount, includeGrid: boolean, ranges
   const requested = ranges.map((range) => {
     const named = a.spreadsheet.namedRanges.find((entry: Row) => entry.name === range);
     if (named) return named.range;
-    const title = range.includes("!") ? range.slice(0, range.lastIndexOf("!")) : undefined;
-    const unquoted = title?.startsWith("'") ? title.slice(1, -1).replaceAll("''", "'") : title;
+    const title = range.includes("!") ? range.slice(0, range.lastIndexOf("!")) : range;
+    const unquoted = title.startsWith("'") ? title.slice(1, -1).replaceAll("''", "'") : title;
     const sheet =
-      a.spreadsheet.sheets.find((entry: Row) => entry.properties.title === (unquoted ?? range)) ??
-      (unquoted === undefined ? a.spreadsheet.sheets[0] : undefined);
+      a.spreadsheet.sheets.find((entry: Row) => entry.properties.title === unquoted) ??
+      (!range.includes("!") ? a.spreadsheet.sheets[0] : undefined);
     const a1 = range.includes("!") ? range.slice(range.lastIndexOf("!") + 1) : range;
     const match = /^\$?([A-Z]+)([0-9]*)(?::\$?([A-Z]+)([0-9]*))?$/.exec(a1);
     const column = (letters: string) => [...letters].reduce((n, char) => n * 26 + char.charCodeAt(0) - 64, 0) - 1;
@@ -910,7 +910,7 @@ export class FakeGoogle {
           id: "upload1",
           name: body.name ?? "evidence.bin",
           mimeType: body.mimeType ?? "application/octet-stream",
-          parents: body.parents ?? ["folder1"],
+          parents: body.parents ?? ["root"],
         };
         a.created.push(file);
         a.uploads.push({ ...(call.args.upload as Row), contentType: call.args.contentType, file });
