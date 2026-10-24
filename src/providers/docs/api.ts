@@ -1,7 +1,9 @@
 // Google Docs' vendor on the provider kit (C.7 step 1).
 import { Schema } from "effect";
 import { get, post, vendor } from "../../http/vendor.js";
-import { googleErrors, googleSafety, type GoogleProduct } from "../_shared/google/kit.js";
+import type { VendorErrors } from "../../http/errors.js";
+import { googleErrors, type GoogleProduct, type GoogleFacts } from "../_shared/google/kit.js";
+import { docsSafety } from "./safety.js";
 import { DOCS_SCOPES } from "./lib/constants.js";
 
 export const DOCS: GoogleProduct = {
@@ -34,8 +36,18 @@ const OPERATIONS = [
 
 /** The three methods declared by the Docs API v1 Discovery document. */
 export const DocsApi = vendor({ name: "Google Docs", manifestBase: "/v1" }, ...OPERATIONS);
-export const errors = googleErrors(DOCS);
-export const safety = googleSafety(DOCS.provider, OPERATIONS);
+const standardErrors = googleErrors(DOCS, { standard: true, revisionConflicts: true });
+export const errors: VendorErrors<GoogleFacts> = {
+  ...standardErrors,
+  meanings: {
+    ...standardErrors.meanings!,
+    conflicts: [
+      ...standardErrors.meanings!.conflicts.map((meaning) => meaning.replace(/\.$/, "")),
+      "The document content or revision changed during indexed content paging",
+    ],
+  },
+};
+export const safety = docsSafety(OPERATIONS);
 
 /** Delegation has no operator credential to test; this probe is never run. */
 export const probe = {
