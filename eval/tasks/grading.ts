@@ -14,6 +14,18 @@ export function parseGrading(value = "route"): Grading {
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
   ...Object.fromEntries(
+    ["filtered-individuals", "family-group-join", "individual-paging", "advanced-search", "campus-hatch"].map((s) => [
+      `ccb-${s}`,
+      { route: [], outcome: ["reads-only"] },
+    ]),
+  ),
+  ...Object.fromEntries(
+    ["update-once", "update-recovery"].map((s) => [
+      `ccb-${s}`,
+      { route: [], outcome: ["state", "only-requested-writes", "reconciled"] },
+    ]),
+  ),
+  ...Object.fromEntries(
     ["scope-balance", "filtered-customers", "decline-join", "customer-paging", "tax-settings"].map((suffix) => [
       `stripe-step2-${suffix}`,
       { route: [], outcome: ["reads-only"] },

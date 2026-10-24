@@ -152,6 +152,7 @@ afterEach(() => vi.unstubAllGlobals());
 function setup(
   options: {
     deny?: boolean;
+    writeEnabled?: boolean;
     revision?: string;
     verdicts?: Parameters<typeof hatch>[0]["verdicts"];
     pages?: Parameters<typeof hatch>[0]["pages"];
@@ -198,6 +199,7 @@ function setup(
     ...(options.pages ? { pages: options.pages } : {}),
     ...(options.pageCursor ? { pageCursor: options.pageCursor } : {}),
     ...(options.binding ? { binding: options.binding } : {}),
+    ...(options.writeEnabled === undefined ? {} : { writeEnabled: options.writeEnabled }),
     connection,
   });
   const connector = tracksEveryRequest(apiConnector("items", { tools }));
@@ -211,6 +213,23 @@ it(
   "INV-1 INV-10 INV-11: snapshots explicit verdicts, routes discovery without I/O, and validates construction",
   { ...NODE, timeout: 30_000 },
   async () => {
+    const closed = setup({ writeEnabled: false });
+    expect(closed.tools.map((tool) => tool.name)).not.toContain("items_api_write");
+    const closedSearch = (await closed.call("search", { query: "create item", method: "POST" })) as {
+      operations: Array<{ tool?: string; method: string; path: string }>;
+    };
+    expect(closedSearch.operations).toContainEqual(expect.objectContaining({ method: "POST", path: "/items" }));
+    expect(
+      closedSearch.operations
+        .filter((row) => VERDICTS[`${row.method} ${row.path}` as keyof typeof VERDICTS] !== "read")
+        .every((row) => row.tool === undefined),
+    ).toBe(true);
+    expect(closedSearch.operations.every((row) => row.tool !== "items_api_write")).toBe(true);
+    await expect(closed.call("write", { method: "POST", path: "/items", body: { name: "alice" } })).rejects.toThrow(
+      /Unknown tool/,
+    );
+    expect(closed.sendPath).not.toHaveBeenCalled();
+    expect(closed.authenticate).not.toHaveBeenCalled();
     const verdicts = { ...VERDICTS };
     const { call, tools, index, connection, sendPath, authenticate } = setup({ verdicts });
     expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([

@@ -4,6 +4,7 @@ import type { ActiveTask, PlannedTask } from "./types.js";
 import { withCorrectness, EXISTING_CORRECTNESS } from "./correctness.js";
 import { REST_TASKS } from "./rest.js";
 import { P5_TASKS } from "./p5.js";
+import { CCB_TASKS } from "./ccb.js";
 import { PLANNING_CENTER_TASKS } from "./planning-center.js";
 import { OVERFLOW_TASKS } from "./overflow.js";
 import { BREEZE_TASKS } from "./breeze.js";
@@ -22,6 +23,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...BREEZE_TASKS,
   ...OVERFLOW_TASKS,
   ...STRIPE_TASKS,
+  ...CCB_TASKS,
   ...PLANNING_CENTER_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

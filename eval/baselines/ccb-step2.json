@@ -1,0 +1,2784 @@
+{
+ "kind": "ccb-step2-eval-summary",
+ "note": "All 56 fresh primary trials are retained. Outcome grading, two repeats, at most two trials concurrently. No grader changes, selective reruns or regrades. Discovery bytes count serialized observed discovery-call results (nested guest and direct calls), not tokenized context. Global hashes differ after merging #991; CCB task and fake bytes are identical.",
+ "runs": [
+  {
+   "arm": "before",
+   "model": "luna",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/ccb/before-luna.json",
+   "sha256": "836300035825a7a049fd4dcd298f5f3d1ef5c8703e17c04ccb2342b83ac7aae1",
+   "meta": {
+    "createdAt": "2026-10-24T07:26:55.780Z",
+    "git": {
+     "commit": "b5bce7b4c872",
+     "branch": "HEAD",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "pairId": "ccb-step2-20261024",
+    "taskDefinitionsHash": "390ad768639e600c1deba0ebadceb785f52d6d6853f53623e8005ef843d37921",
+    "harnessHash": "46b387c2127a937d000285cbc460a08a6e87b1ceec10b64c767bffcdab230cdb"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "outcome",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "ccb-filtered-individuals",
+     "ccb-family-group-join",
+     "ccb-individual-paging",
+     "ccb-advanced-search",
+     "ccb-campus-hatch",
+     "ccb-update-once",
+     "ccb-update-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "before",
+   "model": "sonnet",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/ccb/before-sonnet.json",
+   "sha256": "1ec09f4442a021b8b4fcf84d3af66c3e06f2f873dcfa342eff1385a4cdf551a6",
+   "meta": {
+    "createdAt": "2026-10-24T07:26:55.715Z",
+    "git": {
+     "commit": "b5bce7b4c872",
+     "branch": "HEAD",
+     "dirty": false,
+     "srcTree": "47e358cc24de",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "pairId": "ccb-step2-20261024",
+    "taskDefinitionsHash": "390ad768639e600c1deba0ebadceb785f52d6d6853f53623e8005ef843d37921",
+    "harnessHash": "46b387c2127a937d000285cbc460a08a6e87b1ceec10b64c767bffcdab230cdb"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "outcome",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "ccb-filtered-individuals",
+     "ccb-family-group-join",
+     "ccb-individual-paging",
+     "ccb-advanced-search",
+     "ccb-campus-hatch",
+     "ccb-update-once",
+     "ccb-update-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
+  },
+  {
+   "arm": "after",
+   "model": "luna",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/ccb/after-luna.json",
+   "sha256": "5bcbe9ad8a2dc3a37ad5ea0994f843fd77dc2b9f064e18e935779fd3b7c74de8",
+   "meta": {
+    "createdAt": "2026-10-24T07:53:04.388Z",
+    "git": {
+     "commit": "76d65c5bbbe5",
+     "branch": "t3/ccb-step2",
+     "dirty": false,
+     "srcTree": "e06f0b3a1da7",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "pairId": "ccb-step2-20261024",
+    "taskDefinitionsHash": "bec9492c55b3bdecd60eb812ca23fc85c0b5275604805ebe2b6fe945a420a7e1",
+    "harnessHash": "c4045f207bc2d68d41b572d6ddd62852ed323f5bea27791b000f6cb2c0f6820e"
+   },
+   "config": {
+    "runner": "codex",
+    "surface": "six",
+    "grading": "outcome",
+    "models": [
+     "gpt-6-luna"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "ccb-filtered-individuals",
+     "ccb-family-group-join",
+     "ccb-individual-paging",
+     "ccb-advanced-search",
+     "ccb-campus-hatch",
+     "ccb-update-once",
+     "ccb-update-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "codex-cli 0.163.0"
+  },
+  {
+   "arm": "after",
+   "model": "sonnet",
+   "rawArtifact": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/ccb/after-sonnet.json",
+   "sha256": "a66d3341096c6d8553183edfe1b2d065d0cc7ed8948438017cc0f8c49faeed33",
+   "meta": {
+    "createdAt": "2026-10-24T07:53:04.461Z",
+    "git": {
+     "commit": "76d65c5bbbe5",
+     "branch": "t3/ccb-step2",
+     "dirty": false,
+     "srcTree": "e06f0b3a1da7",
+     "srcDirty": false
+    },
+    "packageVersion": "0.34.1",
+    "node": "v26.12.0",
+    "platform": "linux-x64"
+   },
+   "protocol": {
+    "version": 1,
+    "pairId": "ccb-step2-20261024",
+    "taskDefinitionsHash": "bec9492c55b3bdecd60eb812ca23fc85c0b5275604805ebe2b6fe945a420a7e1",
+    "harnessHash": "c4045f207bc2d68d41b572d6ddd62852ed323f5bea27791b000f6cb2c0f6820e"
+   },
+   "config": {
+    "runner": "claude",
+    "surface": "six",
+    "grading": "outcome",
+    "models": [
+     "claude-sonnet-5-5"
+    ],
+    "repeats": 2,
+    "tasks": [
+     "ccb-filtered-individuals",
+     "ccb-family-group-join",
+     "ccb-individual-paging",
+     "ccb-advanced-search",
+     "ccb-campus-hatch",
+     "ccb-update-once",
+     "ccb-update-recovery"
+    ],
+    "concurrency": 1,
+    "timeoutMs": 480000
+   },
+   "cli": "2.1.309 (Claude Code)"
+  }
+ ],
+ "scores": {
+  "before-luna": {
+   "ccb-filtered-individuals": [
+    2,
+    2
+   ],
+   "ccb-family-group-join": [
+    2,
+    2
+   ],
+   "ccb-individual-paging": [
+    1,
+    2
+   ],
+   "ccb-advanced-search": [
+    2,
+    2
+   ],
+   "ccb-campus-hatch": [
+    2,
+    2
+   ],
+   "ccb-update-once": [
+    1,
+    2
+   ],
+   "ccb-update-recovery": [
+    1,
+    2
+   ]
+  },
+  "before-sonnet": {
+   "ccb-filtered-individuals": [
+    2,
+    2
+   ],
+   "ccb-family-group-join": [
+    2,
+    2
+   ],
+   "ccb-individual-paging": [
+    2,
+    2
+   ],
+   "ccb-advanced-search": [
+    2,
+    2
+   ],
+   "ccb-campus-hatch": [
+    2,
+    2
+   ],
+   "ccb-update-once": [
+    0,
+    2
+   ],
+   "ccb-update-recovery": [
+    1,
+    2
+   ]
+  },
+  "after-luna": {
+   "ccb-filtered-individuals": [
+    2,
+    2
+   ],
+   "ccb-family-group-join": [
+    2,
+    2
+   ],
+   "ccb-individual-paging": [
+    2,
+    2
+   ],
+   "ccb-advanced-search": [
+    2,
+    2
+   ],
+   "ccb-campus-hatch": [
+    2,
+    2
+   ],
+   "ccb-update-once": [
+    1,
+    2
+   ],
+   "ccb-update-recovery": [
+    1,
+    2
+   ]
+  },
+  "after-sonnet": {
+   "ccb-filtered-individuals": [
+    2,
+    2
+   ],
+   "ccb-family-group-join": [
+    2,
+    2
+   ],
+   "ccb-individual-paging": [
+    2,
+    2
+   ],
+   "ccb-advanced-search": [
+    2,
+    2
+   ],
+   "ccb-campus-hatch": [
+    2,
+    2
+   ],
+   "ccb-update-once": [
+    2,
+    2
+   ],
+   "ccb-update-recovery": [
+    2,
+    2
+   ]
+  }
+ },
+ "efficiency": {
+  "before-luna": {
+   "passed": 11,
+   "trials": 14,
+   "meanMcpCalls": 4.642857142857143,
+   "meanDiscoveryBytes": 26585.928571428572,
+   "meanWallMs": 15646.214285714286,
+   "httpWrites": 4,
+   "duplicateWrites": 0
+  },
+  "before-sonnet": {
+   "passed": 11,
+   "trials": 14,
+   "meanMcpCalls": 4.285714285714286,
+   "meanDiscoveryBytes": 14802.142857142857,
+   "meanWallMs": 10547.57142857143,
+   "httpWrites": 7,
+   "duplicateWrites": 0
+  },
+  "after-luna": {
+   "passed": 12,
+   "trials": 14,
+   "meanMcpCalls": 5.071428571428571,
+   "meanDiscoveryBytes": 31558,
+   "meanWallMs": 14822.285714285714,
+   "httpWrites": 2,
+   "duplicateWrites": 0
+  },
+  "after-sonnet": {
+   "passed": 14,
+   "trials": 14,
+   "meanMcpCalls": 4.5,
+   "meanDiscoveryBytes": 14336.785714285714,
+   "meanWallMs": 11482.5,
+   "httpWrites": 4,
+   "duplicateWrites": 0
+  }
+ },
+ "toolUse": {
+  "before-luna": {
+   "ccb.ccb_api_get": 2,
+   "ccb.ccb_api_mutate": 4,
+   "ccb.ccb_api_search": 2,
+   "ccb.get_family": 2,
+   "ccb.get_individual": 4,
+   "ccb.list_families": 2,
+   "ccb.list_group_members": 2,
+   "ccb.list_groups": 2,
+   "ccb.list_individuals": 12
+  },
+  "before-sonnet": {
+   "ccb.ccb_api_get": 2,
+   "ccb.ccb_api_mutate": 7,
+   "ccb.ccb_api_search": 2,
+   "ccb.get_family": 2,
+   "ccb.get_individual": 7,
+   "ccb.list_families": 2,
+   "ccb.list_group_members": 2,
+   "ccb.list_groups": 2,
+   "ccb.list_individuals": 12
+  },
+  "after-luna": {
+   "ccb.ccb_api_details": 7,
+   "ccb.ccb_api_read": 4,
+   "ccb.ccb_api_search": 10,
+   "ccb.ccb_api_write": 3,
+   "ccb.get_family": 2,
+   "ccb.get_individual": 2,
+   "ccb.list_families": 2,
+   "ccb.list_group_members": 2,
+   "ccb.list_groups": 2,
+   "ccb.list_individuals": 13,
+   "ccb.search_records": 1
+  },
+  "after-sonnet": {
+   "ccb.ccb_api_details": 4,
+   "ccb.ccb_api_read": 7,
+   "ccb.ccb_api_search": 3,
+   "ccb.ccb_api_write": 4,
+   "ccb.get_family": 2,
+   "ccb.get_individual": 4,
+   "ccb.list_families": 2,
+   "ccb.list_group_members": 2,
+   "ccb.list_groups": 2,
+   "ccb.list_individuals": 14
+  }
+ },
+ "trials": [
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-filtered-individuals",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14236,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 23422,
+     "output": 528,
+     "cacheRead": 73344,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 3
+     }
+    }
+   },
+   "discoveryBytes": 24303,
+   "finalAnswer": "CCB’s full individual list included inactive people and was paged through all 137 records (2 pages). Filtering explicitly for `active = true` and `campusId = 1` gives 55 individuals. [CCB](ccb.list_individuals)\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-family-group-join",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 18877,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14167,
+     "output": 430,
+     "cacheRead": 50304,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 20232,
+   "finalAnswer": "Alice Rowan (individual ID **1002**) is the Rowan family member who leads the Choir. CCB lists her as **LEADER** in the Choir group (group ID **5**); her ID matches a member of the Rowan family (family ID **9**). **Source: CCB** (`get_family`, `list_group_members`).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-individual-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14466,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14394,
+     "output": 840,
+     "cacheRead": 50816,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 60965,
+   "finalAnswer": "CCB returned 137 individuals across 2 pages (100 and 37), including inactive and deceased people across all campuses.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-advanced-search",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 13871,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 15027,
+     "output": 314,
+     "cacheRead": 57984,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2,
+     "skills": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 16277,
+   "finalAnswer": "CCB’s individuals advanced search returned 28 matching inactive profiles.  \nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-campus-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 17521,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16231,
+     "output": 433,
+     "cacheRead": 51968,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 19042,
+   "finalAnswer": "CCB lists the **North** campus (ID 1) with timezone **America/Chicago** and public gift message **“Thank you, North.”** Source: CCB `/campuses` API.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-once",
+   "repeat": 1,
+   "status": "fail",
+   "failed": [
+    "state",
+    "only-requested-writes",
+    "reconciled",
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 17616,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 37484,
+     "output": 580,
+     "cacheRead": 180608,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 8
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PATCH /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 55239,
+   "finalAnswer": "I found Alice Rowan in CCB (individual ID **1002**), but the email update was not made: CCB returned 404 for `PATCH /individuals/1002`. I did not retry the write, so I can’t verify the requested email change.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 19699,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16192,
+     "output": 791,
+     "cacheRead": 111616,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 2,
+     "execute_code": 3,
+     "call_destructive_tool": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 15791,
+   "finalAnswer": "Updated Alice Rowan’s email. Her CCB profile now verifies **alice.updated@example.com** (ID **1002**). The update call returned an error with an unknown outcome, so I checked her actual profile and did not repeat the update. **Source: CCB**.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-filtered-individuals",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14686,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18212,
+     "output": 421,
+     "cacheRead": 30592,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 23075,
+   "finalAnswer": "CCB’s `list_individuals` returned all 137 people across 2 pages, including inactive people. Filtering for `active = true` and `campusId = 1` gives 55 active individuals.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-family-group-join",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11289,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 23501,
+     "output": 394,
+     "cacheRead": 54016,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 13312,
+   "finalAnswer": "**Alice Rowan** — individual ID **1002** — **Choir leader** (`LEADER`).\n\nI joined Rowan family **9** to Choir group **5** by individual ID. Alice’s family record lists ID 1002, and the Choir member record for ID 1002 lists her as `LEADER`. **Source: CCB** (`get_family`, `list_group_members`).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-individual-paging",
+   "repeat": 2,
+   "status": "fail",
+   "failed": [
+    "reads-only",
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 13099,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16986,
+     "output": 274,
+     "cacheRead": 55424,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "search_tools": 1,
+     "skills": 2,
+     "call_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1
+     }
+    }
+   },
+   "discoveryBytes": 7930,
+   "finalAnswer": "CCB reports 109 individuals in total (page 1 of 2; includes inactive people). ANSWER: 109",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-advanced-search",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 15418,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 22356,
+     "output": 348,
+     "cacheRead": 52224,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 23370,
+   "finalAnswer": "CCB’s individuals advanced search returned a total of **28** matching profiles.\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-campus-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 13454,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 17280,
+     "output": 453,
+     "cacheRead": 71424,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 19938,
+   "finalAnswer": "The North campus is in the **America/Chicago** timezone. Its public gift message is **“Thank you, North.”** Source: CCB `/campuses` endpoint.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-once",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 18707,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 32796,
+     "output": 792,
+     "cacheRead": 220800,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 8
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.GET /individuals/1002": 2,
+      "ccb.PUT /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 57645,
+   "finalAnswer": "Updated Alice Rowan’s email exactly once and verified it by reading her CCB profile.\n\n- **Individual ID:** 1002\n- **Verified email:** alice.updated@example.com\n\nSource: CCB (`get_individual`, after the update).",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "before",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-recovery",
+   "repeat": 2,
+   "status": "fail",
+   "failed": [
+    "state",
+    "only-requested-writes",
+    "reconciled",
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 16108,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 25705,
+     "output": 576,
+     "cacheRead": 76416,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2,
+     "search_tools": 1,
+     "call_destructive_tool": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PATCH /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 15084,
+   "finalAnswer": "I found Alice Rowan in CCB (ID **1002**). The email update failed, and her actual profile still shows **person1@example.com**. I did not retry, so her email remains unchanged. **Source: CCB** (`list_individuals`, `ccb_api_mutate`, `get_individual`).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-filtered-individuals",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9329,
+    "apiMs": 5768,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 604,
+     "cacheRead": 13354,
+     "cacheCreation": 9935
+    },
+    "costUsd": 0.0471274,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 13148,
+   "finalAnswer": "There are 55 active individuals at campus id 1.\n\nI pulled the full list from CCB with `list_individuals`, including inactive people, across every page. That came to 137 unique people, matching CCB's reported total. I then kept only those with `campusId` 1 and `active` true. A further 14 people at campus 1 are inactive and were excluded. None of the 55 are flagged deceased.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-family-group-join",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11412,
+    "apiMs": 7436,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 749,
+     "cacheRead": 27182,
+     "cacheCreation": 5582
+    },
+    "costUsd": 0.0325562,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 28005,
+   "finalAnswer": "The Rowan family member who leads the Choir is **Alice Rowan**.\n\n- **Name:** Alice Rowan\n- **Individual ID:** 1002\n- **Role:** LEADER of the Choir group\n\nI joined the two lists on individual id. The Rowan family has two members, 1002 and 1003. The Choir has three members: 1002, 1003 and 1004. The two lists overlap on 1002 and 1003. Alice (1002) is the only one of them with the LEADER role. Member 2 (1003) is a regular MEMBER of the Choir. Member 3 (1004) is in the Choir but isn't in the Rowan family.\n\nSource: CCB, using these records:\n- Family \"Rowan\", id 9 (`list_families`, `get_family`)\n- Group \"Choir\", id 5 (`list_groups`, `list_group_members`)",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-individual-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 10072,
+    "apiMs": 6434,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 554,
+     "cacheRead": 21242,
+     "cacheCreation": 7017
+    },
+    "costUsd": 0.0357482,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 13148,
+   "finalAnswer": "CCB (`list_individuals` with inactive people included, 100 rows per page) has 137 individuals. It took 2 pages. The 137 returned records are all distinct, and CCB's own reported total is also 137.\n\nI left the deceased filter at its default, so I didn't separately ask for deceased records.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-advanced-search",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 5459,
+    "apiMs": 4138,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 401,
+     "cacheRead": 13026,
+     "cacheCreation": 5722
+    },
+    "costUsd": 0.0282126,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 10446,
+   "finalAnswer": "CCB's individuals advanced search returned 28 profiles. I ran it with `configuration.filter_profile_type` set to `[\"inactive\"]` and an empty `filters` object. The results fit on one page, and the reported total of 28 matches the 28 rows listed.\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-campus-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 8227,
+    "apiMs": 4773,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 424,
+     "cacheRead": 13495,
+     "cacheCreation": 4304
+    },
+    "costUsd": 0.0228175,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 6842,
+   "finalAnswer": "The North campus (id 1) has these values in CCB:\n\n- **Timezone:** America/Chicago\n- **Public gift message:** \"Thank you, North.\"\n\nThe named tools (`list_individuals`, `list_groups`, `list_forms`) don't return campus fields, so I used the vendor API hatch, `ccb_api_get`, on `/campuses`. The response listed only the North campus.\n\nSource: CCB `/campuses` endpoint.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-once",
+   "repeat": 1,
+   "status": "fail",
+   "failed": [
+    "only-requested-writes"
+   ],
+   "metrics": {
+    "wallMs": 16777,
+    "apiMs": 12971,
+    "modelTurns": 9,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1411,
+     "cacheRead": 49309,
+     "cacheCreation": 9205
+    },
+    "costUsd": 0.0558929,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2,
+     "search_tools": 1,
+     "call_destructive_tool": 2,
+     "call_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 2,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PATCH /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 2,
+      "ccb.PUT /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 17760,
+   "finalAnswer": "I changed Alice Rowan's email in CCB to alice.updated@example.com. I confirmed it by reading her profile afterward.\n\n- **Individual id:** 1002 (the only match for \"Alice Rowan\")\n- **Verified email:** alice.updated@example.com (it was person1@example.com)\n- **Other fields:** Her family, campus, membership type and active status are the same as before.\n\nMy first attempt used PATCH on `/individuals/1002`. CCB returned a 404 because that route doesn't exist, and I confirmed the email hadn't changed. The update that took effect was a single PUT to the same path.\n\nSource: CCB (Pushpay ChMS).",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-recovery",
+   "repeat": 1,
+   "status": "fail",
+   "failed": [
+    "only-requested-writes"
+   ],
+   "metrics": {
+    "wallMs": 17096,
+    "apiMs": 12868,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1320,
+     "cacheRead": 50720,
+     "cacheCreation": 5956
+    },
+    "costUsd": 0.042128,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2,
+     "call_destructive_tool": 2,
+     "call_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 2,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 2,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 2,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PATCH /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 2,
+      "ccb.PUT /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 23255,
+   "finalAnswer": "Alice Rowan's email is now alice.updated@example.com. I confirmed it by reading her profile back from CCB.\n\n- **Id:** 1002, from CCB's individual list.\n- **Verified email:** alice.updated@example.com, per `get_individual` in CCB. It was person1@example.com before.\n- **First attempt:** `PATCH /individuals/1002` failed with a 404 because that route doesn't exist. I re-read her profile and her email was unchanged, so nothing had been applied.\n- **Second attempt:** `PUT /individuals/1002` returned a 500 saying the response was lost and the outcome was unknown. I read her profile again before doing anything else, and the new email was already there. I didn't repeat the write.\n\nNo other fields were changed.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-filtered-individuals",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9130,
+    "apiMs": 5604,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 578,
+     "cacheRead": 16484,
+     "cacheCreation": 6783
+    },
+    "costUsd": 0.034572399999999996,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 13148,
+   "finalAnswer": "CCB (`list_individuals`) has 55 active individuals at campus 1.\n\nI pulled every page with inactive people included, which gave 137 people in total, matching CCB's reported total. 28 of them are inactive. They sit at campus 1 or campus 2. I then kept only the records marked active with a campus id of 1 and counted unique person ids.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-family-group-join",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 12242,
+    "apiMs": 8665,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 821,
+     "cacheRead": 31290,
+     "cacheCreation": 7044
+    },
+    "costUsd": 0.039535,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 13175,
+   "finalAnswer": "The Rowan family member who leads the Choir is **Alice Rowan**, individual id **1002**, with the role **LEADER**.\n\nHow I got there in CCB:\n- **Family:** `list_families` (lastName \"Rowan\") returned one match, family id 9. `get_family` showed two members: Alice Rowan (1002) and \"Member 2\" (1003).\n- **Group:** `list_groups` (name \"Choir\") returned one match, group id 5.\n- **Join:** I matched the family members to the Choir's members from `list_group_members` (group 5, three members in total) by individual id. Two of the three matched.\n\n| Individual id | Name | Choir role |\n|---|---|---|\n| 1002 | Alice Rowan | LEADER |\n| 1003 | Member 2 | MEMBER |\n\nSource: CCB (Pushpay ChMS) tools `list_families`, `get_family`, `list_groups` and `list_group_members`.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-individual-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 8957,
+    "apiMs": 5659,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 580,
+     "cacheRead": 16430,
+     "cacheCreation": 6739
+    },
+    "costUsd": 0.034411,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 13148,
+   "finalAnswer": "I counted 137 individuals in CCB (Pushpay ChMS), inactive people included. I used `list_individuals` with `includeInactive: true` and 100 rows per page, which took 2 pages. The 137 rows were all distinct IDs, and that matches the `page.total` of 137 that CCB reported.\n\nI didn't set `includeDeceased`, so if the query leaves out deceased records by default, they aren't in this count.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-advanced-search",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 6163,
+    "apiMs": 4912,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 431,
+     "cacheRead": 13345,
+     "cacheCreation": 5400
+    },
+    "costUsd": 0.0272565,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 10446,
+   "finalAnswer": "The CCB individuals advanced search (POST `/search/individuals/results`) returned 28 profiles. I ran it with `configuration.filter_profile_type` set to `[\"inactive\"]` and an empty `filters` object. The response reported a total of 28 and no further pages. I counted the 28 rows returned, and they match that total. Every row has `active: false`.\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-campus-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 7943,
+    "apiMs": 4518,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 426,
+     "cacheRead": 13796,
+     "cacheCreation": 4006
+    },
+    "costUsd": 0.0216756,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 6842,
+   "finalAnswer": "The North campus (campus id 1) has these two values in CCB:\n\n- **Timezone:** America/Chicago\n- **Public gift message:** \"Thank you, North.\"\n\nNone of the named tools (`list_individuals`, `list_groups`, `list_forms`) return campus fields, so I used the vendor API hatch, `ccb_api_get`, on `/campuses`. That call returned only the North campus.\n\nSource: CCB, `GET /campuses`.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-once",
+   "repeat": 2,
+   "status": "fail",
+   "failed": [
+    "only-requested-writes"
+   ],
+   "metrics": {
+    "wallMs": 15182,
+    "apiMs": 11485,
+    "modelTurns": 8,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 14,
+     "output": 1200,
+     "cacheRead": 43114,
+     "cacheCreation": 5604
+    },
+    "costUsd": 0.03875540000000001,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2,
+     "call_destructive_tool": 2,
+     "call_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 2,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PATCH /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 2,
+      "ccb.PUT /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 23255,
+   "finalAnswer": "I updated Alice Rowan's email in CCB, and reading her profile back confirms the change.\n\n- **Individual id:** 1002\n- **Verified email:** alice.updated@example.com (it was person1@example.com)\n\nI sent only the email field, and her name, family, campus, membership type and active status are unchanged.\n\nMy first attempt, a PATCH to `/individuals/1002`, returned a 404 and changed nothing. The PUT to the same path then succeeded, so one update was applied. After that I read her profile with `get_individual` to verify.\n\nSource: CCB (Church Community Builder / Pushpay ChMS).",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "before",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9677,
+    "apiMs": 8240,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 775,
+     "cacheRead": 43542,
+     "cacheCreation": 7942
+    },
+    "costUsd": 0.0438962,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 2,
+     "call_tool": 2,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 14612,
+   "finalAnswer": "Alice Rowan's email in CCB is now alice.updated@example.com. Her CCB id is 1002.\n\nThe update call returned a 500 error and said it couldn't tell whether the write had gone through. I read her profile back with `get_individual` before doing anything else, and it showed the new email. The write had taken effect, so I didn't repeat it. I made one business update in total.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-filtered-individuals",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11795,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 17594,
+     "output": 598,
+     "cacheRead": 44416,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 21257,
+   "finalAnswer": "CCB `list_individuals` returned 137 people across 2 pages, including inactive people. Filtering for `active = true` and `campusId = 1` gives 55.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-family-group-join",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 16229,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 24438,
+     "output": 404,
+     "cacheRead": 57216,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 15775,
+   "finalAnswer": "**Alice Rowan** — individual ID **1002** — **Choir leader**.\n\nI joined the Rowan family’s members to Choir group members by individual ID: Alice’s family member ID 1002 matches the Choir member’s individual ID 1002, whose status is `LEADER`.\n\n**CCB records:** Rowan family (family ID 9, `get_family`); Choir (group ID 5, `list_group_members`).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-individual-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 13679,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 15441,
+     "output": 510,
+     "cacheRead": 51328,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 22330,
+   "finalAnswer": "CCB’s `list_individuals` returned 137 unique individuals across 2 pages (100 rows on page 1, 37 on page 2), with inactive and deceased individuals included and campus scope set to all.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-advanced-search",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 15994,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 25514,
+     "output": 489,
+     "cacheRead": 125696,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 32283,
+   "finalAnswer": "CCB’s advanced individuals search returned 28 matching inactive profiles.\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-campus-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 17531,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 33593,
+     "output": 483,
+     "cacheRead": 155264,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 66302,
+   "finalAnswer": "CCB lists the **North** campus (ID 1) with timezone **America/Chicago** and public gift message: **“Thank you, North.”**【CCB: `GET /campuses`】",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-once",
+   "repeat": 1,
+   "status": "fail",
+   "failed": [
+    "state",
+    "only-requested-writes",
+    "reconciled",
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 17952,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 30218,
+     "output": 731,
+     "cacheRead": 218368,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 9
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1
+     }
+    }
+   },
+   "discoveryBytes": 47952,
+   "finalAnswer": "I wasn’t able to complete the update. CCB rejected the write arguments before sending the update, so no email change was made. I have not retried the write. **Individual ID:** 1002 (Alice Rowan). **Verified email:** not verified.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-recovery",
+   "repeat": 1,
+   "status": "fail",
+   "failed": [
+    "state",
+    "only-requested-writes",
+    "reconciled",
+    "correct-destination",
+    "answer-evidence"
+   ],
+   "metrics": {
+    "wallMs": 12592,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 26286,
+     "output": 339,
+     "cacheRead": 65664,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2,
+     "skills": 1,
+     "search_tools": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1
+     }
+    }
+   },
+   "discoveryBytes": 15086,
+   "finalAnswer": "Found Alice Rowan in CCB (ID 1002), but I haven’t updated her email. CCB requires approval for writes, and the write wasn’t approved.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-filtered-individuals",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 12862,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 20441,
+     "output": 496,
+     "cacheRead": 26752,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 21565,
+   "finalAnswer": "CCB’s `list_individuals` returned 137 individuals across 2 pages with inactive people included and all campuses in scope. Explicitly filtering for `active = true` and `campusId = 1` gives 55 individuals.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-family-group-join",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 12045,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 18260,
+     "output": 442,
+     "cacheRead": 75776,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 21751,
+   "finalAnswer": "**Alice Rowan** — individual ID **1002** — **Choir leader** (`LEADER`).\n\nI joined the Rowan family members to Choir group members by individual ID: Alice’s ID appears in both. **CCB records:** Rowan family **ID 9** (`ccb.get_family`); Choir **ID 5** (`ccb.list_group_members`).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-individual-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11186,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 27726,
+     "output": 400,
+     "cacheRead": 59520,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 3
+     }
+    }
+   },
+   "discoveryBytes": 28305,
+   "finalAnswer": "CCB returned 137 individuals across two pages (100 and 37), with inactive and deceased individuals included.  \nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-advanced-search",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 17328,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 33133,
+     "output": 757,
+     "cacheRead": 177024,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 7
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 50891,
+   "finalAnswer": "CCB’s advanced individual search matched **28 inactive profiles**.\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-campus-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14729,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 31380,
+     "output": 499,
+     "cacheRead": 82816,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 22701,
+   "finalAnswer": "North campus (ID 1) uses the **America/Chicago** timezone. Its public gift message is: **“Thank you, North.”** [CCB: `GET /campuses`](ccb)",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-once",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 15303,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 28728,
+     "output": 688,
+     "cacheRead": 103808,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 45963,
+   "finalAnswer": "Updated Alice Rowan’s email exactly once and verified it by reading her CCB profile.\n\n- **Individual ID:** 1002\n- **Verified email:** alice.updated@example.com\n\nSource: CCB.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "gpt-6-luna",
+   "task": "ccb-update-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 18287,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 49092,
+     "output": 752,
+     "cacheRead": 140032,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5,
+     "skills": 1,
+     "call_destructive_tool": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 29651,
+   "finalAnswer": "CCB id **1002** — Alice Rowan’s verified email is **alice.updated@example.com**. The update returned an unknown outcome, so I read her CCB profile and confirmed the email was already updated; I did not repeat the write.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-filtered-individuals",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9872,
+    "apiMs": 6249,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 591,
+     "cacheRead": 16355,
+     "cacheCreation": 6658
+    },
+    "costUsd": 0.034189500000000005,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 13284,
+   "finalAnswer": "There are 55 active individuals at campus 1. I got this from CCB `list_individuals` with `includeInactive: true` and `campusScope: \"all\"`. The list came back in 2 pages and held 137 people in total, 28 of them inactive. I then kept only people with `active` true and `campusId` 1. The people in the list belong to campus 1 or campus 2.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-family-group-join",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11762,
+    "apiMs": 8036,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 852,
+     "cacheRead": 34004,
+     "cacheCreation": 8086
+    },
+    "costUsd": 0.0442844,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 15908,
+   "finalAnswer": "The Rowan family member who leads the Choir is **Alice Rowan**, individual id **1002**, with the role **LEADER**.\n\n- **Family:** The only Rowan family in CCB is family id 9. Its members are Alice Rowan (1002) and \"Member 2\" (1003).\n- **Group:** The only Choir group is group id 5. Its members are Alice Rowan (1002, LEADER), \"Member 2\" (1003, MEMBER) and \"Member 3\" (1004, MEMBER).\n- **Join on individual id:** Two people appear in both lists. Alice Rowan (1002) is the Choir leader. Member 2 (1003) is a regular member. Member 3 (1004) is not in the Rowan family.\n\nSource: CCB (Pushpay ChMS), using `list_families` (lastName \"Rowan\"), `list_groups` (name \"Choir\"), `get_family` (id 9) and `list_group_members` (group 5).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-individual-paging",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9389,
+    "apiMs": 5322,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 536,
+     "cacheRead": 15838,
+     "cacheCreation": 6123
+    },
+    "costUsd": 0.0314478,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 12152,
+   "finalAnswer": "CCB (Pushpay ChMS) has 137 individuals when inactive people are included. I got that count with the `list_individuals` call set to include inactive people, all campuses, and 100 rows per page. It took 2 pages, and the 137 items I counted match the total CCB reported. I didn't set the deceased option, so the count doesn't deliberately include deceased people.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-advanced-search",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 16888,
+    "apiMs": 12671,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 1316,
+     "cacheRead": 41734,
+     "cacheCreation": 7498
+    },
+    "costUsd": 0.0473494,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 4
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 2
+     }
+    }
+   },
+   "discoveryBytes": 9654,
+   "finalAnswer": "The CCB individuals advanced search (`POST /search/individuals/results`) returned 28 inactive profiles. I ran it with `configuration.filter_profile_type` set to `[\"inactive\"]` and an empty `filters` object.\n\nThe results came back on a single page of up to 100, and CCB reported no further pages. I counted 28 unique profile ids.\n\nSource: Pushpay ChMS (CCB).\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-campus-hatch",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 9296,
+    "apiMs": 5230,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 426,
+     "cacheRead": 19094,
+     "cacheCreation": 3378
+    },
+    "costUsd": 0.0196974,
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 9198,
+   "finalAnswer": "The North campus (campus id 1) has these values in CCB:\n\n- **Timezone:** America/Chicago\n- **Public gift message:** \"Thank you, North.\"\n\nSource: CCB, `GET /campuses`. None of the named tools return campus fields, so I used the vendor API hatch (`ccb_api_read`). North was the only campus in the response.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-once",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 13711,
+    "apiMs": 9867,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 786,
+     "cacheRead": 48941,
+     "cacheCreation": 9865
+    },
+    "costUsd": 0.052238099999999996,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 2,
+     "execute_code": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 19725,
+   "finalAnswer": "I updated Alice Rowan's email in CCB (Pushpay ChMS) and checked it by reading her profile back.\n\n- **Individual id:** 1002 (Alice Rowan)\n- **Verified email:** alice.updated@example.com. It was person1@example.com before.\n\nShe was the only match for \"Alice Rowan\". I sent one update, and it changed only the email field. The profile read returned the new address.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-recovery",
+   "repeat": 1,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11443,
+    "apiMs": 9856,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 786,
+     "cacheRead": 48937,
+     "cacheCreation": 9837
+    },
+    "costUsd": 0.052125700000000004,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 3,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 19700,
+   "finalAnswer": "Alice Rowan's email is now alice.updated@example.com. She is individual id **1002** in CCB. The profile read after the update confirmed it.\n\nThe update call returned an HTTP 500 error saying the response was lost, so I couldn't tell whether the change had gone through. I read her profile instead of repeating the write. The change had already been applied, so I made only one update.\n\nI changed only the email. Her previous address was person1@example.com.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-filtered-individuals",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 10837,
+    "apiMs": 7014,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 546,
+     "cacheRead": 21792,
+     "cacheCreation": 6098
+    },
+    "costUsd": 0.0320472,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 2
+     }
+    }
+   },
+   "discoveryBytes": 12152,
+   "finalAnswer": "Using CCB's `list_individuals` with inactive people included and campus scope set to all, I read every page (2 pages, 137 people in total). I then filtered those people to `active = true` and `campusId = 1`. That left 55 people, with no duplicate ids.\n\nI didn't set `includeDeceased`, so I didn't check whether deceased people are in the 137.\n\nANSWER: 55",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-family-group-join",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11985,
+    "apiMs": 8340,
+    "modelTurns": 5,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 719,
+     "cacheRead": 34000,
+     "cacheCreation": 7993
+    },
+    "costUsd": 0.042582,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /families": 1,
+      "ccb.GET /groups": 1,
+      "ccb.GET /families/9": 1,
+      "ccb.GET /groups/5/members": 1
+     }
+    }
+   },
+   "discoveryBytes": 15908,
+   "finalAnswer": "The Rowan family member who leads the Choir is **Alice Rowan**.\n\n- **Name:** Alice Rowan\n- **Individual id:** 1002\n- **Role in Choir:** LEADER\n\nI found the Rowan family (id 9) and the Choir group (id 5) in CCB. I then matched the family members to the Choir's members by individual id. Both Rowan family members are in the Choir. The other one is \"Member 2\" (id 1003), who has the role MEMBER.\n\nSource: CCB (Pushpay ChMS) calls `list_families`, `list_groups`, `get_family` (family 9) and `list_group_members` (group 5).",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-individual-paging",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 11161,
+    "apiMs": 7074,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 8,
+     "output": 627,
+     "cacheRead": 21717,
+     "cacheCreation": 6218
+    },
+    "costUsd": 0.0333297,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 4,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 4
+     }
+    }
+   },
+   "discoveryBytes": 12152,
+   "finalAnswer": "CCB (`list_individuals`) shows 137 individuals. I counted with `includeInactive: true` and 100 rows per page. That took 2 pages, and I checked every page. The 137 matches the `total` that CCB reports, and all 137 IDs are unique. Adding `includeDeceased: true` doesn't change the count.\n\nANSWER: 137",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-advanced-search",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14321,
+    "apiMs": 10535,
+    "modelTurns": 6,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 10,
+     "output": 1223,
+     "cacheRead": 31523,
+     "cacheCreation": 6729
+    },
+    "costUsd": 0.0423183,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "execute_code": 3
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.POST /search/individuals/results": 1
+     }
+    }
+   },
+   "discoveryBytes": 9654,
+   "finalAnswer": "The CCB individuals advanced search (`POST /search/individuals/results`) returned 28 profiles. I ran it with `configuration.filter_profile_type` set to `[\"inactive\"]` and an empty `filters` object. The results came back on one page (100 per page requested), and CCB reported no further pages, so 28 is the full count.\n\nSource: CCB (Pushpay ChMS).\n\nANSWER: 28",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-campus-hatch",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 5692,
+    "apiMs": 4227,
+    "modelTurns": 4,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 6,
+     "output": 392,
+     "cacheRead": 14603,
+     "cacheCreation": 4752
+    },
+    "costUsd": 0.0244003,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 1,
+     "writes": 0,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /campuses": 1
+     }
+    }
+   },
+   "discoveryBytes": 9198,
+   "finalAnswer": "The North campus in CCB has these two values:\n\n- **Timezone:** America/Chicago\n- **Public gift message:** \"Thank you, North.\"\n\nThe named tools (`list_individuals`, `list_groups`) don't return either field. I read them with the vendor API hatch (`ccb_api_read`, `GET /campuses`), which returned North as campus id 1.",
+   "businessUpdates": 0
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-once",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 14241,
+    "apiMs": 12559,
+    "modelTurns": 9,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 16,
+     "output": 1052,
+     "cacheRead": 75305,
+     "cacheCreation": 11208
+    },
+    "costUsd": 0.0629145,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 2,
+     "call_tool": 4,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 22330,
+   "finalAnswer": "I updated Alice Rowan's email in CCB, and reading her profile back confirmed the change.\n\n- **Individual id:** 1002\n- **Verified email:** alice.updated@example.com (it was person1@example.com before)\n\nI made one update call, `PUT /individuals/1002`, and sent only the email field. The profile read showed no other change.\n\nSource: CCB (Pushpay ChMS), `list_individuals`, `ccb_api_write` and `get_individual`.",
+   "businessUpdates": 1
+  },
+  {
+   "arm": "after",
+   "model": "claude-sonnet-5-5",
+   "task": "ccb-update-recovery",
+   "repeat": 2,
+   "status": "pass",
+   "failed": [],
+   "metrics": {
+    "wallMs": 10157,
+    "apiMs": 8656,
+    "modelTurns": 7,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 12,
+     "output": 784,
+     "cacheRead": 48952,
+     "cacheCreation": 9840
+    },
+    "costUsd": 0.0521192,
+    "metaTools": {
+     "skills": 1,
+     "search_tools": 1,
+     "call_tool": 3,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 1,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 1,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "ccb.GET /individuals": 1,
+      "ccb.PUT /individuals/1002": 1,
+      "ccb.GET /individuals/1002": 1
+     }
+    }
+   },
+   "discoveryBytes": 19700,
+   "finalAnswer": "Alice Rowan's email is now alice.updated@example.com. CCB shows this on her profile (id **1002**), read back after the update.\n\nThe update call returned a 500 error saying the response was lost, so I couldn't tell whether it had applied. I read her profile before deciding on a repeat. The change was already there, so I made no second write. I sent one update in total and changed only the email field.\n\nHer email was person1@example.com before the update.",
+   "businessUpdates": 1
+  }
+ ]
+}
