@@ -975,6 +975,32 @@
           }
         }
       ]
+    },
+    "slides_api_search": {
+      "query": "presentation"
+    },
+    "slides_api_details": {
+      "method": "GET",
+      "path": "/presentations/{presentationsId}"
+    },
+    "slides_api_read": {
+      "path": "/presentations/deck1"
+    },
+    "slides_api_write": {
+      "method": "POST",
+      "path": "/presentations/deck1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "createSlide": {
+              "objectId": "newslide"
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "rev-1"
+        }
+      }
     }
   },
   "stripe": {

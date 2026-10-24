@@ -37,8 +37,8 @@
     "./providers/gmail measures 339,455 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/overflow measures 352,543 B gzip standalone at 88c918ed (0011 step 2), versus 341,849 B on main 8e92eed9 (+10,694 B), Node 26.12.0 with zlib-ng 1.3.1. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
     "./providers/planning-center initial step-2 baseline is 635,569 B gzip, versus 349,553 B on main 8e92eed9 (+286,016 B), Node 22.23.3 with system zlib. The ten products now index 1,752 operations after omitting one empty-path artifact. Review attributes about 263 KB gzip to the index, mostly repeated where[] rows; lossless shared compaction is deferred. Reviewed safety and standard discovery remain. The shared Effect kit is paid once per deployment; provider entries are reported, not capped, and sizes are not additive (#899).",
-    "./providers/sheets step-2 round-1 fixes merged with Forms main 84fb4eee measure 394,998 B gzip standalone before recording these bundle facts, versus 353,251 B on main 84fb4eee (+41,747 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 481,495 B versus 448,880 B (+32,615 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
-    "./providers/slides measures 344,074 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    "./providers/sheets step-2 merge with Slides main 437d7759 measures 395,159 B gzip standalone before recording these bundle facts, versus 353,338 B on main 437d7759 (+41,821 B), Node 22.23.3, esbuild 0.28.1 and gzip level 9. The all-six Google entry is 499,725 B versus 467,381 B (+32,344 B). This includes the shared Effect kit, paid once per deployment; provider entries remain report-only, uncapped and non-additive (#703).",
+    "./providers/slides round-1 measurement is 386,289 B gzip standalone (#703), Node 26.12.0 and zlib-ng 1.3.1. Same-toolchain merged main f9bf5afb measures 362,798 B: +23,491 B. The build report gives the current measurement. This includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/stripe measures 379,663 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/tithely remeasures at 333,313 B gzip in its decision 0011 step 2, from 323,386 B on main at 57176ce1 (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations (budgeted, paged discovery), and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
     "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899)."
@@ -91,10 +91,10 @@
       "baselineGzip": 635569
     },
     "./providers/sheets": {
-      "baselineGzip": 394998
+      "baselineGzip": 395159
     },
     "./providers/slides": {
-      "baselineGzip": 344074
+      "baselineGzip": 386289
     },
     "./providers/stripe": {
       "baselineGzip": 379663
