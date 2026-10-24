@@ -1173,6 +1173,10 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   googleNamedOperation(collisionIndex, "GET", "/items/ordinary", "/items/{item}");
   const defaults = setup();
   expect(() => googleClient(google.connection, "Google", { index: google.index })).not.toThrow();
+  expect(() => googleClient(google.connection, "Google", { standard: true })).toThrow("reviewed operation index");
+  expect(() =>
+    googleHatchBinding(google.connection, { review: "Missing index" } as Parameters<typeof googleHatchBinding>[1]),
+  ).toThrow("reviewed operation index");
   expect(() => googleClient(defaults.connection, "Google", { index: defaults.index })).toThrow("uri-template");
   expect(() => googleHatchBinding(defaults.connection, { index: defaults.index, review: "Refuse defaults" })).toThrow(
     "uri-template",
@@ -1191,6 +1195,8 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
   expect(googlePageToken.prepareQuery!({ fields: "data/nextPageToken" })).toEqual({
     fields: "data/nextPageToken,nextPageToken",
   });
+  for (const fields of ["nextPageToken/x", "nextPageToken(x)", "data(id),nextPageToken/x"])
+    expect(googlePageToken.prepareQuery!({ fields })).toEqual({ fields: `${fields},nextPageToken` });
   for (const row of [
     {
       adapter: stripePage,
