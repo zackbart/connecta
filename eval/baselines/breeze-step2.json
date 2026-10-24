@@ -3,8 +3,8 @@
   "beforeMain": "e4401cd79b5ec29cb413d3650d1b66a8d9ee2a3f",
   "evalCommit": "f47438cc",
   "graderCorrection": "5150020d",
-  "afterCommit": "f2f486567515",
-  "notes": "BEFORE saved observations uniformly regraded after making vendor-side filtering advisory; prompts, fakes, references and outcome checks otherwise unchanged. Final changes after AFTER are equivalent lint cleanup, bundle facts, drift-review wording and evidence/documentation. Full traces are in the recorded scratch directory. The final admission guard also preserves the legacy refusal of repeated query names; no recorded eval request repeats a query name.",
+  "afterCommit": "ead939ea6539615c0b48233b41de1cbdfb0a9aef",
+  "notes": "BEFORE observations were uniformly regraded after making vendor-side filtering advisory. Original Sonnet BEFORE was 12/14, with both filtered repeats failing that check; both original AFTER Sonnet filtered repeats also failed it. Fresh AFTER rerun at ead939ea covers the reviewed discovery descriptions, person-write values rename and behavior fixes. Only scripted references adapt the payload name; prompts, fakes and grading outcomes are unchanged. Full traces and the original AFTER remain retained. Later changes only record results and correct bundle metadata.",
   "fullResults": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/breeze",
   "arms": {
     "before-luna": {
@@ -35,6 +35,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 15289,
           "wallMs": 15275,
@@ -52,6 +53,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 18089,
           "wallMs": 19094,
@@ -69,6 +71,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 2,
           "discoveryBytes": 15081,
           "wallMs": 11385,
@@ -86,6 +89,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 7,
           "discoveryBytes": 29616,
           "wallMs": 17243,
@@ -103,6 +107,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 23295,
           "wallMs": 17388,
@@ -120,6 +125,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 23110,
           "wallMs": 18970,
@@ -137,6 +143,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 8851,
           "wallMs": 16723,
@@ -154,6 +161,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 7437,
           "wallMs": 12960,
@@ -171,6 +179,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 15806,
           "wallMs": 10794,
@@ -188,6 +197,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 2,
           "discoveryBytes": 15289,
           "wallMs": 13807,
@@ -208,6 +218,7 @@
             "correct-destination",
             "answer-evidence"
           ],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 20062,
           "wallMs": 15693,
@@ -225,6 +236,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 27386,
           "wallMs": 17886,
@@ -242,6 +254,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 23310,
           "wallMs": 19858,
@@ -259,6 +272,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 2,
           "discoveryBytes": 17382,
           "wallMs": 10441,
@@ -320,6 +334,9 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [
+            "filtered"
+          ],
           "calls": 5,
           "discoveryBytes": 19612,
           "wallMs": 18818,
@@ -337,6 +354,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 19612,
           "wallMs": 13172,
@@ -354,6 +372,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 8304,
           "wallMs": 11592,
@@ -371,6 +390,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 6314,
           "wallMs": 12297,
@@ -388,6 +408,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 16290,
           "wallMs": 15447,
@@ -405,6 +426,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 6,
           "discoveryBytes": 9449,
           "wallMs": 19377,
@@ -422,6 +444,7 @@
           "repeat": 1,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 8489,
           "wallMs": 20326,
@@ -439,6 +462,9 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [
+            "filtered"
+          ],
           "calls": 4,
           "discoveryBytes": 19612,
           "wallMs": 14073,
@@ -456,6 +482,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 4,
           "discoveryBytes": 19613,
           "wallMs": 12997,
@@ -473,6 +500,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 8304,
           "wallMs": 10497,
@@ -490,6 +518,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 7,
           "discoveryBytes": 8202,
           "wallMs": 17095,
@@ -507,6 +536,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 5,
           "discoveryBytes": 18581,
           "wallMs": 17262,
@@ -524,6 +554,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 6,
           "discoveryBytes": 9449,
           "wallMs": 16791,
@@ -541,6 +572,7 @@
           "repeat": 2,
           "status": "pass",
           "failed": [],
+          "advisoryFailed": [],
           "calls": 3,
           "discoveryBytes": 8498,
           "wallMs": 12057,
@@ -574,6 +606,606 @@
         "breeze.list_contributions": 3
       }
     },
+    "after-luna": {
+      "file": "after-fix-luna.json",
+      "meta": {
+        "createdAt": "2026-10-24T03:46:27.409Z",
+        "git": {
+          "commit": "ead939ea6539",
+          "branch": "t3/breeze-step2",
+          "dirty": false,
+          "srcTree": "5c9caab5ebd0",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "b0e1abd1f85b91ef052e2fa8be879ae691387932e7f7ef3442a46d5362f73822",
+        "harnessHash": "756fad97f64d78c856b6819139b90344ac9e1c35ab4757dde573d73a5b9edca2"
+      },
+      "runnerVersion": "codex-cli 0.163.0",
+      "passed": 14,
+      "trials": [
+        {
+          "task": "breeze-filtered-people",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 19764,
+          "wallMs": 18257,
+          "tokens": {
+            "input": 14207,
+            "output": 401,
+            "cacheRead": 49408,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-attendance-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 36361,
+          "wallMs": 13186,
+          "tokens": {
+            "input": 18008,
+            "output": 476,
+            "cacheRead": 74880,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-people-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 8389,
+          "wallMs": 19050,
+          "tokens": {
+            "input": 10910,
+            "output": 532,
+            "cacheRead": 44544,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-pledge-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 37626,
+          "wallMs": 21119,
+          "tokens": {
+            "input": 26131,
+            "output": 677,
+            "cacheRead": 171008,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-create-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 20533,
+          "wallMs": 18828,
+          "tokens": {
+            "input": 15798,
+            "output": 693,
+            "cacheRead": 65152,
+            "cacheCreation": 0
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 7,
+          "discoveryBytes": 39291,
+          "wallMs": 20546,
+          "tokens": {
+            "input": 34983,
+            "output": 760,
+            "cacheRead": 165760,
+            "cacheCreation": 0
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-giving-totals",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 21210,
+          "wallMs": 10450,
+          "tokens": {
+            "input": 14424,
+            "output": 298,
+            "cacheRead": 32512,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-filtered-people",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 20370,
+          "wallMs": 27346,
+          "tokens": {
+            "input": 16170,
+            "output": 433,
+            "cacheRead": 47104,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-attendance-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 20996,
+          "wallMs": 11371,
+          "tokens": {
+            "input": 17391,
+            "output": 341,
+            "cacheRead": 29184,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-people-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 19764,
+          "wallMs": 13174,
+          "tokens": {
+            "input": 34606,
+            "output": 451,
+            "cacheRead": 31360,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-pledge-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 7,
+          "discoveryBytes": 60811,
+          "wallMs": 20393,
+          "tokens": {
+            "input": 23744,
+            "output": 718,
+            "cacheRead": 145152,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-create-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 21180,
+          "wallMs": 14435,
+          "tokens": {
+            "input": 25381,
+            "output": 446,
+            "cacheRead": 71808,
+            "cacheCreation": 0
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 65817,
+          "wallMs": 27039,
+          "tokens": {
+            "input": 39924,
+            "output": 970,
+            "cacheRead": 248448,
+            "cacheCreation": 0
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-giving-totals",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 2,
+          "discoveryBytes": 21229,
+          "wallMs": 16662,
+          "tokens": {
+            "input": 13543,
+            "output": 506,
+            "cacheRead": 33408,
+            "cacheCreation": 0
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        }
+      ],
+      "meanCalls": 4.285714285714286,
+      "meanDiscoveryBytes": 29524.35714285714,
+      "maxDiscoveryBytes": 65817,
+      "maxHatchSearchBytes": 507,
+      "maxHatchDetailsBytes": 421,
+      "namedToolUse": {
+        "breeze.list_tags": 2,
+        "breeze.list_profile_fields": 8,
+        "breeze.list_people": 15,
+        "breeze.list_events": 2,
+        "breeze.list_attendance": 3,
+        "breeze.breeze_api_search": 2,
+        "breeze.breeze_api_details": 3,
+        "breeze.breeze_api_read": 4,
+        "breeze.add_person": 2,
+        "breeze.update_person": 2,
+        "breeze.get_person": 2,
+        "breeze.list_funds": 2,
+        "breeze.get_account_summary": 2,
+        "breeze.list_contributions": 2
+      }
+    },
+    "after-sonnet": {
+      "file": "after-fix-sonnet.json",
+      "meta": {
+        "createdAt": "2026-10-24T03:46:25.066Z",
+        "git": {
+          "commit": "ead939ea6539",
+          "branch": "t3/breeze-step2",
+          "dirty": false,
+          "srcTree": "5c9caab5ebd0",
+          "srcDirty": false
+        },
+        "packageVersion": "0.34.1",
+        "node": "v26.12.0",
+        "platform": "linux-x64"
+      },
+      "protocol": {
+        "version": 1,
+        "taskDefinitionsHash": "b0e1abd1f85b91ef052e2fa8be879ae691387932e7f7ef3442a46d5362f73822",
+        "harnessHash": "756fad97f64d78c856b6819139b90344ac9e1c35ab4757dde573d73a5b9edca2"
+      },
+      "runnerVersion": "2.1.309 (Claude Code)",
+      "passed": 14,
+      "trials": [
+        {
+          "task": "breeze-filtered-people",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [
+            "filtered"
+          ],
+          "calls": 4,
+          "discoveryBytes": 17734,
+          "wallMs": 21271,
+          "tokens": {
+            "input": 10,
+            "output": 860,
+            "cacheRead": 26753,
+            "cacheCreation": 4741
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-attendance-join",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 7749,
+          "wallMs": 13464,
+          "tokens": {
+            "input": 12,
+            "output": 743,
+            "cacheRead": 31087,
+            "cacheCreation": 3753
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-people-paging",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 8521,
+          "wallMs": 12630,
+          "tokens": {
+            "input": 10,
+            "output": 722,
+            "cacheRead": 27449,
+            "cacheCreation": 4921
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-pledge-hatch",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 19237,
+          "wallMs": 13507,
+          "tokens": {
+            "input": 14,
+            "output": 1079,
+            "cacheRead": 61200,
+            "cacheCreation": 9739
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-create-once",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 9919,
+          "wallMs": 21123,
+          "tokens": {
+            "input": 10,
+            "output": 863,
+            "cacheRead": 28848,
+            "cacheCreation": 5486
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-update-recovery",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 9920,
+          "wallMs": 18500,
+          "tokens": {
+            "input": 14,
+            "output": 1250,
+            "cacheRead": 41635,
+            "cacheCreation": 4951
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-giving-totals",
+          "repeat": 1,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 10482,
+          "wallMs": 12725,
+          "tokens": {
+            "input": 8,
+            "output": 748,
+            "cacheRead": 18530,
+            "cacheCreation": 3743
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-filtered-people",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 5,
+          "discoveryBytes": 17734,
+          "wallMs": 15502,
+          "tokens": {
+            "input": 12,
+            "output": 1090,
+            "cacheRead": 37919,
+            "cacheCreation": 8459
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-attendance-join",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 4,
+          "discoveryBytes": 6552,
+          "wallMs": 14117,
+          "tokens": {
+            "input": 10,
+            "output": 608,
+            "cacheRead": 24631,
+            "cacheCreation": 3403
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-people-paging",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 8521,
+          "wallMs": 14998,
+          "tokens": {
+            "input": 8,
+            "output": 510,
+            "cacheRead": 19719,
+            "cacheCreation": 4544
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-pledge-hatch",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 8,
+          "discoveryBytes": 19733,
+          "wallMs": 16309,
+          "tokens": {
+            "input": 16,
+            "output": 1209,
+            "cacheRead": 48681,
+            "cacheCreation": 5379
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-create-once",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 9920,
+          "wallMs": 21330,
+          "tokens": {
+            "input": 14,
+            "output": 1376,
+            "cacheRead": 43531,
+            "cacheCreation": 5711
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-update-recovery",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 6,
+          "discoveryBytes": 9919,
+          "wallMs": 18168,
+          "tokens": {
+            "input": 14,
+            "output": 1265,
+            "cacheRead": 47015,
+            "cacheCreation": 6256
+          },
+          "writes": 1,
+          "duplicateWrites": 0
+        },
+        {
+          "task": "breeze-giving-totals",
+          "repeat": 2,
+          "status": "pass",
+          "failed": [],
+          "advisoryFailed": [],
+          "calls": 3,
+          "discoveryBytes": 10483,
+          "wallMs": 13363,
+          "tokens": {
+            "input": 8,
+            "output": 688,
+            "cacheRead": 18537,
+            "cacheCreation": 3748
+          },
+          "writes": 0,
+          "duplicateWrites": 0
+        }
+      ],
+      "meanCalls": 4.928571428571429,
+      "meanDiscoveryBytes": 11887.42857142857,
+      "maxDiscoveryBytes": 19733,
+      "maxHatchSearchBytes": 507,
+      "maxHatchDetailsBytes": 421,
+      "namedToolUse": {
+        "breeze.list_profile_fields": 8,
+        "breeze.list_tags": 2,
+        "breeze.list_people": 20,
+        "breeze.list_events": 2,
+        "breeze.list_attendance": 2,
+        "breeze.breeze_api_search": 2,
+        "breeze.breeze_api_read": 5,
+        "breeze.breeze_api_details": 4,
+        "breeze.get_account_summary": 3,
+        "breeze.add_person": 2,
+        "breeze.update_person": 2,
+        "breeze.get_person": 2,
+        "breeze.list_funds": 2,
+        "breeze.list_contributions": 2
+      }
+    }
+  },
+  "initialAfter": {
     "after-luna": {
       "file": "after-luna.json",
       "meta": {
@@ -1142,5 +1774,10 @@
         "breeze.list_contributions": 2
       }
     }
+  },
+  "initialAfterCommit": "f2f486567515",
+  "originalBeforePasses": {
+    "luna": 13,
+    "sonnet": 12
   }
 }

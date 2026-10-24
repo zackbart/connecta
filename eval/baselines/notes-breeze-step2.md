@@ -10,12 +10,16 @@ Full saved grading inputs and logs are retained under
 ## Setup and provenance
 
 - BEFORE: main `e4401cd7` plus eval-only commit `f47438cc`.
-- AFTER: clean implementation commit `f2f486567515`. Subsequent source changes
-  are equivalent lint cleanup (an unused argument and an unnecessary spread),
-  bundle measurement facts and drift-review wording; the served catalog/call
-  behavior is unchanged for the recorded requests. A final admission guard
-  also preserves the legacy refusal of repeated query names; no recorded
-  eval request repeats a query name. Golden verification covers final source.
+- AFTER: fresh fix-round run at clean commit `ead939ea6539`, after the
+  reviewed descriptions, response roots, `values` rename, false-write check,
+  error sentences and calendar/limit admission fixes. Only bundle metadata
+  and evidence change afterward. Golden verification covers final source.
+- Initial AFTER at `f2f486567515` is retained as history in `initialAfter` in
+  the JSON summary and the original scratch files. Both models were 14/14;
+  initial mean calls were Luna 4.64 / Sonnet 5.14. No trial was discarded.
+- The fix-round task-reference adapter uses `values` on the current surface
+  and `fields` on legacy main. Prompts, fake behavior and graders did not
+  change; task-definition hashes record that reference-only change.
 - Codex CLI 0.163.0, served model `gpt-6-luna`; Claude Code 2.1.309, served
   model `claude-sonnet-5-5`; default effort, two repeats, eight-minute deadline,
   one trial per runner at a time, at most two trials globally.
@@ -29,7 +33,7 @@ One grader correction was made after BEFORE: `5150020d` made vendor-side
 filtering advisory. Sonnet returned the correct count after applying the
 Status filter to profiles in code; the task does not require both filters to
 run at the vendor. Every saved BEFORE observation was uniformly regraded
-with that correction. No trial was rerun or replaced, and prompts, fake
+with that correction. No BEFORE trial was rerun or replaced, and prompts, fake
 behavior and all other outcome checks stayed frozen. Both the original and
 regraded inputs are retained; the primary results below use the regrade.
 
@@ -37,7 +41,9 @@ Before the correction Sonnet BEFORE was **12/14**: both filtered-people
 repeats failed the vendor-side filtering check. Both original AFTER Sonnet
 filtered-people trials also fail that now-advisory check. The correction is
 load-bearing for Sonnet in both arms and was applied uniformly; the required
-answer and write-safety checks remain unchanged.
+answer and write-safety checks remain unchanged. In the fresh fix-round
+AFTER, one of the two Sonnet filtered-people trials fails that advisory
+check; both still pass all required outcomes.
 
 ## Results
 
@@ -66,16 +72,23 @@ of production vendor availability.
 | Arm | Mean MCP calls | Mean cumulative discovery bytes | Maximum cumulative discovery bytes |
 | --- | ---: | ---: | ---: |
 | BEFORE Luna | 3.79 | 18,572 | 29,616 |
-| AFTER Luna | 4.64 | 18,507 | 29,491 |
+| AFTER Luna | 4.29 | 29,524 | 65,817 |
 | BEFORE Sonnet | 4.64 | 12,881 | 19,613 |
-| AFTER Sonnet | 5.14 | 12,387 | 29,039 |
+| AFTER Sonnet | 4.93 | 11,887 | 19,733 |
 
 The standard surface costs more calls in this sample. Accuracy is stable or
 higher; these results do not establish a latency or efficiency improvement.
+Luna's cumulative discovery cost regresses: repeated broad `connecta.search`
+requests in the pledge and update-recovery tasks receive roughly 15–24 KiB
+per reply, reaching 65,817 bytes over a trial. The update-recovery second
+repeat requests broad discovery four times. The bounded hatch itself remains
+small. Sonnet's mean discovery bytes decrease, but the mixed results do not
+support a provider-wide efficiency claim.
+
 Discovery bytes add top-level search/describe/skills and hatch discovery text,
 plus JSON received by the corresponding guest calls. Guest receipt is not the
 same as text delivered to the model. Observed hatch tool-data maxima are
-419 bytes for search and 336 bytes for details, within the 16/32 KiB limits.
+507 bytes for search and 421 bytes for details, within the 16/32 KiB limits.
 This small sample does not exercise discovery-budget continuation.
 
 ## Curation evidence
@@ -103,13 +116,14 @@ absence of use in these tasks, not proof those workflows never matter.
 The full tool-address counts remain in the JSON summary.
 
 The serialized operation/contract/field metadata view grows from 18,752 to
-41,999 bytes; the former conversion was drift evidence rather than a served
+53,703 bytes; the former conversion was drift evidence rather than a served
 runtime hatch index. The golden connection's complete guide grows from 3,478
-to 3,717 UTF-8 bytes. Standalone Breeze gzip grows from 341,226 to 345,893
-bytes (+4,667, 1.37%) using the same Node 26.12.0/system-zlib measurement and
-shared core for both arms. This includes the shared Effect kit, paid once per
-deployment; provider entry sizes are not additive. The committed historical
-bundle baseline records the earlier `f2f48656` measurement of 345,800 bytes.
+to 3,925 UTF-8 bytes. Final standalone Breeze gzip grows from 341,226 to
+348,650 B (+7,424, 2.18%), using the same Node 26.12.0/system-zlib
+(`LD_PRELOAD` libz) toolchain and shared core for both arms. The committed
+historical baseline records `ead939ea` at 348,592 B; updating the measurement
+metadata adds 58 B. This includes the shared Effect kit, paid once per
+deployment; provider entry sizes are not additive.
 
 ## Limits and follow-up
 
@@ -118,6 +132,15 @@ is no production traffic or independent held-out task set. Identical fake
 seeds and prompts establish comparability within this experiment, not a
 vendor-general win. Original provenance hashes and the disclosed grader
 correction are recorded rather than represented as identical protocol hashes.
+
+Round 1 restores non-retryable bare-false write failures and standalone HTTP
+error sentences, fills every documented response root found by the reference
+probe, strips calendar secrets from non-array shapes, validates people limits
+before sending, and adds reviewed discovery descriptions. Named person-write
+`fields` becomes `values`; migration gaps are recorded. Regression rows fold
+into the existing six provider cases: fix-round test delta 0, cumulative -16.
+Only Breeze golden bytes change; failures remove leading spaces and add
+sentence punctuation, including the API-key-recovery sentence boundary.
 
 The configurable sensitive set stays empty, calendar secrets remain removed,
 and `raw` retires. The public HTML digest has changed since the existing pin;
