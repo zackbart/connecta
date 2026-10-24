@@ -181,7 +181,7 @@ it("INV-5: withholds URL-bearing Cloudflare envelope cursors and preserves ordin
   }
 });
 
-it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-response and select projections", async () => {
+it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-response and fields projections", async () => {
   const connector = VENDORS[1].create();
   respond = () =>
     Response.json({
@@ -190,7 +190,7 @@ it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-respons
         { uid: "dpl_2", errorMessage: "See https://files.example/b#key=PRIVATE" },
       ],
     });
-  for (const projection of [{}, { select: ["deployments.errorMessage"] }]) {
+  for (const projection of [{}, { fields: ["deployments.errorMessage"] }]) {
     const result = await call(connector, "vercel_api_read", { path: "/v7/deployments", ...projection });
     expect(result.data.deployments).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain("PRIVATE");

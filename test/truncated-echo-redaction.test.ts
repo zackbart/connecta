@@ -155,7 +155,7 @@ describe("shared REST failure mappers", () => {
       );
       const connector = vercel("hosting", { purpose: "Ops", auth: { type: "token" }, teamId: "team_default" });
       const result = (await connector.callTool("get_deployment_build_logs", { deploymentId: "dpl_1" }, keyed())) as {
-        events: { text: string; textTruncated?: true }[];
+        events: { text: string }[];
       };
       const text = result.events[0]!.text;
       expectNoFragment(text, form);

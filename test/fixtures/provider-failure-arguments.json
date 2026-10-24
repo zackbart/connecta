@@ -1037,7 +1037,7 @@
         "projectId": "web",
         "limit": 2
       },
-      "select": [
+      "fields": [
         "deployments.uid",
         "deployments.state"
       ]
@@ -1075,10 +1075,6 @@
         "development"
       ],
       "comment": "Rotated"
-    },
-    "delete_project_env_var": {
-      "projectId": "web",
-      "envVarId": "env_2"
     },
     "get_deployment_build_logs": {
       "deploymentId": "dpl_1",

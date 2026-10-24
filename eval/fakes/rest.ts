@@ -4,6 +4,7 @@ import type { CallRecord, Ledger } from "./service.js";
 import { randomUUID } from "node:crypto";
 import { configureGuardedTransport, type GuardedTransport } from "../../src/guarded-transport.js";
 import { stripeStep2Read } from "./stripe.js";
+import { vercelStep2Dispatch } from "./vercel.js";
 import { cloudflareStep2Read } from "./cloudflare.js";
 
 export type RestVendor = "stripe" | "cloudflare" | "vercel";
@@ -113,6 +114,7 @@ export function restState() {
     refunds: [] as Row[],
     refundKeys: {} as Record<string, { params: string; status: number; value: unknown }>,
     refundFaulted: false,
+    vercelFaulted: false,
     dnsFaulted: false,
     dns: [
       {
@@ -165,6 +167,7 @@ export class FakeRestService {
     private readonly stripeAccount = "acct_eval",
     private readonly stripeStep2 = false,
     private readonly cloudflareStep2?: { fault?: boolean },
+    private readonly vercelStep2 = false,
   ) {
     this.token = `${vendor === "stripe" ? `sk_${stripeMode}_eval_` : "eval_"}${randomUUID()}`;
   }
@@ -242,6 +245,10 @@ export class FakeRestService {
       record.error = `HTTP ${status}`;
     }
     record.resultBytes = Buffer.byteLength(JSON.stringify(value));
+    if (this.vercelStep2 && path.endsWith("/runtime-logs") && status === 200 && Array.isArray(value))
+      return new Response(value.map((row) => JSON.stringify(row)).join("\n") + "\n", {
+        headers: { "Content-Type": "application/stream+json" },
+      });
     return Response.json(value, {
       status,
       headers: this.vendor === "stripe" ? { "request-id": status === 500 ? "req_fault" : "req_eval" } : {},
@@ -454,6 +461,10 @@ export class FakeRestService {
       }
     }
     if (this.vendor === "vercel") {
+      if (this.vercelStep2) {
+        const result = vercelStep2Dispatch(method, path, query, body, this.state, this.refundFault);
+        if (result) return result;
+      }
       const deployments = [
         {
           uid: "dpl_ok1",

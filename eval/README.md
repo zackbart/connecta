@@ -313,6 +313,14 @@ answers HTTP 500. The same prompts and state/ledger/final-answer graders run
 before and after the provider surface change. They require one business refund;
 a same-key replay is allowed in recovery but not required. Historical #801
 worlds retain their original replies.
+Seven [Vercel step-2 tasks](tasks/vercel.ts) use the real provider against an
+isolated REST fake: filtered deployments, a team/project/domain/alias join,
+137-deployment paging, domain verification through the hatch, bounded logs,
+one environment create, and reconciliation after a committed update returns
+HTTP 500. Frozen prompts and state/HTTP-ledger/final-answer graders serve both
+surfaces. The [paired notes](baselines/notes-vercel-step2.md) retain the initial
+regression and complete final rerun; historical #801 artifacts are unchanged.
+
 [Planned tasks](tasks/planned.ts) is currently empty.
 The historical #765 paired comparison registered 19 tasks. The current roster
 retains 18 of them after removing the Mixpanel bootstrap; frozen comparison
