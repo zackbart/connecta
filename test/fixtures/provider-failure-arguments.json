@@ -282,6 +282,35 @@
           }
         }
       ]
+    },
+    "docs_api_search": {
+      "query": "document"
+    },
+    "docs_api_details": {
+      "method": "GET",
+      "path": "/documents/doc-1"
+    },
+    "docs_api_read": {
+      "path": "/documents/doc-1"
+    },
+    "docs_api_write": {
+      "method": "POST",
+      "path": "/documents/doc-1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "insertText": {
+              "text": "Note",
+              "location": {
+                "index": 1
+              }
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "rev-1"
+        }
+      }
     }
   },
   "drive": {

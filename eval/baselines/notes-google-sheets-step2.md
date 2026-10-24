@@ -16,8 +16,9 @@ BEFORE product source is clean main
 `7bd944ff5340d1255b5aab7e373c671eed6064b7`, supplies the paid checkout. Its entire
 `src/` tree equals main; this snapshot is preserved in the branch's merge history.
 AFTER is clean `535ce06584b83ef8d1036c1301fdd78e92feec2b`, source tree
-`407307124b301b7aaf810b4f8cc465d7b0e9cbd2`. Subsequent commits preserve that
-product source and record provenance/results. Both arms include H1 (#1008), the
+`407307124b301b7aaf810b4f8cc465d7b0e9cbd2`. The evaluation-artifact and provenance commits preserve that product source.
+The later main merge described below brings Docs changes and refreshes Sheets
+bundle facts; it does not change Sheets execution behavior. Both arms include H1 (#1008), the
 route-neutral graders/checker fixes (#1011) and delegated-caller binding (#1013).
 
 The reference-only change replaces S4's `get_spreadsheet.raw` call with a GET
@@ -188,3 +189,37 @@ trial's result/checks and enough provenance to locate those immutable originals.
 | before / claude | `before-sonnet.json` | `daf722457eeea3ff526f6ad525fe332ab1f9aad0beb322b7660bc54184c2f945` |
 | after / codex | `after-luna.json` | `f308114cd34749d8242f3481f417385547a1019eed8b8fae2cd73f9e6df5326e` |
 | after / claude | `after-sonnet.json` | `80e3b398bc433306c13e523fb6e5fc1ccf7c034de6367fe04dd63e36c5745d6b` |
+
+## Post-eval merge of Docs #1015
+
+Main `f9bf5afb` is merged into the Sheets branch without rebasing. Both products
+are retained in migration/setup documentation, pending-list removals, eval
+reference adapters and fixtures, and the representative hatch failure sweep.
+Docs source, its eval evidence and its goldens match main. All 65 non-Sheets
+golden files are byte-identical to main. The source review still targets
+`f0ea7223`; this merge applies no review fixes and runs no additional paid trials.
+
+The post-merge task-definition hash is
+`8212d4a30ad170accf7fce9ee985ed2af0b937651af09d469259f38ea324c914`
+from the inherited Docs reference/boundary adapter updates. The common harness
+hash remains `6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca`.
+These are merge-validation fingerprints. The four paid originals, their
+fingerprints and all 56 grades above are retained unchanged.
+
+Fresh matched Node 22.23.3/esbuild 0.28.1/gzip-9 measurements against this main
+are Sheets **353,251 → 394,761 B** before recording bundle facts, **+41,510 B**;
+the final source including those facts is **394,793 B**, **+41,542 B**.
+The all-six Google entry is **434,797 → 472,507 B**, **+37,710 B** including
+the facts. Docs measures **370,111 B** in both trees. Its reviewed snapshot
+baseline **369,878 B** and note are preserved. Sheets' report-only snapshot
+baseline is refreshed to **394,761 B** through its declaration and provider
+generation; no cap changes. These merge measurements supersede the earlier
+combined-bundle sample for the current branch, not the paid-run evidence.
+
+Merge validation passes: **541** selected Node cases, deterministic Docs/Sheets
+Node goldens, all **16** workerd provider goldens, `check:static` and
+`check:build`. All **42** Google reference tasks match expected outcomes across
+both surfaces and both grading modes, including the expected Drive D4 capability
+gap and committed network/body recovery variants. The final byte audit again
+confirms all **65** non-Sheets golden files match main. The original four paid
+JSON hashes still match, test delta remains **0**, and no review fixes are applied.
