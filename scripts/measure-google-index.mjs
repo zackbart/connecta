@@ -30,7 +30,7 @@ for (const pin of pins) {
   );
   const heap = process.memoryUsage().heapUsed;
   const factoryStart = performance.now();
-  const index = new OperationIndex(data, { vendor: pin.provider, title: pin.provider });
+  const index = new OperationIndex(data, { vendor: pin.provider, title: pin.provider, pathMatching: "uri-template" });
   const factoryMs = performance.now() - factoryStart;
   const searchStart = performance.now();
   index.search("list", { limit: 8, partial: true });

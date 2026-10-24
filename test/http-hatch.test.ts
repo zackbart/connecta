@@ -1146,7 +1146,7 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       ops: [...DATA.ops, ["GET", "/items/search", "LiteralSearch", "Search", 0]],
       details: JSON.stringify({ d: [], o: Array(DATA.ops.length + 1).fill(0) }),
     },
-    { vendor: "google", title: "Google" },
+    { vendor: "google", title: "Google", pathMatching: "uri-template" },
   );
   expect(() => googleNamedOperation(collisionIndex, "GET", "/items/search", "/items/{item}")).toThrow(
     "different operation",

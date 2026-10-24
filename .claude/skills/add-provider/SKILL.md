@@ -110,6 +110,12 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+Google indexes explicitly construct `OperationIndex` with
+`pathMatching: "uri-template"` for decoded literal precedence and embedded
+action parameters. Omit this option for existing providers: exact literal
+matching and its refusal ordering remain the default. Matching mode is part
+of an opt-in index's discovery cursor binding.
+
 Google Discovery conversions declare `discovery: { pin: "discovery.json",
 format: "google-discovery-v1", summaries?: { [methodId]: summary } }` on the
 vendored OpenAPI pin. Retain exact official bytes in

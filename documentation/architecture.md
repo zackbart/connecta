@@ -2349,9 +2349,11 @@ Details attach the reachable `$defs`, preserving recursion, required fields,
 dynamic maps and parent schema metadata through the existing bounded
 continuations. This does not make the compact checker a full JSON Schema
 validator. Product admission still needs literal reviewed verdicts and
-independent batch-kind, revision and resource guards. The resolver handles
-literal-route precedence, encoded literal collisions and parameter action
-suffixes. An indexed `googleClient` requires each named request's declared
+independent batch-kind, revision and resource guards. Google indexes explicitly
+set `pathMatching: "uri-template"` on `OperationIndex` to handle encoded literal
+collisions and parameter action suffixes. Other indexes retain exact literal
+segments and their existing refusal ordering. The matching mode also binds
+discovery cursors. An indexed `googleClient` requires each named request's declared
 template and refuses a substituted id resolving to another operation before
 grant evaluation. Products opt in with `googleClient(connection, title,
 { standard: true, index })`; their requests carry `template`.

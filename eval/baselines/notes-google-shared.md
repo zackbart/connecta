@@ -147,3 +147,38 @@ not run under the approved load policy.
 
 CI and independent Opus review remain for the orchestrator after the ready PR
 is opened. This implementation task does not monitor or merge it.
+
+## CI follow-up: default path matching
+
+The initial head `8afc1dfb` failed three Planning Center `excludeApps` cases in
+CI run 40096879139. The shared resolver decoded literal segments
+unconditionally, so `%67iving`, `%65vents` and `%6Cists` matched indexed routes
+and reached Planning Center's exclusion guard. The guard returned
+`provider_permission_denied` where the original index lookup returned
+`invalid_args`. No request was dispatched, but this changed an existing
+provider's error contract.
+
+Default literal matching, parameter extraction and parameter names are now
+restored. Google indexes must explicitly set `pathMatching: "uri-template"`
+for decoded literal precedence and action-suffix parameters. Only opt-in
+cursor bindings include that matching mode; default cursor digests retain
+their original input. The Planning Center tests were not edited. Existing
+compiler and hatch cases verify the opt-in behavior without adding tests.
+
+The consumer audit covers `vendorIndex`, `PlanningCenterIndex`, shared REST
+kit/tools, HTTP hatch/safety, the Google named-operation guard and every direct
+`OperationIndex` constructor. Provider suites include Tithe.ly, Breeze,
+Stripe, Overflow, Planning Center, CCB, Cloudflare and Vercel; GitHub's shared
+REST consumers are checked too. Frozen prompts, fake state and graders are
+unchanged. Fresh Google bundle measurements remain byte-identical to the table
+above.
+
+Follow-up verification uses `VITEST_MAX_WORKERS=2`: all eight provider groups
+pass (106 tests across 12 files), shared REST/HTTP/safety/provenance and GitHub
+consumers pass (193 tests across seven files), and the compiler (21), Planning
+Center (8) and hatch (3) cases pass. Node determinism goldens/harness pass all
+85 tests; workerd goldens/harness/HTTP/provenance pass 108 with 98 platform
+skips. No golden or Planning Center test was edited, and test delta remains
+zero. The hatch and compiler initially hit their existing local time limits
+under concurrent build/test load; isolated reruns pass without changing tests
+or timeouts. Static/build and Node 24 Eve checks/package smoke also pass.

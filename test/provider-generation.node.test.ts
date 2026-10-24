@@ -604,7 +604,10 @@ describe("OpenAPI operation index generation", () => {
       });
       expect(compiled.ops).toHaveLength(pin.methods);
       expect(new Set(compiled.ops.map((row: string[]) => `${row[0]} ${row[1]}`)).size).toBe(pin.methods);
-      const index = new OperationIndex(compiled, { vendor: pin.provider, title: pin.provider });
+      const names = { vendor: pin.provider, title: pin.provider };
+      const legacyIndex = new OperationIndex(compiled, names);
+      const index = new OperationIndex(compiled, { ...names, pathMatching: "uri-template" });
+      expect(await index.cursorRevision()).not.toBe(await legacyIndex.cursorRevision());
       for (const row of normalized["x-google-discovery"].mapping) {
         const op = index.ops.find((op) => op.operationId === row.id)!;
         expect(`${op.method} ${op.path}`).toBe(row.operation);
@@ -623,10 +626,12 @@ describe("OpenAPI operation index generation", () => {
         }
       }
       if (pin.provider === "drive") {
+        expect(legacyIndex.resolve("GET", "/files/%67enerateCseToken").op.operationId).toBe("drive.files.get");
         expect(index.resolve("GET", "/files/generateCseToken").op.operationId).toBe("drive.files.generateCseToken");
         expect(index.resolve("GET", "/files/%67enerateCseToken").op.operationId).toBe("drive.files.generateCseToken");
       }
       if (pin.provider === "docs") {
+        expect(index.resolve("POST", "/documents/id:batchUpdate").params).toEqual({ documentId: "id" });
         expect(normalized.components.schemas.Document.properties.headers.additionalProperties).toHaveProperty("$ref");
         expect(() => index.resolve("POST", "/documents/id")).toThrow();
       }

@@ -232,6 +232,7 @@ export class OperationIndex {
   readonly #vendor: string;
   readonly #segments: readonly (readonly string[])[];
   readonly #slashParams: ReadonlySet<string>;
+  readonly #uriTemplates: boolean;
   #details: { d: readonly SchemaNode[]; o: readonly (0 | DetailsRow)[] } | undefined;
   #fields: readonly (readonly OperationField[])[] | undefined;
   #requestSchemas: { definitions: Record<string, JsonSchema>; roots: (JsonSchema | null)[] } | undefined;
@@ -241,10 +242,22 @@ export class OperationIndex {
    * `vendor` is the tool-name prefix; `title` the display name in refusals.
    * `slashParams` names path parameters whose values may carry an encoded
    * "/" (`%2F`), such as an object key, and only as the path's last segment.
+   * `pathMatching: "uri-template"` opts into decoded literals and parameters
+   * embedded in a segment, such as Google's `{id}:batchUpdate`. The default
+   * retains exact literal segments and whole-segment parameters.
    */
-  constructor(data: OpenApiData, names: { vendor: string; title: string; slashParams?: readonly string[] }) {
+  constructor(
+    data: OpenApiData,
+    names: {
+      vendor: string;
+      title: string;
+      slashParams?: readonly string[];
+      pathMatching?: "uri-template";
+    },
+  ) {
     const { title } = names;
     this.#slashParams = new Set(names.slashParams ?? []);
+    this.#uriTemplates = names.pathMatching === "uri-template";
     this.#data = data;
     this.#title = title;
     this.#vendor = names.vendor;
@@ -269,7 +282,14 @@ export class OperationIndex {
 
   /** Content binding for discovery continuations; labels alone never identify an index. */
   async cursorRevision(): Promise<string> {
-    const bytes = new TextEncoder().encode(canonicalJson([this.#data, this.revision, [...this.#slashParams].sort()]));
+    const bytes = new TextEncoder().encode(
+      canonicalJson([
+        this.#data,
+        this.revision,
+        [...this.#slashParams].sort(),
+        ...(this.#uriTemplates ? ["uri-template"] : []),
+      ]),
+    );
     return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
@@ -328,6 +348,12 @@ export class OperationIndex {
       if (template.length !== segments.length) return;
       let score = 0;
       for (const [index, part] of template.entries()) {
+        if (!this.#uriTemplates) {
+          if (part.startsWith("{")) continue;
+          if (part !== segments[index]) return;
+          score += 1;
+          continue;
+        }
         const parameter = /^(.*)\{([^{}]+)\}(.*)$/.exec(part);
         const value = decodeURIComponent(segments[index]!);
         if (parameter) {
@@ -369,6 +395,10 @@ export class OperationIndex {
     }
     const params: Record<string, string> = {};
     template.forEach((part, index) => {
+      if (!this.#uriTemplates) {
+        if (part.startsWith("{")) params[part.slice(1, -1)] = segments[index]!;
+        return;
+      }
       const parameter = /^(.*)\{([^{}]+)\}(.*)$/.exec(part);
       if (parameter) {
         const raw = segments[index]!;
@@ -497,8 +527,12 @@ export class OperationIndex {
     // A generator may omit plain-string path parameters (`pathParams:
     // "typed"`); the template still names them, so the contract does too.
     const implied: ParamRow[] = this.#segments[op.row]!.flatMap((part) => {
-      const name = /\{([^{}]+)\}/.exec(part)?.[1];
-      return name && !declared.some(([key, at]) => at === "path" && key === name)
+      const name = this.#uriTemplates
+        ? /\{([^{}]+)\}/.exec(part)?.[1]
+        : part.startsWith("{")
+          ? part.slice(1, -1)
+          : undefined;
+      return name !== undefined && !declared.some(([key, at]) => at === "path" && key === name)
         ? [[name, "path", 1, { t: "string" }] as ParamRow]
         : [];
     });
