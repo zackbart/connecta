@@ -42,6 +42,7 @@ interface CallArgs {
   readonly query?: Readonly<Record<string, unknown>>;
   readonly body?: unknown;
   readonly fields?: readonly string[];
+  readonly headers?: Readonly<Record<string, string>>;
   readonly cursor?: string;
   readonly idempotencyKey?: string;
 }
@@ -70,6 +71,10 @@ export interface HatchBinding {
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
   readonly allowOtherBodyTypes?: true;
+  /** Expand deployment-owned path defaults before index resolution. */
+  readonly path?: (path: string) => string;
+  /** Reviewed body framing before index validation, such as NDJSON arrays. */
+  readonly prepareBody?: (body: unknown, operation: Operation) => unknown;
   readonly refuse?: (call: RestCall) => string | undefined;
   readonly send: (
     call: RestCall,
@@ -100,8 +105,16 @@ export interface HatchDeclaration {
   /** Opt in only reviewed paged reads; existing provider surfaces do not inherit adapters. */
   readonly pages?: Readonly<Partial<Record<OperationKey, HatchPageAdapter | readonly HatchPageAdapter[]>>>;
   /** Separate signed continuation from a vendor's raw first-request anchor. Legacy adapters use their parameter. */
-  readonly pageCursor?: "argument";
+  readonly pageCursor?: "argument" | "parameter";
   readonly binding?: HatchBinding;
+  /** Closed, reviewed request-header values. Absent keeps headers out of the catalog. */
+  readonly headers?: Readonly<Record<string, { readonly description: string; readonly values: readonly string[] }>>;
+  /** Admit reviewed string bodies alongside the usual object/array input. */
+  readonly textBodies?: true;
+  /** Fixed call-owned steps for bounded scope preflights and the resource call. */
+  readonly writeSteps?: Readonly<Record<string, "once">>;
+  /** Vendor-envelope root, used only for field-selection guidance. */
+  readonly fieldsRoot?: string;
   /** Deployment configuration may omit the write hatch without widening read verdicts. Defaults to true. */
   readonly writeEnabled?: boolean;
   readonly idempotency?: { readonly header: string; readonly methods: readonly RestMethod[] };
@@ -237,6 +250,36 @@ export function hatch(
 ): ApiTool[] {
   const { name, index, connection } = options;
   const title = options.title ?? name;
+  if (options.textBodies !== undefined && options.textBodies !== true)
+    throw new Error("Hatch textBodies must opt in with true.");
+  if (options.fieldsRoot !== undefined && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(options.fieldsRoot))
+    throw new Error("A hatch fieldsRoot must be a property name.");
+  const headerFields = Object.fromEntries(
+    Object.entries(options.headers ?? {}).map(([key, entry]) => {
+      if (
+        !/^[a-z0-9-]+$/.test(key) ||
+        !entry.description.trim() ||
+        !entry.values.length ||
+        entry.values.some((value) => !value || /[\r\n]/.test(value))
+      )
+        throw new Error("Hatch headers need lowercase names, descriptions and closed values.");
+      return [
+        key,
+        Schema.optionalKey(
+          Schema.Literals([...entry.values] as [string, ...string[]]).annotate({ description: entry.description }),
+        ),
+      ];
+    }),
+  );
+  const Headers = Object.keys(headerFields).length ? Schema.Struct(headerFields) : undefined;
+  const Fields = options.fieldsRoot
+    ? fieldsInput(
+        `Dot paths to keep in data. Envelope fields begin with ${options.fieldsRoot}, e.g. ["${options.fieldsRoot}.id"] or ["${options.fieldsRoot}[].id"], where declared.`,
+      )
+    : HATCH_FIELDS;
+  const Body = options.textBodies
+    ? Schema.Union([ObjectValue, Schema.Array(Schema.Unknown), Schema.String])
+    : undefined;
   if (options.writeEnabled !== undefined && typeof options.writeEnabled !== "boolean")
     throw new Error("Hatch writeEnabled must be a boolean.");
   if (options.binding && !options.binding.review.trim()) throw new Error("A hatch binding needs a vendor review.");
@@ -935,10 +978,22 @@ export function hatch(
         refuseWithheldValues(args.body, name);
       });
       const method = args.method ?? defaultRead;
-      const { op, params } = yield* checked(() => index.resolve(method, args.path));
-      const call = (): RestCall => ({ method, path: args.path, op, params, query, body });
+      const path = yield* checked(() => options.binding?.path?.(args.path) ?? args.path);
+      yield* checked(() => refuseWithheldValues({ path }, name, true));
+      const { op, params } = yield* checked(() => index.resolve(method, path));
+      const call = (): RestCall => ({
+        method,
+        path,
+        op,
+        params,
+        query,
+        body,
+        ...(args.headers ? { headers: args.headers } : {}),
+      });
       let query = args.query ?? {};
-      let body = args.body;
+      let body = yield* checked(() =>
+        options.binding?.prepareBody ? options.binding.prepareBody(args.body, op) : args.body,
+      );
       yield* checked(() => {
         const verdict = verdictOf(op);
         if (verdict === "refuse") {
@@ -974,7 +1029,7 @@ export function hatch(
         ? {
             revision: yield* Effect.promise(() => index.cursorRevision()),
             method,
-            path: args.path,
+            path,
             query: withoutCursors(query, "query"),
             ...(adapters.some((entry) => entry.in === "body")
               ? { body: withoutCursors(record(body) ? body : {}, "body") }
@@ -982,11 +1037,14 @@ export function hatch(
                 ? {}
                 : { body }),
             ...(args.fields ? { fields: args.fields } : {}),
+            ...(args.headers ? { headers: args.headers } : {}),
           }
         : {};
       if (supplied[0]) adapter = supplied[0];
       const value = separateCursor ? args.cursor : adapter && at(adapter);
       if (adapter && value !== undefined) {
+        if (adapter.cursorInputMessage && !signedCursorShape(value))
+          yield* checked(() => invalid(adapter!.cursorInputMessage!));
         if (typeof value !== "string") yield* checked(() => invalid("Pass the opaque page.nextCursor unchanged."));
         const cursor = yield* boundCursor.decode(tool(kind), scope, value as string);
         const restored = yield* checked(() => {
@@ -1019,7 +1077,7 @@ export function hatch(
         });
       }
       const request = yield* checked((): WriteRequest | undefined => {
-        refuseWithheldValues({ path: args.path, query }, name, true);
+        refuseWithheldValues({ path, query }, name, true);
         refuseWithheldValues(body, name);
         const refusal = options.binding?.refuse?.(call());
         if (refusal) invalid(refusal);
@@ -1043,14 +1101,21 @@ export function hatch(
           const roots = index.responseRoots(op);
           if (!roots) invalid(`${method} ${op.path} declares no response properties, so fields cannot narrow it.`);
           const problem = fieldsProblem(args.fields, roots, "data");
-          if (problem) throw problem;
+          if (problem) {
+            if (options.fieldsRoot && roots.has(options.fieldsRoot))
+              invalid(
+                `${problem.message} Use fields:["${options.fieldsRoot}.id"] or fields:["${options.fieldsRoot}[].id"] for declared record or list fields.`,
+              );
+            throw problem;
+          }
         }
         if (options.binding) return undefined;
         return {
           method,
-          path: args.path,
+          path,
           template: op.path,
           query: parameters(query),
+          ...(args.headers ? { headers: args.headers } : {}),
           ...(body === undefined
             ? {}
             : contentType === "application/x-www-form-urlencoded"
@@ -1090,7 +1155,7 @@ export function hatch(
         ),
       );
       const next = adapter
-        ? yield* checked(() => adapter!.next(answer.data, { path: args.path, query, headers: answer.headers ?? {} }))
+        ? yield* checked(() => adapter!.next(answer.data, { path, query, headers: answer.headers ?? {} }))
         : undefined;
       let page;
       if (adapter && next !== undefined) {
@@ -1149,10 +1214,11 @@ export function hatch(
   }
   if (nonGetReads.length)
     readFields["body"] = Schema.optionalKey(
-      ObjectValue.annotate({ description: "Body for a reviewed read-only POST." }),
+      (Body ?? ObjectValue).annotate({ description: "Body for a reviewed read-only POST." }),
     );
   readFields["query"] = Schema.optionalKey(Query);
-  readFields["fields"] = Schema.optionalKey(HATCH_FIELDS);
+  readFields["fields"] = Schema.optionalKey(Fields);
+  if (Headers) readFields["headers"] = Schema.optionalKey(Headers);
   if (options.pageCursor === "argument")
     readFields["cursor"] = Schema.optionalKey(
       text(1, 4096).annotate({
@@ -1160,6 +1226,7 @@ export function hatch(
       }),
     );
   const readSpec = {
+    ...(options.writeSteps ? { writeSteps: options.writeSteps } : {}),
     name: tool("read"),
     description: `Call a reviewed ${title} API read${nonGetReads.length ? `, including reviewed read-only ${nonGetReads.join(" and ")}` : ""}. The operation index checks arguments before anything is sent.${note(options.notes?.read)}`,
     input: Schema.Struct(readFields),
@@ -1176,12 +1243,13 @@ export function hatch(
       path: Path,
       query: Schema.optionalKey(Query),
       body: Schema.optionalKey(
-        Schema.Union([ObjectValue, Schema.Array(Schema.Unknown)]).annotate({
+        (Body ?? Schema.Union([ObjectValue, Schema.Array(Schema.Unknown)])).annotate({
           description: "Request body as JSON fields, named as details lists them; form operations are encoded for you.",
         }),
       ),
-      fields: Schema.optionalKey(HATCH_FIELDS),
+      fields: Schema.optionalKey(Fields),
     };
+    if (Headers) writeFields["headers"] = Schema.optionalKey(Headers);
     if (idempotency)
       writeFields["idempotencyKey"] = Schema.optionalKey(
         text(1, IDEMPOTENCY_KEY_MAX_LENGTH).annotate({
@@ -1191,6 +1259,7 @@ export function hatch(
       );
     tools.push(
       write(connection, {
+        ...(options.writeSteps ? { writeSteps: options.writeSteps } : {}),
         name: tool("write"),
         description: `Call a reviewed ${title} API write; method and path are stated for approval, and the operation index checks arguments first.${note(options.notes?.write)}`,
         input: Schema.Struct(writeFields),

@@ -5,13 +5,14 @@
   "latest": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
   "options": {
     "depth": 2,
-    "descriptions": 0,
+    "descriptions": 120,
     "maxEnum": 50,
     "operationIds": false,
     "pathParams": "typed",
     "opBudget": 6000,
     "valueSafety": {
       "dataRoot": "result"
-    }
+    },
+    "numericBounds": true
   }
 }

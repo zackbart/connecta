@@ -7,6 +7,7 @@ import { saveGradeInputs, restoreGradeInputs, type SavedGradeInputs } from "../a
 import { ACCOUNT_B, OLD_ENV, ZONE, FakeRestService, restState } from "../fakes/rest.js";
 import { Ledger } from "../fakes/service.js";
 import { FakeOverflow, overflowState } from "../fakes/overflow.js";
+import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { overflow } from "@zackbart/connecta/providers/overflow";
 import { connectorGuide } from "../../src/skills.js";
 import { sentSecretsForRequest, redactAgentOutput } from "../../src/sent-secrets.js";
@@ -21,6 +22,13 @@ export async function restTransportControls() {
   for (const value of Object.values(JSON.parse(fake.credential) as Record<string, string>)) sent.secret(value);
   if (redactAgentOutput(sent, surface) !== surface)
     throw new Error("Overflow fake credentials withhold public catalog or guide text");
+  const cfConnector = cloudflare("cloudflare_prod", { purpose: "Fake DNS and analytics", auth: { type: "apiToken" } });
+  const cfFake = new FakeRestService("cloudflare_prod", "cloudflare", new Ledger(), restState());
+  const cfSurface = JSON.stringify({ tools: cfConnector.staticTools, guide: connectorGuide(cfConnector) });
+  const cfSecrets = sentSecretsForRequest({});
+  cfSecrets.secret(cfFake.token);
+  if (redactAgentOutput(cfSecrets, cfSurface) !== cfSurface)
+    throw new Error("Cloudflare fake credential withholds catalog or guide text");
   const before = globalThis.fetch;
   const ledgers = [new Ledger(), new Ledger()];
   const services = ledgers.map((ledger) => new FakeRestService("stripe_sandbox", "stripe", ledger, restState()));
@@ -124,7 +132,7 @@ export async function restTransportControls() {
 }
 
 export function restCounterexamples(task: ActiveTask, world: World, trace: AgentTrace) {
-  if (!task.id.startsWith("801-")) return [];
+  if (!task.id.startsWith("801-") && !task.id.startsWith("cloudflare-step2-")) return [];
   const cases: { name: string; rejected: boolean }[] = [];
   const mutate = (name: string, change: (saved: SavedGradeInputs) => void, check: string) => {
     const saved = structuredClone(saveGradeInputs(world, trace));
@@ -143,6 +151,31 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
       outcome: "ok",
       resultBytes: 1,
     });
+  if (task.id.startsWith("cloudflare-step2-")) {
+    mutate(
+      "wrong Cloudflare destination",
+      (s) => {
+        for (const call of s.world.calls) call.service = "unrelated";
+      },
+      "correct-destination",
+    );
+    if (task.id.endsWith("purge-once") || task.id.endsWith("dns-recovery")) {
+      mutate(
+        "duplicate Cloudflare write",
+        (s) => {
+          const write = s.world.calls.find((c) => c.kind === "write");
+          if (write) s.world.calls.push({ ...structuredClone(write), seq: 9999 });
+        },
+        "once",
+      );
+    } else
+      mutate(
+        "unrequested Cloudflare write",
+        (s) => write(s, "/zones/foreign/purge_cache", "cloudflare_prod"),
+        "reads-only",
+      );
+    return cases;
+  }
   if (
     [
       "801-stripe-failed-payment",

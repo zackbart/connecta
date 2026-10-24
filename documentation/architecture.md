@@ -2202,10 +2202,26 @@ Returned tokens authenticate the selected adapter parameter and value as well
 as the call. Search/v2 raw page tokens cannot replace cursor. Providers without
 this declaration keep parameter-based continuation.
 Separate-cursor paging also adds the hatch Paging line to generated
-Conventions; parameter-based providers retain their existing guide bytes.
+Conventions. `pageCursor: "parameter"` explicitly opts parameter-based providers
+into guidance for restoring `page.nextCursor` at `page.param`/`page.in`; omitting
+the declaration retains the existing guide bytes. An unsafe continuation keeps
+the safe page data with `hasMore: true` and no `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
 the same Connection API; the shared hatch retains resolution, verdicts,
 index/fields validation, withheld-value admission, paging and projection.
+A binding may expand deployment-owned path defaults before indexed resolution,
+and may prepare a reviewed text/NDJSON body before validation. Both the original
+and resolved paths pass withheld-value admission. Closed request-header enums
+are opt-in; selected headers join the paging cursor's call identity. Text body
+inputs are opt-in too. A provider with bounded call-owned scope lookups declares
+its fixed write steps, preserving the resource call's single-attempt slot.
+A page adapter may declare `cursorInputMessage` to give provider-specific repair
+guidance when an unsigned raw value is supplied; absent keeps the standard refusal.
+An optional `fieldsRoot` supplies vendor-envelope selection guidance and the
+corresponding generated convention; it never changes the declared response roots.
+Field selection on every provider, including named reads, accepts optional `[]`
+array notation (`result.id` and `result[].id` are equivalent); this normalization
+is shared behavior, independent of `fieldsRoot`.
 Bindings retain the hatch's other-server and JSON/form body-type guards by
 default. `allowOtherServers: true` and `allowOtherBodyTypes: true` explicitly
 replace those guards with the binding's reviewed routing or encoding checks.

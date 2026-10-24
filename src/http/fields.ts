@@ -31,7 +31,7 @@ export function fieldsProblem(
   names: ReadonlySet<string>,
   of: string,
 ): ConnectorCallError | undefined {
-  const bad = fields?.find((field) => !names.has(field.split(".")[0]!));
+  const bad = fields?.find((field) => !names.has(field.replace(/\[\](?=\.|$)/g, "").split(".")[0]!));
   if (bad === undefined) return undefined;
   const choices = names.size > 0 && names.size <= 40 ? `: one of ${[...names].join(", ")}` : "";
   return new ConnectorCallError(
@@ -48,7 +48,7 @@ export function selectFields(data: unknown, fields: readonly string[] | undefine
     if (!record(value)) return value;
     const children = new Map<string, string[]>();
     for (const path of paths) {
-      const [key, ...tail] = path.split(".");
+      const [key, ...tail] = path.replace(/\[\](?=\.|$)/g, "").split(".");
       children.set(key!, [...(children.get(key!) ?? []), tail.join(".")]);
     }
     return Object.fromEntries(

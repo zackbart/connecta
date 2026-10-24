@@ -3434,7 +3434,7 @@
     "evidence": {
       "graphql.document.json": "sha256:6793b4bcb1427f062743c3fce237fc1fddf85baacb0cc92ca305e36aafc9b123",
       "graphql.json": "sha256:8e41d5fbea4dd3f5b37c39e1c6a3cddf227631d9dde4150831bd63dd7e59864b",
-      "openapi.json": "sha256:4f53b4e404209b77e4fb9b0d97ac11d6cc60fa5fe74c8f8d33d0e2c6cee08272",
+      "openapi.json": "sha256:0a66a221ff025467455edae03b22cf7236267989855143d699505414c789d612",
       "value-safety.json": "sha256:e9aa388d9599dff3690e418b030212fdc2f481112988495e7010c5702fdae42f"
     }
   },
