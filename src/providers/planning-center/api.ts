@@ -535,8 +535,8 @@ export function pcoBinding({
     refuse: (call) => {
       const refusal = PCO_REFUSALS[`${call.op.method} ${call.op.path}`];
       if (refusal) return refusal;
-      if (call.op.server)
-        return "This Planning Center operation uses a different server, which this connection does not reach.";
+      // The shared hatch keeps its other-server guard. This binding is JSON
+      // only, stricter than the hatch's default JSON-or-form body admission.
       const type = PCO_INDEX.bodyType(call.op)?.split(";", 1)[0]!.trim().toLowerCase();
       return type && !/^application\/(?:[^/]+\+)?json$/.test(type)
         ? "This Planning Center operation takes a non-JSON body, which this connection does not send."

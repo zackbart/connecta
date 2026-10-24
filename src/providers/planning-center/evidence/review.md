@@ -168,3 +168,11 @@ Stripe's unchanged binding/page-adapter changes. Three fresh Node 22 processes
 on the same PCO index measured median construction 665.7 ms before the lookup
 fix and 316.5 ms after (shared-host characterization, not a benchmark guarantee).
 No test or request time budget changes.
+
+Round 1 merges Stripe's reviewed follow-up at
+`38de8fbf5f86ec7ac289f727a392617e3674ee66`. The shared hatch keeps other-server
+and body-type guards for bindings unless explicitly opted out. PCO sets neither
+opt-out: its duplicate other-server guard is removed, while its stricter
+JSON-only body rule and two credential-action refusals remain. The merge keeps
+the shared lookup cache unchanged; `hatch.ts` differs from Stripe only by that
+previously approved fix.

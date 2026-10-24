@@ -291,3 +291,11 @@ requires an AFTER-only rerun of all seven tasks, both required models and two
 repeats per task. The original paired results above remain frozen. Excluded
 named-tool pointers and lossless shared-index compaction are deferred by the
 orchestrator; neither is implemented in this round.
+
+Stripe's follow-up `38de8fbf5f86` is merged before the new AFTER snapshot. Its
+shared binding guards remain enabled. PCO drops its duplicate other-server
+check and keeps JSON-only body admission plus the two credential-action
+refusals. No shared seam or ranking change is authored by this fix round.
+Stripe's plural-refund task/fake updates also move the global protocol hashes;
+the seven PCO prompts, graders and fake behavior are unchanged. This is an
+AFTER-only follow-up, rather than a newly paired BEFORE/AFTER experiment.
