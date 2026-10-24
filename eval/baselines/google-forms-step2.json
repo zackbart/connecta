@@ -9671,7 +9671,9 @@
  "referenceOnlyAdapter": {
   "path": "/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/forms-reference-adapter.mjs",
   "sha256": "ddbc36bba8eee60e688c2c5f941a1bb303f424396ccede4d89ba8332318066ac",
-  "paidTrialsLoaded": false
+  "paidTrialsLoaded": false,
+  "removedDuringRound1": true,
+  "replacement": "In-tree Forms F4 reference at eval/tasks/google.ts; separate reference-only commit abcbbf3d."
  },
  "bundle": [
   {
@@ -9761,5 +9763,451 @@
   "after": 4205,
   "delta": 0,
   "perFileCountsIdentical": true
+ },
+ "reviewFixes": {
+  "baseCommit": "99be2ca72577f260fa918547504a13e60b846f71",
+  "referenceCommit": "abcbbf3dd14f054b4a3bb760122b4155d5725994",
+  "protocol": {
+   "version": 1,
+   "pairId": "google-forms-step2-2026-10-24",
+   "taskDefinitionsHash": "0a1561b61a404ad909daf53d64fedde6fd0962e76e5a191a3cb2173f9f90a15c",
+   "harnessHash": "6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca"
+  },
+  "taskFiles": [
+   {
+    "path": "eval/tasks/google-controls.ts",
+    "change": "empty-response surface adapter only",
+    "beforeMainSha256": "cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75",
+    "paidAfterSha256": "51bc61da3eebc0b41a390a05a5efbb8755a0ac22ab1da7809f56f07c498edf3b",
+    "currentSha256": "ec6b2b6b3bcf7646d991d7263e1ca75cd078efef07d18931aced52ec68ed6a1a"
+   },
+   {
+    "path": "eval/tasks/google.ts",
+    "change": "Forms F4 scripted reference only",
+    "beforeMainSha256": "fcdf659aaf51e3dd66750ede493f2c5a71ab37abeeba3cde12bfcdcbf1c12a9f",
+    "paidAfterSha256": "fcdf659aaf51e3dd66750ede493f2c5a71ab37abeeba3cde12bfcdcbf1c12a9f",
+    "currentSha256": "b3cb501b5d5c0be2db0c1b2eff5ece98edb2e21e0a01ce7f9880464a88989825"
+   }
+  ],
+  "paidOutcomesChanged": false,
+  "paidReruns": 0,
+  "promptGraderFakeChanges": false,
+  "externalReferencePreloadRemoved": true,
+  "controlProbe": [
+   {
+    "name": "legacy empty",
+    "accepted": true
+   },
+   {
+    "name": "standard empty",
+    "accepted": true
+   },
+   {
+    "name": "mixed nonempty",
+    "accepted": false
+   },
+   {
+    "name": "standard nonempty",
+    "accepted": false
+   },
+   {
+    "name": "legacy nonempty",
+    "accepted": false
+   },
+   {
+    "name": "nonterminal",
+    "accepted": false
+   }
+  ],
+  "bundle": [
+   {
+    "product": "gmail",
+    "before": {
+     "bytes": 1174916,
+     "gzip9": 358123
+    },
+    "after": {
+     "bytes": 1174916,
+     "gzip9": 358123
+    }
+   },
+   {
+    "product": "drive",
+    "before": {
+     "bytes": 1172972,
+     "gzip9": 357094
+    },
+    "after": {
+     "bytes": 1172972,
+     "gzip9": 357094
+    }
+   },
+   {
+    "product": "docs",
+    "before": {
+     "bytes": 1162587,
+     "gzip9": 354334
+    },
+    "after": {
+     "bytes": 1162587,
+     "gzip9": 354334
+    }
+   },
+   {
+    "product": "sheets",
+    "before": {
+     "bytes": 1160324,
+     "gzip9": 353191
+    },
+    "after": {
+     "bytes": 1160324,
+     "gzip9": 353191
+    }
+   },
+   {
+    "product": "slides",
+    "before": {
+     "bytes": 1194156,
+     "gzip9": 362793
+    },
+    "after": {
+     "bytes": 1194156,
+     "gzip9": 362793
+    }
+   },
+   {
+    "product": "forms",
+    "before": {
+     "bytes": 1159863,
+     "gzip9": 353598
+    },
+    "after": {
+     "bytes": 1218228,
+     "gzip9": 372123
+    }
+   },
+   {
+    "product": "all-six",
+    "before": {
+     "bytes": 1382753,
+     "gzip9": 417651
+    },
+    "after": {
+     "bytes": 1442366,
+     "gzip9": 436937
+    },
+    "syntheticWithIndexes": {
+     "bytes": 1985842,
+     "gzip9": 522519
+    }
+   }
+  ],
+  "testDelta": 0,
+  "note": "Deterministic post-review fixes. Historical runs, task hashes, file audit and bundle measurements above describe their original evaluated commits and are not rewritten.",
+  "generatedModule": {
+   "moduleBytes": 30278,
+   "moduleGzip9": 5597
+  },
+  "searchRows": [
+   {
+    "query": "rename option",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     }
+    ]
+   },
+   {
+    "query": "rename a choice",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     }
+    ]
+   },
+   {
+    "query": "update a choice option",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     }
+    ]
+   },
+   {
+    "query": "change option",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     }
+    ]
+   },
+   {
+    "query": "edit an option",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "POST",
+      "path": "/forms",
+      "summary": "Create add an empty form with title and optional Drive document title.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}",
+      "summary": "Get read form question options, quiz grading answer key, images and section navigation.",
+      "tool": "forms_api_read"
+     }
+    ]
+   },
+   {
+    "query": "rename form",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "POST",
+      "path": "/forms",
+      "summary": "Create add an empty form with title and optional Drive document title.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}",
+      "summary": "Get read form question options, quiz grading answer key, images and section navigation.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:setPublishSettings",
+      "summary": "Refused: publish form settings and response availability require separate authorization."
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses",
+      "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/watches",
+      "summary": "Refused: list watch form response registrations is outside this connection."
+     }
+    ]
+   },
+   {
+    "query": "change form name",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "POST",
+      "path": "/forms",
+      "summary": "Create add an empty form with title and optional Drive document title.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}",
+      "summary": "Get read form question options, quiz grading answer key, images and section navigation.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:setPublishSettings",
+      "summary": "Refused: publish form settings and response availability require separate authorization."
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses",
+      "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/watches",
+      "summary": "Refused: list watch form response registrations is outside this connection."
+     }
+    ]
+   },
+   {
+    "query": "set correct answer",
+    "batchUpdateRank": 1,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:setPublishSettings",
+      "summary": "Refused: publish form settings and response availability require separate authorization."
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses/{responseId}",
+      "summary": "Get read one form response with answers, quiz grades and feedback.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses",
+      "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "tool": "forms_api_read"
+     }
+    ]
+   },
+   {
+    "query": "publish form",
+    "batchUpdateRank": 4,
+    "operations": [
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:setPublishSettings",
+      "summary": "Refused: publish form settings and response availability require separate authorization."
+     },
+     {
+      "method": "POST",
+      "path": "/forms",
+      "summary": "Create add an empty form with title and optional Drive document title.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}",
+      "summary": "Get read form question options, quiz grading answer key, images and section navigation.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}:batchUpdate",
+      "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "tool": "forms_api_write"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses",
+      "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/watches",
+      "summary": "Refused: list watch form response registrations is outside this connection."
+     }
+    ]
+   },
+   {
+    "query": "watch form responses",
+    "batchUpdateRank": null,
+    "operations": [
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/watches",
+      "summary": "Refused: list watch form response registrations is outside this connection."
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}/watches",
+      "summary": "Refused: register watch form responses with persistent Pub/Sub delivery requires separate authorization."
+     },
+     {
+      "method": "DELETE",
+      "path": "/forms/{formId}/watches/{watchId}",
+      "summary": "Refused: delete watch form response registration is outside this connection."
+     },
+     {
+      "method": "POST",
+      "path": "/forms/{formId}/watches/{watchId}:renew",
+      "summary": "Refused: renew watch form response delivery requires separate authorization."
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses",
+      "summary": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "tool": "forms_api_read"
+     },
+     {
+      "method": "GET",
+      "path": "/forms/{formId}/responses/{responseId}",
+      "summary": "Get read one form response with answers, quiz grades and feedback.",
+      "tool": "forms_api_read"
+     }
+    ]
+   }
+  ],
+  "verification": {
+   "targetedSuites": {
+    "passed": 654,
+    "files": 6
+   },
+   "finalFormsSuite": {
+    "passed": 5
+   },
+   "normalSelftests": {
+    "tasks": 7,
+    "surfaces": [
+     "six",
+     "code"
+    ],
+    "grading": [
+     "route",
+     "outcome"
+    ],
+    "passed": true
+   },
+   "exactF4SelftestPassed": true,
+   "nodeGoldens": {
+    "passed": 16,
+    "determinism": true
+   },
+   "workerdGoldens": {
+    "passed": 16
+   },
+   "eveNode24": {
+    "passed": 5,
+    "packedConsumerPassed": true
+   },
+   "staticPassed": true,
+   "buildAndCapsPassed": true,
+   "testRegistrationsUnchanged": true,
+   "otherStoredGoldensUnchanged": true,
+   "vitestMaxWorkers": 2,
+   "fullCheckRun": false,
+   "paidTrialsRun": false
+  }
  }
 }

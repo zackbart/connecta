@@ -2518,7 +2518,7 @@
             "description": "Success"
           }
         },
-        "summary": "List watch registrations. Refused: watches are outside this connection.",
+        "summary": "Refused: list watch form response registrations is outside this connection.",
         "tags": [
           "forms.watches"
         ],
@@ -2590,7 +2590,7 @@
             "description": "Success"
           }
         },
-        "summary": "Create register watch form responses Pub/Sub push delivery. Refused: persistent delivery requires separate authorization.",
+        "summary": "Refused: register watch form responses with persistent Pub/Sub delivery requires separate authorization.",
         "tags": [
           "forms.watches"
         ],
@@ -2664,7 +2664,7 @@
             "description": "Success"
           }
         },
-        "summary": "Delete watch registration. Refused: watches are outside this connection.",
+        "summary": "Refused: delete watch form response registration is outside this connection.",
         "tags": [
           "forms.watches"
         ],
@@ -2748,7 +2748,7 @@
             "description": "Success"
           }
         },
-        "summary": "Renew watch registration. Refused: watches are outside this connection.",
+        "summary": "Refused: renew watch form response delivery requires separate authorization.",
         "tags": [
           "forms.watches"
         ],
@@ -2822,7 +2822,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch update edit form: change form title, add question, delete form item, move item or edit quiz settings.",
+        "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
         "tags": [
           "forms"
         ],
@@ -2893,7 +2893,7 @@
             "description": "Success"
           }
         },
-        "summary": "Set publish form settings and response availability. Refused: publishing requires separate authorization.",
+        "summary": "Refused: publish form settings and response availability require separate authorization.",
         "tags": [
           "forms"
         ],

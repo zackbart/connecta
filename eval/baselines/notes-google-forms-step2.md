@@ -3,7 +3,9 @@
 Seven fake-only workflows compare the six named Forms tools on main with the
 standard surface's six retained names and four indexed hatches. The paired
 matrix completes **56 trials**, with no reruns or rescoring: **17/28 BEFORE →
-20/28 AFTER**. The [JSON summary](./google-forms-step2.json) retains source,
+20/28 AFTER**. These paid trials measure the pre-review implementation; the
+round-1 fixes below have deterministic verification and no paid rerun.
+The [JSON summary](./google-forms-step2.json) retains source,
 protocol and CLI metadata, every trial's outcome and metrics, attempted tools,
 discovery sizes, failed checks, and exact write destinations/bodies. Original
 JSON, complete transcripts and saved grading inputs remain under
@@ -15,8 +17,9 @@ BEFORE is clean main `ff3f7c3b9cbf0e8958599834850876c24ab64d7e`, source tree
 `d5e26d1d940e`. AFTER is clean `7ec41a1fc9e61708f5c15be23c4d233d972f2a4b`, source
 tree `2edb103a3775`. Both include the frozen route-neutral graders, checker fixes
 and caller-bound cursors from #1011/#1013, and the independently merged H1.
-The later reporting commit changes no production source. Main was fetched again
-for handoff and remained at the BEFORE commit.
+Reporting commit `99be2ca7` changes no production source. The round-1 production
+fixes below postdate the paid trials. Main was fetched again for handoff and
+remained at the BEFORE commit.
 
 Codex CLI `0.163.0` uses `gpt-6-luna`; Claude Code `2.1.309` uses
 `claude-sonnet-5-5`. Each arm has two repeats of each of the seven tasks, default
@@ -28,7 +31,7 @@ there is no cache reset or cache matching. Fake credentials pass the neutral
 substring guard. No real Workspace data call or service-account token mint is
 used.
 
-All task prompts, graders, fake responses and paid-trial reference definitions
+Across the original paid arms, all task prompts, graders, fake responses and reference definitions
 are byte-identical. The only changed file in the frozen task/fake/harness tree
 is the explicitly approved **surface adapter**, committed separately as
 `7ec41a1f`: [google-controls.ts:250](../tasks/google-controls.ts) now selects
@@ -38,8 +41,8 @@ Both branches require an empty array, so a non-empty result still fails. The
 original failure was at line 247; the changed expectation is now lines 245–256,
 with row selection at **line 250**.
 
-There is no checked-in per-file frozen-hash manifest to refresh. The explicit
-file audit in the summary has exactly one changed row, `eval/tasks/google-controls.ts`:
+There is no checked-in per-file frozen-hash manifest to refresh. The original
+paid-arm file audit has exactly one changed row, `eval/tasks/google-controls.ts`:
 `cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75` →
 `51bc61da3eebc0b41a390a05a5efbb8755a0ac22ab1da7809f56f07c498edf3b`.
 The harness fingerprints the whole task directory, so this approved control
@@ -51,17 +54,56 @@ The harness hash remains
 No grader, prompt or fake changed, and no paid outcome was revised.
 
 The BEFORE scripted references pass the frozen graders without adaptation.
-AFTER selftests use an external, reference-only preload for F4: its old
+Pre-review AFTER selftests used an external, reference-only preload for F4: its old
 `get_form({raw:true})` call becomes `forms_api_read({path:"/forms/forms1"})`,
 unwrapping the vendor Form from `reply.data`. The preload does not modify the
 on-disk task file, prompts, graders or fakes, and **is never loaded in paid
-trials**. Its artifact is `forms-reference-adapter.mjs` in the directory above,
+trials**. Its historical artifact was `forms-reference-adapter.mjs` in the directory above,
 SHA-256 `ddbc36bba8eee60e688c2c5f941a1bb303f424396ccede4d89ba8332318066ac`.
-Both references pass all seven tasks on six/code surfaces and route/outcome
-grading, including negative and saved-input checks. Reproduce the AFTER check
-with `node --import tsx --import <artifact-directory>/forms-reference-adapter.mjs
-eval/selftest.ts --tasks google-forms-1,google-forms-2,google-forms-3,google-forms-4,google-forms-5,google-forms-6,google-forms-7`.
-The initial control failure and final passing logs are retained separately.
+The orchestrator's round-1 ruling replaces this mechanism with the product's
+own in-tree reference entry, in separate commit `abcbbf3d`. F4 now reads
+`forms_api_read({path:"/forms/forms1"})` and takes its `data`. The external
+preload has been deleted. Current selftests run normally with
+`node --import tsx eval/selftest.ts --tasks google-forms-4` or the full seven
+Forms task ids, without any preload. References never execute in paid trials;
+their saved outcomes and original hashes remain unchanged. The historical
+control failure and pre-review passing logs are retained separately.
+
+## Round-1 fixes and current hashes
+
+The review fixes are on top of `99be2ca7`; the F4 reference migration is its own
+commit. The production fixes keep refusal reasons in the compiler-retained first
+sentence, improve edit discovery, preserve `truncated` after named field
+selection and `omittedQuestionIds` on single responses, and refuse non-integer
+or out-of-range hatch pageSize before mint/send. The connector accepts 1–5000;
+omission retains Google's default. The 150-option dropdown and oversized response
+rows prove selected data still carries cut/recovery metadata. All requested
+option/choice/form-name searches rank batchUpdate first; publish/watch searches
+show their refusal reason. Existing test cases contain the new assertions, so
+the collected test delta remains zero.
+
+The empty-response control additionally rejects `items: []` when `responses`
+is present, including a non-empty legacy collection. A six-case control probe
+includes that counterexample. Migration wording now names the delegated caller;
+unrelated Drive/Gmail fixture re-escaping is reverted. Only Forms stored goldens
+change. The generated bundle-budget row changes only Forms, through the normal
+provider generator; no shared Google/HTTP or generator logic changes.
+
+Current task-directory hash:
+`0a1561b61a404ad909daf53d64fedde6fd0962e76e5a191a3cb2173f9f90a15c`.
+The harness hash remains `6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca`.
+The JSON's `reviewFixes` records current file hashes for the hardened control
+and Forms-only F4 reference separately from the historical paid-run audit.
+No prompt, grader or fake changes; no paid outcome is regraded or replaced.
+
+Round-1 validation passes: the six targeted suites **654/654**, a final Forms
+run **5/5**, all seven normal selftests across both surfaces/grading modes,
+and the exact F4-only selftest command. Node goldens with full determinism
+and workerd goldens each pass **16/16**. Node 24 Eve **5/5**, packed-consumer
+smoke, generated freshness, formatting, `check:static` and `check:build` pass;
+all bundle caps pass. `VITEST_MAX_WORKERS=2` throughout; no full check or paid
+rerun. Test registrations are unchanged, and other products' goldens remain
+byte-identical. Logs are retained as `r1-*` in the artifact directory above.
 
 | Original artifact | SHA-256 |
 | --- | --- |
@@ -206,10 +248,14 @@ and execute_code cases, workerd delegation/hatch/native probes, Node 24 Eve chec
 caps pass. Checks use `VITEST_MAX_WORKERS=2`. No full local `pnpm run check` runs;
 the required full CI gate remains the merge requirement.
 
-The same measurement toolchain against exact BEFORE `ff3f7c3b` gives Forms
-**353,598 → 371,901 B gzip (+18,303 B)** and all-six deployment
-**417,651 → 436,748 B (+19,097 B)**. The actual generated Forms module is
-30,034 B text / 5,533 B gzip with ten indexed methods and five admitted methods.
+The same measurement toolchain against exact BEFORE `ff3f7c3b`, after the
+round-1 fixes, gives Forms **353,598 → 372,123 B gzip (+18,525 B)** and all-six
+deployment **417,651 → 436,937 B (+19,286 B)**. The provider's refreshed bundle
+baseline/note records the 372,120 B snapshot before recording those bundle facts;
+the facts themselves add 3 B gzip. The original paid-head measurement was
+371,901 B Forms / 436,748 B all-six, retained in the historical JSON bundle rows.
+The actual generated index is 30,278 B text / 5,597 B gzip, retaining ten methods
+and five admitted methods.
 Publish settings and every watch operation remain refused before authentication.
 Responses, respondent emails and quiz answers remain requested user data under
 S6; temporary `Image.contentUri` destinations are permanently withheld across

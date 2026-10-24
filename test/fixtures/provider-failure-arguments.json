@@ -313,7 +313,7 @@
     "create_file": {
       "name": "notes.md",
       "parentId": "folder-1",
-      "content": "# Notes \u2014 caf\u00e9",
+      "content": "# Notes — café",
       "mimeType": "text/markdown"
     },
     "update_file_content": {
@@ -502,9 +502,9 @@
       "cc": [
         "Smith, Dana <dana@example.com>"
       ],
-      "subject": "R\u00e9union des anciens",
-      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
-      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
+      "subject": "Réunion des anciens",
+      "body": "Bonjour à tous,\nÀ mardi.",
+      "htmlBody": "<p>Bonjour à tous</p>"
     },
     "update_draft": {
       "draftId": "d1",

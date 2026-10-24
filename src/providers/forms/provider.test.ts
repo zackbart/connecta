@@ -308,9 +308,30 @@ describe("worst-case results fit one host result (256 KiB)", () => {
       ["change form title", "/forms/{formId}:batchUpdate"],
       ["add question", "/forms/{formId}:batchUpdate"],
       ["delete form item", "/forms/{formId}:batchUpdate"],
+      ["rename option", "/forms/{formId}:batchUpdate"],
+      ["rename an option", "/forms/{formId}:batchUpdate"],
+      ["rename a choice", "/forms/{formId}:batchUpdate"],
+      ["update a choice option", "/forms/{formId}:batchUpdate"],
+      ["change option", "/forms/{formId}:batchUpdate"],
+      ["edit an option", "/forms/{formId}:batchUpdate"],
+      ["rename form", "/forms/{formId}:batchUpdate"],
+      ["change form name", "/forms/{formId}:batchUpdate"],
+      ["set correct answer", "/forms/{formId}:batchUpdate"],
     ]) {
       const discovery = await call(connector, "forms_api_search", { query });
-      expect(discovery.operations.slice(0, 2).map((op: any) => op.path)).toContain(path);
+      expect(
+        discovery.operations.slice(0, 2).map((op: any) => op.path),
+        query,
+      ).toContain(path);
+    }
+    for (const [query, path] of [
+      ["publish form", "/forms/{formId}:setPublishSettings"],
+      ["watch form responses", "/forms/{formId}/watches"],
+    ]) {
+      const discovery = await call(connector, "forms_api_search", { query });
+      const refused = discovery.operations.find((op: any) => op.path === path && op.method === "POST");
+      expect(refused).toMatchObject({ summary: expect.stringMatching(/^Refused: .*separate authorization/) });
+      expect(refused.tool).toBeUndefined();
     }
     const readOnly = connection({ readOnly: true });
     const meta = createMetaTools(makeRegistry([readOnly]), "https://connecta.example");
@@ -334,6 +355,43 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     await expect(
       call(connection(), "get_form", { formId: "other", cursor: first.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
+    const dropdown = {
+      formId: "dropdown",
+      items: [{ questionItem: { question: { questionId: "q", choiceQuestion: { type: "DROP_DOWN", options } } } }],
+    };
+    route = () => ({ body: dropdown });
+    for (const fields of [["items"], ["items.questions.options"]]) {
+      const cut = await call(connector, "get_form", { formId: "dropdown", fields });
+      expect(cut.items[0].questions[0].options).toHaveLength(100);
+      expect(cut.truncated).toContain("items[].questions[].options[]");
+      expect(cut.page).toEqual({ hasMore: false });
+      await conforms(connector, "get_form", cut);
+    }
+    const response = {
+      responseId: "cut",
+      answers: Object.fromEntries(
+        Array.from({ length: 60 }, (_, i) => [
+          `q${i}`,
+          { questionId: `q${i}`, textAnswers: { answers: [{ value: "日".repeat(2_500) }] } },
+        ]),
+      ),
+    };
+    route = (request) => ({ body: request.url.pathname.endsWith("/responses/cut") ? response : dropdown });
+    const responseSent = calls.length;
+    await expect(
+      call(connector, "get_response", { formId: "dropdown", responseId: "cut", fields: ["missing"] }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(responseSent);
+    for (const fields of [["answers"], ["responseId"]]) {
+      const cut = await call(connector, "get_response", { formId: "dropdown", responseId: "cut", fields });
+      expect(cut.truncated).toContain("answers[]");
+      expect(cut.omittedQuestionIds.length).toBeGreaterThan(0);
+      expect(cut).not.toHaveProperty(fields[0] === "answers" ? "responseId" : "answers");
+      expect(
+        new Set([...cut.omittedQuestionIds, ...(cut.answers ?? []).map((answer: any) => answer.questionId)]).size,
+      ).toBe(fields[0] === "answers" ? 60 : cut.omittedQuestionIds.length);
+      await conforms(connector, "get_response", cut);
+    }
     route = () => ({
       body: {
         formId: "f",
@@ -399,6 +457,20 @@ describe("worst-case results fit one host result (256 KiB)", () => {
       call(connector, "forms_api_read", { path: "/forms/other/responses", cursor: empty.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(pageSent);
+    const fetches = vi.mocked(globalThis.fetch).mock.calls.length;
+    const invalidPages = connection();
+    for (const pageSize of [0, -1, 1.5, "5", 5001, 100000, NaN, Infinity]) {
+      await expect(
+        call(invalidPages, "forms_api_read", { path: "/forms/f/responses", query: { pageSize } }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(pageSent);
+      expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(fetches);
+    }
+    route = () => ({ body: { responses: [] } });
+    for (const pageSize of [1, 5000]) {
+      await call(connector, "forms_api_read", { path: "/forms/f/responses", query: { pageSize } });
+      expect(calls.at(-1)!.url.searchParams.get("pageSize")).toBe(String(pageSize));
+    }
   });
 });
 

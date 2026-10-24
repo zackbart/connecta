@@ -717,7 +717,7 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
       input: Schema.Struct({
         formId,
         cursor,
-        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in the form; content page metadata is preserved.")),
+        fields: Schema.optionalKey(fieldsInput("Dot paths to keep in the form; page and cut metadata is preserved.")),
       }),
       output: FormRecord,
       run: (args) =>
@@ -818,7 +818,12 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               { retryable: false },
             );
           }
-          return { ...(selectFields(standardResult(result), args.fields) as JsonRecord), page: result.page };
+          const safe = standardResult(result);
+          return {
+            ...(selectFields(safe, args.fields) as JsonRecord),
+            page: result.page,
+            ...(safe["truncated"] ? { truncated: safe["truncated"] } : {}),
+          };
         }).pipe(knownFailures),
     }),
     write(connection, {
@@ -1100,13 +1105,17 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
             .check(Schema.isMinLength(1), Schema.isMaxLength(MAX_QUESTION_IDS), Schema.isUnique())
             .annotate({ description: "Return only these questions for a large response." }),
         ),
+        fields: Schema.optionalKey(
+          fieldsInput("Dot paths to keep in the response; cut and recovery metadata is preserved."),
+        ),
       }),
       output: ResponseRecord,
-      fields: true,
       writeSteps: pairedReads,
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
+          const problem = fieldsProblem(args.fields, new Set(Object.keys(ResponseRecord.fields)), "the response");
+          if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           const formId: string = args["formId"];
           const [form, response] = yield* Effect.all(
             [
@@ -1150,7 +1159,12 @@ export function formsTools({ connection }: { connection: Connection }): ApiTool[
               "This response cannot be returned inside one result even with its answers cut; pass fewer questionIds.",
             );
           }
-          return standardResult(result);
+          const safe = standardResult(result);
+          return {
+            ...(selectFields(safe, args.fields) as JsonRecord),
+            ...(safe["truncated"] ? { truncated: safe["truncated"] } : {}),
+            ...(safe["omittedQuestionIds"] ? { omittedQuestionIds: safe["omittedQuestionIds"] } : {}),
+          };
         }).pipe(knownFailures),
     }),
     write(connection, {

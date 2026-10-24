@@ -250,7 +250,7 @@ export async function googleBoundaryControls(): Promise<void> {
     const rows = data?.items ?? data?.responses;
     const terminal =
       data?.items !== undefined
-        ? data.page?.hasMore === false && data.page?.nextCursor === undefined
+        ? data.responses === undefined && data.page?.hasMore === false && data.page?.nextCursor === undefined
         : data.page?.nextCursor === null;
     if (empty.isError || !Array.isArray(rows) || rows.length !== 0 || !terminal)
       throw new Error(`Google empty collection did not terminate: ${empty.text}`);

@@ -30,7 +30,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the form; content page metadata is preserved.",
+            "description": "Dot paths to keep in the form; page and cut metadata is preserved.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -506,7 +506,7 @@
           "fields": {
             "type": "array",
             "maxItems": 50,
-            "description": "Dot paths to keep in the result, e.g. [\"responseId\"]. It only narrows the result.",
+            "description": "Dot paths to keep in the response; cut and recovery metadata is preserved.",
             "items": {
               "type": "string",
               "minLength": 1,
@@ -1084,7 +1084,7 @@
     },
     {
       "name": "forms_api_read",
-      "description": "Call a reviewed Google Forms API read. The operation index checks arguments before anything is sent. Paths are relative to /v1. Full vendor JSON follows the same privacy and permanent value-safety boundary as named reads. Responses page with top-level cursor from page.nextCursor; never pass a raw pageToken. fields selects response data; query.fields is Google's wire mask.",
+      "description": "Call a reviewed Google Forms API read. The operation index checks arguments before anything is sent. Paths are relative to /v1. Full vendor JSON follows the same privacy and permanent value-safety boundary as named reads. Responses page with top-level cursor from page.nextCursor; never pass a raw pageToken. query.pageSize accepts integers from 1 to 5000; omit it for the default. fields selects response data; query.fields is Google's wire mask.",
       "inputSchema": {
         "type": "object",
         "properties": {

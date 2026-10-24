@@ -14,7 +14,10 @@ execution table admits five: forms.get/create/batchUpdate and responses.get/list
 The vendor declaration and named dispatch manifest contain exactly those five.
 Publish-settings mutation and watches.create/list/delete/renew are refused
 before authentication. No new scope is requested. The response scope remains
-read-only. Search summaries distinguish these refusals from admitted editing.
+read-only. Refusal reasons and natural edit vocabulary live in each summary's
+first sentence (at most 120 characters), which is retained by the compiler.
+Natural-query assertions cover option/choice edits, form renames, publishing
+and watches against the generated index.
 
 Privacy has no new configuration switch: response answers, respondent email,
 question labels and quiz correct answers are the requested user data. A person
@@ -39,12 +42,17 @@ There is no base64 or upload transport in this product.
 
 `nextPageToken` is continuation metadata, never authorization. It survives the
 safety pass and wire field masks until paging is computed, then a signed,
-connection/owner/call-bound cursor carries it. Empty pages with a token
+connection/owner/delegated-caller/call-bound cursor carries it. Hatch pageSize
+is locally restricted to integers from 1 to 5000; the pin documents 5000 as
+the default response count, and omission retains that vendor default.
+Empty pages with a token
 continue, malformed/withheld tokens fail closed, and terminal cursors are
 omitted. Named response pages retain their local response-id fingerprint and
 anchor; form content retains revision, item index and grid-row position.
 Old private cursors intentionally fail after upgrade. Selected fields can
 change between named pages; hatch selection is bound to the full call.
+Named field selection preserves cut paths and omitted question ids outside
+the selected data, so a partial response still explains how to recover it.
 
 Standard Google errors keep reviewed reason facts, numeric Retry-After,
 ambiguous 404 and revision-guarded ABORTED/FAILED_PRECONDITION conflicts.
@@ -52,5 +60,6 @@ H5 incomplete-read wording is enabled. No auth-before-execution assertion or
 idempotency key is claimed. A dispatched write is attempted once. H1's core
 fix is already in the base (#1008); no other provider's golden changes belong
 here. H9 cold/warm Node 22 timing is characterization only, without deadline
-changes. Existing named tools are retained by the approved plan; no measured
-eval win or retirement is claimed before the scheduled paired evaluation.
+changes. Existing named tools are retained by the approved plan. Paired fake
+evals and post-review verification are recorded in
+`eval/baselines/notes-google-forms-step2.md`; no retirement is proposed.

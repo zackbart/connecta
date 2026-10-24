@@ -34,11 +34,20 @@ export function formsBinding(connection: Connection) {
     index: formsIndex,
     review:
       "Five reviewed Forms JSON methods, confined below /v1 with delegated subject, shared safety and revision-checked batches; publish settings and watches refused.",
-    refuse: (call) =>
-      FORMS_REFUSALS[`${call.method} ${call.op.path}`] ??
-      (call.op.path === "/forms/{formId}:batchUpdate"
+    refuse: (call) => {
+      const refusal = FORMS_REFUSALS[`${call.method} ${call.op.path}`];
+      if (refusal) return refusal;
+      const pageSize = call.query["pageSize"];
+      if (
+        call.op.path === "/forms/{formId}/responses" &&
+        pageSize !== undefined &&
+        (typeof pageSize !== "number" || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 5000)
+      )
+        return "Forms query.pageSize must be an integer from 1 to 5000; omit it for the default.";
+      return call.op.path === "/forms/{formId}:batchUpdate"
         ? googleBatchGuard(call.body, { kinds: FORMS_REQUEST_KINDS, revision: true })
-        : undefined),
+        : undefined;
+    },
     revisionGuarded: (call) => call.op.path === "/forms/{formId}:batchUpdate",
   });
 }

@@ -608,6 +608,8 @@ Keep all six named tools. Four tools are added: `forms_api_search`,
 The ten-method frozen inventory is discoverable; only the five existing
 Forms methods execute. Publish settings and all watch methods stay refused.
 Scopes and named-write approval classifications are unchanged.
+The additive `create_form` catalog follows the kit convention of omitting
+`destructiveHint: false`; its write classification is unchanged.
 
 - Replace `get_form({ formId, raw: true })` with
   `forms_api_read({ path: "/forms/<formId>" })`. The vendor Form is in
@@ -617,13 +619,16 @@ Scopes and named-write approval classifications are unchanged.
   redundant top-level `formId` is removed. `fields` on this tool selects
   paths inside each item. `fields` on `get_form` and `get_response` selects
   paths in the projected record. Content `get_form` pages preserve `page` metadata
-  even when selecting other fields. Invalid roots fail before authentication.
+  even when selecting other fields. Cuts retain `truncated`, and a selected
+  response retains `omittedQuestionIds` for recovery. Invalid roots fail before authentication.
 - Terminal `page` omits `nextCursor` instead of returning null. Discard old
   private cursors after upgrading: content and response cursors now carry a
-  signature bound to the connection and personal owner, retaining revision
+  signature bound to the connection, credential owner and delegated caller,
+  retaining revision
   and mid-page response-fingerprint checks. `fields` may narrow between
   named pages. Continue hatch lists with top-level `cursor`, never raw
   `query.pageToken`; hatch cursors bind the full call, including `fields`.
+  Hatch `query.pageSize` must be an integer from 1 to 5000; omit it for the default.
 - `truncated: string[]` reports cut paths, replacing the batch's boolean
   `truncated` and the form's `moreOptions`/`moreQuestions` counts. Continued
   grids retain `questionsFrom`; `omittedQuestionIds` remains a recovery list

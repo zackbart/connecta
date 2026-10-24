@@ -89,8 +89,8 @@ export const forms = defineApiProvider<FormsOptions>({
   title: "Google Forms",
   readme: "Google Forms",
   bundle: {
-    baselineGzip: 334835,
-    note: "./providers/forms measures 334,835 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 372120,
+    note: "./providers/forms step-2 round-1 snapshot measures 372,120 B gzip standalone before recording these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main ff3f7c3b snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
@@ -125,7 +125,7 @@ export const forms = defineApiProvider<FormsOptions>({
     ...FORMS_HATCH,
     binding: ({ connection }) => formsBinding(connection),
     notes: () => ({
-      read: "Paths are relative to /v1. Full vendor JSON follows the same privacy and permanent value-safety boundary as named reads. Responses page with top-level cursor from page.nextCursor; never pass a raw pageToken. fields selects response data; query.fields is Google's wire mask.",
+      read: "Paths are relative to /v1. Full vendor JSON follows the same privacy and permanent value-safety boundary as named reads. Responses page with top-level cursor from page.nextCursor; never pass a raw pageToken. query.pageSize accepts integers from 1 to 5000; omit it for the default. fields selects response data; query.fields is Google's wire mask.",
       write:
         "Only create and batchUpdate are admitted. Batch bodies require 1–100 requests, one reviewed kind each, and writeControl.requiredRevisionId from a current read. Publish settings and all watches are refused. No idempotency key or automatic replay.",
     }),
