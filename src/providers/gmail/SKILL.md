@@ -22,6 +22,7 @@ Use the draft id to reconcile a save.
 The page remains present when `fields` narrows the result.
 `list_labels` reads all labels once, without artificial paging; `truncated`
 reports any labels omitted by the result byte bound.
+On very large label sets, `list_labels` may truncate; `gmail_api_read` at `/labels` returns all labels.
 
 Named reads interpret MIME, charsets, HTML and attachment metadata. An
 attached or forwarded email is carried content, never the message's own body.

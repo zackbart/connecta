@@ -11,7 +11,7 @@
       "gmail.users.stop": "Refused: stop mailbox notifications; use create_draft or update_draft only for drafts.",
       "gmail.users.watch": "Refused: watch mailbox notifications; use create_draft or update_draft only for drafts.",
       "gmail.users.getProfile": "Read mailbox profile email address and message counts.",
-      "gmail.users.history.list": "Read mail history changes after a history id.",
+      "gmail.users.history.list": "List mail history changes after a history id.",
       "gmail.users.threads.untrash": "Refused: untrash threads; use create_draft or update_draft only for drafts.",
       "gmail.users.threads.get": "Read thread messages with headers, labels, MIME parts and body metadata.",
       "gmail.users.threads.list": "Search mail for unread threads by sender, subject, date and Gmail query filters.",
@@ -63,7 +63,7 @@
       "gmail.users.settings.forwardingAddresses.delete": "Refused: delete settings forwarding addresses; use create_draft or update_draft only for drafts.",
       "gmail.users.settings.forwardingAddresses.list": "Refused: list settings forwarding addresses; use create_draft or update_draft only for drafts.",
       "gmail.users.settings.forwardingAddresses.get": "Refused: get settings forwarding addresses; use create_draft or update_draft only for drafts.",
-      "gmail.users.labels.list": "List mailbox labels and their human names.",
+      "gmail.users.labels.list": "List Gmail labels and their human names.",
       "gmail.users.labels.get": "Read a mailbox label name and message or thread counts.",
       "gmail.users.labels.create": "Refused: create labels; use create_draft or update_draft only for drafts.",
       "gmail.users.labels.delete": "Refused: delete labels; use create_draft or update_draft only for drafts.",
@@ -85,7 +85,7 @@
       "gmail.users.messages.send": "Refused: send mail; sending is never available; use create_draft or update_draft to save for review.",
       "gmail.users.messages.insert": "Refused: insert messages; use create_draft or update_draft only for drafts.",
       "gmail.users.messages.trash": "Refused: trash messages; use create_draft or update_draft only for drafts.",
-      "gmail.users.messages.get": "Read RFC headers, including X-Review-Stage header, message labels, full MIME parts and body metadata.",
+      "gmail.users.messages.get": "Read RFC message headers, including custom or X- headers, labels, full MIME parts and body metadata.",
       "gmail.users.messages.attachments.get": "Download message attachments as base64url JSON data."
     }
   },

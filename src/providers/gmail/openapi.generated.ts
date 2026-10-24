@@ -2,7 +2,7 @@
 // source: https://gmail.googleapis.com/$discovery/rest?version=v1
 // revision: 20261019
 // digest: sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97
-// document: sha256:66591470e156c209f4a3d5d35363de7e87414444db6a84d84f317c7259931b24
+// document: sha256:f750e8716954bca4eaedbf1751d01faed58d73d6fc78dabdb7a6250e5f7bbdfb
 // options: {"depth":5,"numericBounds":true,"formats":true,"maxEnum":200,"requestGraph":true,"deprecations":true,"allSuccessResponses":true,"valueSafety":true}
 // format: 4
 import type { OpenApiData } from "../_shared/rest/operation-index.js";
@@ -21,8 +21,8 @@ export const openapi: OpenApiData = {
     ["GET","/drafts/{id}","gmail.users.drafts.get","Read a saved draft with headers, MIME parts and body metadata.",0],
     ["PUT","/drafts/{id}","gmail.users.drafts.update","Refused: edit a draft via the hatch; use update_draft or create_draft.",0],
     ["DELETE","/drafts/{id}","gmail.users.drafts.delete","Refused: delete drafts; use create_draft or update_draft only for drafts.",0],
-    ["GET","/history","gmail.users.history.list","Read mail history changes after a history id.",1],
-    ["GET","/labels","gmail.users.labels.list","List mailbox labels and their human names.",2],
+    ["GET","/history","gmail.users.history.list","List mail history changes after a history id.",1],
+    ["GET","/labels","gmail.users.labels.list","List Gmail labels and their human names.",2],
     ["POST","/labels","gmail.users.labels.create","Refused: create labels; use create_draft or update_draft only for drafts.",2],
     ["GET","/labels/{id}","gmail.users.labels.get","Read a mailbox label name and message or thread counts.",2],
     ["PUT","/labels/{id}","gmail.users.labels.update","Refused: update labels; use create_draft or update_draft only for drafts.",2],
@@ -34,7 +34,7 @@ export const openapi: OpenApiData = {
     ["POST","/messages/batchModify","gmail.users.messages.batchModify","Refused: batch modify messages; use create_draft or update_draft only for drafts.",3],
     ["POST","/messages/import","gmail.users.messages.import","Refused: import messages; use create_draft or update_draft only for drafts.",3],
     ["POST","/messages/send","gmail.users.messages.send","Refused: send mail; sending is never available; use create_draft or update_draft to save for review.",3],
-    ["GET","/messages/{id}","gmail.users.messages.get","Read RFC headers, including X-Review-Stage header, message labels, full MIME parts and body metadata.",3],
+    ["GET","/messages/{id}","gmail.users.messages.get","Read RFC message headers, including custom or X- headers, labels, full MIME parts and body metadata.",3],
     ["DELETE","/messages/{id}","gmail.users.messages.delete","Refused: delete messages; use create_draft or update_draft only for drafts.",3],
     ["POST","/messages/{id}/modify","gmail.users.messages.modify","Refused: modify messages; use create_draft or update_draft only for drafts.",3],
     ["POST","/messages/{id}/trash","gmail.users.messages.trash","Refused: trash messages; use create_draft or update_draft only for drafts.",3],

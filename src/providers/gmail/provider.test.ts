@@ -316,12 +316,15 @@ describe("writing drafts", () => {
       expect(copied.headers["References"]).toContain("<a@example.com>");
       expect(calls.filter((entry) => entry.method === "POST")).toHaveLength(1);
     }
-    for (const legacy of [
-      'Your message of "Mon" <x@example.com>',
-      'Your message of "Mon"',
-      "<a@x><b@x>",
-      "<a@x>\r\n <b@x>",
-    ]) {
+    const longIds = Array.from({ length: 40 }, (_, i) => `<${i}${"a".repeat(700)}@example.com>`);
+    for (const [legacy, emitted] of [
+      ['Your message of "Mon" <x@example.com>', "<x@example.com>"],
+      ['Your message of "Mon"', undefined],
+      ["<a@x><b@x>", "<a@x>\r\n <b@x>"],
+      ["<a@x>\r\n <b@x>\r\n \r\n ", "<a@x>\r\n <b@x>"],
+      [`(${"comment".repeat(1000)}) <x@example.com>`, "<x@example.com>"],
+      [longIds.join(" "), longIds.join("\r\n ")],
+    ] as const) {
       calls.length = 0;
       route = (request) => ({
         body:
@@ -337,8 +340,12 @@ describe("writing drafts", () => {
       });
       await call(connection(), "update_draft", { draftId: "d1", body: "x" });
       const kept = parseMime(calls.at(-1)!.body.message.raw);
-      expect(kept.headers["In-Reply-To"]).toBe(legacy.replace(/\r\n /g, " "));
-      expect(kept.source).toContain(`In-Reply-To: ${legacy}\r\n`);
+      expect(kept.headers["In-Reply-To"]).toBe(emitted?.replace(/\r\n /g, " "));
+      if (emitted) expect(kept.source).toContain(`In-Reply-To: ${emitted}\r\n`);
+      else expect(kept.source).not.toContain("In-Reply-To:");
+      const headers = kept.source.split("\r\n\r\n")[0]!.split("\r\n");
+      expect(headers.every((line) => line.length <= 998)).toBe(true);
+      expect(headers).not.toContain(" ");
       expect(calls.filter((entry) => entry.method === "PUT")).toHaveLength(1);
     }
   });
@@ -746,7 +753,7 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       ["mailbox profile", "GET /profile"],
       ["mail history", "GET /history"],
       ["read RFC header", "GET /messages/{id}"],
-      ["X-Review-Stage header", "GET /messages/{id}"],
+      ["custom RFC headers", "GET /messages/{id}"],
       ["search mail", "GET /messages"],
       ["reply to email", "POST /drafts"],
     ])
@@ -764,6 +771,11 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       const first = index.search(query!, { limit: 1, partial: true })[0]!;
       expect(`${first.method} ${first.path}`).toBe(operation);
     }
+    // Exercise the hatch's intent/ranking layer, not only the underlying index.
+    const history = await call(c, "gmail_api_search", { query: "mail history" });
+    expect(
+      history.operations.slice(0, 2).map((op: { method: string; path: string }) => `${op.method} ${op.path}`),
+    ).toContain("GET /history");
     route = (request) => ({
       body: request.url.searchParams.has("pageToken")
         ? { messages: [{ id: "m2" }], nextPageToken: "" }
@@ -1027,6 +1039,9 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     expect(first.items.length).toBeLessThan(labels.length);
     expect(size(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(calls).toHaveLength(1);
+    const complete = await call(connection(), "gmail_api_read", { path: "/labels" });
+    expect(complete.data.labels).toEqual(labels);
+    expect(calls).toHaveLength(2);
   });
 });
 

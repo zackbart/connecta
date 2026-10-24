@@ -1248,7 +1248,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       name: "search_threads",
       writeSteps: { list: "once", ...indexedSteps("row", MAX_PAGE_SIZE) },
       description:
-        "Search Gmail threads with conversation ids, newest first, using Gmail query syntax. Read each thread with get_thread for message ids and bodies.",
+        "Search Gmail threads with conversation ids, newest first, using Gmail query syntax; returns subject, senders and snippet. Read each thread with get_thread for message ids and bodies.",
       annotations: readOnly,
       run: (args, ctx) =>
         Effect.gen(function* () {
@@ -1591,11 +1591,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
               ? addressEntries(`The draft's ${name} (pass ${argument} explicitly)`, oneLine(header(payload, name)))
               : undefined;
           const references = threadingIds(header(payload, "References"), true);
-          const inReplyTo = header(payload, "In-Reply-To");
-          threadingIds(inReplyTo, true);
+          const inReplyTo = threadingIds(header(payload, "In-Reply-To"), true);
           const kept: Kept = {
             threadId: text(message["threadId"]),
-            inReplyTo,
+            inReplyTo: inReplyTo.length > 0 ? inReplyTo.join("\r\n ") : undefined,
             references: references.length > 0 ? references.join("\r\n ") : undefined,
             subject: oneLine(header(payload, "Subject")),
             from: addressEntries("The draft's From", oneLine(header(payload, "From"))),

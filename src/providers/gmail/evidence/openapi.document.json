@@ -3276,7 +3276,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read mail history changes after a history id.",
+        "summary": "List mail history changes after a history id.",
         "tags": [
           "users.history"
         ],
@@ -3328,7 +3328,7 @@
             "description": "Success"
           }
         },
-        "summary": "List mailbox labels and their human names.",
+        "summary": "List Gmail labels and their human names.",
         "tags": [
           "users.labels"
         ],
@@ -4257,7 +4257,7 @@
             "description": "Success"
           }
         },
-        "summary": "Read RFC headers, including X-Review-Stage header, message labels, full MIME parts and body metadata.",
+        "summary": "Read RFC message headers, including custom or X- headers, labels, full MIME parts and body metadata.",
         "tags": [
           "users.messages"
         ],
