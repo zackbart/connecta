@@ -27,7 +27,6 @@
     "C.0a (#939): CI static at 42745149 measured 401,125 B gzip for the root and 742,563 B for examples/worker, versus main at 400,287 / 741,618 B. Final source head 0a2efe6d measured 401,150 / 742,583 B in CI (+25 / +20 B). Set caps from those CI measurements to 402,000 / 743,000 B. Local esbuild metafile comparison against 5306f7b1 attributes the minified source growth to remote-mcp.ts (+2,327 B root / +2,186 B Worker: header validation, resource-only forwarding and identity), registry.ts (+534 B each: hidden and dormant overrides), tool-safety.ts (+147 B each: private replay provenance) and config.ts (+25 B each); catalog-service.ts and invocation.ts shrink slightly while preserving provenance across clones. Validation and errors are shared; no behavior was removed to reduce size. Local gzip differs from CI and does not set these caps.",
     "Gmail on the shared Google provider kit; local measurement follows.",
     "Gmail on the shared Google provider kit; local measurement follows.",
-    "Standalone Vercel gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899).",
     "./providers/breeze measures 348,592 B gzip standalone at ead939ea (step-2 round-1 fix snapshot), versus 341,226 B on main e4401cd7 (+7,366 B), Node 26.12.0 with system zlib. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
     "./providers/ccb measures 328,952 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/cloudflare measures 483,872 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
@@ -42,7 +41,7 @@
     "./providers/slides measures 344,074 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/stripe measures 379,663 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
     "./providers/tithely remeasures at 333,313 B gzip in its decision 0011 step 2, from 323,386 B on main at 57176ce1 (Node 26 local, system zlib): the standard hatch over an index derived from request and response contracts for all 21 operations (budgeted, paged discovery), and the kit's standard lists and fields. Reported against this baseline, not capped (#899).",
-    "Standalone Vercel gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899)."
+    "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899)."
   ],
   "entries": {
     ".": {
@@ -104,7 +103,7 @@
       "baselineGzip": 333313
     },
     "./providers/vercel": {
-      "baselineGzip": 423826
+      "baselineGzip": 423956
     },
     "./ui": {
       "baselineGzip": 272943,

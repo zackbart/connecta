@@ -80,8 +80,8 @@ export const vercel = defineApiProvider<VercelOptions>({
   title: "Vercel",
   readme: "Vercel",
   bundle: {
-    baselineGzip: 423826,
-    note: "Standalone Vercel gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899).",
+    baselineGzip: 423956,
+    note: "./providers/vercel standalone gzip after decision 0011 step 2, Node 26.12.0, gzip level 9. Re-pinned response metadata, reviewed discovery prose, signed paging and bounded logs. The shared Effect kit is paid once per deployment; provider entries are reported, not capped (#899).",
   },
   skill,
   options: VERCEL_OPTIONS,

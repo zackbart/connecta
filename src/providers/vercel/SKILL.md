@@ -12,6 +12,11 @@ project id. Team ids start with `team_`, project ids with `prj_`, and deployment
 ids with `dpl_`. A deployment hostname and a deployment id identify the same
 deployment; an alias can later point to a different deployment.
 
+Some project paths accept a project name, but a deployment list's projectId
+filter requires the observed `prj_` id. Resolve the name before listing its
+deployments; an empty result for a guessed name does not prove absence.
+Complete each identifier lookup before starting the reads that depend on it.
+
 The configured team is a routing default, not a restriction. Explicit teamId
 or slug selects another team the token can reach; teamId: null selects personal
 scope. Vercel token permissions determine access. Prefer an explicit team when
