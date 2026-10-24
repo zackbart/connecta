@@ -4,10 +4,10 @@
 // request translation, refusals before dispatch, and write outcomes.
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SLIDES_INDEX } from "./api.js";
 import { slides } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { validateToolInput } from "../../validate.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
@@ -30,6 +30,7 @@ interface ApiCall {
 /** A reply: a JSON body and status, or a whole Response, or a dropped connection. */
 type Route = (call: ApiCall) => { status?: number; body?: unknown; response?: () => Response } | undefined;
 
+let storage = memoryStorage();
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
 let route: Route = () => undefined;
@@ -37,6 +38,7 @@ const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls.length = 0;
+  storage = memoryStorage();
   tokenCalls = 0;
   route = () => undefined;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -73,7 +75,7 @@ function connection(overrides: Record<string, unknown> = {}): Connector {
 }
 
 function context(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+  return { storage, logger: silentLogger, baseUrl: "https://connecta.example" };
 }
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
@@ -329,27 +331,45 @@ describe("every result is deliverable, in a program and directly", { timeout: 60
     const result = await call(connection(), "get_presentation", { presentationId: "big1", maxCharsPerSlide: 50_000 });
     expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
     const [first] = result.slides;
-    expect(first.truncated).toBe(true);
+    expect(first.truncated).toEqual(expect.any(Array));
     expect(JSON.stringify(first)).toContain("this slide is larger than one result can carry");
     // The next slide starts the next page whole rather than being cut too.
     expect(result.slides).toHaveLength(1);
     expect(result.page.nextCursor).toBeTruthy();
     // The layout list is bounded and counts what it left out.
-    expect(result.layoutsNotShown).toBeGreaterThan(0);
-    expect(result.layouts.length + result.layoutsNotShown).toBe(2_000);
+    expect(result.truncated).toContain("layouts[]");
+    expect(result.layouts.length).toBeLessThan(2_000);
   });
 
-  it("names a raw slide no result can carry instead of returning it", async () => {
-    route = () => ({ body: worstDeck(2, 4, 60_000) });
-    const result = await call(connection(), "get_presentation", { presentationId: "big1", raw: true });
-    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
-    expect(result.slides).toEqual([
-      {
-        objectId: "s0",
-        rawNotShown: expect.stringMatching(/^This slide's raw JSON is \d+ bytes, more than one result can carry/),
-      },
-    ]);
-    expect(result.page.nextCursor).toBeTruthy();
+  it("INV-3 INV-4 INV-10: indexes exactly five methods with plural presentationsId and refuses invalid fields before minting", async () => {
+    const c = connection();
+    expect(SLIDES_INDEX.pathMatching).toBe("uri-template");
+    expect(SLIDES_INDEX.ops).toHaveLength(5);
+    const detail = await call(c, "slides_api_details", { method: "GET", path: "/presentations/{presentationsId}" });
+    expect(JSON.stringify(detail)).toContain("presentationsId");
+    expect(calls).toEqual([]);
+    expect(tokenCalls).toBe(0);
+    for (const args of [
+      { presentationId: "deck1", raw: true },
+      { presentationId: "deck1", fields: ["bogus"] },
+    ])
+      await expect(call(c, "get_presentation", args)).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(c, "slides_api_read", { path: "/presentations/deck1", fields: ["bogus"] })).rejects.toMatchObject(
+      { code: "invalid_args" },
+    );
+    expect(calls).toEqual([]);
+    expect(tokenCalls).toBe(0);
+    for (const query of [
+      "format slide text",
+      "add a slide",
+      "create comment",
+      "reply to comment",
+      "resolve comment thread",
+      "replace slide text",
+    ]) {
+      const result = await call(c, "slides_api_search", { query });
+      expect(result.operations.slice(0, 2).some((op: any) => op.path.endsWith(":batchUpdate"))).toBe(true);
+    }
   });
 });
 
@@ -415,44 +435,54 @@ describe("get_page and list_layouts: every page, element, and layout is reachabl
     for (const page of pages) {
       for (const row of page.elements) {
         expect(row.textOffset).toBe(gathered.length);
-        gathered += row.truncated ? row.text.replace(CONTINUES, "") : row.text;
+        gathered += row.truncated?.length ? row.text.replace(CONTINUES, "") : row.text;
       }
     }
     expect(gathered).toBe(full);
   });
 
-  it("sends a raw element too large for one result in JSON chunks that parse back to it", async () => {
-    const huge = {
-      objectId: "essay",
-      transform: at(0, 0),
-      shape: {
-        shapeType: "TEXT_BOX",
-        text: { textElements: [{ textRun: { content: long(400_000), style: { bold: true } } }] },
+  it("INV-4 INV-5: structural hatch reads keep styles and field selection with exact confined URL bytes", async () => {
+    route = () => ({
+      body: {
+        objectId: "p",
+        pageElements: [{ objectId: "shape1", shape: { text: textContent("Hello") }, transform: at(1, 2) }],
+        pageProperties: { colorScheme: { colors: [] } },
+        image: { contentUrl: "https://private.example/image", sourceUrl: "https://example.com/source" },
       },
-    };
-    const small = { objectId: "small", transform: at(0, 0), shape: { shapeType: "TEXT_BOX" } };
-    const page = { objectId: "p", pageType: "SLIDE", revisionId: "rev-1", pageElements: [small, huge, small] };
-    route = () => ({ body: page });
-    const pages = await follow(connection(), { pageObjectId: "p", raw: true });
-    expect(calls[0]!.url.searchParams.get("fields")).toBeNull();
-    expect(pages[0].properties).toEqual({ objectId: "p", pageType: "SLIDE", revisionId: "rev-1" });
-    const entries = pages.flatMap((entry) => entry.elements);
-    expect(entries[0]).toEqual(small);
-    const chunks = entries.filter((entry: any) => entry.rawJson);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((entry: any) => entry.objectId === "essay")).toBe(true);
-    let json = "";
-    for (const { rawJson } of chunks) {
-      expect(rawJson.offset).toBe(json.length);
-      json += rawJson.json;
-    }
-    expect(JSON.parse(json)).toEqual(huge);
-    expect(entries[entries.length - 1]).toEqual(small);
+    });
+    const result = await call(connection(), "slides_api_read", {
+      path: "/presentations/deck1/pages/p",
+      fields: ["objectId", "pageElements.shape"],
+    });
+    expect(result.status).toBe(200);
+    expect(result.data.objectId).toBe("p");
+    expect(result.data.pageProperties).toBeUndefined();
+    expect(result.data.pageElements[0].shape.text.textElements[1].textRun.style.bold).toBe(true);
+    expect(calls[0]!.url.pathname).toBe("/v1/presentations/deck1/pages/p");
+    expect(calls).toHaveLength(1);
+    route = () => ({
+      body: {
+        objectId: "p",
+        pageElements: [
+          { image: { contentUrl: "https://private.example/image", sourceUrl: "https://example.com/source" } },
+          { sheetsChart: { contentUrl: "https://private.example/chart" } },
+        ],
+        pageProperties: {
+          pageBackgroundFill: { stretchedPictureFill: { contentUrl: "https://private.example/background" } },
+        },
+      },
+    });
+    const safe = await call(connection(), "slides_api_read", { path: "/presentations/deck1/pages/p" });
+    expect(safe.data.pageElements[0].image).toEqual({
+      contentUrl: "[redacted]",
+      sourceUrl: "https://example.com/source",
+    });
+    expect(safe.data.pageElements[1].sheetsChart.contentUrl).toBe("[redacted]");
+    expect(safe.data.pageProperties.pageBackgroundFill.stretchedPictureFill.contentUrl).toBe("[redacted]");
   });
 });
 
 describe("round three: content-bound cursors, the notes master, bounded replies and links", { timeout: 60_000 }, () => {
-  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const letters = (length: number, from = 0) =>
     Array.from({ length }, (_, index) => String.fromCharCode(97 + ((index + from) % 26))).join("");
 
@@ -476,30 +506,41 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     ).rejects.toMatchObject({ code: "conflict" });
   });
 
-  it("binds a viewer's raw cursor to the exact JSON, so an equal-byte edit is a conflict", async () => {
-    // An emoji (four UTF-8 bytes) swapped for four ASCII letters: the same
-    // serialized size, and chunks stitched from both would parse to neither.
-    const content = (swap: string) => `${letters(200_000)}${swap}${letters(200_000, 3)}`;
-    const page = (swap: string) => ({
-      objectId: "p",
-      pageElements: [
-        { objectId: "essay", shape: { text: { textElements: [{ textRun: { content: content(swap) } }] } } },
-      ],
+  it("INV-4: signed content cursors reject tampering and another connector before dispatch", async () => {
+    route = () => ({
+      body: {
+        objectId: "p",
+        revisionId: "rev1",
+        pageElements: [{ objectId: "shape1", shape: { text: textContent("x".repeat(300000)) } }],
+      },
     });
-    expect(bytes(page("😀"))).toBe(bytes(page("abcd")));
-    const connector = connection();
-    route = () => ({ body: page("😀") });
-    const first = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", raw: true });
+    const c = connection();
+    const first = await call(c, "get_page", { presentationId: "deck1", pageObjectId: "p" });
     expect(first.page.hasMore).toBe(true);
-    route = () => ({ body: page("abcd") });
-    await expect(
-      call(connector, "get_page", {
-        presentationId: "deck1",
-        pageObjectId: "p",
-        raw: true,
-        cursor: first.page.nextCursor,
-      }),
-    ).rejects.toMatchObject({ code: "conflict" });
+    const cursor = first.page.nextCursor;
+    calls.length = 0;
+    for (const [other, token] of [
+      [c, cursor.slice(0, -1) + (cursor.endsWith("A") ? "B" : "A")],
+      [
+        slides("other", {
+          purpose: "Other",
+          serviceAccount: { clientEmail: "other@project.iam.gserviceaccount.com", privateKey: PRIVATE_KEY },
+          subject: "alice@example.com",
+        }),
+        cursor,
+      ],
+    ] as const)
+      await expect(
+        call(other, "get_page", { presentationId: "deck1", pageObjectId: "p", cursor: token }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toEqual([]);
+    const next = await call(c, "get_page", {
+      presentationId: "deck1",
+      pageObjectId: "p",
+      cursor,
+      fields: ["elements.text", "page"],
+    });
+    expect(next.elements[0].text).toBeTruthy();
   });
 });
 
@@ -528,10 +569,10 @@ describe("round four: nested reply ids, and every write result bounded", () => {
         objectId: "dup-0",
         detail: { sourceId: "src-0", status: "OK", parts: [{ partId: "part-0-a" }] },
       },
-      cut: ["duplicateObject.detail.note", "duplicateObject.detail.parts[0].body"],
+      truncated: ["duplicateObject.detail.note", "duplicateObject.detail.parts[0].body"],
     });
-    expect(result.replies[1]).toEqual({ createShape: { objectId: "shape-1" }, cut: ["createShape.blob"] });
-    expect(result.note).toMatch(/^Large reply fields are named in cut; every id is kept\./);
+    expect(result.replies[1]).toEqual({ createShape: { objectId: "shape-1" }, truncated: ["createShape.blob"] });
+    expect(result.note).toMatch(/^Large reply fields are named in truncated; every id is kept\./);
   });
 });
 
@@ -548,15 +589,15 @@ describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
     route = () => ({ body: COMMENT_DECK });
     const connector = connection();
     const first = await call(connector, "list_comments", { presentationId: "deck1", limit: 2 });
-    expect(first.threads.map((thread: any) => thread.commentId)).toEqual(["c1", "c2"]);
+    expect(first.items.map((thread: any) => thread.commentId)).toEqual(["c1", "c2"]);
     expect(first.page.hasMore).toBe(true);
     const second = await call(connector, "list_comments", {
       presentationId: "deck1",
       limit: 2,
       cursor: first.page.nextCursor,
     });
-    expect(second.threads.map((thread: any) => thread.commentId)).toEqual(["c3"]);
-    expect(second.page).toEqual({ hasMore: false, nextCursor: null });
+    expect(second.items.map((thread: any) => thread.commentId)).toEqual(["c3"]);
+    expect(second.page).toEqual({ hasMore: false, total: 3 });
   });
 
   describe("cursors are bound to the deck, the page, the revision, and the threads", () => {
@@ -584,7 +625,7 @@ describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
       // Unmoved, it continues, and places the thread where the anchor is.
       const fresh = await firstPage(connector, deck("shapeA"));
       const next = await call(connector, "list_comments", { presentationId: "deck1", limit: 1, cursor: fresh });
-      expect(next.threads[0]).toMatchObject({ commentId: "c2", objectIds: ["shapeA"] });
+      expect(next.items[0]).toMatchObject({ commentId: "c2", objectIds: ["shapeA"] });
     });
   });
 });
@@ -664,19 +705,18 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
     expect(result.note).not.toMatch(/nothing (was|is) (applied|changed)/i);
   }
 
-  it.each([
-    ["create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" }],
-    ["create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" }],
-    ["delete_comment", { presentationId: "deck1", commentId: "c1" }],
-  ])("%s reports a 2xx whose comment change did not save, as a result rather than a failure", async (name, args) => {
-    route = () => ({ body: unsaved });
-    const result = await call(connection(), name, args);
-    expect(result.presentationId).toBe("deck1");
-    expect(result.revisionId).toBe("rev-2");
-    expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
-  });
-
   it("reports a comment write Slides gave no state for as unspecified, since nothing said it saved", async () => {
+    for (const [name, args] of [
+      ["create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" }],
+      ["create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" }],
+      ["delete_comment", { presentationId: "deck1", commentId: "c1" }],
+    ] as const) {
+      route = () => ({ body: unsaved });
+      const result = await call(connection(), name, args);
+      expect(result.presentationId).toBe("deck1");
+      expect(result.revisionId).toBe("rev-2");
+      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+    }
     route = () => ({ body: { presentationId: "deck1", replies: [{}] } });
     const result = await call(connection(), "delete_comment", { presentationId: "deck1", commentId: "c1" });
     expectReported(result, "COMMENT_UPDATE_STATE_UNSPECIFIED");
@@ -714,7 +754,7 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
         posts.map(() => "users/2002"),
       );
       // The later replies gave up their text so every one keeps its ids.
-      expect(result.replies.at(-1).cut).toEqual([expect.stringContaining("ids only")]);
+      expect(result.replies.at(-1).truncated).toEqual([expect.stringContaining("ids only")]);
       expect(result.note).toContain("every id is kept");
       expect(result.note).not.toContain("execute_code");
     });
@@ -747,7 +787,7 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
       expect(result.revisionId).toBe("rev-2");
 
       expect(result.replies).toEqual([]);
-      expect(result.repliesNotShown).toBe(100);
+      expect(result.truncated).toContain("replies[]");
       expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
       expect(result.note).toContain("Slides accepted the batch");
       expect(result.note).toContain("Do not send it again");
@@ -774,24 +814,21 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
         expect(result.commentUpdateState, state).toBeUndefined();
         expect(result.note, state).toBeUndefined();
       }
+      route = () => ({ body: { ...unsaved, replies: [{}, {}] } });
+      const mixed = await call(
+        connection(),
+        "batch_update_presentation",
+        batch({ insertText: { objectId: "t", text: "x" } }, { insertComment: { objectId: "p", content: "c" } }),
+      );
+      expectReported(mixed, "ALL_FAILED_UNKNOWN_REASON");
+      expect(mixed.note).toContain(
+        "re-read with get_presentation or get_page for deck changes, and list_comments for comments",
+      );
       // A failure Slides reports for a batch with no comments is still said.
       route = () => ({ body: unsaved });
       expectReported(
         await call(connection(), "batch_update_presentation", batch({ deleteObject: { objectId: "x" } })),
         "ALL_FAILED_UNKNOWN_REASON",
-      );
-    });
-
-    it("reports a batch whose deck changes applied and whose comments did not", async () => {
-      route = () => ({ body: { ...unsaved, replies: [{}, {}] } });
-      const result = await call(
-        connection(),
-        "batch_update_presentation",
-        batch({ insertText: { objectId: "t", text: "x" } }, { insertComment: { objectId: "p", content: "c" } }),
-      );
-      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
-      expect(result.note).toContain(
-        "re-read with get_presentation or get_page for deck changes, and list_comments for comments",
       );
     });
 
@@ -808,7 +845,7 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
         "batch_update_presentation",
         batch({ insertComment: { objectId: "p", content } }),
       );
-      expect(result.replies[0].cut.length).toBeGreaterThan(0);
+      expect(result.replies[0].truncated.length).toBeGreaterThan(0);
       expect(result.replies[0].insertComment.commentThread.commentId).toBe("c9");
       expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
       expect(result.note).not.toMatch(/(write|batch) applied/i);
@@ -817,103 +854,85 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
   });
 });
 
-describe("comments: raw: true (#696)", { timeout: 60_000 }, () => {
-  it("returns each thread as Slides sends it, with the anchors and fields the projection drops", async () => {
-    const copied = { ...THREADS[1], headPost: { ...THREADS[1]!.headPost, fromCopiedPresentation: true } };
-    route = () => ({ body: { ...COMMENT_DECK, comments: [THREADS[0], copied, THREADS[2]] } });
-    const connector = connection();
-    const tool = (await connector.listTools(context())).find((entry) => entry.name === "list_comments")!;
-    const result = await call(connector, "list_comments", { presentationId: "deck1", raw: true });
-    expect(calls[0]!.url.searchParams.get("commentsViewMode")).toBe("COMMENTS_VIEW_MODE_INCLUDED");
-    expect(result.total).toBe(3);
-    expect(result.threads[0]).toEqual({
-      ...THREADS[0],
-      commentAnchors: [{ pageObjectId: "p", ...COMMENT_DECK.slides[0]!.commentAnchors[0] }],
+describe("comments: full JSON through the hatch (#696)", { timeout: 60_000 }, () => {
+  it("INV-4: the hatch preserves HTML and anchors while named comment fields narrow each item", async () => {
+    route = () => ({ body: COMMENT_DECK });
+    const c = connection();
+    const result = await call(c, "slides_api_read", {
+      path: "/presentations/deck1",
+      query: { commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED" },
     });
-    // contentHtml, fromCopiedPresentation, and the anchor's text ranges.
-    expect(result.threads[0].headPost.contentHtml).toBe("<span>Should this be bigger?</span>");
-    expect(result.threads[0].commentAnchors[0].objectAnchors[0].shapeTextAnchors.ranges).toEqual([
-      { startIndex: 0, endIndex: 11 },
-    ]);
-    expect(result.threads[1].headPost.fromCopiedPresentation).toBe(true);
-    expect(result.threads[1].commentAnchors).toEqual([
-      { pageObjectId: "p_notes", anchorId: "a2", objectAnchors: [{ objectId: "n1" }] },
-    ]);
-    expect(
-      validateToolInput(tool.outputSchema!, result, {
-        address: "decks.list_comments",
-        logger: silentLogger,
-        failClosed: true,
-      })?.message,
-    ).toBeUndefined();
+    expect(result.data.comments[0].headPost.contentHtml).toContain("<span>");
+    expect(result.data.slides[0].commentAnchors[0].anchorId).toBe("a1");
+    const named = await call(c, "list_comments", { presentationId: "deck1", fields: ["commentId"] });
+    expect(named.items).toEqual(THREADS.map((thread) => ({ commentId: thread.commentId })));
+    expect(named.page).toEqual({ hasMore: false, total: 3 });
   });
 
-  it("sends a thread too large for one result in JSON chunks that parse back to it, under the same budget and binding", async () => {
-    const replies = Array.from({ length: 40 }, (_, index) => slidesPost(`r${index}`, "z".repeat(10_000), SAM));
-    const big = { ...THREADS[0], replies };
-    route = () => ({ body: { ...COMMENT_DECK, comments: [THREADS[1], big, THREADS[2]] } });
-    const connector = connection();
-    const pages: any[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await call(connector, "list_comments", {
-        presentationId: "deck1",
-        raw: true,
-        ...(cursor ? { cursor } : {}),
+  it("INV-3 INV-4 INV-9: hatch refusals preserve batch kind, revision, subject and thumbnail boundaries without minting", async () => {
+    const c = connection();
+    for (const path of ["/presentations/deck1/pages/p/thumbnail", "/presentations/deck1/pages/p/%74humbnail"])
+      await expect(call(c, "slides_api_read", { path })).rejects.toMatchObject({ code: "invalid_args" });
+    for (const body of [
+      { requests: [{ unknownKind: {} }], writeControl: { requiredRevisionId: "rev1" } },
+      { requests: [{ insertText: {} }] },
+      { requests: [{ createSlide: {}, deleteObject: {} }], writeControl: { requiredRevisionId: "rev1" } },
+      {
+        requests: Array.from({ length: 101 }, () => ({ createSlide: {} })),
+        writeControl: { requiredRevisionId: "rev1" },
+      },
+    ])
+      await expect(
+        call(c, "slides_api_write", { method: "POST", path: "/presentations/deck1:batchUpdate", body }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    for (const query of [{ access_token: "injected" }, { quotaUser: "bob" }, { alt: "media" }, { userId: "bob" }])
+      await expect(call(c, "slides_api_read", { path: "/presentations/deck1", query })).rejects.toMatchObject({
+        code: "invalid_args",
       });
-      pages.push(page);
-      cursor = page.page.nextCursor ?? undefined;
-    } while (cursor && pages.length < 50);
-    for (const page of pages) expect(new TextEncoder().encode(JSON.stringify(page)).length).toBeLessThan(256 * 1024);
-    const rows = pages.flatMap((page) => page.threads);
-    expect(rows[0].commentId).toBe("c2");
-    const chunks = rows.filter((row: any) => row.rawJson);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((row: any) => row.commentId === "c1")).toBe(true);
-    const whole = JSON.parse(chunks.map((row: any) => row.rawJson.json).join(""));
-    expect(whole.replies.map((reply: any) => reply.postId)).toEqual(replies.map((reply) => reply.postId));
-    expect(whole.commentAnchors[0].pageObjectId).toBe("p");
-    expect(rows.at(-1).commentId).toBe("c3");
-    // A raw cursor does not continue a projected read, nor the other way.
-    route = () => ({ body: { ...COMMENT_DECK, comments: [THREADS[1], big, THREADS[2]] } });
-    const projected = await call(connector, "list_comments", { presentationId: "deck1", limit: 1 });
-    calls.length = 0;
-    await expect(
-      call(connector, "list_comments", { presentationId: "deck1", raw: true, cursor: projected.page.nextCursor }),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("raw: false") });
-    await expect(
-      call(connector, "list_comments", { presentationId: "deck1", cursor: pages[0].page.nextCursor }),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("raw: true") });
     expect(calls).toEqual([]);
+    expect(tokenCalls).toBe(0);
   });
 });
 
 describe("comments: a thread whose anchors alone pass one result (#696)", () => {
-  it("says raw: true pages it, and raw: true does", async () => {
-    const objectAnchors = Array.from({ length: 300 }, (_, index) => ({ objectId: `e${index}_${"o".repeat(900)}` }));
-    route = () => ({
-      body: {
-        ...COMMENT_DECK,
-        comments: THREADS.slice(0, 1),
-        slides: [{ objectId: "p", commentAnchors: [{ anchorId: "a1", objectAnchors }] }],
-      },
-    });
-    const failure = await call(connection(), "list_comments", { presentationId: "deck1" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed" });
-    expect(failure.message).toContain("raw: true pages it in JSON chunks");
-    const connector = connection();
-    const rows: any[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await call(connector, "list_comments", {
-        presentationId: "deck1",
-        raw: true,
-        ...(cursor ? { cursor } : {}),
+  it("INV-5 INV-9: hatch batches retain every id and report independent comment saves, including missing state", async () => {
+    installOwnedTransport();
+    const c = connection();
+    for (const state of [undefined, "ALL_FAILED_UNKNOWN_REASON", "ALL_SAVED"]) {
+      route = () => ({
+        body: {
+          presentationId: "deck1",
+          replies: [
+            { createSlide: { objectId: "newslide" } },
+            { insertComment: { commentThread: { commentId: "comment9", headPost: { postId: "post9" } } } },
+          ],
+          ...(state ? { commentUpdateState: state } : {}),
+        },
       });
-      rows.push(...page.threads);
-      cursor = page.page.nextCursor ?? undefined;
-    } while (cursor && rows.length < 50);
-    const whole = JSON.parse(rows.map((row) => row.rawJson.json).join(""));
-    expect(whole.commentAnchors[0].objectAnchors).toHaveLength(300);
+      const result = await call(c, "slides_api_write", {
+        method: "POST",
+        path: "/presentations/deck1:batchUpdate",
+        body: {
+          requests: [{ createSlide: { objectId: "newslide" } }, { insertComment: { objectId: "p", content: "Hello" } }],
+          writeControl: { requiredRevisionId: "rev1" },
+        },
+      });
+      expect(result.data.replies[0].createSlide.objectId).toBe("newslide");
+      expect(result.data.replies[1].insertComment.commentThread.headPost.postId).toBe("post9");
+      if (state !== "ALL_SAVED") {
+        expect(result.data.commentUpdateState).toBe(state ?? "COMMENT_UPDATE_STATE_UNSPECIFIED");
+        expect(result.data.note).toContain("Do not repeat");
+      } else expect(result.data.note).toBeUndefined();
+    }
+    expect(calls).toHaveLength(3);
+    route = () => ({ status: 500, body: { error: { message: "Temporary failure" } } });
+    await expect(
+      call(c, "slides_api_write", {
+        method: "POST",
+        path: "/presentations/deck1:batchUpdate",
+        body: { requests: [{ createSlide: { objectId: "unique" } }], writeControl: { requiredRevisionId: "rev1" } },
+      }),
+    ).rejects.toMatchObject({ retryable: false });
+    expect(calls).toHaveLength(4);
   });
 });

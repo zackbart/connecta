@@ -5,115 +5,71 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
-# Google Slides usage
+## Find and read a deck
 
-Acts as the signed-in person in Google Slides through Workspace delegation: read, create, and edit the decks they can open.
+Slides cannot search or list decks. Find the file through Drive, or take the
+presentation id from `/presentation/d/<id>/` in its URL. A presentation is a
+Drive file; finding one does not grant permission to open it.
 
-Connection purpose: <!-- endfragment -->
+`get_presentation` reads text in page order, with speaker notes, alt text and
+placeholder ids. `get_page` opens groups and reads a slide, layout, master or
+notes page. A slide's `index` is zero-based. Resolve a layout's placeholders
+with `list_layouts` and `get_page` before filling a new slide.
 
-<!-- fragment: guide_1 -->
+Text and notes have independent continuation. Pass an element's `textCursor`
+or a slide's `elementsCursor` to `get_page` with that slide's id; pass a
+`notesCursor` with its `notesPageId`. A deck's `layoutsCursor` continues in
+`list_layouts`. Content cursors bind to the deck's revision and the text they
+continue; a changed deck requires a fresh read. Follow continuation even when
+a result contains fewer rows than requested.
 
+For styles, transforms, HTML comment content, anchors' ranges or other full
+structural JSON, use `slides_api_read`. Operation details use the legacy
+`presentationsId` spelling for presentations.get; pages and batch updates use
+`presentationId`. These are path parameter names, not query arguments.
+Spell colons and unreserved characters literally in hatch paths; encode other
+characters within one id segment. Named tools handle their own id encoding.
 
-## Whose decks
+In code, `const {data: reply} = await connecta.call("decks.slides_api_read",
+{path: "/presentations/deck1"});` exposes the vendor presentation as
+`reply.data`.
+A direct call wraps that same `{status,data}` tool value in Connecta's result
+delivery; follow its result handle for large JSON. Content cursors belong to
+the named reading tools and are separate from that delivery handle.
 
-Every call acts as the Workspace account deployment config maps the caller
-to, and reaches exactly the decks that person can open; an agent acts as the
-owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an account. A call with
-none mapped fails `auth_required`; only an operator can change that. A deck the person cannot see and one that does not exist
-fail alike — Google does not say which.
+`get_slide_thumbnail` returns a link that opens as the delegated person for
+about 30 minutes. Keep it private. Generic thumbnail/preview operations are
+refused; use the named thumbnail workflow.
 
-## Finding a deck
+## Edit at the version you read
 
-Slides cannot list or search decks; that is Google Drive's job. Take the id
-from a Drive search or from a URL (`/presentation/d/<id>/`).
+Read before editing and use its `revisionId` as the write precondition.
+Revision ids are preconditions, not replay keys. `create_slide` adds an empty
+slide; read its placeholder ids before inserting text. `replace_all_text`
+replaces literal text. No Slides tool shares, moves or deletes the deck file.
 
-## Reading
+`batch_update_presentation` takes the existing reviewed Request kinds.
+The generic batch hatch uses `POST /presentations/deck1:batchUpdate` with
+`body: {requests: [{insertText: {objectId: "shape1", text: "Hello"}}],
+writeControl: {requiredRevisionId: "revision-from-read"}}`. It retains the
+same request-kind and revision guards. No additional preview capabilities are
+admitted by indexing the complete Discovery document.
 
-- `get_presentation` returns each slide's text in reading order (top to
-  bottom, then left to right), speaker notes, and alt text for images,
-  videos, and charts. Empty placeholders are listed with their id and type;
-  lines and other empty shapes are counted in `omittedElements`. `index`
-  is 0-based, the numbering `create_slide` takes.
-- Nothing is cut without a way back. Text past `maxCharsPerSlide`, or past
-  what one result can carry (about 192 KB), ends with a marker, and its
-  element's `textCursor` (the slide's `notesCursor` for notes) is a
-  `get_page` cursor that continues from the cut; pass it with the page it came
-  from (the slide's `notesPageId` for a `notesCursor`). A slide too crowded to
-  list whole gives `elementsNotShown` and an `elementsCursor`.
-- `get_page` reads any page by objectId — a slide, a layout (its
-  placeholders' types and indexes, for `placeholderIdMappings`), a master,
-  a notes page (`notesPageId`), or the notes master (`notesMasterId`) —
-  listing every element, groups opened,
-  and continuing long text across pages from `page.nextCursor`.
-- `list_layouts` lists masters and their layouts; `get_presentation`
-  previews them, and `layoutsCursor` continues where the preview stops.
-- `raw: true` returns Slides' own JSON: `get_presentation` a page of
-  slides, `get_page` the page and its top-level elements. One too large
-  for a result is named (`rawNotShown`) or sent in `rawJson` chunks;
-  join the chunks' `json` in order and parse.
-- Every cursor is bound to the deck and the revision it was read at. A
-  `conflict` on a cursor means the deck changed: start again without one.
-  A page may hold fewer rows than `limit`; follow `page.nextCursor`.
-- `get_slide_thumbnail` returns a link, never the image. The link opens as
-  this person for about 30 minutes; do not share it.
+## Comments can save separately
 
-## Writing
+A comment thread's `commentId` identifies the thread; its head post and
+replies have their own `postId`. Authors' `user` ids are stable; display names
+are labels. Anchors join to page and object ids; speaker-note comments belong
+to the notes page. Reading comments requires comment access. A view-only
+account may be refused rather than receiving an apparently empty list.
 
-- `create_presentation` and `create_slide` are additive. A new slide is
-  empty: fill it with `batch_update_presentation` (`insertText` into its
-  placeholders, after reading their ids with `get_presentation`).
-- `replace_all_text` changes every literal match, case-sensitive unless
-  `matchCase: false`. Pass `requiredRevisionId` to refuse a deck that
-  changed since you read it.
-- `batch_update_presentation` takes Slides' own Request objects and always
-  requires `requiredRevisionId`: the `revisionId` from the read the requests
-  were built on. All
-  requests apply or none do, except comment changes (below). Each write
-  returns the new `revisionId` for the next one. A `conflict` means the
-  deck changed since that read: re-read it, rebuild the requests, and send
-  them with the new `revisionId`. Its replies keep every id at every depth
-  whole, in every reply; text is cut first, and a large reply's other fields
-  are named in `cut`. Ids too many for this tool's 192 KiB budget are all
-  returned anyway, without text; past 256 KiB, more than a program can
-  receive, call the tool directly and page with `connecta.result`. A batch
-  whose ids pass even that returns its comment state and `repliesNotShown`;
-  read what it made with `list_comments`, `get_presentation`, or
-  `get_page`, and do not send it again.
-- An id or revision too long to copy into a result is left out and flagged
-  (`revisionIdNotShown`), never cut. A failure that says the write
-  applied means Google answered 2xx: do not repeat it; re-read instead.
-- Nothing here shares, moves, or deletes a deck.
+Resolve, reopen or reassign a thread with `update_comment_thread`; edit its
+text with `update_comment_post`. Reassignment requires content. Only the
+post's author can edit or delete that post. Comments notify people as in the
+Slides editor.
 
-## Comments
-
-- `list_comments` lists the deck's threads, or one page's with
-  `pageObjectId` (a speaker-notes comment is on the notes page). Each has
-  its `commentId`, `status` (OPEN or RESOLVED), where it is anchored
-  (`pageObjectIds`, `objectIds`), the `quote` it was made on, its
-  `headPost`, and `replies`. A post's `author.user` (`users/…`) is
-  the stable id; `displayName` is only a name. Slides gives no `user`
-  for an anonymous or imported post. Text too long for one result continues
-  on the next page: a row with `continued` picks up its thread where the
-  last stopped, and `repliesOffset` counts the replies before it. Its
-  cursor is bound to the threads and their anchors as well as the revision,
-  so a comment added or moved between pages is a `conflict` too. Reading
-  comments needs comment access; a view-only account is refused.
-- The projection leaves out each post's HTML (`contentHtml`), whether it
-  came from a copied deck, and the text and cell ranges an anchor covers.
-  `raw: true` returns each thread as Slides sends it, with
-  `commentAnchors` added (its anchors, each with its `pageObjectId`),
-  in `rawJson` chunks when one is too large.
-- `create_comment` and `create_comment_reply` are additive and return
-  every new id whole. `update_comment_thread` resolves, reopens, or
-  reassigns a thread (one at a time; a reassignment needs `content`),
-  replacing its status or assignee, and is destructive,
-  like `update_comment_post`, `delete_comment`, and
-  `delete_comment_reply`; Slides allows the last three only to the
-  post's author. Comments notify people the way the Slides editor does.
-- Slides saves comment changes apart from the rest of a write. When it does
-  not confirm they saved, the result carries `commentUpdateState` — for
-  example `ALL_FAILED_UNKNOWN_REASON` — and the write's other changes may
-  still have applied. Do not repeat it: re-read with `list_comments`, then
-  decide.
-<!-- endfragment -->
+Slides saves deck changes and comment changes separately. A successful mixed
+batch can save the deck without confirming the comments. When
+`commentUpdateState` is not `ALL_SAVED`, or the result says comment saves are
+unconfirmed, read the deck and `list_comments`, report each outcome separately,
+and avoid replaying the whole batch. Keep every created id for reconciliation.

@@ -313,7 +313,7 @@
     "create_file": {
       "name": "notes.md",
       "parentId": "folder-1",
-      "content": "# Notes — café",
+      "content": "# Notes \u2014 caf\u00e9",
       "mimeType": "text/markdown"
     },
     "update_file_content": {
@@ -483,9 +483,9 @@
       "cc": [
         "Smith, Dana <dana@example.com>"
       ],
-      "subject": "Réunion des anciens",
-      "body": "Bonjour à tous,\nÀ mardi.",
-      "htmlBody": "<p>Bonjour à tous</p>"
+      "subject": "R\u00e9union des anciens",
+      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
+      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
     },
     "update_draft": {
       "draftId": "d1",
@@ -902,6 +902,32 @@
           }
         }
       ]
+    },
+    "slides_api_search": {
+      "query": "presentation"
+    },
+    "slides_api_details": {
+      "method": "GET",
+      "path": "/presentations/{presentationsId}"
+    },
+    "slides_api_read": {
+      "path": "/presentations/deck1"
+    },
+    "slides_api_write": {
+      "method": "POST",
+      "path": "/presentations/deck1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "createSlide": {
+              "objectId": "newslide"
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "rev-1"
+        }
+      }
     }
   },
   "stripe": {

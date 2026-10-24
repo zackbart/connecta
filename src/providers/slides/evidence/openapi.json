@@ -1,0 +1,26 @@
+{
+  "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
+  "documentation": "https://developers.google.com/workspace/slides/api/reference/rest",
+  "revision": "20261019",
+  "digest": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+  "vendored": true,
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true
+  },
+  "discovery": {
+    "pin": "discovery.json",
+    "format": "google-discovery-v1",
+    "summaries": {
+      "slides.presentations.get": "Get a presentation deck with slides, speaker notes, layouts, masters, elements, text styles and comments.",
+      "slides.presentations.create": "Create a presentation deck.",
+      "slides.presentations.batchUpdate": "Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",
+      "slides.presentations.pages.get": "Get a slide, layout, master or notes page with elements, text styles, placeholders and transforms.",
+      "slides.presentations.pages.getThumbnail": "Get a slide thumbnail preview link. Refused in the generic hatch; use get_slide_thumbnail."
+    }
+  }
+}

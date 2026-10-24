@@ -9,9 +9,18 @@
       "POST /v1/presentations",
       "POST /v1/presentations/{presentationId}:batchUpdate"
     ],
-    "evidence": {}
+    "evidence": {
+      "discovery.document.json": "sha256:ed0b6619e9f776a4c9c4094a303dbaaa47a79e90ceada26ae0c7c2986ee30fea",
+      "discovery.json": "sha256:c0f579b8a691b76e19e850937897412d9ab940164155fdf9be7df54ad0148c9f",
+      "openapi.document.json": "sha256:213713ce951dfe8d12ac63b1515df4ce2d99c547c8e2b76540e8ad38e446478b",
+      "openapi.json": "sha256:8d67644643cd0472be2a78d66ac189a3d9e979994c7960fa8b416adfdea49284"
+    }
   },
   "checks": [
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
     {
       "type": "endpoints",
       "specification": {

@@ -1,0 +1,6 @@
+---
+type: changed
+breaking: true
+---
+
+Standardize Google Slides with four indexed `slides_api_*` hatches while keeping all 15 named tools. Generic thumbnails remain refused; `get_slide_thumbnail` keeps its private temporary-link workflow. Batch writes retain the 49 reviewed request kinds, revision preconditions and separate comment-save outcomes. Remove `raw` from `get_presentation`, `get_page` and `list_comments`; use `slides_api_read` for structural JSON. Rename list `layouts`/`threads` to `items`, move exact `total` into `page.total`, omit terminal `page.nextCursor`, and restart old content cursors once for signed continuation. Replace boolean `truncated`, reply `cut`, `elementsNotShown`, `layoutsNotShown`, `repliesNotShown` and `revisionIdNotShown` size reports with `truncated` paths. Rename projected `get_presentation.pageSize` to `canvasSize` (slide dimensions); full hatch JSON keeps vendor `data.pageSize`. Named reads gain narrowing `fields`; hatch responses use `{status,data}`. Presentations.get details retain the legacy `presentationsId` parameter spelling. The new write hatch is destructive; retained named classifications are unchanged. See the Google Slides section of `documentation/provider-migration-0.35.md` for concrete path, query and body mappings.

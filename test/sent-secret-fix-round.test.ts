@@ -8,6 +8,7 @@ import { drive } from "../src/providers/drive/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { redactBoundedRead, requestSentSecrets, SentSecrets } from "../src/sent-secrets.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
 import { echoForms, leaks, SECRET } from "./helpers/secret-echoes.js";
@@ -412,7 +413,7 @@ describe("Slides representation-bound cursors", () => {
   const content = `${privateValue.repeat(20)}${Array.from({ length: 30_000 }, (_, i) => `[${String(i).padStart(5, "0")}]`).join("")}`;
 
   it.each([false, true])(
-    "INV-5: projected and raw continuations reject changed secret sets (first secret: %s)",
+    "INV-5: signed content continuations reject changed secret sets (first secret: %s)",
     async (firstHasSecret) => {
       stubGoogle((url) =>
         url.searchParams.has("commentsViewMode")
@@ -435,28 +436,25 @@ describe("Slides representation-bound cursors", () => {
             },
       );
       const connector = slides("decks", await workspaceOptions());
-      for (const [tool, raw] of [
-        ["get_page", false],
-        ["get_page", true],
-        ["list_comments", false],
-        ["list_comments", true],
-      ] as const) {
-        const args = { presentationId: "deck1", pageObjectId: "s1", raw };
-        const first: any = await connector.callTool(
-          tool,
-          args,
-          privateContext(firstHasSecret ? privateValue : undefined),
-        );
+      const continuationStorage = memoryStorage();
+      const pageContext = (value?: string) => {
+        const ctx = privateContext(value);
+        ctx.storage = continuationStorage;
+        return ctx;
+      };
+      for (const tool of ["get_page", "list_comments"] as const) {
+        const args = { presentationId: "deck1", pageObjectId: "s1" };
+        const first: any = await connector.callTool(tool, args, pageContext(firstHasSecret ? privateValue : undefined));
         expect(first.page.nextCursor).toBeTruthy();
         const continuation = { ...args, cursor: first.page.nextCursor };
         const same: any = await connector.callTool(
           tool,
           continuation,
-          privateContext(firstHasSecret ? privateValue : undefined),
+          pageContext(firstHasSecret ? privateValue : undefined),
         );
-        expect((same.elements ?? same.threads).length).toBeGreaterThan(0);
+        expect((same.elements ?? same.items).length).toBeGreaterThan(0);
         await expect(
-          connector.callTool(tool, continuation, privateContext(firstHasSecret ? undefined : privateValue)),
+          connector.callTool(tool, continuation, pageContext(firstHasSecret ? undefined : privateValue)),
         ).rejects.toMatchObject({ code: "conflict" });
         if (firstHasSecret) expect(leaks(JSON.stringify([first, same]), privateValue)).toBe(false);
       }

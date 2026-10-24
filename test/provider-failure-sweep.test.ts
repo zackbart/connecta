@@ -47,7 +47,7 @@ const LOCAL = new Set([
   "github.list_scopes",
   "planning-center.pco_api_search",
   "planning-center.pco_api_details",
-  ...["breeze", "ccb", "cloudflare", "github", "overflow", "stripe", "tithely", "vercel"].flatMap((name) => [
+  ...["breeze", "ccb", "cloudflare", "github", "overflow", "stripe", "tithely", "vercel", "slides"].flatMap((name) => [
     `${name}.${name}_api_search`,
     `${name}.${name}_api_details`,
   ]),
@@ -131,13 +131,19 @@ describe("API provider failure sweep", () => {
         `${provider.name}: cover tools from every API mode`,
       ).toEqual(tools);
       expect(Object.keys(argumentsTable[provider.name]!).sort(), provider.name).toEqual(tools);
-      // Fold GitHub's two new offline hatches here: injected remote failures
-      // cannot affect metadata that sends no request.
-      if (provider.name === "github")
-        for (const name of ["github_api_search", "github_api_details"]) {
-          const result = await sweepCall(provider, name, `github.${name}`, argumentsTable.github![name], "read", () => {
-            throw new Error("An offline GitHub hatch dispatched a request.");
-          });
+      // Offline index hatches cannot observe injected remote failures; fold them into the inventory row.
+      if (["github", "slides"].includes(provider.name))
+        for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
+          const result = await sweepCall(
+            provider,
+            name,
+            `${provider.name}.${name}`,
+            argumentsTable[provider.name]![name],
+            "read",
+            () => {
+              throw new Error("An offline API hatch dispatched a request.");
+            },
+          );
           expect(result.isError).toBeFalsy();
         }
     }
@@ -148,7 +154,11 @@ describe("API provider failure sweep", () => {
     describe(provider.name, () => {
       const examples = provider.catalog
         .filter(
-          (tool) => !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)),
+          (tool) =>
+            !(
+              ["github", "slides"].includes(provider.name) &&
+              [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
+            ),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },

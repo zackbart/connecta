@@ -1,5 +1,260 @@
 [
   {
+    "label": "slides_api_search",
+    "tool": "slides_api_search",
+    "args": {
+      "query": "format slide text"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "POST",
+            "path": "/presentations/{presentationId}:batchUpdate",
+            "operationId": "slides.presentations.batchUpdate",
+            "summary": "Update presentation: add slide, replace text, format text styles; create/reply comment, resolve comment thread.",
+            "tool": "slides_api_write",
+            "named": "batch_update_presentation"
+          },
+          {
+            "method": "GET",
+            "path": "/presentations/{presentationsId}",
+            "operationId": "slides.presentations.get",
+            "summary": "Get a presentation deck with slides, speaker notes, layouts, masters, elements, text styles and comments.",
+            "tool": "slides_api_read",
+            "named": "get_presentation"
+          },
+          {
+            "method": "GET",
+            "path": "/presentations/{presentationId}/pages/{pageObjectId}",
+            "operationId": "slides.presentations.pages.get",
+            "summary": "Get a slide, layout, master or notes page with elements, text styles, placeholders and transforms.",
+            "tool": "slides_api_read",
+            "named": "get_page"
+          },
+          {
+            "method": "GET",
+            "path": "/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
+            "operationId": "slides.presentations.pages.getThumbnail",
+            "summary": "Get a slide thumbnail preview link.",
+            "named": "get_slide_thumbnail"
+          },
+          {
+            "method": "POST",
+            "path": "/presentations",
+            "operationId": "slides.presentations.create",
+            "summary": "Create a presentation deck.",
+            "tool": "slides_api_write",
+            "named": "create_presentation"
+          }
+        ],
+        "revision": "20261019",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "slides_api_details",
+    "tool": "slides_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/presentations/{presentationsId}"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/presentations/{presentationsId}",
+        "operationId": "slides.presentations.get",
+        "summary": "Get a presentation deck with slides, speaker notes, layouts, masters, elements, text styles and comments.",
+        "parameters": [
+          {
+            "name": "prettyPrint",
+            "in": "query",
+            "required": false,
+            "description": "Returns response with indentations and line breaks.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": false,
+            "description": "Selector specifying which fields to include in a partial response.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "presentationsId",
+            "in": "path",
+            "required": true,
+            "description": "The ID of the presentation to retrieve.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "commentsViewMode",
+            "in": "query",
+            "required": false,
+            "description": "The comments view mode to apply to the presentation.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "COMMENTS_VIEW_MODE_UNSPECIFIED",
+                "COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS",
+                "COMMENTS_VIEW_MODE_OMITTED",
+                "COMMENTS_VIEW_MODE_INCLUDED"
+              ]
+            }
+          }
+        ],
+        "verdict": "read",
+        "tool": "slides_api_read",
+        "named": "get_presentation",
+        "revision": "20261019"
+      }
+    }
+  },
+  {
+    "label": "slides_api_write",
+    "tool": "slides_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/presentations/deck1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "createSlide": {
+              "objectId": "newslide"
+            }
+          },
+          {
+            "insertComment": {
+              "objectId": "p",
+              "content": "Hello"
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "rev-1"
+        }
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-slides-api-write@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "createSlide": {
+                    "objectId": "newslide"
+                  }
+                },
+                {
+                  "insertComment": {
+                    "objectId": "p",
+                    "content": "Hello"
+                  }
+                }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "rev-1"
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "presentationId": "deck1",
+          "replies": [
+            {
+              "createSlide": {
+                "objectId": "newslide"
+              }
+            },
+            {
+              "insertComment": {
+                "commentThread": {
+                  "commentId": "newcomment",
+                  "headPost": {
+                    "postId": "newpost"
+                  }
+                }
+              }
+            }
+          ],
+          "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
+          "note": "Slides accepted the write but did not report its comment changes saved (commentUpdateState), so it was not all or none: other changes may have applied. Do not repeat it; re-read with list_comments to see what saved."
+        }
+      }
+    }
+  },
+  {
     "label": "get_presentation",
     "tool": "get_presentation",
     "args": {
@@ -67,7 +322,7 @@
         "revisionId": "rev-1",
         "url": "https://docs.google.com/presentation/d/deck1/edit",
         "locale": "en",
-        "pageSize": {
+        "canvasSize": {
           "width": {
             "magnitude": 9144000,
             "unit": "EMU"
@@ -157,19 +412,16 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
   },
   {
-    "label": "get_presentation raw",
-    "tool": "get_presentation",
+    "label": "structural presentation hatch",
+    "tool": "slides_api_read",
     "args": {
-      "presentationId": "deck1",
-      "raw": true,
-      "limit": 1
+      "path": "/presentations/deck1"
     },
     "steps": [
       [
@@ -197,7 +449,7 @@
                       "typ": "JWT"
                     },
                     "claims": {
-                      "iss": "slides-get-presentation-raw@project.iam.gserviceaccount.com",
+                      "iss": "slides-structural-presentation-hatch@project.iam.gserviceaccount.com",
                       "sub": "alice@example.com",
                       "scope": "https://www.googleapis.com/auth/presentations",
                       "aud": "https://oauth2.googleapis.com/token",
@@ -228,165 +480,354 @@
       "ok": true,
       "format": "json",
       "value": {
-        "presentationId": "deck1",
-        "title": "Easter Sunday",
-        "revisionId": "rev-1",
-        "url": "https://docs.google.com/presentation/d/deck1/edit",
-        "locale": "en",
-        "pageSize": {
-          "width": {
-            "magnitude": 9144000,
-            "unit": "EMU"
+        "status": 200,
+        "data": {
+          "presentationId": "deck1",
+          "title": "Easter Sunday",
+          "revisionId": "rev-1",
+          "locale": "en",
+          "pageSize": {
+            "width": {
+              "magnitude": 9144000,
+              "unit": "EMU"
+            },
+            "height": {
+              "magnitude": 5143500,
+              "unit": "EMU"
+            }
           },
-          "height": {
-            "magnitude": 5143500,
-            "unit": "EMU"
-          }
-        },
-        "slideCount": 3,
-        "slides": [
-          {
-            "objectId": "p",
-            "slideProperties": {
-              "layoutObjectId": "L1",
-              "notesPage": {
-                "objectId": "p_notes",
-                "notesProperties": {
-                  "speakerNotesObjectId": "n1"
-                },
-                "pageElements": [
-                  {
-                    "objectId": "slideImage",
-                    "image": {
-                      "contentUrl": "https://lh3.example/y"
-                    }
-                  },
-                  {
-                    "objectId": "n1",
-                    "shape": {
-                      "shapeType": "TEXT_BOX",
-                      "text": {
-                        "textElements": [
-                          {
-                            "startIndex": 0,
-                            "endIndex": 1,
-                            "paragraphMarker": {
-                              "style": {}
-                            }
-                          },
-                          {
-                            "textRun": {
-                              "content": "Welcome everyone.\n",
-                              "style": {
-                                "bold": true
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    }
-                  }
-                ]
+          "masters": [
+            {
+              "objectId": "M1",
+              "masterProperties": {
+                "displayName": "Light"
+              }
+            }
+          ],
+          "layouts": [
+            {
+              "objectId": "L1",
+              "layoutProperties": {
+                "name": "TITLE",
+                "displayName": "Title slide",
+                "masterObjectId": "M1"
               }
             },
-            "pageElements": [
-              {
-                "objectId": "body",
-                "transform": {
-                  "scaleX": 1,
-                  "scaleY": 1,
-                  "translateX": 311700,
-                  "translateY": 2000000,
-                  "unit": "EMU"
-                },
-                "shape": {
-                  "shapeType": "TEXT_BOX",
-                  "placeholder": {
-                    "type": "SUBTITLE"
-                  },
-                  "text": {
-                    "textElements": [
-                      {
-                        "startIndex": 0,
-                        "endIndex": 1,
-                        "paragraphMarker": {
-                          "style": {}
-                        }
-                      },
-                      {
-                        "textRun": {
-                          "content": "He is risen\u000bindeed\n",
-                          "style": {
-                            "bold": true
-                          }
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "objectId": "title",
-                "transform": {
-                  "scaleX": 1,
-                  "scaleY": 1,
-                  "translateX": 311700,
-                  "translateY": 744575,
-                  "unit": "EMU"
-                },
-                "shape": {
-                  "shapeType": "TEXT_BOX",
-                  "placeholder": {
-                    "type": "CENTERED_TITLE"
-                  },
-                  "text": {
-                    "textElements": [
-                      {
-                        "startIndex": 0,
-                        "endIndex": 1,
-                        "paragraphMarker": {
-                          "style": {}
-                        }
-                      },
-                      {
-                        "textRun": {
-                          "content": "Easter ",
-                          "style": {
-                            "bold": true
-                          }
-                        }
-                      },
-                      {
-                        "textRun": {
-                          "content": "Sunday\n",
-                          "style": {
-                            "bold": true
-                          }
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "objectId": "rule",
-                "transform": {
-                  "scaleX": 1,
-                  "scaleY": 1,
-                  "translateX": 0,
-                  "translateY": 1500000,
-                  "unit": "EMU"
-                },
-                "line": {
-                  "lineType": "STRAIGHT_LINE"
-                }
+            {
+              "objectId": "L2",
+              "layoutProperties": {
+                "name": "TITLE_AND_BODY",
+                "displayName": "Title and body",
+                "masterObjectId": "M1"
               }
-            ]
-          }
-        ],
-        "page": {
-          "hasMore": true,
-          "nextCursor": "eyJrIjoiZGVjayIsInAiOiJkZWNrMSIsInMiOiJyOnJldi0xIiwicmF3IjoxLCJpIjoxfQ"
+            }
+          ],
+          "slides": [
+            {
+              "objectId": "p",
+              "slideProperties": {
+                "layoutObjectId": "L1",
+                "notesPage": {
+                  "objectId": "p_notes",
+                  "notesProperties": {
+                    "speakerNotesObjectId": "n1"
+                  },
+                  "pageElements": [
+                    {
+                      "objectId": "slideImage",
+                      "image": {
+                        "contentUrl": "[redacted]"
+                      }
+                    },
+                    {
+                      "objectId": "n1",
+                      "shape": {
+                        "shapeType": "TEXT_BOX",
+                        "text": {
+                          "textElements": [
+                            {
+                              "startIndex": 0,
+                              "endIndex": 1,
+                              "paragraphMarker": {
+                                "style": {}
+                              }
+                            },
+                            {
+                              "textRun": {
+                                "content": "Welcome everyone.\n",
+                                "style": {
+                                  "bold": true
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "pageElements": [
+                {
+                  "objectId": "body",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 311700,
+                    "translateY": 2000000,
+                    "unit": "EMU"
+                  },
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "SUBTITLE"
+                    },
+                    "text": {
+                      "textElements": [
+                        {
+                          "startIndex": 0,
+                          "endIndex": 1,
+                          "paragraphMarker": {
+                            "style": {}
+                          }
+                        },
+                        {
+                          "textRun": {
+                            "content": "He is risen\u000bindeed\n",
+                            "style": {
+                              "bold": true
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "objectId": "title",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 311700,
+                    "translateY": 744575,
+                    "unit": "EMU"
+                  },
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "CENTERED_TITLE"
+                    },
+                    "text": {
+                      "textElements": [
+                        {
+                          "startIndex": 0,
+                          "endIndex": 1,
+                          "paragraphMarker": {
+                            "style": {}
+                          }
+                        },
+                        {
+                          "textRun": {
+                            "content": "Easter ",
+                            "style": {
+                              "bold": true
+                            }
+                          }
+                        },
+                        {
+                          "textRun": {
+                            "content": "Sunday\n",
+                            "style": {
+                              "bold": true
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "objectId": "rule",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 0,
+                    "translateY": 1500000,
+                    "unit": "EMU"
+                  },
+                  "line": {
+                    "lineType": "STRAIGHT_LINE"
+                  }
+                }
+              ]
+            },
+            {
+              "objectId": "s2",
+              "slideProperties": {
+                "layoutObjectId": "L2",
+                "isSkipped": true
+              },
+              "pageElements": [
+                {
+                  "objectId": "group",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 100,
+                    "translateY": 0,
+                    "unit": "PT"
+                  },
+                  "elementGroup": {
+                    "children": [
+                      {
+                        "objectId": "g-table",
+                        "transform": {
+                          "scaleX": 1,
+                          "scaleY": 1,
+                          "translateX": 0,
+                          "translateY": 1270000,
+                          "unit": "EMU"
+                        },
+                        "table": {
+                          "rows": 2,
+                          "columns": 2,
+                          "tableRows": [
+                            {
+                              "tableCells": [
+                                {
+                                  "text": {
+                                    "textElements": [
+                                      {
+                                        "startIndex": 0,
+                                        "endIndex": 1,
+                                        "paragraphMarker": {
+                                          "style": {}
+                                        }
+                                      },
+                                      {
+                                        "textRun": {
+                                          "content": "Time\n",
+                                          "style": {
+                                            "bold": true
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "text": {
+                                    "textElements": [
+                                      {
+                                        "startIndex": 0,
+                                        "endIndex": 1,
+                                        "paragraphMarker": {
+                                          "style": {}
+                                        }
+                                      },
+                                      {
+                                        "textRun": {
+                                          "content": "Service\n",
+                                          "style": {
+                                            "bold": true
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "tableCells": [
+                                {
+                                  "text": {
+                                    "textElements": [
+                                      {
+                                        "startIndex": 0,
+                                        "endIndex": 1,
+                                        "paragraphMarker": {
+                                          "style": {}
+                                        }
+                                      },
+                                      {
+                                        "textRun": {
+                                          "content": "9:00\n",
+                                          "style": {
+                                            "bold": true
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "text": {
+                                    "textElements": [
+                                      {
+                                        "startIndex": 0,
+                                        "endIndex": 1,
+                                        "paragraphMarker": {
+                                          "style": {}
+                                        }
+                                      },
+                                      {
+                                        "textRun": {
+                                          "content": "Sunrise\nservice\n",
+                                          "style": {
+                                            "bold": true
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "objectId": "photo",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 0,
+                    "translateY": 1270000,
+                    "unit": "EMU"
+                  },
+                  "title": "Empty tomb",
+                  "description": "Sunrise photo",
+                  "image": {
+                    "contentUrl": "[redacted]"
+                  }
+                },
+                {
+                  "objectId": "chart",
+                  "transform": {
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "translateX": 0,
+                    "translateY": 3000000,
+                    "unit": "EMU"
+                  },
+                  "sheetsChart": {
+                    "spreadsheetId": "sheet1"
+                  }
+                }
+              ]
+            },
+            {
+              "objectId": "s3",
+              "slideProperties": {
+                "layoutObjectId": "L2"
+              },
+              "pageElements": []
+            }
+          ]
         }
       }
     }
@@ -483,8 +924,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }
@@ -554,8 +994,11 @@
       "value": {
         "presentationId": "deck1",
         "revisionId": "rev-1",
-        "total": 3,
-        "layouts": [
+        "page": {
+          "hasMore": false,
+          "total": 3
+        },
+        "items": [
           {
             "objectId": "M1",
             "kind": "master",
@@ -575,11 +1018,7 @@
             "displayName": "Title and body",
             "masterId": "M1"
           }
-        ],
-        "page": {
-          "hasMore": false,
-          "nextCursor": null
-        }
+        ]
       }
     }
   },
@@ -648,8 +1087,11 @@
       "value": {
         "presentationId": "deck1",
         "revisionId": "rev-1",
-        "total": 2,
-        "threads": [
+        "page": {
+          "hasMore": false,
+          "total": 2
+        },
+        "items": [
           {
             "commentId": "c1",
             "anchorId": "a1",
@@ -717,11 +1159,7 @@
               "content": "Typo in the notes"
             }
           }
-        ],
-        "page": {
-          "hasMore": false,
-          "nextCursor": null
-        }
+        ]
       }
     }
   },
@@ -1833,7 +2271,7 @@
         "revisionId": "rev-1",
         "url": "https://docs.google.com/presentation/d/deck1/edit",
         "locale": "en",
-        "pageSize": {
+        "canvasSize": {
           "width": {
             "magnitude": 9144000,
             "unit": "EMU"
@@ -1923,8 +2361,7 @@
           }
         ],
         "page": {
-          "hasMore": false,
-          "nextCursor": null
+          "hasMore": false
         }
       }
     }

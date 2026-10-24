@@ -474,7 +474,7 @@ describe("Slides", () => {
       for (let pages = 0; pages < 4; pages++) {
         const args = { presentationId: "deck1", ...(cursor ? { cursor } : {}) };
         const result = await read(connector.callTool("list_comments", args, caller()));
-        for (const thread of result.threads as { headPost?: { content?: string } }[])
+        for (const thread of result.items as { headPost?: { content?: string } }[])
           shown.push(thread.headPost?.content ?? "");
         cursor = result.page.nextCursor ?? undefined;
         if (!cursor) break;
@@ -484,22 +484,15 @@ describe("Slides", () => {
   );
 
   it.each([["raw", SECRET]])(
-    "INV-5: a raw page element echoing the sent token %s, chunked past one result, leaks no fragment across chunks",
+    "INV-5: a structural Slides hatch keeps split text runs behind the sent-secret boundary %s",
     async (_name, form) => {
       const { page } = deck("Plan", form.repeat(Math.ceil(400_000 / form.length)));
       stubGoogle(() => page);
       const connector = slides("decks", await workspaceOptions());
-      const args = { presentationId: "deck1", pageObjectId: "s1", raw: true };
-      const chunks: string[] = [];
-      let cursor: string | undefined;
-      for (let pages = 0; pages < 8; pages++) {
-        const result = await read(connector.callTool("get_page", cursor ? { ...args, cursor } : args, caller()));
-        for (const element of result.elements as { rawJson?: { json: string } }[])
-          chunks.push(element.rawJson?.json ?? "");
-        cursor = result.page.nextCursor ?? undefined;
-        if (!cursor) break;
-      }
-      expectNoPiece(chunks.join(""), form);
+      const result = await read(
+        connector.callTool("slides_api_read", { path: "/presentations/deck1/pages/s1" }, caller()),
+      );
+      expectNoPiece(JSON.stringify(result.data), form);
     },
   );
 });
