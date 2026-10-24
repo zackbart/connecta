@@ -1269,6 +1269,21 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+A provider whose public API is split across documents may declare
+`evidence/openapi.json` as `{ revision, documents: [{ pin, prefix }], options? }`.
+Each `pin` names a simple supplemental sibling pin and byte-exact document;
+`prefix` is its literal API path and must match that document's one server.
+All documents must share an HTTPS origin. A composition has no `url`, `digest`,
+`latest`, or `vendored` field of its own: its actual source URLs and composite
+digest are derived from those pins. `providers:spec` namespaces local component
+references, prefixes paths, refuses collisions, and compiles the combined
+contract through the same compiler. Missing operation summaries inherit the
+path item's resource description with a method-specific action. Both the source
+pin bytes and normalized composed document are checked for offline freshness.
+A composition moves only by explicit review of its source pins/documents;
+`--record` and `--file` cannot replace it. `providers:check` compares the actual
+public documents independently; it never fetches a synthetic combined URL.
+
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the

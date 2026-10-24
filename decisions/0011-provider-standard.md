@@ -180,6 +180,13 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+A multi-document API may use a composition in `evidence/openapi.json`:
+`{ revision, documents: [{ pin, prefix }], options? }`. Each source is a
+supplemental sibling pin and byte-exact document. Prefixes match their source
+server paths and share one HTTPS origin. There is no combined public URL or
+hand-kept digest. The generator namespaces references and derives source and
+composed-document digests; only reviewed source-pin changes move the baseline.
+
 - **E1.** `evidence/` holds only these names.
 - **E2.** No hosted MCP catalog or documentation evidence is captured or
   required (0012), including the former observation-only Google baselines.

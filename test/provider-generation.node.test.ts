@@ -1194,6 +1194,7 @@ describe("value-safety candidate detection", () => {
 
 describe("decision 0011 evidence names in providers:spec and value safety", () => {
   interface Spec {
+    composeOpenApi(directory: string, source: object): Promise<{ document: any; digest: string }>;
     checkOpenApiOutputs(root: string, providers: { directory: string }[]): Promise<string[]>;
     openApiEvidence(directory: string): Promise<{ pin: string } | undefined>;
     readOpenApiSource(directory: string): Promise<unknown>;
@@ -1314,5 +1315,78 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     writeFileSync(join(directory, "evidence/openapi.json"), JSON.stringify({ ...pin, vendored: undefined }));
     unlinkSync(join(directory, "evidence/openapi.document.json"));
     expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+    // A multi-document API keeps every actual public URL and namespaces local
+    // refs, rather than pinning an invented combined public specification.
+    const { composeOpenApi } = await spec();
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const part = (prefix: string, property: string) =>
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: { title: prefix, version: "1" },
+        servers: [{ url: `https://vendor.example/${prefix}/v2` }],
+        paths: {
+          "/things": {
+            summary: "Thing",
+            get: {
+              responses: {
+                "200": { content: { "application/json": { schema: { $ref: "#/components/schemas/Thing" } } } },
+              },
+            },
+          },
+        },
+        components: { schemas: { Thing: { type: "object", properties: { [property]: { type: "string" } } } } },
+      });
+    const alpha = part("alpha", "name"),
+      beta = part("beta", "title");
+    const composition = {
+      revision: "alpha@1,beta@1",
+      documents: [
+        { pin: "alpha.json", prefix: "/alpha/v2" },
+        { pin: "beta.json", prefix: "/beta/v2" },
+      ],
+    };
+    const pinFor = (name: string, value: string) =>
+      JSON.stringify({
+        url: `https://vendor.example/${name}.json`,
+        documentation: `https://vendor.example/${name}/docs`,
+        digest: sha256(value),
+        vendored: true,
+      });
+    const multi = folder({
+      "evidence/openapi.json": JSON.stringify(composition),
+      "evidence/alpha.json": pinFor("alpha", alpha),
+      "evidence/alpha.document.json": alpha,
+      "evidence/beta.json": pinFor("beta", beta),
+      "evidence/beta.document.json": beta,
+    });
+    await specProvider(multi.provider);
+    expect(await checkOpenApiOutputs(multi.root, [multi.provider])).toEqual([]);
+    const composed = await composeOpenApi(multi.directory, composition);
+    const index = new OperationIndex(
+      buildOperationIndex(composed.document, { url: "Actual sources", revision: "1", digest: composed.digest }),
+      { vendor: "fixture", title: "Fixture" },
+    );
+    expect(index.ops.map((op) => op.path)).toEqual(["/alpha/v2/things", "/beta/v2/things"]);
+    expect(index.fields(index.ops[0]!)).toContainEqual({ in: "response", path: "name" });
+    expect(index.fields(index.ops[1]!)).toContainEqual({ in: "response", path: "title" });
+    expect(index.ops.every((op) => op.summary.includes("Thing"))).toBe(true);
+    await expect(specProvider(multi.provider, { record: true })).rejects.toThrow("a composed pin moves by review");
+    await expect(specProvider(multi.provider, { file: "ignored" })).rejects.toThrow("a composed pin moves by review");
+    writeFileSync(join(multi.directory, "evidence/beta.document.json"), beta.replace('"title"', '"label"'));
+    await expect(checkOpenApiOutputs(multi.root, [multi.provider])).rejects.toThrow("does not match the pinned");
+    const movedBeta = beta.replace('"title"', '"label"');
+    writeFileSync(join(multi.directory, "evidence/beta.json"), pinFor("beta", movedBeta));
+    expect(await checkOpenApiOutputs(multi.root, [multi.provider])).toEqual(["acme/openapi.generated.ts"]);
+    await specProvider(multi.provider);
+    expect(await checkOpenApiOutputs(multi.root, [multi.provider])).toEqual([]);
+    for (const documents of [
+      [{ pin: "../alpha.json", prefix: "/alpha/v2" }],
+      [composition.documents[0], composition.documents[0]],
+      [{ pin: "alpha.json", prefix: "/alpha/../v2" }],
+    ]) {
+      writeFileSync(join(multi.directory, "evidence/openapi.json"), JSON.stringify({ ...composition, documents }));
+      await expect(specProvider(multi.provider)).rejects.toThrow("unique supplemental document pins");
+    }
   });
 });

@@ -21,6 +21,7 @@ import {
   generatedProblems,
   supplementalDocument,
   validSupplementalPin,
+  validOpenApiComposition,
 } from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
@@ -175,31 +176,37 @@ export function evidenceViolations(provider: ProviderFacts, _today: string): str
   const has = (path: string) => provider.files.includes(path);
   const drift = parse(provider.read("drift.json"));
   const pins = new Set<string>();
+  const names: string[] = [];
+  const source = parse(provider.read("evidence/openapi.json"));
+  if (record(source) && validOpenApiComposition(source))
+    for (const entry of source["documents"] as { pin: string }[]) names.push(entry.pin);
   if (record(drift) && Array.isArray(drift["checks"])) {
     for (const check of drift["checks"]) {
       if (!record(check) || !record(check["specification"])) continue;
       const pin = check["specification"]["pin"];
-      if (typeof pin !== "string") continue;
-      const document = supplementalDocument(pin);
-      if (!document) {
-        found.push("E3: supplemental pin needs a simple non-reserved filename");
-        continue;
-      }
-      pins.add(pin);
-      pins.add(document);
-      const value = parse(provider.read(`evidence/${pin}`));
-      const evidence =
-        record(drift["generated"]) && record(drift["generated"]["evidence"]) ? drift["generated"]["evidence"] : {};
-      if (
-        !validSupplementalPin(value) ||
-        !record(value) ||
-        value["digest"] !== evidence[document] ||
-        !has(`evidence/${document}`)
-      )
-        found.push(
-          "E3: supplemental pin needs https url/documentation, vendored: true and its matching document digest",
-        );
+      if (typeof pin === "string") names.push(pin);
     }
+  }
+  for (const pin of new Set(names)) {
+    const document = supplementalDocument(pin);
+    if (!document) {
+      found.push("E3: supplemental pin needs a simple non-reserved filename");
+      continue;
+    }
+    pins.add(pin);
+    pins.add(document);
+    const value = parse(provider.read(`evidence/${pin}`));
+    const evidence =
+      record(drift) && record(drift["generated"]) && record(drift["generated"]["evidence"])
+        ? drift["generated"]["evidence"]
+        : {};
+    if (
+      !validSupplementalPin(value) ||
+      !record(value) ||
+      value["digest"] !== evidence[document] ||
+      !has(`evidence/${document}`)
+    )
+      found.push("E3: supplemental pin needs https url/documentation, vendored: true and its matching document digest");
   }
   for (const file of provider.files) {
     if (!file.startsWith("evidence/")) continue;
@@ -210,13 +217,14 @@ export function evidenceViolations(provider: ProviderFacts, _today: string): str
   if (has("evidence/openapi.json")) {
     const pin = parse(provider.read("evidence/openapi.json"));
     if (
-      !record(pin) ||
-      typeof pin["url"] !== "string" ||
-      !pin["url"].startsWith("https://") ||
-      typeof pin["revision"] !== "string" ||
-      !pin["revision"] ||
-      typeof pin["digest"] !== "string" ||
-      !SHA256.test(pin["digest"])
+      !validOpenApiComposition(pin) &&
+      (!record(pin) ||
+        typeof pin["url"] !== "string" ||
+        !pin["url"].startsWith("https://") ||
+        typeof pin["revision"] !== "string" ||
+        !pin["revision"] ||
+        typeof pin["digest"] !== "string" ||
+        !SHA256.test(pin["digest"]))
     ) {
       found.push("E3: evidence/openapi.json needs an https url, a revision, and a sha256 digest");
     }

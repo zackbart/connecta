@@ -110,6 +110,16 @@ The checker reads that document offline from this provider's evidence only,
 checks its digest, and never fetches the pin's URL. Keep dataset semantics
 that the envelope does not describe in a separate manual check.
 
+For a vendor with several public OpenAPI documents, `evidence/openapi.json`
+may instead declare `{ revision, documents: [{ pin, prefix }], options? }`.
+Each `pin` names one supplemental sibling pin/document; each literal `prefix`
+matches that document's one HTTPS server path, and all servers share an origin.
+Do not invent a combined public URL. The compiler namespaces local component
+references, prefixes paths and rejects collisions before `buildOperationIndex`.
+It derives source and document digests from the retained evidence; generation
+and freshness need no scratch files. A composition moves only by review, never
+`--record` or `--file`. Keep product version and endpoint drift checks as well.
+
 Nothing else goes in `evidence/`. Never fetch credentials or call operational
 tools to capture evidence.
 

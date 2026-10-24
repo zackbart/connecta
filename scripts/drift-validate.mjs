@@ -57,6 +57,33 @@ export function validSupplementalPin(pin) {
   );
 }
 
+/** A composition names reviewed sibling pins and literal API prefixes, never a combined public URL. */
+export function validOpenApiComposition(source) {
+  return (
+    source !== null &&
+    typeof source === "object" &&
+    typeof source.revision === "string" &&
+    source.revision.trim() !== "" &&
+    !/[\r\n]/.test(source.revision) &&
+    source.url === undefined &&
+    source.digest === undefined &&
+    source.vendored === undefined &&
+    source.latest === undefined &&
+    Array.isArray(source.documents) &&
+    source.documents.length > 0 &&
+    source.documents.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        supplementalDocument(entry.pin) !== undefined &&
+        typeof entry.prefix === "string" &&
+        /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(entry.prefix),
+    ) &&
+    new Set(source.documents.map((entry) => entry.pin)).size === source.documents.length &&
+    new Set(source.documents.map((entry) => entry.prefix)).size === source.documents.length
+  );
+}
+
 /** `{ method, path }` of an operation key, or undefined when it is not one. */
 export function parseOperation(key) {
   const match = typeof key === "string" ? OPERATION.exec(key) : null;
