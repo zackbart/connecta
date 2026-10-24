@@ -7,6 +7,15 @@ roster](./integrating.md#add-or-remove-a-connector) covers the general
 procedure and the providers not listed here. Agent guidance for each
 provider ships with its connection's usage guide, not here.
 
+Standard API operation search accepts resource nouns, actions and conversational
+phrasing. A bare noun ranks its root collection before nested routes; action
+queries prefer the corresponding reviewed read or write and can match some
+terms when no operation contains every word. Search order is deterministic.
+For example, search a configured `crm` connection's API index for `person`,
+then follow `page.nextCursor` to reach operations beyond the leading profile
+results. Responses contain at most eight compact hits within 16 KiB; fetch
+operation details separately and keep the same query when continuing.
+
 ## Planning Center
 
 `planningCenter()` connects one organization's reviewed product APIs.

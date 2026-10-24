@@ -26,12 +26,25 @@
             "tool": "tithely_api_write"
           },
           {
-            "method": "GET",
-            "path": "/charges/{charge_id}",
-            "operationId": "getCharge",
-            "summary": "Retrieve a charge",
-            "tool": "tithely_api_read",
-            "matched": "response field charge_id"
+            "method": "POST",
+            "path": "/charge-once",
+            "operationId": "chargeOnce",
+            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
+            "tool": "tithely_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/charges",
+            "operationId": "createCharge",
+            "summary": "Create a charge (gift) on a donor's stored payment method",
+            "tool": "tithely_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/recurring",
+            "operationId": "createRecurring",
+            "summary": "Create a recurring charge (gift)",
+            "tool": "tithely_api_write"
           },
           {
             "method": "GET",
@@ -39,28 +52,13 @@
             "operationId": "listCharges",
             "summary": "List charges (gifts) for an organization or donor",
             "tool": "tithely_api_read",
-            "matched": "response field data[].charge_id"
-          },
-          {
-            "method": "POST",
-            "path": "/charges",
-            "operationId": "createCharge",
-            "summary": "Create a charge (gift) on a donor's stored payment method",
-            "tool": "tithely_api_write",
-            "matched": "response field charge_id"
-          },
-          {
-            "method": "POST",
-            "path": "/charge-once",
-            "operationId": "chargeOnce",
-            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
-            "tool": "tithely_api_write",
-            "matched": "response field charge_id"
+            "named": "list_charges"
           }
         ],
         "revision": "v1",
         "page": {
-          "hasMore": false
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiZGY0OTA0OGZjYjhlYmY2ZTA3MzFjMGZhOTNhMWQzYWMiLCJjIjoiNiIsIm0iOiJCWnRsWk5EQWF5Q05UTFlRMC0yeU05UkhjdUtYSHpfQUNOZzNtbEtDeExVIn0"
         }
       }
     }

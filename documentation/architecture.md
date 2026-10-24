@@ -2126,8 +2126,13 @@ declared response roots before dispatch. Search answers stay within 16 KiB
 (at most eight compact entries, long labels cut and marked, continuation by
 cursor); details stay within 32 KiB, paging whole parameters and body
 properties, and chunking any piece larger than one answer, behind a bound
-cursor. Search ranks exact path nouns, root collections and authored
-operations first, then operations found by a field they return or take, and
+cursor. Standard hatch search removes conversational framing and admits
+partial lexical matches while retaining action intent. Bare resource nouns
+(including person/people and singular/plural forms) rank root collection
+list/create operations before nested or action routes; profile roots lead
+cross-product relationships without filtering them out. Authored operations
+break otherwise equal root ties. Other lexical relevance and index order
+remain deterministic, followed by operations found only by a field they return or take, and search
 points at the authored tool that serves an operation. `_api_read` omits
 `method` only when GET is its one reviewed read method.
 The hatch's optional `pages` table declares an adapter for each indexed read

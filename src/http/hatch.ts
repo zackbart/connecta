@@ -9,6 +9,7 @@
 // cursor) and details return at most 32 KiB, cutting only optional parts and
 // listing them in `truncated`; a required parameter or body field is never cut.
 import { Effect, Schema } from "effect";
+import { lexicalSearchQuery } from "../catalog.js";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import { keyResendAdvice } from "../errors.js";
@@ -314,33 +315,97 @@ export function hatch(
       ...(authored ? { named: authored } : {}),
     };
   };
-  // 0014: exact path nouns and root collections ahead of related resources,
-  // and authored operations ahead of equal ones, over the index's own order.
+  const actions = new Set([
+    "get",
+    "read",
+    "list",
+    "find",
+    "search",
+    "create",
+    "add",
+    "update",
+    "edit",
+    "delete",
+    "remove",
+    "cancel",
+    "stop",
+  ]);
+  const writeActions = new Set([
+    "create",
+    "add",
+    "update",
+    "edit",
+    "delete",
+    "remove",
+    "cancel",
+    "stop",
+    "refund",
+    "charge",
+    "issue",
+    "process",
+  ]);
+  const queryWords = (query: string) =>
+    lexicalSearchQuery(query)
+      .split(/[^a-z0-9]+/i)
+      .filter(Boolean);
+  const retrievalQuery = (query: string) => {
+    if (query.trim().startsWith("/")) return query;
+    const terms = queryWords(query);
+    const content = terms.filter((term) => !["process", "issue", "by"].includes(term));
+    return content.length ? content.join(" ") : query;
+  };
+  const singular = (word: string) => (word === "people" ? "person" : word.replace(/s$/, ""));
+  // 0014: bare nouns lead with their root collection, including irregular
+  // person/people. Action queries retain intent and partial lexical relevance:
+  // a refund route beats an authorize route merely mentioning refunds.
   const rank = (found: readonly Operation[], query: string): Operation[] => {
-    const terms = new Set(
-      query
+    const terms = queryWords(retrievalQuery(query));
+    const literal = (op: Operation) => op.path.split("/").filter((part) => part && !part.startsWith("{"));
+    const matches = (part: string, term: string) =>
+      part
         .toLowerCase()
         .split(/[^a-z0-9]+/)
-        .filter(Boolean),
+        .some((word) => singular(word) === singular(term));
+    const focus = terms.find(
+      (term) => !actions.has(term) && found.some((op) => literal(op).some((part) => matches(part, term))),
     );
-    const literal = (op: Operation) => op.path.split("/").filter((part) => part && !part.startsWith("{"));
-    const exact = (op: Operation) =>
-      literal(op).some((part) =>
-        part
-          .toLowerCase()
-          .split(/[^a-z0-9]+/)
-          .some((word) => terms.has(word)),
-      );
+    const rawTerms = queryWords(query);
+    const intent =
+      writeActions.has(rawTerms[0]!) && rawTerms.length > 1
+        ? "write"
+        : actions.has(rawTerms[0]!) && !writeActions.has(rawTerms[0]!)
+          ? "read"
+          : undefined;
+    const intentMatch = (op: Operation) =>
+      intent === undefined ||
+      (intent === "read" ? verdictOf(op) === "read" : ["write", "destructive"].includes(verdictOf(op)));
+    const resourceOnly = terms.filter((term) => !actions.has(term)).length === 1 && !query.trim().startsWith("/");
+    const focused = (op: Operation) =>
+      (intent !== undefined || resourceOnly) && focus !== undefined && literal(op).some((part) => matches(part, focus));
+    const collection = (op: Operation) => {
+      const parts = op.path.split("/").filter(Boolean);
+      const parameter = parts.findIndex((part) => part.startsWith("{"));
+      const root = parameter < 0 ? parts : parts.slice(0, parameter);
+      return {
+        exact: focus !== undefined && singular((root.at(-1) ?? "").toLowerCase()) === singular(focus),
+        nested: parameter < 0 ? 0 : parts.slice(parameter).filter((part) => !part.startsWith("{")).length,
+        namespace: focus !== undefined && singular((root[0] ?? "").toLowerCase()) === singular(focus),
+      };
+    };
     const order = new Map(found.map((op, position) => [op, position]));
-    const lead = found
-      .filter(exact)
-      .sort(
-        (a, b) =>
-          a.path.split("/").length - b.path.split("/").length ||
-          Number(named.has(`${b.method} ${b.path}`)) - Number(named.has(`${a.method} ${a.path}`)) ||
-          order.get(a)! - order.get(b)!,
-      );
-    return [...lead, ...found.filter((op) => !exact(op))];
+    return [...found].sort(
+      (a, b) =>
+        Number(intentMatch(b)) - Number(intentMatch(a)) ||
+        Number(focused(b)) - Number(focused(a)) ||
+        (resourceOnly
+          ? Number(collection(b).exact) - Number(collection(a).exact) ||
+            collection(a).nested - collection(b).nested ||
+            Number(collection(b).namespace) - Number(collection(a).namespace) ||
+            a.path.split("/").length - b.path.split("/").length ||
+            Number(named.has(`${b.method} ${b.path}`)) - Number(named.has(`${a.method} ${a.path}`))
+          : 0) ||
+        order.get(a)! - order.get(b)!,
+    );
   };
   // Find operations by the request or response properties they declare: a
   // query word must equal a word of a property's name. Rarer words weigh more,
@@ -479,7 +544,13 @@ export function hatch(
               }),
             );
           const primary = rank(
-            yield* checked(() => index.search(args.query, { ...scope, limit: index.ops.length })),
+            yield* checked(() =>
+              index.search(retrievalQuery(args.query), {
+                ...scope,
+                limit: index.ops.length,
+                partial: !args.query.trim().startsWith("/"),
+              }),
+            ),
             args.query,
           );
           // Operations found only by a field they return or take rank after every path, id or summary match.

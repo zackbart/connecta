@@ -19,33 +19,46 @@
             "tool": "overflow_api_write"
           },
           {
+            "method": "POST",
+            "path": "/contributions",
+            "operationId": "chargeCashPaymentMethod",
+            "summary": "Charge a donor's saved card, bank or wallet payment method for a cash gift",
+            "tool": "overflow_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/subscriptions/{donorId}",
+            "operationId": "createSubscription",
+            "summary": "Create a recurring gift (subscription), with amount in dollars",
+            "tool": "overflow_api_write"
+          },
+          {
+            "method": "PATCH",
+            "path": "/subscriptions/{donorId}/{subscriptionId}",
+            "operationId": "updateSubscriptionById",
+            "summary": "Update a recurring gift, payment method, schedule or dollar amount",
+            "tool": "overflow_api_write"
+          },
+          {
+            "method": "DELETE",
+            "path": "/subscriptions/{donorId}/{subscriptionId}",
+            "operationId": "cancelSubscription",
+            "summary": "Cancel (stop) a recurring gift or donation (subscription); past gifts stay charged",
+            "tool": "overflow_api_write"
+          },
+          {
             "method": "GET",
             "path": "/refunds",
             "operationId": "getRefunds",
             "summary": "List refunds with contribution and deposit joins and cent amounts",
             "tool": "overflow_api_read",
-            "matched": "response field data[].processorRefundId"
-          },
-          {
-            "method": "GET",
-            "path": "/refunds/{refundId}",
-            "operationId": "getRefundById",
-            "summary": "Retrieve one refund and its contribution, status and cent amounts",
-            "tool": "overflow_api_read",
-            "matched": "response field data.processorRefundId"
-          },
-          {
-            "method": "GET",
-            "path": "/deposits/{depositId}/summary",
-            "operationId": "getDepositSummary",
-            "summary": "Read a payout's gross, fees and net totals in cents by kind",
-            "tool": "overflow_api_read",
-            "matched": "response field data.refunds"
+            "named": "list_refunds"
           }
         ],
         "revision": "v3",
         "page": {
-          "hasMore": false
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiYTY0N2UzNDBmNWJhNmNhOGY5YTVhMWQ4ZDZkNjg0ZDciLCJjIjoiNiIsIm0iOiJSNU9DMV96NkdXaWRhaG1GUmh5ZUF4WXROdFpxOFhTczhPbU5ISFVncDFRIn0"
         }
       }
     }
