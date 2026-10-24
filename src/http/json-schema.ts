@@ -236,6 +236,23 @@ function normalize(value: unknown): unknown {
     }
     out[key] = key === "items" || key === "additionalProperties" ? normalize(child) : child;
   }
+  // A discrete integer constraint may render in one allOf member beside its integer type.
+  // Flatten disjoint keywords so enum/default/max remain one usable parameter contract.
+  const members = out["allOf"];
+  if (out["type"] === "integer" && Array.isArray(members) && members.length === 1) {
+    const part = members[0] as Node;
+    if (
+      Array.isArray(part["enum"]) &&
+      Object.keys(part).every(
+        (key) =>
+          ["enum", "minimum", "maximum", "description", "default"].includes(key) &&
+          (!(key in out) || out[key] === part[key]),
+      )
+    ) {
+      delete out["allOf"];
+      Object.assign(out, part);
+    }
+  }
   // Hand-written catalogs spell an array's own keywords before its `items`.
   if ("items" in out) {
     const { items, ...rest } = out;
