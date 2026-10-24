@@ -707,3 +707,61 @@ Respondent emails, answers and quiz data remain user data under the same
 boundary on every read. Temporary `Image.contentUri` destinations are now
 permanently withheld, including expanded forms in batch replies. Ordinary
 responder links, image source URLs and feedback links remain available.
+
+## Google Slides
+
+All 15 named tools remain. Four indexed tools are added:
+`slides_api_search`, `slides_api_details`, `slides_api_read`, and
+`slides_api_write`. The write hatch is always destructive; the four existing
+additive named tools (`create_presentation`, `create_slide`, `create_comment`
+and `create_comment_reply`) lose the explicit `destructiveHint:false` catalog
+annotation through the shared builder (issue #1017). Approval routing is
+unchanged. Every write is sent once; a revision precondition does not make a
+replay safe.
+
+| Previous program                                                                                                 | Replacement                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_presentation({presentationId, raw: true})`                                                                  | `slides_api_read({path: "/presentations/deck1"})`; vendor JSON is in `data`                                                                             |
+| `get_page({presentationId, pageObjectId, raw: true})`                                                            | `slides_api_read({path: "/presentations/deck1/pages/slide1"})`                                                                                          |
+| `list_comments({presentationId, raw: true})`                                                                     | `slides_api_read({path: "/presentations/deck1", query: {commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED"}})`                                             |
+| `list_layouts().layouts`, `list_comments().threads`                                                              | `.items`; `fields` selects paths inside each item                                                                                                       |
+| Terminal `page.nextCursor: null`                                                                                 | Terminal `page: {hasMore: false}`; cursor is absent                                                                                                     |
+| Private content cursors                                                                                          | Restart once; new cursors are signed and bound to the connection, owner, delegated caller and content state                                             |
+| Boolean `truncated`, reply `cut`, `elementsNotShown`, `layoutsNotShown`, `repliesNotShown`, `revisionIdNotShown` | `truncated: string[]` names the affected paths; continuation and reconciliation advice remain                                                           |
+| Projected `get_presentation.pageSize`                                                                            | `canvasSize` describes slide width and height; structural hatch JSON retains vendor `data.pageSize`                                                     |
+| Image, SheetsChart and StretchedPictureFill `contentUrl` from `raw:true`                                         | `"[redacted]"` in the replacement hatch; possession grants temporary access. `sourceUrl` remains available; the named thumbnail keeps its reviewed link |
+| List `total`                                                                                                     | `page.total` retains the exact count of returned vendor content                                                                                         |
+
+Every named read gains `fields`; it narrows the safe result while retaining
+`page` and `truncated` metadata on the result and `truncated` on selected nested
+records. Hatch `fields` narrows `data`, while `query.fields` is Google's own wire
+mask. Named
+text and speaker-note cursors continue through `get_page`; they are separate
+from Connecta's large-result delivery handles. Reuse the deployment storage
+between calls so signed continuation remains valid across requests.
+
+Operation details for presentations.get retain `presentationsId` (plural):
+`GET /presentations/{presentationsId}`. Page methods and batch updates use
+`presentationId`. Substitute one encoded id segment in the concrete `path`;
+do not supply these path names as query arguments or add `/v1` again.
+Spell colons and unreserved characters literally in hatch paths; encode other
+characters within one id segment. Named tools handle their own id encoding.
+
+For example, the retained `batch_update_presentation({presentationId:
+"deck1", requiredRevisionId: "rev1", requests: [...]})` corresponds to
+`slides_api_write({method: "POST", path: "/presentations/deck1:batchUpdate",
+body: {requests: [...], writeControl: {requiredRevisionId: "rev1"}}})`.
+Both keep the 1–100 request bound and the 49 reviewed kinds. The complete
+five-method inventory does not admit generic thumbnails or new preview
+operations. Use `get_slide_thumbnail` for its reviewed private link.
+
+Mixed comment/deck batches keep `commentUpdateState`, every created id and
+separate-save advice. Hatch `warnings` keep the observed comment-save state
+(or its absence) and advice after `fields` selection; vendor `data` is unchanged.
+Missing confirmation of comment saves is not a reason to replay an accepted
+deck edit. Read both outcomes and report them separately.
+HTTP 404 remains ambiguous between absence and permission. Standard errors
+retain explicit auth, permission and structured revision-conflict meanings;
+incomplete responses now say the response could not be read completely.
+
+See [Google Slides setup](./providers.md#google-slides).

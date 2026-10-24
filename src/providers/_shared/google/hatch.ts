@@ -58,11 +58,17 @@ export function googleHatchBinding(
     readonly review: string;
     readonly refuse?: (call: RestCall) => string | undefined;
     readonly revisionGuarded?: (call: RestCall) => boolean;
+    /** After hatch admission, inspect a detached request and wrap its one confined send. */
+    readonly wrapSend?: (
+      call: RestCall,
+      send: () => ReturnType<HatchBinding["send"]>,
+    ) => ReturnType<HatchBinding["send"]>;
   },
 ): HatchBinding {
   requireGoogleIndex(options.index);
   return {
     index: options.index,
+    ...(options.wrapSend ? { warnings: true as const } : {}),
     review: options.review,
     refuse: (call) => {
       for (const match of call.path.matchAll(/%([a-f0-9]{2})/gi))
@@ -88,25 +94,32 @@ export function googleHatchBinding(
       return options.refuse?.(call);
     },
     send: (call, sendOptions) =>
-      Effect.suspend(() =>
-        connection.sendPath(
-          {
-            method: call.method,
-            path: call.path,
-            template: call.op.path,
-            query: Object.entries(call.query).flatMap(([name, value]) =>
-              value === undefined
-                ? []
-                : (Array.isArray(value) ? value : [value]).map((item) => [name, String(item)] as [string, string]),
-            ),
-            headers: { accept: "application/json" },
-            ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
-          },
-          {
-            ...sendOptions,
-            ...(options.revisionGuarded?.(call) ? { flags: { revisionGuarded: true } } : {}),
-          },
-        ),
-      ),
+      Effect.suspend(() => {
+        // Capture the admitted wire request before the wrapper can inspect its copy.
+        const request = {
+          method: call.method,
+          path: call.path,
+          template: call.op.path,
+          query: Object.entries(call.query).flatMap(([name, value]) =>
+            value === undefined
+              ? []
+              : (Array.isArray(value) ? value : [value]).map((item) => [name, String(item)] as [string, string]),
+          ),
+          headers: { accept: "application/json" },
+          ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
+        };
+        const optionsForSend = {
+          ...sendOptions,
+          ...(options.revisionGuarded?.(call) ? { flags: { revisionGuarded: true as const } } : {}),
+        };
+        let sent = false;
+        const send = () =>
+          Effect.suspend(() => {
+            if (sent) return Effect.die(new Error("A Google hatch wrapper may send its admitted request only once."));
+            sent = true;
+            return connection.sendPath(request, optionsForSend);
+          });
+        return options.wrapSend ? options.wrapSend(structuredClone(call), send) : send();
+      }),
   };
 }
