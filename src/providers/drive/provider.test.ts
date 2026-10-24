@@ -15,8 +15,8 @@ import { accessTokens } from "../../access-tokens.js";
 import { issueAgentToken } from "../../../test/helpers/agent-tokens.js";
 import { readJsonRpc } from "../../../test/fixtures/http.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { createTestConnecta, silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext } from "../../types.js";
+import { createTestConnecta, makeRegistry, silentLogger } from "../../../test/helpers.js";
+import type { AuthenticatedIdentity, Connector, ConnectorContext } from "../../types.js";
 
 // The final-size guard is the last word on every result, and every source is
 // budgeted before it, so nothing ordinary reaches it. The sizing module passes
@@ -567,7 +567,7 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
     expect(failure.message).toContain("start the listing again without cursor");
   });
 
-  it("refuses a cursor from another tool or other arguments, before any request", async () => {
+  it("INV-3: refuses cursors from another tool, arguments or delegated caller before any request", async () => {
     const connector = connection();
     const mid = (await firstPage(connector, { query: "name contains 'r'" })).page.nextCursor;
     route = () => ({ body: { files: rowsOf(ids.slice(0, 3)), nextPageToken: "second" } });
@@ -589,6 +589,61 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
       expect(failure.message).toMatch(/different (call|listing)/);
     }
     expect(calls).toEqual([]);
+
+    const delegated = connection({
+      subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@org.example`,
+    });
+    const registry = makeRegistry([delegated], { storage: sharedStorage });
+    const callerContext = (id: string) =>
+      registry
+        .scoped({
+          connectorIds: "all",
+          caller: {
+            authenticated: true,
+            identity: {
+              actor: { kind: "test-users", id, namespace: "https://identity.test" },
+              subject: { namespace: "https://identity.test", id },
+              principal: { namespace: "https://identity.test", id },
+              interactive: true,
+            },
+          },
+        })
+        .contextFor("files", "https://connecta.example");
+    route = (request) => {
+      const continued = request.url.searchParams.has("pageToken");
+      const id = continued ? "second" : "first";
+      return {
+        body: {
+          files: [{ id }],
+          drives: [{ id }],
+          permissions: [{ id, role: "reader" }],
+          ...(continued ? {} : { nextPageToken: "native-next" }),
+        },
+      };
+    };
+    for (const [name, args] of [
+      ["search_files", { limit: 1 }],
+      ["list_folder_items", { folderId: "root", limit: 1 }],
+      ["list_shared_drives", { limit: 1 }],
+      ["list_permissions", { fileId: "f1", limit: 1 }],
+    ] as const) {
+      const first = await call(delegated, name, args, callerContext("alice"));
+      expect(first.items.map((item: any) => item.id)).toEqual(["first"]);
+      expect(first.page.nextCursor).toBeTypeOf("string");
+      const continuation = { ...args, cursor: first.page.nextCursor };
+      const before = { tokens: tokenCalls, requests: calls.length };
+      await expect(call(delegated, name, continuation, callerContext("bob"))).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      const unsigned = JSON.parse(atob(first.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/"))).c;
+      await expect(call(delegated, name, { ...args, cursor: unsigned }, callerContext("alice"))).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      expect({ tokens: tokenCalls, requests: calls.length }).toEqual(before);
+      const continued = await call(delegated, name, continuation, callerContext("alice"));
+      expect(continued.items.map((item: any) => item.id)).toEqual(["second"]);
+      expect(continued.page).toEqual({ hasMore: false });
+    }
   });
 });
 
