@@ -84,7 +84,7 @@ export class FakePlanningCenter {
     const url = new URL(request.url),
       path = url.pathname,
       query = Object.fromEntries(url.searchParams);
-    const body = request.body ? await request.json() : undefined;
+    const body = request.body ? ((await request.json()) as Row) : undefined;
     const authorized = request.headers.get("authorization") === `Basic ${btoa(`eval-pco:${this.key}`)}`;
     const version = request.headers.get("x-pco-api-version");
     const record: CallRecord = {
