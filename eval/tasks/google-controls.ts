@@ -242,8 +242,17 @@ export async function googleBoundaryControls(): Promise<void> {
       args: { formId: "forms1" },
       resultMode: "value",
     });
-    const data = delivered<{ responses?: unknown[]; page?: { nextCursor?: unknown } }>(empty);
-    if (empty.isError || data?.responses?.length !== 0 || data.page?.nextCursor !== null)
+    const data = delivered<{
+      items?: unknown[];
+      responses?: unknown[];
+      page?: { hasMore?: boolean; nextCursor?: unknown };
+    }>(empty);
+    const rows = data?.items ?? data?.responses;
+    const terminal =
+      data?.items !== undefined
+        ? data.page?.hasMore === false && data.page?.nextCursor === undefined
+        : data.page?.nextCursor === null;
+    if (empty.isError || !Array.isArray(rows) || rows.length !== 0 || !terminal)
       throw new Error(`Google empty collection did not terminate: ${empty.text}`);
     if (world.ledger.calls.some((call) => call.kind === "write"))
       throw new Error("Google content controls dispatched a mutation");
