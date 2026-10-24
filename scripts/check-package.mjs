@@ -1231,10 +1231,9 @@ try {
           params: { name: "execute_code", arguments: { code: "async () => { while (true) {} }" } },
         }),
         signal: AbortSignal.timeout(20_000),
-      }).then(
-        (response) => response.text(),
-        () => "disconnected",
-      );
+      })
+        .then((response) => response.text())
+        .catch(() => "disconnected");
       const activeDeadline = Date.now() + 5_000;
       let active = false;
       while (Date.now() < activeDeadline) {
@@ -1246,6 +1245,20 @@ try {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       if (!active) throw new Error("Shutdown smoke did not admit its QuickJS program");
+      run(
+        "docker",
+        [
+          ...compose,
+          "exec",
+          "-T",
+          "connecta",
+          "node",
+          "-e",
+          "const fs = require('node:fs'); if (!fs.readdirSync('/proc').some(pid => { try { return fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0').some(arg => arg.endsWith('/quickjs-child.js')); } catch { return false; } })) throw new Error('No live QuickJS child at shutdown');",
+        ],
+        generatedRoot,
+        composeEnv,
+      );
       const stopped = spawn("docker", [...compose, "stop", "-t", "15", "connecta"], {
         cwd: generatedRoot,
         env: { ...process.env, ...composeEnv },
