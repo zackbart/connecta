@@ -1,0 +1,7 @@
+{
+  "documentation": "https://developers.google.com/workspace/forms/api/reference/rest",
+  "url": "https://forms.googleapis.com/$discovery/rest?version=v1",
+  "revision": "20261022",
+  "digest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+  "vendored": true
+}

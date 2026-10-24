@@ -1,0 +1,33 @@
+{
+  "documentation": "https://developers.google.com/workspace/forms/api/reference/rest",
+  "url": "https://forms.googleapis.com/$discovery/rest?version=v1",
+  "revision": "20261022",
+  "digest": "sha256:2e867ccaa2a404efaffc20705102b90510d1be5cb47ca23795a776cfa0548869",
+  "vendored": true,
+  "discovery": {
+    "pin": "discovery.json",
+    "format": "google-discovery-v1",
+    "summaries": {
+      "forms.forms.get": "Get read form question options, quiz grading answer key, images and section navigation.",
+      "forms.forms.batchUpdate": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
+      "forms.forms.create": "Create add an empty form with title and optional Drive document title.",
+      "forms.forms.responses.list": "List find form responses since a timestamp, submitted answers and respondent email.",
+      "forms.forms.responses.get": "Get read one form response with answers, quiz grades and feedback.",
+      "forms.forms.setPublishSettings": "Refused: publish form settings and response availability require separate authorization.",
+      "forms.forms.watches.create": "Refused: register watch form responses with persistent Pub/Sub delivery requires separate authorization.",
+      "forms.forms.watches.list": "Refused: list watch form response registrations is outside this connection.",
+      "forms.forms.watches.delete": "Refused: delete watch form response registration is outside this connection.",
+      "forms.forms.watches.renew": "Refused: renew watch form response delivery requires separate authorization."
+    }
+  },
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "maxEnum": 200,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true,
+    "valueSafety": true
+  }
+}

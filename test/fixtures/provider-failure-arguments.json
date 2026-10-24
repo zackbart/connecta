@@ -464,6 +464,25 @@
           }
         }
       ]
+    },
+    "forms_api_search": {
+      "query": "quiz grading"
+    },
+    "forms_api_details": {
+      "method": "GET",
+      "path": "/forms/{formId}"
+    },
+    "forms_api_read": {
+      "path": "/forms/form-1"
+    },
+    "forms_api_write": {
+      "method": "POST",
+      "path": "/forms",
+      "body": {
+        "info": {
+          "title": "Example"
+        }
+      }
     }
   },
   "github": {

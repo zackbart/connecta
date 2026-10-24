@@ -644,6 +644,70 @@ Docs image `contentUri` values now read `[redacted]` because possession grants
 the requester's temporary image access. Authored image `sourceUri` and text links
 remain available; `fields` cannot widen this boundary.
 
+## Google Forms
+
+Keep all six named tools. Four tools are added: `forms_api_search`,
+`forms_api_details`, `forms_api_read` and destructive `forms_api_write`.
+The ten-method frozen inventory is discoverable; only the five existing
+Forms methods execute. Publish settings and all watch methods stay refused.
+Scopes and named-write approval classifications are unchanged.
+The additive `create_form` catalog follows the kit convention of omitting
+`destructiveHint: false`; its write classification is unchanged.
+
+- Replace `get_form({ formId, raw: true })` with
+  `forms_api_read({ path: "/forms/<formId>" })`. The vendor Form is in
+  `data`, including `info`, `settings`, `items` and `revisionId`. There is no
+  `raw` argument or privacy-widening argument on any tool.
+- Read `list_responses` rows from `items`, replacing `responses`; its
+  redundant top-level `formId` is removed. `fields` on this tool selects
+  paths inside each item. `fields` on `get_form` and `get_response` selects
+  paths in the projected record. Content `get_form` pages preserve `page` metadata
+  even when selecting other fields. Cuts retain `truncated`, and a selected
+  response retains `omittedQuestionIds` for recovery. Invalid roots fail before authentication.
+- Terminal `page` omits `nextCursor` instead of returning null. Discard old
+  private cursors after upgrading: content and response cursors now carry a
+  signature bound to the connection, credential owner and delegated caller,
+  retaining revision
+  and mid-page response-fingerprint checks. `fields` may narrow between
+  named pages. Continue hatch lists with top-level `cursor`, never raw
+  `query.pageToken`; hatch cursors bind the full call, including `fields`.
+  Hatch `query.pageSize` must be an integer from 1 to 5000; omit it for the default.
+- `truncated: string[]` reports cut paths, replacing the batch's boolean
+  `truncated` and the form's `moreOptions`/`moreQuestions` counts. Continued
+  grids retain `questionsFrom`; `omittedQuestionIds` remains a recovery list
+  for targeted reads. Text cut markers remain alongside the path report.
+- Indexed batch writes use `POST /forms/<formId>:batchUpdate`, with
+  `body: { requests, writeControl: { requiredRevisionId } }`. Use
+  `forms_api_details` for nested request contracts. The named wrapper still
+  accepts `requests` and `requiredRevisionId` at top level. Both require
+  1–100 requests with exactly one reviewed kind each. Paths are relative to
+  `/v1`, never `/v1/forms/...`; create uses `POST /forms`,
+  `body.info` and optional `query.unpublished`.
+- Hatch results are `{ status, data, page? }`. `fields` selects safe data;
+  `query.fields` is Google's separate wire mask, preserving paging metadata.
+  In `execute_code`, unwrap the host result before reading the hatch envelope:
+
+  ```js
+  const { data: reply } = await connecta.call("forms.forms_api_read", {
+    path: "/forms/form_123",
+  });
+  return { title: reply.data.info.title };
+  ```
+
+  Here the first `data` is Connecta's result delivery; `reply` is the hatch
+  envelope, and `reply.data` is Google's Form. Hatch list continuation lives
+  in `reply.page`, alongside the vendor body.
+
+- Standard kit error sentences replace the legacy Google outcome wording.
+  Ambiguous 404 remains `connector_call_failed`; structured revision
+  preconditions remain `conflict`. A dispatched uncertain write is never
+  replayed. Re-read its target before deciding whether another edit is needed.
+
+Respondent emails, answers and quiz data remain user data under the same
+boundary on every read. Temporary `Image.contentUri` destinations are now
+permanently withheld, including expanded forms in batch replies. Ordinary
+responder links, image source URLs and feedback links remain available.
+
 ## Google Drive
 
 All 17 named tools retain their names and approval routing. The `create_folder`
