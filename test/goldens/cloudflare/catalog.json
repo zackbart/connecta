@@ -482,7 +482,7 @@
             "description": "HTTP status."
           },
           "data": {
-            "description": "Cloudflare's result."
+            "description": "Cloudflare's response envelope after value safety: result, errors, messages, success."
           }
         },
         "required": [

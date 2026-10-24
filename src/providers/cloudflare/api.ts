@@ -23,12 +23,14 @@ import { callMemo, Operation as ContextView } from "../../runtime/call.js";
 import type { CredentialTestResult } from "../../types.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { Integer } from "../../http/json-schema.js";
+import { cloudflarePage } from "../../http/hatch-paging.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
 import type { RestCall, RestFraming, RestPage, RestReadPost, RestResult } from "../_shared/rest/tools.js";
 import {
   valueSafety,
   withholdEmbeddedUrlsIn,
   refuseWithheldLinks,
+  refuseWithheldValues,
   refuseWithheldUpload,
   refuseWithheldBase64,
 } from "../_shared/rest/value-safety.js";
@@ -855,11 +857,25 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
     // NDJSON operations take a list of records; frame it before validation,
     // so the index checks the string the vendor receives.
     const type = (operations.bodyType(call.op) ?? "").toLowerCase();
-    if (/ndjson|jsonl/.test(type) && Array.isArray(call.body)) {
-      if (!call.body.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
-        invalid(`${call.op.method} ${call.op.path} takes newline-delimited JSON: send a list of objects.`);
+    if (/ndjson|jsonl/.test(type)) {
+      let rows: unknown[] | undefined;
+      if (Array.isArray(call.body)) rows = call.body;
+      else if (typeof call.body === "string") {
+        try {
+          rows = call.body
+            .split(/\r?\n/)
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line));
+        } catch {
+          invalid(`${call.op.method} ${call.op.path} takes valid newline-delimited JSON objects.`);
+        }
       }
-      call = { ...call, body: call.body.map((item) => JSON.stringify(item)).join("\n") };
+      if (rows) {
+        if (!rows.every((item) => typeof item === "object" && item !== null && !Array.isArray(item)))
+          invalid(`${call.op.method} ${call.op.path} takes newline-delimited JSON: send a list of objects.`);
+        for (const row of rows) refuseWithheldValues(row, "Cloudflare");
+        if (Array.isArray(call.body)) call = { ...call, body: rows.map((item) => JSON.stringify(item)).join("\n") };
+      }
     }
     for (const [name, value] of Object.entries(call.headers ?? {})) {
       if (!/^\/accounts\/\{[^/]+\}\/r2\//.test(call.op.path)) {
@@ -966,22 +982,44 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
         }),
       ),
       Effect.flatMap((request) => connection.sendPath(request)),
-      Effect.map((reply) => {
-        const body = reply.data;
-        const data = isEnvelope(body)
-          ? envelope
-            ? {
-                ...body,
-                ...(body["result_info"] !== undefined
-                  ? { result_info: withholdEmbeddedUrlsIn(body["result_info"]) }
-                  : {}),
-                result: filterListed(call.op, body["result"]),
-              }
-            : filterListed(call.op, body["result"])
-          : body;
-        const next = call.op.path === "/graphql" ? undefined : page(body, call);
-        return { status: reply.status, data, ...(next ? { page: next } : {}) };
-      }),
+      Effect.flatMap((reply) =>
+        checked(() => {
+          const body = reply.data;
+          const result = isEnvelope(body) ? filterListed(call.op, body["result"]) : body;
+          let info = isEnvelope(body) ? withholdEmbeddedUrlsIn(body["result_info"]) : undefined;
+          if (
+            envelope &&
+            isEnvelope(body) &&
+            info !== undefined &&
+            result !== body["result"] &&
+            Array.isArray(result)
+          ) {
+            // Validate before dropping estate-wide counts; retain only page-level
+            // continuation metadata, never an unfiltered total for the pinned scope.
+            cloudflarePage.next(body, { path: call.path, query: call.query, headers: {} });
+            const original = record(info);
+            const totalPages =
+              original["total_pages"] ??
+              (typeof original["total_count"] === "number" &&
+              typeof original["per_page"] === "number" &&
+              original["per_page"] > 0
+                ? Math.ceil(original["total_count"] / original["per_page"])
+                : undefined);
+            info = {
+              page: original["page"],
+              per_page: original["per_page"],
+              count: result.length,
+              total_pages: totalPages,
+            };
+          }
+          const data =
+            isEnvelope(body) && envelope
+              ? { ...body, ...(info !== undefined ? { result_info: info } : {}), result }
+              : result;
+          const next = call.op.path === "/graphql" ? undefined : page(body, call);
+          return { status: reply.status, data, ...(next ? { page: next } : {}) };
+        }),
+      ),
     );
   const read = (method: RestMethod, path: string, input: Parameters<typeof call>[2] = {}) =>
     checked(() => call(method, path, input)).pipe(Effect.flatMap(send));

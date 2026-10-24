@@ -425,6 +425,7 @@ Approval classifications do not change: hatch writes and uploads are destructive
   `result[].id` for list traversal). `fields: ["id"]` on an envelope response is
   refused before any request. Value safety and pin filtering still apply to
   `result`, and `success: false` remains an error rather than returned data.
+- `cloudflare_api_upload` data likewise becomes the envelope: `data.id` → `data.result.id`.
 - On `list_accounts` and `list_zones`, replace `perPage` with `limit` (default
   20, range 5–50) and numbered `page` with opaque `cursor`. Their noun arrays
   `accounts`/`zones` become `items`. They always return `page.hasMore`; a

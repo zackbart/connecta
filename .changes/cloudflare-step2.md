@@ -6,6 +6,7 @@ breaking: true
 Standardize Cloudflare's nine existing tools. Rename hatch `select` to `fields`;
 hatch reads/writes/uploads retain the safe vendor envelope (`data.id` →
 `data.result.id`, arrays under `data.result`; select `result.id`/`result[].id`).
+`cloudflare_api_upload` data likewise becomes the envelope: `data.id` → `data.result.id`.
 Named reads keep projected shapes and gain `fields`; account/zone lists replace
 `perPage`/`page` with `limit`/opaque `cursor`, and `accounts`/`zones` with `items`.
 Replace hatch `page.next` and raw continuation values with signed

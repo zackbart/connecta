@@ -224,7 +224,9 @@ export function cloudflareTools({
         type: "object",
         properties: {
           status: { type: "integer", description: "HTTP status." },
-          data: { description: "Cloudflare's result." },
+          data: {
+            description: "Cloudflare's response envelope after value safety: result, errors, messages, success.",
+          },
         },
         required: ["status", "data"],
       },

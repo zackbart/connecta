@@ -561,6 +561,55 @@ describe("cloudflare() over a key", () => {
       expect(
         ((await connector.callTool("cloudflare_api_read", { path: "/zones" }, token())) as any).data.result,
       ).toHaveLength(1);
+      const listContext = token();
+      for (const path of ["/zones", "/accounts", "/memberships"]) {
+        const rows =
+          path === "/zones"
+            ? [
+                { id: ZONE, account: { id: ACCOUNT } },
+                { id: OTHER_ZONE, account: { id: OTHER_ACCOUNT } },
+              ]
+            : path === "/accounts"
+              ? [{ id: ACCOUNT }, { id: OTHER_ACCOUNT }]
+              : [
+                  { id: "m1", account: { id: ACCOUNT } },
+                  { id: "m2", account: { id: OTHER_ACCOUNT } },
+                ];
+        for (const totalPages of [undefined, 29]) {
+          respond = () =>
+            envelope(rows, {
+              result_info: {
+                page: 1,
+                per_page: 2,
+                count: 2,
+                total_count: 57,
+                ...(totalPages === undefined ? {} : { total_pages: totalPages }),
+                estate_total: 99,
+              },
+            });
+          const filtered = (await connector.callTool("cloudflare_api_read", { path }, listContext)) as any;
+          expect(filtered.data.result).toHaveLength(1);
+          expect(filtered.data.result_info).toEqual({ page: 1, per_page: 2, count: 1, total_pages: 29 });
+          expect(filtered.data.result_info).not.toHaveProperty("total_count");
+          if (path !== "/memberships")
+            expect(filtered.page).toMatchObject({ hasMore: true, nextCursor: expect.any(String) });
+          if (path === "/zones" && totalPages === undefined) {
+            respond = () => envelope(rows, { result_info: { page: 2, per_page: 2, count: 2, total_count: 57 } });
+            const continued = (await connector.callTool(
+              "cloudflare_api_read",
+              { path, query: { page: filtered.page.nextCursor } },
+              listContext,
+            )) as any;
+            expect(continued.data.result_info).toEqual({ page: 2, per_page: 2, count: 1, total_pages: 29 });
+            expect(continued.page.hasMore).toBe(true);
+          }
+        }
+        respond = () => envelope(rows, { result_info: { page: 1, per_page: 2, count: 2, total_count: "57" } });
+        await expect(connector.callTool("cloudflare_api_read", { path }, listContext)).rejects.toMatchObject({
+          code: "connector_call_failed",
+          retryable: false,
+        });
+      }
       respond = () =>
         envelope([
           { id: ACCOUNT, name: "Mine" },
@@ -577,12 +626,15 @@ describe("cloudflare() over a key", () => {
         ["update DNS record", "PATCH", "/zones/{zone_id}/dns_records/{dns_record_id}"],
         ["purge cache URL", "POST", "/zones/{zone_id}/purge_cache"],
         ["purge URL", "POST", "/zones/{zone_id}/purge_cache"],
+        ["clear cache for a file", "POST", "/zones/{zone_id}/purge_cache"],
         ["Workers scripts", "GET", "/accounts/{account_id}/workers/scripts"],
         ["deploy Worker script", "PUT", "/accounts/{account_id}/workers/scripts/{script_name}"],
+        ["deploy a Worker", "PUT", "/accounts/{account_id}/workers/scripts/{script_name}"],
         ["R2 buckets", "GET", "/accounts/{account_id}/r2/buckets"],
         ["R2 objects", "GET", "/accounts/{account_id}/r2/buckets/{bucket_name}/objects"],
         ["KV keys", "GET", "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/keys"],
         ["zones", "GET", "/zones"],
+        ["zone details", "GET", "/zones/{zone_id}"],
       ] as const) {
         for (const filter of [undefined, method]) {
           const result = (await connector.callTool(
@@ -632,14 +684,34 @@ describe("cloudflare() over a key", () => {
         { per_page: 5000001 },
         { per_page: 1.5 },
         { per_page: "abc" },
+        { page: 1 },
+        { page: "1" },
         { page: 2 },
       ]) {
         sent = [];
-        await expect(
+        const error = await refusal(
           scoped.callTool("cloudflare_api_read", { path: `/zones/${ZONE}/dns_records`, query }, ctx),
-        ).rejects.toMatchObject({ code: "invalid_args" });
+        );
+        expect(error.code).toBe("invalid_args");
+        if ("page" in query) {
+          expect(error.message).toContain("Omit page on the first call");
+          expect(error.message).toContain("cursor in query.page");
+        }
         expect(sent).toHaveLength(0);
       }
+      sent = [];
+      const rawCursor = await refusal(
+        connector.callTool(
+          "cloudflare_api_read",
+          {
+            path: `/accounts/${ACCOUNT}/storage/kv/namespaces/n1/keys`,
+            query: { cursor: "vendor-raw-next" },
+          },
+          ctx,
+        ),
+      );
+      expect(rawCursor.message).toContain("Pass page.nextCursor as cursor");
+      expect(sent).toHaveLength(0);
       for (const limit of [4, 51]) {
         sent = [];
         await expect(connector.callTool("list_zones", { limit }, token())).rejects.toMatchObject({
@@ -705,7 +777,7 @@ describe("cloudflare() over a key", () => {
         expect(sent).toHaveLength(1);
         if (tool.endsWith("write")) expect(error.retryable).toBe(false);
       }
-    }, 15_000);
+    }, 30_000);
 
     it("holds GraphQL to pinned tags and refuses unscoped or negated filters", async () => {
       const connector = pinned();
@@ -1111,6 +1183,23 @@ describe("cloudflare() over a key", () => {
       ),
     );
     expect(bad.message).toContain("list of objects");
+    const path = `/accounts/${ACCOUNT}/vectorize/v2/indexes/idx/insert`;
+    for (const value of ["[redacted]", "https://files.example/x?sig=[redacted]"]) {
+      const rows = [{ id: "a", values: [1], metadata: { private: value } }];
+      for (const body of [rows, rows.map((row) => JSON.stringify(row)).join("\n")]) {
+        sent = [];
+        const blocked = await refusal(
+          connector.callTool("cloudflare_api_write", { method: "POST", path, body }, token()),
+        );
+        expect(blocked.code).toBe("invalid_args");
+        expect(sent).toHaveLength(0);
+      }
+    }
+    sent = [];
+    const body = ' {"id":"a","values":[1]}\r\n\n{"id":"b","values":[2]}\n';
+    await connector.callTool("cloudflare_api_write", { method: "POST", path, body }, token());
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body).toBe(body);
   });
 
   it("bounds zone-ownership reads per call (finding 8)", async () => {

@@ -24,6 +24,7 @@ const badPage = (message: string): never => {
 const tokenPage = (param: string): HatchPageAdapter => ({
   param,
   in: "query",
+  cursorInputMessage: `Pass page.nextCursor as cursor in query.${param}; do not send the vendor raw cursor.`,
   decode: (value) =>
     typeof value === "string" && value ? value : invalid("This paging cursor contains no valid Cloudflare token."),
   next(data) {
@@ -52,7 +53,15 @@ export const CLOUDFLARE_PAGES = Object.fromEntries(
     if (!cloudflareIndex.responseRoots(op)?.has("result_info") || (token && params.some((p) => p.name === "page")))
       return [];
 
-    const adapter = token ? tokenPage(token.name) : params.some((p) => p.name === "page") ? cloudflarePage : undefined;
+    const adapter = token
+      ? tokenPage(token.name)
+      : params.some((p) => p.name === "page")
+        ? {
+            ...cloudflarePage,
+            cursorInputMessage:
+              "Omit page on the first call; to continue, pass page.nextCursor unchanged as the cursor in query.page.",
+          }
+        : undefined;
     return adapter ? [[`${op.method} ${op.path}`, adapter]] : [];
   }),
 ) as NonNullable<HatchDeclaration["pages"]>;
