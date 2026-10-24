@@ -1363,8 +1363,9 @@ every vendor ships one reviewed table through one mechanism
    remainder. No decoded replacement is returned. Possible named references
    are read fail-closed with their required semicolon and bounded HTML name
    length. Numeric references also accept an omitted semicolon, and `amp`
-   may omit its semicolon immediately before `#`. Signing separators accept nested
-   ampersand references around decimal, hexadecimal or named `=` references.
+   may omit its semicolon immediately before `#`. Signing separators accept
+   nested ampersand references around decimal, hexadecimal or named `=`
+   references.
    A literal query separator such as `&name=alice` still ends the signing
    value. Ordinary query strings and prose retain their original spelling.
    Generic credential names (`code`, `key`, `token`, `signature`, `sig`, etc.)
