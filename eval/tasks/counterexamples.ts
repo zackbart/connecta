@@ -72,8 +72,11 @@ export function counterexamples(
           toolUses: [
             ...trace.toolUses,
             {
+              id: "pco-negative-write",
               turn: 1,
               tool: "call_destructive_tool",
+              isError: true,
+              resultText: "Refused",
               input: { address: "pco.update_person", args: { personId: "1001", nickname: "bad" } },
             },
           ],
