@@ -56,6 +56,7 @@ export function googleHatchBinding(
   options: {
     readonly index: OperationIndex;
     readonly review: string;
+    readonly refusal?: HatchBinding["refusal"];
     readonly refuse?: (call: RestCall) => string | undefined;
     readonly revisionGuarded?: (call: RestCall) => boolean;
     /** After hatch admission, inspect a detached request and wrap its one confined send. */
@@ -70,6 +71,7 @@ export function googleHatchBinding(
     index: options.index,
     ...(options.wrapSend ? { warnings: true as const } : {}),
     review: options.review,
+    ...(options.refusal ? { refusal: options.refusal } : {}),
     refuse: (call) => {
       for (const match of call.path.matchAll(/%([a-f0-9]{2})/gi))
         if (/^[-A-Za-z0-9._~:]$/.test(String.fromCharCode(parseInt(match[1]!, 16))))

@@ -127,7 +127,8 @@ export const factory = Object.assign((id: string, options: object) => ({ id, kin
     `import { factory } from "./index.js";
 export const fixture = { name: ${JSON.stringify(name)}, options: { purpose: "fixture" }, cases: [{ label: "default", options: {} }],
   create(id = "fixture", overrides = {}) { return factory(id, { purpose: "fixture", ...overrides }); }
-};\n`,
+};
+export const createAuthored = () => factory("fixture", {});\n`,
   );
   write(root, `${folder}/drift.json`, '{"kind":"manual","reason":"fixture"}\n');
   write(
@@ -336,7 +337,8 @@ export const factory = Object.assign((id: string) => ({ id }), {
     `import { factory } from "./index.js";
 export const fixture = { name: ${JSON.stringify(name)}, options: { purpose: "fixture" }, cases: [{ label: "default", options: {} }],
   create(id = "fixture") { return factory(id); }
-};\n`,
+};
+export const createAuthored = () => ({ staticTools: [{ name: "get_item", inputSchema: { type: "object", properties: {} }, outputSchema: { type: "object", properties: {} } }] });\n`,
   );
   write(
     root,
@@ -443,8 +445,73 @@ describe("decision 0011 guides and drift records", () => {
       files: ["drift.json"],
       read: (path: string) => (path === "drift.json" ? read(root, "src/providers/alpha/drift.json") : undefined),
     });
+    write(
+      root,
+      "src/providers/alpha/fixtures.ts",
+      read(root, "src/providers/alpha/fixtures.ts").replace("export const createAuthored", "const originalAuthored") +
+        `
+export const createAuthored = () => ({ staticTools: [
+  { name: "get_widget", inputSchema: { properties: { cursor: { type: "string" } } }, outputSchema: { type: "object", properties: { page: { type: "object", properties: { hasMore: { type: "boolean" } } } } } },
+  { name: "list_terminal", outputSchema: { properties: { page: { properties: { hasMore: { const: false } } } } } },
+  { name: "alpha_api_read", inputSchema: { properties: { query: { type: "object" } } }, outputSchema: { properties: { page: { properties: { hasMore: { type: "boolean" }, param: { type: "string" }, in: { enum: ["query", "body"] } } } } } },
+  { name: "get_summary", outputSchema: { type: "object", properties: { title: { type: "string" } } } }
+] });
+`,
+    );
+    const authoredFixture = read(root, "src/providers/alpha/fixtures.ts");
+    for (const replacement of [
+      "export const noAuthored",
+      "export const createAuthored = () => ({}); const ignoredAuthored",
+      "export const createAuthored = () => ({ staticTools: [] }); const ignoredAuthored",
+    ]) {
+      write(
+        root,
+        "src/providers/alpha/fixtures.ts",
+        authoredFixture.replace("export const createAuthored", replacement),
+      );
+      const before = snapshot(root);
+      const invalid = run(root);
+      expect(invalid.status).toBe(1);
+      expect(invalid.stderr).toMatch(/providers\/alpha: .*createAuthored/);
+      expect(snapshot(root)).toEqual(before);
+    }
+    write(root, "src/providers/alpha/fixtures.ts", authoredFixture);
     // Generation accepts the rows --record will complete; the suite does not accept them committed.
     expect(run(root).status).toBe(0);
+    const guide = generatedSkill(root, "alpha").content;
+    expect(guide).toContain("For `get_widget`, pass it as the top-level `cursor`");
+    expect(guide).toContain("For `alpha_api_read`, put it in `query[page.param]`");
+    expect(guide).not.toContain("`list_terminal`");
+    expect(guide.match(/\*\*Paging:\*\*/g)).toHaveLength(1);
+    expect(guide).toContain("`query[page.param]` or `body[page.param]`");
+    expect(guide).not.toContain("`get_summary`");
+    expect(guide).toContain("before the call that would exceed it and continue in the next program; don't restart");
+    const { renderConventions } = await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href);
+    const kit = {
+      idempotencyKey: false,
+      errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
+    };
+    for (const count of [0, 1, 70, 10000]) {
+      const rendered = renderConventions({
+        name: "alpha",
+        kind: "api",
+        kit: {
+          ...kit,
+          hatch: {
+            name: "widgets",
+            verdicts: Object.fromEntries(Array.from({ length: count }, (_, i) => [`DELETE /widgets/${i}`, "refuse"])),
+          },
+        },
+      });
+      const line = rendered.split("\n").find((line: string) => line.startsWith("- **Hatch:**"))!;
+      if (count) {
+        expect(line).toContain(`${count} ${count === 1 ? "operation is" : "operations are"} refused by design`);
+        expect(line).toContain("use `widgets_api_details` with the method and path");
+      } else expect(line).not.toContain("refused by design");
+      expect(line).toContain("An operation without a reviewed verdict is refused");
+      expect(line).not.toContain("DELETE /widgets");
+      expect(new TextEncoder().encode(line).length).toBeLessThan(550);
+    }
     expect(driftViolations(facts(), "2026-10-20")).toEqual([
       "D3: providers:check rejects checks[0]: invalid contract digest: GET /a",
     ]);

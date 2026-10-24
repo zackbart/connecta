@@ -326,13 +326,21 @@ describe("worst-case results fit one host result (256 KiB)", () => {
         query,
       ).toContain(path);
     }
-    for (const [query, path] of [
-      ["publish form", "/forms/{formId}:setPublishSettings"],
-      ["watch form responses", "/forms/{formId}/watches"],
+    for (const [query, path, reason] of [
+      [
+        "publish form",
+        "/forms/{formId}:setPublishSettings",
+        "Publishing and response availability changes require separate product authorization; the owner can change them in Forms.",
+      ],
+      [
+        "watch form responses",
+        "/forms/{formId}/watches",
+        "Watch registration creates persistent Pub/Sub delivery and requires separate product authorization.",
+      ],
     ]) {
       const discovery = await call(connector, "forms_api_search", { query });
       const refused = discovery.operations.find((op: any) => op.path === path && op.method === "POST");
-      expect(refused).toMatchObject({ summary: expect.stringMatching(/^Refused: .*separate authorization/) });
+      expect(refused).toMatchObject({ summary: `Refused: ${reason}` });
       expect(refused.tool).toBeUndefined();
     }
     const readOnly = connection({ readOnly: true });

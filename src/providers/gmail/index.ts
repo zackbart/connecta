@@ -115,6 +115,7 @@ export const gmail = defineApiProvider<GmailOptions>({
         index,
         review:
           "Exactly eleven reviewed Gmail reads beneath users/me. Draft writes use named guarded MIME tools; sending/settings/media are never admitted.",
+        refusal: (op) => refusalReasons[`${op.method} ${op.path}`],
         refuse: (call) => {
           const refused = refusalReasons[`${call.method} ${call.op.path}`];
           if (refused) return refused;

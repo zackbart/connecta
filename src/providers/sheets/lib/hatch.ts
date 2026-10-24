@@ -131,6 +131,8 @@ export function sheetsBinding(connection: Connection) {
         "Seventeen explicitly reviewed Sheets JSON methods, seven reads including three side-effect-free POST reads; bounded scalar value writes and reviewed non-preview batch kinds, delegated subject and permanent value safety.",
       refuse: sheetsRequestProblem,
     }),
+    // A1 references supply cell addresses, not resource nouns; technical nouns in other providers stay searchable.
+    searchNoun: (term: string) => !/^[a-z]{1,3}[1-9]\d*$/.test(term),
     path: sheetsPath,
   };
 }

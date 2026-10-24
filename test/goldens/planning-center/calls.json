@@ -28,31 +28,35 @@
           },
           {
             "method": "GET",
-            "path": "/calendar/v2/people",
+            "path": "/people/v2/people",
             "operationId": "",
-            "summary": "List Person — Planning Center Calendar",
-            "tool": "pco_api_read"
+            "summary": "Find and search People profiles: a person, contact details, active or inactive members, name, email or phone. (List Person)",
+            "tool": "pco_api_read",
+            "named": "search_people"
           },
           {
             "method": "GET",
-            "path": "/check-ins/v2/people",
+            "path": "/people/v2/me",
             "operationId": "",
-            "summary": "List Person — Planning Center Check-Ins",
-            "tool": "pco_api_read"
+            "summary": "List Person — Planning Center People",
+            "tool": "pco_api_read",
+            "named": "get_me"
           },
           {
             "method": "GET",
-            "path": "/giving/v2/people",
+            "path": "/people/v2/workflows",
             "operationId": "",
-            "summary": "List Person — Planning Center Giving",
-            "tool": "pco_api_read"
+            "summary": "List Workflow — Planning Center People",
+            "tool": "pco_api_read",
+            "named": "list_workflows"
           },
           {
             "method": "GET",
-            "path": "/groups/v2/people",
+            "path": "/people/v2/people/{person_id}",
             "operationId": "",
-            "summary": "List Person — Planning Center Groups",
-            "tool": "pco_api_read"
+            "summary": "Get one person's People profile and contact details; include emails, phone numbers, addresses and household. (Get Person)",
+            "tool": "pco_api_read",
+            "named": "get_person"
           }
         ],
         "revision": "people@2026-06-04,services@2018-11-01,groups@2023-07-10,check-ins@2025-05-28,calendar@2026-06-22,registrations@2025-05-01,giving@2019-10-18,publishing@2024-03-25,webhooks@2022-10-20,api@2026-09-24",
