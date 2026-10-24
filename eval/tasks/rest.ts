@@ -312,7 +312,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     outcome("reads-only", "no write was attempted", noWrites(world, trace));
     advisory(
       trace.toolUses.filter((u) => u.tool === "execute_code").length === 1 &&
-        attempts(world, trace).some((c) => c.args.select),
+        attempts(world, trace).some((c) => c.args.fields || c.args.select),
     );
   } else if (id === "801-vercel-env-value-safety") {
     const updates = [
@@ -431,7 +431,7 @@ async function reference(id: string, ctx: ReferenceContext) {
   } else if (id === "801-vercel-failed-build") {
     await program(
       ctx,
-      `await connecta.call("vercel_rest.vercel_api_read", {path:"/v10/projects", query:{search:"web"}}); await connecta.call("vercel_rest.vercel_api_read", {path:"/v7/deployments", query:{projectId:"web",target:"production",state:"ERROR"}, select:["deployments.uid","deployments.state"]}); return (await connecta.call("vercel_rest.get_deployment_build_logs", {deploymentId:"dpl_fail2"})).data;`,
+      `await connecta.call("vercel_rest.vercel_api_read", {path:"/v10/projects", query:{search:"web"}}); await connecta.call("vercel_rest.vercel_api_read", {path:"/v7/deployments", query:{projectId:"web",target:"production",state:"ERROR"}, fields:["deployments.uid","deployments.state"]}); return (await connecta.call("vercel_rest.get_deployment_build_logs", {deploymentId:"dpl_fail2"})).data;`,
     );
     ctx.answer('Vercel deployment dpl_fail2 failed: Error: Cannot find module "@acme/ui".');
   } else if (id === "801-vercel-env-value-safety") {

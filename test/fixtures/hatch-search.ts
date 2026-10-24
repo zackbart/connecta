@@ -3,6 +3,16 @@
 // cases and final modifier/object regressions. The complete adversarial 47
 // and independent 70-query corpora are measured separately.
 export const HATCH_SEARCH_QUERIES = [
+  ["vercel","list deployments","GET","/v7/deployments",2],
+  ["vercel","list projects","GET","/v10/projects",2],
+  ["vercel","project env vars","GET","/v10/projects/{idOrName}/env",2],
+  ["vercel","list domains","GET","/v5/domains",2],
+  ["vercel","build logs","GET","/v3/deployments/{idOrUrl}/events",2],
+  ["vercel","runtime logs","GET","/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",2],
+  ["vercel","list aliases","GET","/v4/aliases",2],
+  ["vercel","list teams","GET","/v2/teams",2],
+  ["vercel","create project environment variable","POST","/v10/projects/{idOrName}/env",2],
+  ["vercel","update project environment variable","PATCH","/v9/projects/{idOrName}/env/{id}",2],
   ["stripe", "refund", "POST", "/v1/refunds", 3],
   ["stripe", "refunds", "GET", "/v1/refunds", 3],
   ["stripe", "create refund", "POST", "/v1/refunds", 3],

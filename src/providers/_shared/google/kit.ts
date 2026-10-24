@@ -532,7 +532,7 @@ export function googleClient(
   provider: string,
   configuration: { readonly standard?: boolean; readonly index?: OperationIndex } = {},
 ): GoogleClient {
-  if (configuration.index) requireGoogleIndex(configuration.index);
+  if (configuration.standard || configuration.index) requireGoogleIndex(configuration.index);
   const send = (
     request: GoogleRequest,
     accept: string,

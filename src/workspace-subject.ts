@@ -1,7 +1,10 @@
 // Whose account a Google Workspace connector acts as, for the operator
 // matrix (#837, decisions/0006). The Workspace providers tag the connector
 // they build; nothing else can, and nothing a request sends reaches this.
-// Read only by the operator contract, which never shows a mapping function.
+// The operator contract never shows a mapping function; mapped subjects also
+// mark the connector for the core's caller-bound continuations.
+
+import { tagCallerIdentity } from "./connector-caller.js";
 
 /** A mapping subject resolves per caller; a fixed one is the same address for everyone. */
 type WorkspaceSubjectKind = { kind: "mapping" } | { kind: "fixed"; subject: string };
@@ -14,6 +17,7 @@ export function tagWorkspaceSubject<C extends object>(
   subject: string | ((...args: never[]) => unknown),
 ): C {
   tagged.set(connector, typeof subject === "string" ? { kind: "fixed", subject } : { kind: "mapping" });
+  if (typeof subject !== "string") tagCallerIdentity(connector);
   return connector;
 }
 

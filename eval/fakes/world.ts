@@ -74,6 +74,8 @@ export interface WorldOptions {
   refundFault?: boolean;
   /** Stripe step-2 reads; isolated from the historical #801 fixtures. */
   stripeStep2?: boolean;
+  /** Isolated Vercel standard-surface workflows. */
+  vercelStep2?: boolean;
   cloudflareStep2?: { fault?: boolean };
   prerequisites?: boolean;
   assets?: boolean;
@@ -143,6 +145,7 @@ export class World {
             "acct_eval",
             options.stripeStep2,
             options.cloudflareStep2,
+            options.vercelStep2,
           ),
       );
     }

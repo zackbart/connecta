@@ -1,6 +1,7 @@
 // Fix round 2 of the redact-before-cut work: the output boundary's projection, its K-unit
 // fragment guarantee, and the provider sites it cannot cover. Every check decodes the output
 // itself (`leakedRun`) rather than trusting redaction's own list of forms.
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -588,14 +589,15 @@ describe("review round 3", () => {
     expect(encodeForAgent(ctx, clean)).toBe(btoa("Ordinary public bytes."));
     expect(atob(encodeForAgent(ctx, new TextEncoder().encode(`x${TOKEN}z`)))).toBe(MARK);
     expect(encodeForAgent(ctx, `x${TOKEN.slice(4, 4 + K)}z`, { url: true })).toBe(encoded(MARK, true));
-    // A generic REST read of an octet-stream body, decoded by the agent, holds no private value.
+    // The documented sandbox file POST returns bytes; its conservative write verdict is unchanged.
+    installOwnedTransport();
     vi.stubGlobal(
       "fetch",
       async () => new Response(`x${TOKEN}z`, { headers: { "content-type": "application/octet-stream" } }),
     );
     const result = await vercel("hosting", { purpose: "Hosting", auth: { type: "token" }, teamId: "team_1" }).callTool(
-      "vercel_api_read",
-      { path: "/v8/deployments/dpl_1/files/f1" },
+      "vercel_api_write",
+      { method: "POST", path: "/v2/sandboxes/sessions/session_1/fs/read", body: { path: "file.txt" } },
       { ...ctx, credential: keyed("qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u").credential! },
     );
     expect(shown(result)).toContain(btoa(MARK));

@@ -34,7 +34,7 @@ export default defineGoldenSpec({
       args: {
         path: "/v7/deployments",
         query: { projectId: "web", limit: 2 },
-        select: ["deployments.uid", "deployments.state"],
+        fields: ["deployments.uid", "deployments.state"],
       },
       replies: [
         {
@@ -123,8 +123,9 @@ export default defineGoldenSpec({
       ],
     },
     {
-      tool: "delete_project_env_var",
-      args: { projectId: "web", envVarId: "env_2" },
+      tool: "vercel_api_write",
+      label: "delete environment variable through hatch",
+      args: { method: "DELETE", path: "/v9/projects/web/env/env_2" },
       replies: [{ status: 204 }],
     },
     {
