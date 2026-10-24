@@ -2369,7 +2369,7 @@ export function slidesTools({ connection }: { connection: Connection }): ApiTool
     };
     return isRead
       ? read(connection, spec)
-      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
+      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint !== false });
   });
 }
 

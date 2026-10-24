@@ -370,8 +370,13 @@ it(
       ["stripe", "__proto__"],
     ] as const) {
       const prefix = provider === "planning-center" ? "pco" : provider;
-      const found = await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext());
-      expect(found, `${provider}: ${query}`).toMatchObject({ operations: [], page: { hasMore: false } });
+      const found = (await fixtures.get(provider)!.callTool(`${prefix}_api_search`, { query }, connectorContext())) as {
+        structuredContent?: unknown;
+      };
+      expect(found.structuredContent ?? found, `${provider}: ${query}`).toMatchObject({
+        operations: [],
+        page: { hasMore: false },
+      });
     }
     // Verb-less noun phrases keep their broader eligibility rule.
     const broad = (await fixtures

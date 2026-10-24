@@ -116,7 +116,7 @@ export function googleErrors(
       const message = asRecord(asRecord(body)["error"])["message"];
       // The body arrives redacted whole, before anything here cuts it.
       const said = typeof message === "string" ? message.trim().slice(0, 500) : "";
-      return said ? `${provider}: ${said}` : `${provider} returned HTTP ${status}.`;
+      return said ? `${provider}: ${said}${/[.!?]$/.test(said) ? "" : "."}` : `${provider} returned HTTP ${status}.`;
     },
     classify: [
       // Every 3xx the transport lets through (300, 304, 305, 306) is a redirect first.
@@ -247,7 +247,7 @@ export function googleErrors(
             unknownId: notFound === "absent" ? ("not_found" as const) : ("connector_call_failed" as const),
             provesAbsence: notFound === "absent",
             conflicts: options.revisionConflicts
-              ? ["A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409."]
+              ? ["A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409"]
               : [],
           },
           bodyFailures: {

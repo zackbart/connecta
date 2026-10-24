@@ -131,9 +131,9 @@ asserted inside existing cases. No case is added.
 
 The guide and spreadsheet-id parameter explicitly accept a supplied id as is.
 The guide names `get_spreadsheet` and the INSERT_ROWS-pinned
-`append_values`. Migration notes disclose the shared builder's omission of
-the previous create/add/append `destructiveHint:false` (#1017); host approval
-routing is unchanged. Unrelated Drive/Gmail fixture escaping is reverted.
+`append_values`. Follow-up #1017 restores the previous create/add/append
+`destructiveHint:false` annotations through the shared builder; migration notes
+now describe the retained annotations. Host approval routing is unchanged. Unrelated Drive/Gmail fixture escaping is reverted.
 
 The paid snapshot predates these fixes. The independent review identifies
 nine exact-range failures as a frozen-grader defect. Its range-neutral

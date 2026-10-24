@@ -1706,6 +1706,6 @@ export function gmailTools({ connection }: { connection: Connection }): ApiTool[
     };
     return declaration.annotations.readOnlyHint === true
       ? read(connection, spec)
-      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint === true });
+      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint !== false });
   });
 }
