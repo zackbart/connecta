@@ -877,8 +877,8 @@ operator records retain only checked classifications and numeric facts.
 A dispatched write timeout becomes `write_outcome_unknown` and retains its
 deadline details even when the program catches the failure. A completed
 maintained-provider call that reports a timeout keeps `timeout` when its complete
-request ledger records an auxiliary resource read and proves that only auxiliary
-requests departed, unless an explicit `writeOutcome: "unknown"` overrides that
+request ledger records an auxiliary resource read and proves that no call-owned
+request or kit auxiliary falsely declared as a read departed, unless an explicit `writeOutcome: "unknown"` overrides that
 proof. Custom `api()` and `remoteMcp()` connectors, invocation deadlines and
 cancellation without a complete answer retain conservative write outcomes. The final program
 error includes the first timeout in `details`; multiple write timeouts also

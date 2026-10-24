@@ -4156,19 +4156,35 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       { ...LOOKUP, headers: { "X-HTTP-Method-Override": "POST" } },
     ]) {
       sent = [];
-      answers = [() => Response.json({ rows: [] })];
-      const refused = await invoke(acme(), (connection) =>
-        connection
-          .sendPath(LOOKUP, { effect: "read", step: "lookup" })
-          .pipe(Effect.flatMap(() => connection.sendPath(request, { effect: "read", step: "write" }))),
+      answers = [() => Response.json({ rows: [] }), () => Response.json({ ok: true })];
+      const connection = acme();
+      const tool = write(connection, {
+        name: "send",
+        description: "Look up, then send a request labelled auxiliary.",
+        destructive: false,
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        writeSteps: { lookup: "once", write: "once" },
+        run: () =>
+          connection.sendPath(LOOKUP, { effect: "read", step: "lookup" }).pipe(
+            Effect.flatMap(() => connection.sendPath(request, { effect: "read", step: "write" })),
+            Effect.flatMap(() => Effect.fail(new Refusal({ error: new ConnectorCallError("timeout", "Lost reply.") }))),
+          ),
+      });
+      const registry = makeRegistry([tracksEveryRequest(apiConnector("acme", { tools: [tool] }))]);
+      const outcome = await new InvocationService(registry, new CatalogService(registry, context().baseUrl)).invoke(
+        "acme.send",
+        {},
+        { source: "call_destructive_tool" },
       );
-      expect(sent.map((entry) => entry.method)).toEqual(["GET"]);
-      expect(refused.error).toMatchObject({
-        code: "invalid_args",
-        message: "Auxiliary reads must use GET or HEAD without a method override.",
+      expect(sent.map((entry) => entry.method)).toEqual(["GET", request.method]);
+      expect(outcome).toMatchObject({ ok: false, answered: false });
+      if (outcome.ok) throw new Error("expected the reported timeout");
+      expect(outcome.error).toMatchObject({
+        code: "write_outcome_unknown",
         retryable: false,
       });
-      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: refused.error as never })).toBe("failed");
+      expect(classifyWriteOutcome(outcome)).toBe("unknown");
     }
     for (const separate of [false, true]) {
       sent = [];

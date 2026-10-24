@@ -51,6 +51,8 @@ export interface LogicalCall {
   sent: ProviderRequest[];
   /** Auxiliary GET/HEAD dispatches without method overrides, apart from resource writes and auth POSTs. */
   auxiliaryReads: ProviderRequest[];
+  /** A kit auxiliary declared as a read dispatched without physical read proof. */
+  nonReadAuxiliaryDispatched: boolean;
 }
 
 export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
@@ -156,6 +158,7 @@ export function dispatchProviderRequest(
     // so token POSTs and overridden GETs cannot supply this proof later.
     else if (method !== undefined && readRequest({ classification: "read", method }, headers))
       logical.auxiliaryReads.push(request);
+    else if (request.blocksAuxiliaryProof) logical.nonReadAuxiliaryDispatched = true;
   }
 }
 
@@ -224,7 +227,14 @@ export function providerRequest(
  * naming the exact object and `callTool` function it is about to invoke.
  */
 export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): LogicalCall {
-  const call: LogicalCall = { target, entered, boundaries: [], sent: [], auxiliaryReads: [] };
+  const call: LogicalCall = {
+    target,
+    entered,
+    boundaries: [],
+    sent: [],
+    auxiliaryReads: [],
+    nonReadAuxiliaryDispatched: false,
+  };
   setViewService(ctx, LogicalLedger, call);
   return call;
 }
@@ -269,6 +279,7 @@ export function onlyAuxiliaryRequests(call: LogicalCall | undefined): boolean {
     tracksRequests(boundary) &&
     ownsLogicalCall(call) &&
     call.auxiliaryReads.some((request) => request.dispatched) &&
+    !call.nonReadAuxiliaryDispatched &&
     !call.sent.some((request) => request.dispatched && !request.auxiliary)
   );
 }

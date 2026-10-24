@@ -402,6 +402,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Breeze rejected the configured API key (HTTP 403). Breeze said: Golden 403 failure. An operator must replace it with the key from this church's Extensions → API page.",

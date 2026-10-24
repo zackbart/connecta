@@ -2910,21 +2910,28 @@ compiling and configuring the real thing.
   tool's write classification. `onlyAuxiliaryRequests` requires exactly one
   boundary that owns the logical call and declares complete request tracking
   (`tracksEveryRequest`), at least one dispatched auxiliary resource read, and
-  no dispatched call-owned request. The invocation's `mayHaveWritten` is true
+  no dispatched call-owned request or kit auxiliary falsely declared as a read.
+  The kit records `blocksAuxiliaryProof` at dispatch for an `effect: "read"`
+  request without physical GET/HEAD proof; `nonReadAuxiliaryDispatched` retains
+  that blocking fact on the logical call. The
+  invocation's `mayHaveWritten` is true
   for an entered write unless the call answered with that proof; an explicit
   `writeOutcome: "unknown"` always overrides the relaxation. Empty or partial
   ledgers, token POSTs alone, multiple boundaries, custom `api()` and
   `remoteMcp()` connectors, deadlines, and caller cancellation supply no such
   proof. Only maintained providers have the internal tracking declaration;
   they must route every dispatch through their tracked transports. The kit
-  refuses `effect: "read"` requests unless the final request is GET or HEAD
-  without method-override headers. Token mints use separate guarded transports
-  and supply no auxiliary-read proof. When a timeout or auth failure still
-  may have written, the invocation withdraws `answered`; an auth failure with
-  an empty resource ledger also loses its private known-failure mark before
-  advice is composed. Actual resource-refusal provenance remains intact.
-  Token-only auth failures therefore keep conservative program accounting as
-  well as reconciliation wording.
+  still classifies auxiliary POSTs and method-overridden GETs as writes for
+  reservation and replay; the effect label does not change those rules.
+  Their dispatches block auxiliary-only inference even beside a genuine
+  auxiliary read. Guarded authentication token POSTs supply no read proof,
+  but do not invalidate a later auxiliary resource read. A conservative
+  timeout withdraws `answered`; a conservative auth failure does so only with
+  an empty resource ledger, also withdrawing that ledger's private known-failure
+  mark before advice is composed. A refused call-owned write keeps its
+  `answered` evidence and resource-refusal provenance. Token-only auth failures
+  therefore keep conservative program accounting as well as reconciliation
+  wording.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
   `tools/call` is sent, and GitHub's REST target check and token mint.

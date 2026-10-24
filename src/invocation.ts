@@ -464,12 +464,16 @@ export class InvocationService {
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
         }
-        if (mayHaveWritten && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+        if (
+          mayHaveWritten &&
+          (error.code === "auth_required" || error.code === "downstream_oauth_required") &&
+          !logicalCall?.sent.some((request) => request.dispatched)
+        ) {
           // An empty resource ledger cannot settle this auth failure. Keep
           // actual resource-refusal provenance, but withdraw an empty ledger's
           // known mark before composing advice and counting program writes.
           answered = false;
-          if (!logicalCall?.sent.some((request) => request.dispatched)) forgetProviderFailure(error);
+          forgetProviderFailure(error);
         }
         // A dispatched write without refusal provenance is unknown whatever
         // its connector's code says, a custom connector's included: never

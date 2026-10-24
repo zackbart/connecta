@@ -794,8 +794,9 @@ Each round also checks its own invocation facts. Normal stale-fallback calls
 retain their existing behavior.
 An auth failure after a write handler or transport was entered keeps its
 ordinary error code and manual `/connect` guidance where available. Unless a
-maintained provider's complete ledger proves that only auxiliary resource reads
-departed, it also carries `retryable: false` and `reconciliationRequired: true`:
+maintained provider's complete ledger records an auxiliary resource read and
+proves that only auxiliary resource reads and authentication token mints departed,
+it also carries `retryable: false` and `reconciliationRequired: true`:
 the write may have partially run, so reconcile its target before retrying after
 connection. An explicit `writeOutcome: "unknown"` always keeps this guard.
 
@@ -1065,13 +1066,16 @@ bounded to ten calls with `uncertainCallsTruncated` when more exist.
 A dispatched write is never reported as retryable once the downstream may
 have acted on it (INV-9). A failed maintained-provider write call whose complete
 request ledger records an auxiliary resource read and proves that no call-owned
-request departed keeps the failure's retry advice and needs no write
+request or kit auxiliary falsely declared as a read departed keeps the failure's retry advice and needs no write
 reconciliation. For example, a Gmail connector named `mail` can fail
 `mail.update_draft` during its auxiliary draft lookup before sending the update;
 its authorization handoff then says to retry after recovery. The same rule applies
 to a timeout reported by that completed call. An explicit `writeOutcome: "unknown"`
-always takes precedence. An authentication POST alone supplies no resource-read
-proof. Empty, absent or incomplete ledgers, invocation deadlines and caller
+always takes precedence. A kit request declared `effect: "read"` that uses POST
+or a method-overridden GET blocks this inference even alongside an auxiliary read,
+while retaining core write reservation and replay rules. Authentication token mints
+supply no resource-read proof but do not invalidate a later auxiliary resource read.
+Empty, absent or incomplete ledgers, invocation deadlines and caller
 cancellation without a complete answer retain conservative write outcomes.
 Custom `api()` and `remoteMcp()` connectors always stay conservative: the internal
 complete-tracking declaration is available only to maintained providers.

@@ -8,6 +8,8 @@ export interface ProviderRequest {
   readonly dispatched: boolean;
   readonly status?: number;
   auxiliary: boolean;
+  /** A kit auxiliary declared as a read lacked physical GET/HEAD proof at dispatch. */
+  readonly blocksAuxiliaryProof?: true;
   provider: string;
   /** The HTTP method it was sent with, when its channel knows it. */
   readonly method?: string;
