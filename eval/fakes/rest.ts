@@ -40,13 +40,24 @@ function installTransport() {
   globalThis.fetch = (async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (!Object.values(HOSTS).flat().includes(url.hostname) && url.hostname !== "church.breezechms.com")
+    if (
+      !Object.values(HOSTS).flat().includes(url.hostname) &&
+      url.hostname !== "church.breezechms.com" &&
+      url.hostname !== "api.github.com"
+    )
       return forward(request);
     const key =
       request.headers.get("api-key") ??
       request.headers.get("x-auth-key") ??
       request.headers.get("authorization")?.replace(/^Bearer /, "");
-    const target = key ? routes.get(key) : undefined;
+    let target = key ? routes.get(key) : undefined;
+    if (!target && url.hostname === "api.github.com" && key) {
+      try {
+        target = routes.get(`jwt:${JSON.parse(Buffer.from(key.split(".")[1] ?? "", "base64url").toString()).iss}`);
+      } catch {
+        /* unregistered credentials refuse below */
+      }
+    }
     if (!target || !target.hosts.includes(url.hostname)) throw new Error("Eval refused non-fake vendor transport");
     return forward(new Request(`${target.url}${url.pathname}${url.search}`, request));
   }) as typeof fetch;

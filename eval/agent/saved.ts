@@ -11,6 +11,7 @@ export interface SavedGradeInputs {
   trace: AgentTrace;
   world: {
     rest?: World["rest"];
+    github?: World["github"];
     breeze?: World["breeze"];
     pco?: World["pco"];
     overflow?: World["overflow"];
@@ -31,6 +32,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     trace,
     world: {
       rest: world.rest,
+      ...(world.options.github ? { github: world.github } : {}),
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
       ...(world.options.planningCenter ? { pco: world.pco } : {}),
@@ -155,6 +157,12 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.overflow, structuredClone(state.overflow));
   } else if (state.calls.some((c) => c.service === "overflow"))
     throw new Error("Incomplete saved grading evidence: overflow");
+  if (state.github) {
+    for (const key of ["repositories", "releases", "merges"] as const)
+      requireEvidence(Array.isArray(state.github[key]), `github.${key}`);
+    Object.assign(world.github, structuredClone(state.github));
+  } else if (state.calls.some((c) => c.service === "github"))
+    throw new Error("Incomplete saved grading evidence: github");
   if (state.breeze) {
     for (const key of ["people", "created", "updated"] as const)
       requireEvidence(Array.isArray(state.breeze[key]), `breeze.${key}`);
