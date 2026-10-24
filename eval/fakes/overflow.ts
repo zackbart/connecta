@@ -3,7 +3,7 @@ import { serveFetch, type Served } from "../support/serve.js";
 import type { CallRecord, Ledger } from "./service.js";
 
 type Row = Record<string, any>;
-export const overflowId = (n: number) => n.toString(16).padStart(24, "0");
+const overflowId = (n: number) => n.toString(16).padStart(24, "0");
 export const CAMP = overflowId(4001);
 export const LOC = overflowId(5001);
 export const DONOR = overflowId(1);

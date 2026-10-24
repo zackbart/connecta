@@ -1,22 +1,155 @@
 [
   {
-    "label": "overflow_api_get",
-    "tool": "overflow_api_get",
+    "label": "overflow_api_search",
+    "tool": "overflow_api_search",
+    "args": {
+      "query": "refund gift"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "DELETE",
+            "path": "/subscriptions/{donorId}/{subscriptionId}",
+            "operationId": "cancelSubscription",
+            "summary": "Cancel a recurring gift (subscription); does not refund past gifts",
+            "tool": "overflow_api_write"
+          },
+          {
+            "method": "GET",
+            "path": "/refunds",
+            "operationId": "getRefunds",
+            "summary": "List refunds with contribution and deposit joins and cent amounts",
+            "tool": "overflow_api_read",
+            "matched": "response field data[].processorRefundId"
+          },
+          {
+            "method": "GET",
+            "path": "/refunds/{refundId}",
+            "operationId": "getRefundById",
+            "summary": "Retrieve one refund and its contribution, status and cent amounts",
+            "tool": "overflow_api_read",
+            "matched": "response field data.processorRefundId"
+          },
+          {
+            "method": "GET",
+            "path": "/deposits/{depositId}/summary",
+            "operationId": "getDepositSummary",
+            "summary": "Read a payout's gross, fees and net totals in cents by kind",
+            "tool": "overflow_api_read",
+            "matched": "response field data.refunds"
+          }
+        ],
+        "revision": "v3",
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_details",
+    "tool": "overflow_api_details",
+    "args": {
+      "method": "POST",
+      "path": "/subscriptions/{donorId}"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "POST",
+        "path": "/subscriptions/{donorId}",
+        "operationId": "createSubscription",
+        "summary": "Create a recurring gift (subscription), with amount in dollars",
+        "parameters": [
+          {
+            "name": "donorId",
+            "in": "path",
+            "required": true,
+            "description": "The Id of the donor to create the subscription for.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "body": {
+          "contentType": "application/json",
+          "required": true,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "paymentMethodId": {
+                "type": "string",
+                "description": "Id of the payment method."
+              },
+              "amount": {
+                "type": "number",
+                "description": "Subscription amount in dollars."
+              },
+              "frequency": {
+                "type": "string",
+                "description": "Recurring frequency for the subscription.",
+                "enum": [
+                  "two-weeks",
+                  "1st-15th",
+                  "month",
+                  "one-time",
+                  "quarter",
+                  "week",
+                  "year"
+                ]
+              },
+              "startDate": {
+                "type": "string",
+                "description": "ISO 8601 date string when the subscription should start."
+              },
+              "timezone": {
+                "type": "string",
+                "description": "Timezone for the subscription start date. Defaults to UTC if not provided."
+              },
+              "anonymous": {
+                "type": "boolean",
+                "description": "Whether the donor wants the contribution to be anonymous."
+              },
+              "campaignId": {
+                "type": "string",
+                "description": "Id of the campaign to allocate funds to"
+              },
+              "subcampaignId": {
+                "type": "string",
+                "description": "Id of the subcampaign for more specific allocation."
+              },
+              "donorNotes": {
+                "type": "string",
+                "description": "Notes from the donor."
+              }
+            },
+            "required": [
+              "paymentMethodId",
+              "amount",
+              "frequency"
+            ]
+          }
+        },
+        "verdict": "destructive",
+        "tool": "overflow_api_write",
+        "revision": "v3"
+      }
+    }
+  },
+  {
+    "label": "overflow_api_read",
+    "tool": "overflow_api_read",
     "args": {
       "path": "/refunds/9910f34fd5061afeec3eab01",
-      "query": [
-        {
-          "name": "statusBucket[]",
-          "value": "PENDING"
-        },
-        {
-          "name": "statusBucket[]",
-          "value": "FAILED"
-        },
-        {
-          "name": "limit",
-          "value": 5
-        }
+      "fields": [
+        "data.id",
+        "data.amountInCents"
       ]
     },
     "steps": [
@@ -24,7 +157,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01?statusBucket%5B%5D=PENDING&statusBucket%5B%5D=FAILED&limit=5",
+          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -37,26 +170,19 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "data": {
             "id": "9910f34fd5061afeec3eab01",
-            "contributionId": "6710f34fd5061afeec3eab57",
-            "status": "SUCCEEDED",
-            "reason": "requested_by_customer",
-            "amountInCents": 5000,
-            "netValueInCents": 4825,
-            "feeValueInCents": 175,
-            "depositId": null,
-            "createdAt": "2025-01-05T00:00:00.000Z",
-            "updatedAt": "2025-01-05T00:00:00.000Z"
+            "amountInCents": 5000
           }
         }
       }
     }
   },
   {
-    "label": "overflow_api_get text",
-    "tool": "overflow_api_get",
+    "label": "overflow_api_read text",
+    "tool": "overflow_api_read",
     "args": {
       "path": "/health"
     },
@@ -78,20 +204,21 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": "ok"
+        "status": 200,
+        "data": "ok"
       }
     }
   },
   {
-    "label": "overflow_api_mutate",
-    "tool": "overflow_api_mutate",
+    "label": "overflow_api_write",
+    "tool": "overflow_api_write",
     "args": {
       "method": "POST",
-      "path": "/subscriptions",
+      "path": "/subscriptions/6710f34fd5061afeec3eab50",
       "body": {
-        "donorId": "6710f34fd5061afeec3eab50",
+        "paymentMethodId": "pm1",
         "amount": 25,
-        "frequency": "monthly",
+        "frequency": "month",
         "campaignId": "7710f34fd5061afeec3eab78"
       }
     },
@@ -100,7 +227,7 @@
         {
           "after": 0,
           "method": "POST",
-          "url": "https://server.overflow.co/api/v3/subscriptions",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50",
           "headers": {
             "accept": "application/json",
             "content-type": "application/json",
@@ -109,9 +236,9 @@
           },
           "body": {
             "json": {
-              "donorId": "6710f34fd5061afeec3eab50",
+              "paymentMethodId": "pm1",
               "amount": 25,
-              "frequency": "monthly",
+              "frequency": "month",
               "campaignId": "7710f34fd5061afeec3eab78"
             }
           }
@@ -122,7 +249,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 201,
+        "data": {
           "data": {
             "id": "5510f34fd5061afeec3eab11",
             "donorId": "6710f34fd5061afeec3eab50",
@@ -155,8 +283,8 @@
     }
   },
   {
-    "label": "overflow_api_mutate DELETE",
-    "tool": "overflow_api_mutate",
+    "label": "overflow_api_write DELETE",
+    "tool": "overflow_api_write",
     "args": {
       "method": "DELETE",
       "path": "/subscriptions/6710f34fd5061afeec3eab50/5510f34fd5061afeec3eab11",
@@ -188,7 +316,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": null
+        "status": 200,
+        "data": null
       }
     }
   },
@@ -211,7 +340,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/contributions?minimumUpdatedDate=2025-01-01&statusBucket%5B%5D=PENDING&statusBucket%5B%5D=CONFIRMED&campaignId=7710f34fd5061afeec3eab78&locationIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/contributions?limit=25&page=1&minimumUpdatedDate=2025-01-01&statusBucket%5B%5D=PENDING&statusBucket%5B%5D=CONFIRMED&campaignId=7710f34fd5061afeec3eab78&locationIds%5B%5D=6710f34fd5061afeec3eab58",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -224,7 +353,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "contributions": [
+        "items": [
           {
             "id": "6710f34fd5061afeec3eab57",
             "type": "CASH",
@@ -286,20 +415,17 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 60,
-          "hasMore": true
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiZDA1ZmUxNzI4YWM4OTFlMzI3ZjNmOWMwMjg4MjI0MGEiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjI1fSIsIm0iOiJtbEluMDBEaTNIVW9uLW9KT0JHenFHT2kyZDFLMkRRQ0prcEFySEFmSHlRIn0",
+          "total": 60
         }
       }
     }
   },
   {
-    "label": "list_contributions raw without totalCount",
+    "label": "list_contributions without totalCount",
     "tool": "list_contributions",
     "args": {
-      "raw": true,
-      "page": 3,
       "limit": 1
     },
     "steps": [
@@ -307,7 +433,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/contributions?page=3&limit=1",
+          "url": "https://server.overflow.co/api/v3/contributions?limit=1&page=1",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -320,7 +446,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "contributions": [
+        "items": [
           {
             "id": "6710f34fd5061afeec3eab57",
             "type": "CASH",
@@ -329,10 +455,8 @@
           }
         ],
         "page": {
-          "page": 3,
-          "limit": 1,
-          "totalCount": 3,
-          "hasMore": true
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiMGVhZWUzMTBkNGVkMTdlZjdiOWFiYWNlZjZmNmJlNmEiLCJjIjoie1wicGFnZVwiOjIsXCJsaW1pdFwiOjF9IiwibSI6ImNkaTZNQlljaWdJamdXVkZDbWtIU01wVXdSX1pHREw1MDBKQ3VxZlFhRlkifQ"
         }
       }
     }
@@ -405,7 +529,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/deposits?types%5B%5D=AUTOMATED&reconciled=false&minimumEstimatedValueInCents=1000&sortDirection=ASC&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/deposits?limit=25&page=1&sortDirection=ASC&reconciled=false&minimumEstimatedValueInCents=1000&types%5B%5D=AUTOMATED",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -418,7 +542,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "deposits": [
+        "items": [
           {
             "id": "8810f34fd5061afeec3eab67",
             "status": "PAID",
@@ -438,10 +562,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -561,7 +683,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/refunds?contributionId=6710f34fd5061afeec3eab57&sortDirection=DESC&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/refunds?limit=25&page=1&sortDirection=DESC&contributionId=6710f34fd5061afeec3eab57",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -574,7 +696,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "refunds": [
+        "items": [
           {
             "id": "9910f34fd5061afeec3eab01",
             "contributionId": "6710f34fd5061afeec3eab57",
@@ -588,10 +710,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -608,7 +728,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/chargebacks?minimumUpdatedDate=2025-01-01&page=1&limit=10",
+          "url": "https://server.overflow.co/api/v3/chargebacks?limit=10&page=1&minimumUpdatedDate=2025-01-01",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -621,7 +741,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "chargebacks": [
+        "items": [
           {
             "id": "9910f34fd5061afeec3eab02",
             "contributionId": "6710f34fd5061afeec3eab57",
@@ -637,10 +757,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 10,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -657,7 +775,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/donors?sortBy=totalContributionsCount&sortDirection=DESC&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/donors?limit=25&page=1&sortBy=totalContributionsCount&sortDirection=DESC",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -670,7 +788,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "donors": [
+        "items": [
           {
             "id": "6710f34fd5061afeec3eab50",
             "firstName": "Alice",
@@ -687,10 +805,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -756,7 +872,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50?status%5B%5D=active&status%5B%5D=paused&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50?limit=25&page=1&status%5B%5D=active&status%5B%5D=paused",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -769,7 +885,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "subscriptions": [
+        "items": [
           {
             "id": "5510f34fd5061afeec3eab11",
             "donorId": "6710f34fd5061afeec3eab50",
@@ -796,10 +912,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -815,7 +929,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/subscriptions?sortBy=nextContributionAt&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/subscriptions?limit=25&page=1&sortBy=nextContributionAt",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -828,7 +942,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "subscriptions": [
+        "items": [
           {
             "id": "5510f34fd5061afeec3eab11",
             "donorId": "6710f34fd5061afeec3eab50",
@@ -855,10 +969,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -888,7 +1000,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "paymentMethods": [
+        "items": [
           {
             "id": "pm1",
             "type": "card",
@@ -897,7 +1009,10 @@
             "isExpired": false,
             "updatedAt": "2025-01-01"
           }
-        ]
+        ],
+        "page": {
+          "hasMore": false
+        }
       }
     }
   },
@@ -913,7 +1028,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/campaigns?isSubcampaign=true&parentCampaignId=7710f34fd5061afeec3eab78&search=Mission&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/campaigns?limit=25&page=1&isSubcampaign=true&parentCampaignId=7710f34fd5061afeec3eab78&search=Mission",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -926,7 +1041,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "campaigns": [
+        "items": [
           {
             "id": "7710f34fd5061afeec3eab78",
             "name": "Mission 2025",
@@ -951,10 +1066,8 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
@@ -970,7 +1083,7 @@
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/locations?sortBy=name&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/locations?limit=25&page=1&sortBy=name",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -983,7 +1096,7 @@
       "ok": true,
       "format": "json",
       "value": {
-        "locations": [
+        "items": [
           {
             "id": "6710f34fd5061afeec3eab58",
             "name": "Main Campus",
@@ -995,75 +1108,30 @@
           }
         ],
         "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
+          "hasMore": false,
+          "total": 1
         }
       }
     }
   },
   {
-    "label": "list_tap_events",
-    "tool": "list_tap_events",
+    "label": "overflow_api_read tap events",
+    "tool": "overflow_api_read",
     "args": {
-      "groupIds": [
-        "6710f34fd5061afeec3eab58"
-      ],
-      "startDate": "2026-05-01"
-    },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://server.overflow.co/api/v3/tap/events?startDate=2026-05-01&groupIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
-          "headers": {
-            "accept": "application/json",
-            "x-api-key": "<secret:apiKey>",
-            "x-client-id": "<secret:clientId>"
-          }
-        }
-      ]
-    ],
-    "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "events": [
-          {
-            "id": "t1",
-            "createdAt": "2026-05-01T10:00:00.000Z",
-            "deviceId": "d1",
-            "deviceSerialNumber": 12345,
-            "groupId": "g1",
-            "groupName": "Sunday",
-            "destinationId": "x1",
-            "destinationName": "Give",
-            "destinationType": "web"
-          }
+      "path": "/tap/events",
+      "query": {
+        "groupIds[]": [
+          "6710f34fd5061afeec3eab58"
         ],
-        "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
-        }
+        "startDate": "2026-05-01"
       }
-    }
-  },
-  {
-    "label": "list_webhooks",
-    "tool": "list_webhooks",
-    "args": {
-      "status": "enabled"
     },
     "steps": [
       [
         {
           "after": 0,
           "method": "GET",
-          "url": "https://server.overflow.co/api/v3/webhooks?status=enabled&page=1&limit=25",
+          "url": "https://server.overflow.co/api/v3/tap/events?groupIds%5B%5D=6710f34fd5061afeec3eab58&startDate=2026-05-01",
           "headers": {
             "accept": "application/json",
             "x-api-key": "<secret:apiKey>",
@@ -1076,129 +1144,210 @@
       "ok": true,
       "format": "json",
       "value": {
-        "webhooks": [
-          {
-            "id": "6710f34fd5061afeec3eab99",
-            "name": "CRM sync",
-            "destinationUrl": "https://hooks.example/overflow",
-            "enabledEvents": [
-              "contribution.approved",
-              "donor.updated"
-            ],
-            "status": "enabled",
-            "createdAt": "2025-01-01T00:00:00.000Z",
-            "updatedAt": "2025-01-01T00:00:00.000Z"
-          }
-        ],
-        "page": {
-          "page": 1,
-          "limit": 25,
-          "totalCount": 1,
-          "hasMore": false
-        }
-      }
-    }
-  },
-  {
-    "label": "list_webhook_event_logs",
-    "tool": "list_webhook_event_logs",
-    "args": {
-      "webhookId": "6710f34fd5061afeec3eab99",
-      "status": "failed"
-    },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?status=failed&limit=25",
-          "headers": {
-            "accept": "application/json",
-            "x-api-key": "<secret:apiKey>",
-            "x-client-id": "<secret:clientId>"
-          }
-        }
-      ]
-    ],
-    "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "attempts": [
-          {
-            "id": "a1",
-            "eventId": "e1",
-            "webhookEventName": "contribution.approved",
-            "status": "failed",
-            "attemptNumber": 2,
-            "deliverySource": "automated",
-            "originatedAt": "2026-01-01T00:00:00.000Z",
-            "attemptedAt": "2026-01-01T00:00:05.000Z",
-            "url": "https://hooks.example/overflow",
-            "responseCode": 500,
-            "responseDurationMs": 120,
-            "errorMessage": "Internal Server Error"
-          }
-        ],
-        "nextCursor": "c2"
-      }
-    }
-  },
-  {
-    "label": "list_webhook_event_logs last page raw",
-    "tool": "list_webhook_event_logs",
-    "args": {
-      "webhookId": "6710f34fd5061afeec3eab99",
-      "cursor": "c2",
-      "raw": true
-    },
-    "steps": [
-      [
-        {
-          "after": 0,
-          "method": "GET",
-          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?cursor=c2&limit=25",
-          "headers": {
-            "accept": "application/json",
-            "x-api-key": "<secret:apiKey>",
-            "x-client-id": "<secret:clientId>"
-          }
-        }
-      ]
-    ],
-    "result": {
-      "ok": true,
-      "format": "json",
-      "value": {
-        "attempts": [
-          {
-            "id": "a1",
-            "eventId": "e1",
-            "webhookEventName": "contribution.approved",
-            "subscriptionId": "6710f34fd5061afeec3eab99",
-            "status": "failed",
-            "attemptNumber": 2,
-            "deliverySource": "automated",
-            "originatedAt": "2026-01-01T00:00:00.000Z",
-            "attemptedAt": "2026-01-01T00:00:05.000Z",
-            "request": {
-              "url": "https://hooks.example/overflow",
-              "body": "{\"donor\":{\"email\":\"alice@example.com\"}}"
-            },
-            "response": {
-              "code": 500,
-              "body": "boom",
-              "durationMs": 120,
-              "errorMessage": "Internal Server Error"
+        "status": 200,
+        "data": {
+          "data": [
+            {
+              "id": "t1",
+              "createdAt": "2026-05-01T10:00:00.000Z",
+              "deviceId": "d1",
+              "groupId": "g1",
+              "destinationId": "x1",
+              "device": {
+                "id": "d1",
+                "serialNumber": 12345
+              },
+              "group": {
+                "id": "g1",
+                "name": "Sunday"
+              },
+              "destination": {
+                "id": "x1",
+                "name": "Give",
+                "type": "web"
+              }
             }
-          }
-        ]
+          ],
+          "totalCount": 1
+        },
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
       }
     }
   },
   {
-    "label": "overflow_api_get echoes sent secrets",
-    "tool": "overflow_api_get",
+    "label": "overflow_api_read webhooks",
+    "tool": "overflow_api_read",
+    "args": {
+      "path": "/webhooks",
+      "query": {
+        "status": "enabled"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks?status=enabled",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "data": [
+            {
+              "id": "6710f34fd5061afeec3eab99",
+              "name": "CRM sync",
+              "description": null,
+              "destinationUrl": "https://hooks.example/overflow",
+              "enabledEvents": [
+                "contribution.approved",
+                "donor.updated"
+              ],
+              "status": "enabled",
+              "createdAt": "2025-01-01T00:00:00.000Z",
+              "updatedAt": "2025-01-01T00:00:00.000Z"
+            }
+          ],
+          "totalCount": 1
+        },
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_read delivery attempts",
+    "tool": "overflow_api_read",
+    "args": {
+      "path": "/webhooks/6710f34fd5061afeec3eab99/event-logs",
+      "query": {
+        "status": "failed"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?status=failed",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "data": [
+            {
+              "id": "a1",
+              "eventId": "e1",
+              "webhookEventName": "contribution.approved",
+              "subscriptionId": "6710f34fd5061afeec3eab99",
+              "status": "failed",
+              "attemptNumber": 2,
+              "deliverySource": "automated",
+              "originatedAt": "2026-01-01T00:00:00.000Z",
+              "attemptedAt": "2026-01-01T00:00:05.000Z",
+              "request": {
+                "url": "https://hooks.example/overflow",
+                "body": "{\"donor\":{\"email\":\"alice@example.com\"}}"
+              },
+              "response": {
+                "code": 500,
+                "body": "boom",
+                "durationMs": 120,
+                "errorMessage": "Internal Server Error"
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": true,
+            "nextCursor": "c2"
+          }
+        },
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJ2IjoyLCJkIjoiNzgyOWRhODBmMWQ1MDE4YjM0NjkxNGUxNGM1MTMyNGYiLCJjIjoiXCJjMlwiIiwibSI6Il9vU1ZjQzlHdllEbDdQN2tjR1hPd3dvUEx2NFh3VGFzSVJ5TVdpX2dfVHcifQ",
+          "param": "cursor",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_read delivery last page",
+    "tool": "overflow_api_read",
+    "args": {
+      "path": "/webhooks/6710f34fd5061afeec3eab99/event-logs",
+      "fields": [
+        "data.id",
+        "data.response.code"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "data": [
+            {
+              "id": "a1",
+              "response": {
+                "code": 500
+              }
+            }
+          ]
+        },
+        "page": {
+          "hasMore": false,
+          "param": "cursor",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_read echoes sent secrets",
+    "tool": "overflow_api_read",
     "args": {
       "path": "/refunds/9910f34fd5061afeec3eab01"
     },
@@ -1220,7 +1369,8 @@
       "ok": true,
       "format": "json",
       "value": {
-        "result": {
+        "status": 200,
+        "data": {
           "data": {
             "id": "9910f34fd5061afeec3eab01",
             "contributionId": "6710f34fd5061afeec3eab57",

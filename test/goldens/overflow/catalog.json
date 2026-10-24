@@ -24,148 +24,10 @@
     ]
   },
   "guide": {
-    "summary": "Overflow production: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.",
-    "content": "# Overflow usage\n\nOverflow **production**: live nonprofit giving data, real donors, and real money.\n\nNonprofit purpose: Grace Church giving and deposits\n\n## Money, units, and status\n\nOverflow does not use one money unit, so read the unit per field:\n\n- Fields named `…InCents` are cents: deposits and their line items and\n  totals, refunds, chargebacks, and the authorize body.\n- Recurring-gift `amount` is dollars: Overflow's create and update bodies\n  say so, and its subscription reads carry the same field.\n- Contribution `amount` states no unit in Overflow's schema. Check one known\n  gift before reporting totals.\n- `status` is per asset type. A gift is final at `PAID_OUT` (cash),\n  `CONFIRMED` (manual cash, crypto), `CONTRIBUTION_RECEIVED` or `BILLED`\n  (stock), and `CONTRIBUTION_RECEIVED` (DAF). `statusBucket` filters by\n  Overflow's coarser PENDING / CONFIRMED / FAILED / CANCELED.\n- There is no funds endpoint. A gift reports its campaign and subcampaign;\n  `fundId` and `subFundId` appear only in the payment-authorize body.\n- Poll for changes with `minimumUpdatedDate`; `minimumInitiatedDate` is\n  when the donor gave.\n\n## Reconcile a deposit\n\n`list_deposits` → `get_deposit_summary` for totals → `get_deposit` for the\nline items, whose `referenceId` names the contribution, refund, or\nchargeback. Contributions also carry their `depositId`.\n\n## Donor data is sensitive\n\nGiving history and donor contact details are personal data. Reduce inside\n`execute_code` — aggregate, count, or keep ids — and return names, emails,\nphones, or addresses only when the task needs them. Contribution rows carry\nonly the donor's id and name; `list_donors` includes email but omits phone and\naddress; `get_donor` is the deliberate full-contact lookup.\n\n## Writes go through `overflow_api_mutate`\n\nEvery Overflow write moves money or changes a donor record, so none has a\nnamed tool. Each is one approval-gated `overflow_api_mutate` call with\nOverflow's documented body:\n\n- `POST /contributions` charges a saved payment method. Its `amount`\n  states no unit; confirm it against a known gift of the same donor before\n  charging. `POST /payments/authorize` takes `amountInCents` and\n  authorizes a new method (`0` only saves it).\n- `POST /contributions/{id}/initiate-refund` (under $1,000 only).\n- `POST` / `PATCH` / `DELETE /subscriptions/{donorId}[/{subscriptionId}]`\n  creates, changes, or cancels a recurring gift. Its `amount` is dollars,\n  not cents: a $50.00 monthly gift is `amount: 50`. Cancel takes a\n  `cancellationReason` body.\n- `POST /donors`, `PATCH /donors/{id}`.\n\nResolve every id first — donors, payment methods (`list_payment_methods`),\ncampaigns, locations — and never guess one. A write that fails with HTTP 5xx\nmay still have happened: read before retrying.\n\n## Hatches, pages, and limits\n\n- `overflow_api_get` reaches the reads without a named tool: single refunds,\n  chargebacks, campaigns, locations, webhooks, and recurring gifts\n  (`/subscriptions/{donorId}/{id}`), and Tap devices, groups, and\n  destinations (`/tap/devices`, `/tap/groups`, `/tap/destinations`). Paths\n  are below `/api/v3`; array filters repeat a `name[]` query pair.\n- Lists page by number: pass `page` while `page.hasMore` is true.\n  `list_webhook_event_logs` pages by cursor instead.\n- Overflow allows 120 requests per minute per API client. This connection\n  admits the same per runtime, four at a time, which approximates rather than\n  enforces it; a `rate_limited` failure carries the wait.\n"
+    "summary": "Giving records: asset-specific status, per-field money units, donor joins and deposit reconciliation.",
+    "content": "# Overflow usage\n\nOverflow production: live nonprofit giving, donors and money.\n\nNonprofit purpose: Grace Church giving and deposits\n\nNamed reads minimize contact data; get_donor is the full-contact lookup. Webhook signing secrets are always removed.\n\n## Giving records and joins\n\nDonor ids join profiles, contributions, subscriptions and payment methods.\nCampaigns and subcampaigns allocate gifts; locations identify campuses.\nResolve names to ids before editing a donor or moving money. There is no funds\nendpoint: fund and sub-fund identifiers occur only in payment authorization.\nA donor profile owned by a donor account cannot be edited through this API;\nwhen reads work but its edit is denied, changing the credential does not fix it.\n\nTap groups contain devices and point to destinations. A tap is engagement,\nnot a gift; use contributions to establish giving.\n\n## Money and final status\n\nRead the unit per field. Values named `InCents` are cents, including deposits,\nrefunds, chargebacks and payment authorization. Subscription `amount` is\nin dollars. Contribution and saved-method charge `amount` have no stated unit\nin the public schema: establish it from a known gift before reporting a sum\nor authorizing a charge. Do not assume every numeric amount uses the same unit.\n\nA gift is final at `PAID_OUT` for cash, `CONFIRMED` for manual cash or crypto,\n`CONTRIBUTION_RECEIVED` or `BILLED` for stock, and `CONTRIBUTION_RECEIVED` for\nDAF. A status bucket is coarser than those asset-specific states. Polling by\nupdated date finds later state changes; initiated date identifies when a donor gave.\n\n## Reconcile a deposit\n\nFind the bank payout, inspect its summary totals, then its line items.\nEach line item's `referenceId` names a contribution, refund or chargeback\naccording to its type; contributions can also carry a `depositId`.\nKeep gross, fee and net cent amounts separate and convert only for presentation.\nA refund request starts processing; verify the gift or refund before claiming\nthat funds have reached the donor. Canceling a recurring gift stops future\npayments and does not refund earlier gifts.\n\n## Reduce donor and delivery data\n\nGiving history and donor contact details are personal data. Aggregate or join\ninside code and return names, email, phone and address only when the task needs\nthem. Lean contribution rows carry donor identity; the full donor lookup\ncarries contact details. Webhook delivery logs can include delivered donor\npayloads and the receiving server's response: select the status, response code\nand error needed for diagnosis instead of returning those payloads wholesale.\n\n## Conventions\n\n- **Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100) and `cursor`. While `page.hasMore` is true, pass `page.nextCursor` back unchanged as `cursor`; the last page has no `nextCursor`.\n- **Results:** `fields` narrows a read's result to the dot paths you name. `truncated` lists the dot paths a result cut for size; the ids that fetch what was cut stay in the result.\n- **Hatch:** `overflow_api_search` finds this API's operations and reads no account data, `overflow_api_details` shows one operation's contract, and `overflow_api_read` calls a reviewed read. `overflow_api_write` calls a reviewed write, and every call to it needs approval. An operation without a reviewed verdict is refused.\n- **Writes:** a write is sent once and never retried. When its outcome is unknown, read the target before repeating it. Writes take no idempotency key.\n- **Errors:** codes come from the vendor's statuses and error facts, never its prose. `not_found` means the record does not exist; this API tells absence from a permission gap. It documents no conflict.\n- **Withheld values:** a value withheld for safety reads `\"[redacted]\"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.\n"
   },
   "tools": [
-    {
-      "name": "overflow_api_get",
-      "description": "Call any Overflow v3 GET endpoint and return its untouched body. Prefer a named read; this covers single refunds, chargebacks, campaigns, and Tap devices.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Path below /api/v3 beginning with '/', e.g. /refunds/<id>. No query string."
-          },
-          "query": {
-            "type": "array",
-            "maxItems": 50,
-            "description": "Query parameters as name/value pairs; repeat a name to send several values.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "description": "Parameter name, e.g. statusBucket[]."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ],
-                  "description": "Parameter value."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Overflow's untouched response body."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "overflow_api_mutate",
-      "description": "Send a JSON POST, PATCH, or DELETE to Overflow v3. Every Overflow write — charges, refunds, recurring gifts, donor edits — goes here, behind approval.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "method": {
-            "type": "string",
-            "enum": [
-              "POST",
-              "PATCH",
-              "DELETE"
-            ],
-            "description": "Mutation method the Overflow endpoint requires."
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Path below /api/v3 beginning with '/', e.g. /refunds/<id>. No query string."
-          },
-          "query": {
-            "type": "array",
-            "maxItems": 50,
-            "description": "Query parameters as name/value pairs; repeat a name to send several values.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "description": "Parameter name, e.g. statusBucket[]."
-                },
-                "value": {
-                  "type": [
-                    "string",
-                    "number",
-                    "boolean"
-                  ],
-                  "description": "Parameter value."
-                }
-              },
-              "required": [
-                "name",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "body": {
-            "type": [
-              "object",
-              "array"
-            ],
-            "description": "JSON body exactly as Overflow documents it. Units differ: subscription `amount` is dollars, /payments/authorize takes `amountInCents`, /contributions `amount` states none. Omit when the endpoint takes none."
-          }
-        },
-        "required": [
-          "method",
-          "path"
-        ],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "result": {
-            "description": "Overflow's untouched response body, or null when it sent none."
-          }
-        },
-        "required": [
-          "result"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      }
-    },
     {
       "name": "list_contributions",
       "description": "List gifts (cash, stock, crypto, DAF, manual) with status, amount, campaign, deposit, and donor name. Donor contact details stay in get_donor.",
@@ -196,6 +58,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
+            "description": "Overflow's coarse status buckets; matches any.",
             "items": {
               "type": "string",
               "enum": [
@@ -205,8 +68,7 @@
                 "CANCELED"
               ],
               "description": "Status bucket."
-            },
-            "description": "Overflow's coarse status buckets; matches any."
+            }
           },
           "campaignId": {
             "type": "string",
@@ -221,12 +83,12 @@
           "locationIds": {
             "type": "array",
             "minItems": 1,
+            "description": "Ids from list_locations; matches any.",
             "items": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{24}$",
               "description": "Id from list_locations."
-            },
-            "description": "Ids from list_locations; matches any."
+            }
           },
           "givingLinkId": {
             "type": "string",
@@ -238,20 +100,27 @@
             "minLength": 1,
             "description": "Pledge id."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"anonymous\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -260,11 +129,17 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "contributions": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "anonymous": {},
+                "donorCoveredFees": {},
+                "givingLinkId": {},
+                "pledgeId": {},
+                "dedication": {},
+                "donorNotes": {},
                 "id": {
                   "type": "string"
                 },
@@ -335,42 +210,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "type",
-                "status",
-                "amount"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "contributions",
+          "items",
           "page"
         ]
       },
@@ -389,9 +252,15 @@
             "pattern": "^[0-9a-fA-F]{24}$",
             "description": "24-hex id from list_contributions."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"anonymous\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -402,6 +271,12 @@
       "outputSchema": {
         "type": "object",
         "properties": {
+          "anonymous": {},
+          "donorCoveredFees": {},
+          "givingLinkId": {},
+          "pledgeId": {},
+          "dedication": {},
+          "donorNotes": {},
           "id": {
             "type": "string"
           },
@@ -472,13 +347,7 @@
           "updatedAt": {
             "type": "string"
           }
-        },
-        "required": [
-          "id",
-          "type",
-          "status",
-          "amount"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -504,6 +373,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
+            "description": "Deposit types; matches any.",
             "items": {
               "type": "string",
               "enum": [
@@ -512,8 +382,7 @@
                 "IMPORT"
               ],
               "description": "Deposit type."
-            },
-            "description": "Deposit types; matches any."
+            }
           },
           "reconciled": {
             "type": "boolean",
@@ -542,20 +411,27 @@
             ],
             "description": "Arrival-date order. Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"statementDescriptor\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -564,11 +440,14 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "deposits": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "statementDescriptor": {},
+                "startingBalanceInCents": {},
+                "endingBalanceInCents": {},
                 "id": {
                   "type": "string"
                 },
@@ -617,41 +496,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "status",
-                "amountInCents"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "deposits",
+          "items",
           "page"
         ]
       },
@@ -670,9 +538,15 @@
             "pattern": "^[0-9a-fA-F]{24}$",
             "description": "24-hex id from list_deposits."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"statementDescriptor\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -683,6 +557,9 @@
       "outputSchema": {
         "type": "object",
         "properties": {
+          "statementDescriptor": {},
+          "startingBalanceInCents": {},
+          "endingBalanceInCents": {},
           "id": {
             "type": "string"
           },
@@ -731,12 +608,7 @@
           "updatedAt": {
             "type": "string"
           }
-        },
-        "required": [
-          "id",
-          "status",
-          "amountInCents"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -752,6 +624,16 @@
             "type": "string",
             "pattern": "^[0-9a-fA-F]{24}$",
             "description": "24-hex id from list_deposits."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"depositId\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -833,14 +715,7 @@
               }
             }
           }
-        },
-        "required": [
-          "depositId",
-          "contributions",
-          "refunds",
-          "chargebacks",
-          "adjustments"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -848,7 +723,7 @@
     },
     {
       "name": "list_refunds",
-      "description": "List refunds with status, reason, amount, and net in cents, optionally for one contribution. Reads only; issuing a refund is a mutate call.",
+      "description": "List refunds with status, reason, amount, and net in cents, optionally for one contribution. Reads only; issuing a refund uses overflow_api_write.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -875,20 +750,27 @@
             ],
             "description": "Created-date order. Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -897,7 +779,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "refunds": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -932,42 +814,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "contributionId",
-                "status",
-                "amountInCents"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "refunds",
+          "items",
           "page"
         ]
       },
@@ -1004,20 +874,27 @@
             ],
             "description": "Created-date order. Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"feeValueInCents\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1026,11 +903,12 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "chargebacks": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "feeValueInCents": {},
                 "id": {
                   "type": "string"
                 },
@@ -1061,42 +939,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "contributionId",
-                "status",
-                "amountInCents"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "chargebacks",
+          "items",
           "page"
         ]
       },
@@ -1113,12 +979,12 @@
           "locationIds": {
             "type": "array",
             "minItems": 1,
+            "description": "Ids from list_locations; matches any.",
             "items": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{24}$",
               "description": "Id from list_locations."
-            },
-            "description": "Ids from list_locations; matches any."
+            }
           },
           "minimumUpdatedDate": {
             "type": "string",
@@ -1150,20 +1016,27 @@
             ],
             "description": "Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1172,7 +1045,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "donors": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1216,39 +1089,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "donors",
+          "items",
           "page"
         ]
       },
@@ -1266,6 +1130,16 @@
             "type": "string",
             "pattern": "^[0-9a-fA-F]{24}$",
             "description": "24-hex id from list_donors or a contribution's donor.id."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in the result, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1315,10 +1189,7 @@
           "updatedAt": {
             "type": "string"
           }
-        },
-        "required": [
-          "id"
-        ]
+        }
       },
       "annotations": {
         "readOnlyHint": true
@@ -1339,6 +1210,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
+            "description": "Statuses; matches any.",
             "items": {
               "type": "string",
               "enum": [
@@ -1350,18 +1222,17 @@
                 "recreated"
               ],
               "description": "Recurring-gift status."
-            },
-            "description": "Statuses; matches any."
+            }
           },
           "locationIds": {
             "type": "array",
             "minItems": 1,
+            "description": "Ids from list_locations; matches any.",
             "items": {
               "type": "string",
               "pattern": "^[0-9a-fA-F]{24}$",
               "description": "Id from list_locations."
-            },
-            "description": "Ids from list_locations; matches any."
+            }
           },
           "minimumUpdatedDate": {
             "type": "string",
@@ -1391,20 +1262,27 @@
             ],
             "description": "Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"anonymous\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1413,11 +1291,14 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "subscriptions": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "anonymous": {},
+                "donorCoveredFees": {},
+                "metadata": {},
                 "id": {
                   "type": "string"
                 },
@@ -1476,43 +1357,30 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "donorId",
-                "status",
-                "amount",
-                "frequency"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "subscriptions",
+          "items",
           "page"
         ]
       },
@@ -1522,22 +1390,40 @@
     },
     {
       "name": "list_payment_methods",
-      "description": "List one donor's saved payment methods (type, last 4, expiry) and their ids. Unpaginated. Never returns account or card numbers.",
+      "description": "List a donor's saved payment-method ids, types, last four and expiry. Other nonsecret metadata comes from overflow_api_read.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "donorId": {
             "type": "string",
             "pattern": "^[0-9a-fA-F]{24}$",
-            "description": "24-hex id from list_donors."
+            "description": "Donor id from list_donors."
           },
           "showExpired": {
             "type": "boolean",
-            "description": "Include expired methods. Defaults to false."
+            "description": "Include expired methods."
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"id\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -1548,7 +1434,7 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "paymentMethods": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
@@ -1571,17 +1457,27 @@
                 "updatedAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "type",
-                "last4"
-              ]
+              }
             }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "paymentMethods"
+          "items",
+          "page"
         ]
       },
       "annotations": {
@@ -1637,20 +1533,27 @@
             ],
             "description": "Defaults to DESC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
           },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"hideFromDonors\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1659,11 +1562,13 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "campaigns": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "hideFromDonors": {},
+                "archivedAt": {},
                 "id": {
                   "type": "string"
                 },
@@ -1731,41 +1636,30 @@
                 "uniqueDonorCount": {
                   "type": "number"
                 }
-              },
-              "required": [
-                "id",
-                "name",
-                "status"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "campaigns",
+          "items",
           "page"
         ]
       },
@@ -1800,16 +1694,27 @@
             ],
             "description": "Defaults to ASC."
           },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
           "limit": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+            "description": "Rows per page, at most 100. Keep limit unchanged while paging numbered lists.",
+            "default": 25
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in each item, e.g. [\"updatedAt\"]. It only narrows the result.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [],
@@ -1818,11 +1723,12 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "locations": {
+          "items": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "updatedAt": {},
                 "id": {
                   "type": "string"
                 },
@@ -1844,40 +1750,30 @@
                 "createdAt": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "name"
-              ]
+              }
             }
           },
           "page": {
             "type": "object",
             "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
               "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "required": [
-              "page",
-              "limit",
-              "totalCount",
               "hasMore"
             ]
           }
         },
         "required": [
-          "locations",
+          "items",
           "page"
         ]
       },
@@ -1886,369 +1782,423 @@
       }
     },
     {
-      "name": "list_tap_events",
-      "description": "List Tap-to-give taps with the device, group, and destination each hit. Taps are engagement, not gifts; giving is list_contributions.",
+      "name": "overflow_api_search",
+      "description": "Find Overflow API operations by keyword or path. Returns up to 8 compact matches with the tool that calls each; reads no account data.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "startDate": {
+          "query": {
             "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
-            "description": "On or after; ISO date or date-time."
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keywords or a path, e.g. refund charge."
           },
-          "endDate": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
-            "description": "On or before; ISO date or date-time."
-          },
-          "groupIds": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{24}$",
-              "description": "Id from a tap event's groupId."
-            },
-            "description": "Ids from a tap event's groupId; matches any."
-          },
-          "destinationIds": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{24}$",
-              "description": "Id from a tap event's destinationId."
-            },
-            "description": "Ids from a tap event's destinationId; matches any."
-          },
-          "deviceIds": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-fA-F]{24}$",
-              "description": "Id from a tap event's deviceId."
-            },
-            "description": "Ids from a tap event's deviceId; matches any."
-          },
-          "sortDirection": {
+          "method": {
             "type": "string",
             "enum": [
-              "ASC",
-              "DESC"
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
             ],
-            "description": "Time order. Defaults to DESC."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
+            "description": "Only operations with this method."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "events": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "createdAt": {
-                  "type": "string"
-                },
-                "deviceId": {
-                  "type": "string"
-                },
-                "deviceSerialNumber": {
-                  "type": "number"
-                },
-                "groupId": {
-                  "type": "string"
-                },
-                "groupName": {
-                  "type": "string"
-                },
-                "destinationId": {
-                  "type": "string"
-                },
-                "destinationName": {
-                  "type": "string"
-                },
-                "destinationType": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "createdAt"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
-              "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
-              }
-            },
-            "required": [
-              "page",
-              "limit",
-              "totalCount",
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "events",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_webhooks",
-      "description": "List the nonprofit's webhook subscriptions with destination URL, enabled events, and status. Delivery history is list_webhook_event_logs.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "enabled",
-              "disabled"
-            ],
-            "description": "Subscription status."
-          },
-          "sortDirection": {
-            "type": "string",
-            "enum": [
-              "ASC",
-              "DESC"
-            ],
-            "description": "Created-date order. Defaults to DESC."
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "1-based page number. Defaults to 1."
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "webhooks": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "destinationUrl": {
-                  "type": "string"
-                },
-                "enabledEvents": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "status": {
-                  "type": "string"
-                },
-                "createdAt": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "status"
-              ]
-            }
-          },
-          "page": {
-            "type": "object",
-            "properties": {
-              "page": {
-                "type": "integer"
-              },
-              "limit": {
-                "type": "integer"
-              },
-              "totalCount": {
-                "type": "integer"
-              },
-              "hasMore": {
-                "type": "boolean",
-                "description": "True when page + 1 exists."
-              }
-            },
-            "required": [
-              "page",
-              "limit",
-              "totalCount",
-              "hasMore"
-            ]
-          }
-        },
-        "required": [
-          "webhooks",
-          "page"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_webhook_event_logs",
-      "description": "List delivery attempts for one webhook with status, response code, and error. Omits event payloads unless raw. Pages by cursor, not page.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "webhookId": {
-            "type": "string",
-            "pattern": "^[0-9a-fA-F]{24}$",
-            "description": "24-hex id from list_webhooks."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "delivered",
-              "failed",
-              "pending"
-            ],
-            "description": "Delivery status."
-          },
-          "webhookEventName": {
-            "type": "string",
-            "pattern": "^(\\*|[a-z_]+\\.[a-z_]+)$",
-            "description": "Event name, e.g. contribution.approved or donor.updated."
-          },
-          "sortDirection": {
-            "type": "string",
-            "enum": [
-              "ASC",
-              "DESC"
-            ],
-            "description": "Attempt order. Defaults to DESC."
+            "maximum": 8,
+            "description": "Most operations to return.",
+            "default": 6
           },
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "This tool pages by cursor: pass nextCursor back unchanged."
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 50,
-            "description": "Attempts per page, up to Overflow's cap of 50 for this endpoint. Defaults to 25."
-          },
-          "raw": {
-            "type": "boolean",
-            "description": "Return Overflow's untouched rows instead of the lean projection."
+            "maxLength": 512,
+            "description": "page.nextCursor from the previous search with the same query."
           }
         },
         "required": [
-          "webhookId"
+          "query"
         ],
         "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
         "properties": {
-          "attempts": {
+          "operations": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "path": {
                   "type": "string"
                 },
-                "eventId": {
+                "operationId": {
                   "type": "string"
                 },
-                "webhookEventName": {
+                "summary": {
                   "type": "string"
                 },
-                "status": {
-                  "type": "string"
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that calls it; absent when refused."
                 },
-                "attemptNumber": {
-                  "type": "number"
+                "named": {
+                  "type": "string",
+                  "description": "A named tool serving this operation with a projected result; prefer it."
                 },
-                "attemptedAt": {
-                  "type": "string"
-                },
-                "url": {
-                  "type": "string"
-                },
-                "responseCode": {
-                  "type": "number"
-                },
-                "errorMessage": {
-                  "type": "string"
+                "matched": {
+                  "type": "string",
+                  "description": "The request or response field this operation was found by; call its tool to read the field."
                 }
               },
               "required": [
-                "id",
-                "status"
+                "method",
+                "path",
+                "operationId",
+                "summary"
               ]
             }
           },
-          "nextCursor": {
+          "revision": {
             "type": "string",
-            "description": "Present only when more attempts exist; no page object."
+            "description": "Operation index revision."
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Entry labels cut for size; overflow_api_details on that method and path returns them whole.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ]
           }
         },
         "required": [
-          "attempts"
+          "operations",
+          "revision",
+          "page"
         ]
       },
       "annotations": {
         "readOnlyHint": true
+      }
+    },
+    {
+      "name": "overflow_api_details",
+      "description": "Read one Overflow API operation's request contract: path, query and body parameters with types and required names. Reads no account data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "The path template from search, or a concrete path."
+          },
+          "param": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Return only this parameter, in full."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "page.nextCursor from the previous details call with the same method, path and param."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "Path and query parameters."
+          },
+          "body": {
+            "type": "object",
+            "description": "Body content type and schema. When paged: this page's properties, the required names it delivers or chunks, and the schema's other keywords on the page that carries them."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "refuse"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "description": "The tool that calls it; absent when refused."
+          },
+          "named": {
+            "type": "string",
+            "description": "A named tool serving this operation with a projected result; prefer it."
+          },
+          "revision": {
+            "type": "string"
+          },
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "of": {
+                "type": "string",
+                "description": "The piece this text belongs to, such as parameters.limit."
+              },
+              "text": {
+                "type": "string",
+                "description": "Part of that piece's JSON; join the parts in page order, then parse them."
+              }
+            },
+            "required": [
+              "of",
+              "text"
+            ]
+          },
+          "truncated": {
+            "type": "array",
+            "description": "Labels cut for size; their full text arrives as chunks.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hasMore"
+            ],
+            "description": "Present when the contract exceeds one answer: pass nextCursor back for the next pieces."
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "operationId",
+          "summary",
+          "parameters",
+          "verdict",
+          "revision"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "overflow_api_read",
+      "description": "Call a reviewed Overflow API read. The operation index checks arguments before anything is sent. Paths are relative to /api/v3. Array query filters use bracketed names and repeated values; GET /health returns text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /donors/6710f34fd5061afeec3eab50. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "description": "Put nextCursor in this vendor parameter, unchanged."
+              },
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "param",
+              "in"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "overflow_api_write",
+      "description": "Call a reviewed Overflow API write; method and path are stated for approval, and the operation index checks arguments first. JSON-string and empty acknowledgements are valid. Resolve donor and payment-method ids first; money units differ by field.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "The operation's HTTP method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2048,
+            "description": "Concrete path from search with ids filled in, e.g. /donors/6710f34fd5061afeec3eab50. No query string."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters as JSON, named as details lists them."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "Request body as JSON fields, named as details lists them; form operations are encoded for you."
+          },
+          "fields": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Dot paths to keep in data, applied to each item of an array, after value safety and privacy filtering.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "HTTP status."
+          },
+          "data": {
+            "description": "Response body after value safety and the connection's privacy filtering."
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
       }
     }
   ]

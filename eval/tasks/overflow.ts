@@ -114,7 +114,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       "only-requested-writes",
       writes.length === 1 &&
         writes[0]?.args.path === `/donors/${DONOR}` &&
-        (writes[0]?.args.body as Args).phone === NEW_PHONE,
+        (writes[0]!.args.body as Args).phone === NEW_PHONE,
     );
     add(
       "reconciled",
@@ -185,7 +185,7 @@ async function reference(id: string, ctx: ReferenceContext) {
     for (let i = 1; i <= 3; i++) {
       const result = await call(ctx, "list_donors", {
         limit: 100,
-        ...(standard() ? (cursor ? { cursor } : {}) : { page: i }),
+        ...(standard() ? { fields: ["id", "email"], ...(cursor ? { cursor } : {}) } : { page: i }),
       });
       if (result.isError) throw new Error(result.text);
       cursor = /"nextCursor"\s*:\s*"([^"]+)"/.exec(result.text)?.[1];

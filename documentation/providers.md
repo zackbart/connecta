@@ -48,6 +48,53 @@ to 8 MiB and standard hatch successes must be JSON. People page by offset;
 other paged named lists window a bounded vendor response locally. Events and
 account logs have vendor caps; narrow date ranges when a reply fills its limit.
 
+## Overflow
+
+`overflow()` connects one nonprofit's Overflow v3 API, with an explicit
+production or staging environment.
+
+```ts
+import { overflow } from "@zackbart/connecta/providers/overflow";
+
+const giving = overflow("giving", {
+  purpose: "Giving reports and donor care for the nonprofit",
+  environment: "staging",
+});
+```
+
+**Authentication.** An operator saves the environment's `clientId` and `apiKey`
+on this connection. They are sent as `x-client-id` and `x-api-key`; neither
+identifies which environment it belongs to. Staging and production credentials
+are separate. The credential test reads one location with the candidate pair;
+`/health` is not an authenticated credential test.
+
+**Options.** `environment` is required, with no default. `defaultPageSize`
+controls numbered named lists (default 25, maximum 100). `readOnly` refuses
+all writes. `authScope` selects shared or personal credential ownership.
+`instructions` appends nonprofit conventions. `baseUrl` is an optional proxy
+or test origin; Connecta appends `/api/v3`. `maxResultBytes` limits inline
+results, and `callAdmission` replaces the default policy.
+
+Named reads retain lean projections; `get_donor` is the full-contact lookup.
+There is no configurable sensitive-field set. The indexed hatch returns other
+nonsecret vendor fields and `fields` only narrows them. Webhook signing secrets
+are always removed, including bare, wrapped and list responses.
+
+**Prerequisites.** Obtain API credentials from Overflow for the intended
+nonprofit and environment. A donor-account-owned profile cannot be edited
+through this API even when the credentials can read it. Resolve donor,
+payment-method, campaign and location ids before authorizing money writes.
+
+**Limits.** Overflow documents 120 requests per minute per API client. The
+default admission policy approximates it per runtime with a rolling 60-second
+budget, concurrency four and a bounded queue. Other integrations and runtimes
+share the vendor allowance without sharing this local counter. The connection
+reads at most 4 MiB per response. Named lists use opaque cursors; keep the same
+limit when continuing a numbered list. A vendor-stated exact count appears as
+`page.total`; no count is synthesized when it is absent. Payment methods are
+windowed locally from one bounded response. The webhook-log hatch accepts at
+most 50 rows and returns its native continuation inside a signed cursor.
+
 ## Tithe.ly
 
 `tithely()` connects one Tithe.ly giving account through its v1 REST API.

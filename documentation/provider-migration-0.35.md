@@ -136,3 +136,60 @@ requested limit and narrowing the date range. 400/422/429/5xx diagnostics use
 the provider's standalone detail sentence or HTTP-status fallback through
 the kit; reviewed key/absence meanings and write-once behavior
 remain. Operator setup is in [Maintained provider setup](./providers.md#breeze-chms).
+
+## Overflow
+
+Overflow's standard surface ships in 0.35.0. Update deployment instructions
+and programs that name the retired tools or arguments.
+
+| Before                                                                                                                                 | Replacement                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `overflow_api_get`                                                                                                                     | `overflow_api_read`                                                                                                                                                     |
+| `overflow_api_mutate`                                                                                                                  | `overflow_api_write`; remains destructive and host approval rules still apply                                                                                           |
+| `list_tap_events`                                                                                                                      | `overflow_api_read`, path `/tap/events`                                                                                                                                 |
+| `list_webhooks`                                                                                                                        | `overflow_api_read`, path `/webhooks`                                                                                                                                   |
+| `list_webhook_event_logs`                                                                                                              | `overflow_api_read`, path `/webhooks/<webhookId>/event-logs`; move `webhookId` into the path                                                                            |
+| Hatch query name/value pairs                                                                                                           | A `query` object. Repeated array filters use bracketed keys, for example `{ "statusBucket[]": ["PENDING", "CONFIRMED"] }`                                               |
+| Named-list `page`                                                                                                                      | Start without a cursor, then pass `page.nextCursor` unchanged as `cursor`; keep `limit` fixed                                                                           |
+| `raw` on contributions, deposits, refunds, chargebacks, donors, subscriptions, payment methods, campaigns and Tap/event-log reads      | Removed. Use the indexed hatch for nonsecret vendor fields beyond the named projection                                                                                  |
+| List keys `contributions`, `deposits`, `refunds`, `chargebacks`, `donors`, `subscriptions`, `paymentMethods`, `campaigns`, `locations` | `items`, beside `page`                                                                                                                                                  |
+| Tap `events`, webhook `webhooks`, delivery-log `attempts`                                                                              | Hatch `data.data`; the hatch body retains the vendor's nested records rather than the retired wrappers' flattened projections                                           |
+| Numbered `page.page`, `page.limit`, `page.totalCount`                                                                                  | `page.hasMore`, optional `page.nextCursor`, and `page.total` only when the vendor states an exact count                                                                 |
+| Delivery-log top-level `nextCursor` or raw vendor token                                                                                | Hatch `page.nextCursor`, with `page.param: "cursor"` and `page.in: "query"`; return the signed token in `query.cursor`                                                  |
+| Hatch `{ result }`                                                                                                                     | `{ status, data, page? }`; empty replies have `data: null`                                                                                                              |
+| Undocumented `POST /subscriptions` with a body `donorId`                                                                               | `POST /subscriptions/<donorId>` with the documented creation body, including `paymentMethodId`, `amount` in dollars and the creation frequency spelling such as `month` |
+
+`overflow_api_search` and `overflow_api_details` find the 38 reviewed operations
+and their request contracts without reading nonprofit data. Unindexed paths,
+unknown query names and missing required body fields now fail before dispatch.
+Paths remain relative to `/api/v3`; do not include that prefix again. For
+array queries the hatch uses the bracketed spelling the named tools use;
+unbracketed wire framing is not promised. Existing named filter names and
+framing remain.
+
+All retained named reads and both call hatches accept narrowing `fields`.
+For a named list these paths address each item; for a hatch they address the
+vendor body, for example `fields: ["data.id", "data.status"]`. Missing declared
+response properties cause a nonempty selection to be refused before sending;
+JSON-string and empty acknowledgements have no selectable object properties.
+
+The hatch returns paging metadata before selection can remove it. Put its
+signed `page.nextCursor` back into the parameter named by `page.param`, keeping
+other query arguments and `fields` unchanged. Numbered hatch lists name `page`;
+start by omitting it. Old page numbers and webhook cursors are not continuation
+tokens for the new surface. Payment-method lists gain `limit` and `cursor` even
+though the vendor answers them in one bounded response. A missing vendor count
+may require an empty terminal page; it never creates an estimated `page.total`.
+
+`GET /health` still returns its text. Documented JSON-string write responses
+and empty acknowledgements remain valid; unexpected non-health, non-JSON
+successes are refused. Webhook `secret`, `signingSecret`, `signingKey`,
+`webhookSecret` and `signing_secret` fields are permanently removed from every
+webhook reply shape. Removing `raw` introduces no configurable PII policy:
+the existing lean/full-contact choices remain and the sensitive set is empty.
+
+HTTP 422 now uses standard `invalid_args` rather than `connector_call_failed`;
+HTTP 409 remains generic and is not `conflict`. Other classification and write
+settlement rules remain, while messages become complete standalone sentences.
+Writes take no idempotency key and are sent once; reconcile an unknown outcome
+with a read. Setup is in [Maintained provider setup](./providers.md#overflow).

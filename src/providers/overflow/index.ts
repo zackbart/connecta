@@ -14,6 +14,11 @@ import {
   safety,
   result,
   probe,
+  admit,
+  OVERFLOW_INDEX,
+  OVERFLOW_VERDICTS,
+  OVERFLOW_NAMED,
+  OVERFLOW_PAGES,
 } from "./api.js";
 import { overflowTools } from "./tools.js";
 /**
@@ -90,21 +95,6 @@ export interface OverflowOptions {
   baseUrl?: string;
 }
 
-function usageGuide(purpose: string, environment: OverflowEnvironment, instructions: string | undefined): string {
-  const accountInstructions = instructions?.trim();
-  const environmentLine =
-    environment === "production"
-      ? "Overflow **production**: live nonprofit giving data, real donors, and real money."
-      : "Overflow **staging**: Overflow's sandbox, isolated from production donors and money.";
-  return `# Overflow usage
-
-${environmentLine}
-
-Nonprofit purpose: ${purpose}${skill.fragments.guide_0}${
-    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
-  }`;
-}
-
 const OVERFLOW_OPTIONS = optionsOf<OverflowOptions>()({
   ...PROVIDER_COMMON,
   ...keys("environment", "defaultPageSize", "baseUrl"),
@@ -138,15 +128,42 @@ export const overflow = defineApiProvider<OverflowOptions>({
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   credential: API_KEY_CREDENTIAL,
   authenticate,
+  admit,
   errors,
+  idempotencyKey: false,
   safety: () => safety,
   result,
   probe,
   guide: (options) => ({
-    content: usageGuide(options.purpose, environmentOf(options), options.instructions),
-    summary: `Overflow ${environmentOf(options)}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
+    heading: "Overflow usage",
+    context: [
+      environmentOf(options) === "production"
+        ? "Overflow production: live nonprofit giving, donors and money."
+        : "Overflow staging: a sandbox with separate credentials and data.",
+      `Nonprofit purpose: ${options.purpose}`,
+      "Named reads minimize contact data; get_donor is the full-contact lookup. Webhook signing secrets are always removed.",
+      ...(options.readOnly ? ["This connection is read-only: every write is refused."] : []),
+      ...(options.defaultPageSize !== undefined
+        ? [`Paged lists return ${options.defaultPageSize} items by default on this connection.`]
+        : []),
+    ],
+    summary: "Giving records: asset-specific status, per-field money units, donor joins and deposit reconciliation.",
     required: true,
   }),
+  hatch: {
+    name: "overflow",
+    title: "Overflow",
+    index: OVERFLOW_INDEX,
+    verdicts: OVERFLOW_VERDICTS,
+    named: OVERFLOW_NAMED,
+    pages: OVERFLOW_PAGES,
+    pathExample: "/donors/6710f34fd5061afeec3eab50",
+    notes: () => ({
+      read: "Paths are relative to /api/v3. Array query filters use bracketed names and repeated values; GET /health returns text.",
+      write:
+        "JSON-string and empty acknowledgements are valid. Resolve donor and payment-method ids first; money units differ by field.",
+    }),
+  },
   defaultCallAdmission: OVERFLOW_ADMISSION,
   tools: overflowTools,
 });
