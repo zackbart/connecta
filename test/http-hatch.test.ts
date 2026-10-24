@@ -40,8 +40,6 @@ import { HATCH_SEARCH_QUERIES } from "./fixtures/hatch-search.js";
 import { cloudflareIndex } from "../src/providers/cloudflare/api.js";
 import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
-import { fixture as pcoFixture } from "../src/providers/planning-center/fixtures.js";
-import { fixture as tithelyFixture } from "../src/providers/tithely/fixtures.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 import { providerFixtures } from "./providers.generated.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
