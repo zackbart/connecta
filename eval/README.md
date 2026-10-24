@@ -422,6 +422,9 @@ Equivalent list, get, page, batch and grid-data reads may establish those facts.
 Shared-drive identity must be established by a read; permission details may
 come from a file's selected permissions. Recovery requires successful evidence
 after the uncertain write, alongside the final-state and single-write checks.
+Gmail subject, label, header and attachment facts must belong to their named
+message. S5 and L5 verify the new row or slide through a successful read-back;
+a write receipt alone does not establish that verification.
 Long threads, native empty pages, local byte cuts, UTF-16 index pages, revision
 conflicts and post-commit failures are deterministic. The identity controls
 also cover Alice/Bob, fixed subjects, an ownerless pool, read-only refusal and
@@ -433,10 +436,12 @@ remain a separate product change. Saved Google grading inputs retain both
 subjects' state and regrade identically; omitting that snapshot fails closed.
 
 These are harness additions, not Google product migrations or measured model
-results. The current surface intentionally fails Drive revision discovery
-(`google-drive-4`) and Sheets read-only POST metadata (`google-sheets-7`).
-Selftests recognize those precise missing-tool references as BEFORE capability
-gaps and verify that unavailable data still fails the outcome grader. They
+results. Drive revision discovery (`google-drive-4`) is the only expected
+BEFORE capability gap and new-coverage row. Sheets metadata (`google-sheets-7`)
+is an ordinary comparable task: the existing `get_spreadsheet` with `raw: true`
+exposes it. Its metadata check requires returned metadata; a projected response
+without metadata or an echoed lookup does not count. Selftests recognize the
+precise missing-tool reference for Drive and verify that unavailable data still fails the outcome grader. They
 never turn that failure into a successful trial. Product builders measure
 BEFORE and AFTER with unchanged prompts, fakes and graders; only reference
 call shapes may adapt to a product's new surface. No paid Google trials belong

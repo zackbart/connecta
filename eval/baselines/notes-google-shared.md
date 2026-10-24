@@ -74,15 +74,19 @@ pnpm exec tsx eval/measure-google.ts
 
 All 42 tasks are registered: seven each for Gmail, Drive, Docs, Sheets, Slides
 and Forms. The default selftest exercises both `six` and `code` surfaces in
-both route and outcome grading modes. Forty supported references pass in each
-combination (160 supported executions). Two precise BEFORE gaps are checked in
-each combination (eight gap executions):
+both route and outcome grading modes. Forty-one supported references pass in each
+combination (164 supported executions). One precise BEFORE gap is checked in
+each combination (four gap executions):
 
 - `google-drive-4`: revision listing is absent from the current product.
-- `google-sheets-7`: read-only data-filter/developer-metadata POSTs are absent.
 
-The gap references report unavailable and **fail** the outcome grader. The
-selftest only accepts their precise missing-tool evidence; it does not turn an
+`google-sheets-7` is an ordinary comparable BEFORE/AFTER task, not new coverage:
+the current `get_spreadsheet(raw: true)` returns developer metadata. Its
+reference uses that existing read. Grading requires actual metadata in the
+response; projected reads that omit it and echoed metadata lookups fail.
+
+The Drive gap reference reports unavailable and **fails** the outcome grader. The
+selftest only accepts its precise missing-tool evidence; it does not turn an
 unavailable answer into a passing trial.
 
 All six post-commit recovery tasks additionally reconcile committed network and
@@ -90,7 +94,9 @@ unreadable-body failures without replay (12 reference executions). Saved-input
 round trips reproduce grades for all 42 primary references; missing Google
 state is refused. Negative controls reject fabricated no-ops, wrong subjects
 and sources, first-page-only reads, duplicate physical mutations, missing
-evidence and missing reconciliation where applicable. Hatch usage is an
+evidence and missing reconciliation where applicable. Every Google task also
+registers a sibling/decoy read control that must fail correct-destination,
+including a populated wrong-file revision read for the Drive coverage gap. Hatch usage is an
 advisory diagnostic based on observed calls, not a mandatory outcome route.
 
 Deterministic controls verify delegated JWT identity/scope, Alice/Bob isolation,
@@ -114,18 +120,21 @@ TASKS=$(node -e 'console.log(["gmail","drive","docs","sheets","slides","forms"].
 VITEST_MAX_WORKERS=2 pnpm run eval:selftest --tasks "$TASKS"
 ```
 
-Frozen source SHA-256 values:
+Frozen source SHA-256 values after the #1011 review fixes:
 
 | File | SHA-256 |
 | --- | --- |
-| `eval/fakes/google.ts` | `8326a390917ac5e9dd80be6e69f15e425fd07b27a4c82267b76a8d1f2622da38` |
-| `eval/tasks/google.ts` | `1da5441aca26805d224e162c6684fbb486983bea9a7cb422ab5d6b272a0b985a` |
-| `eval/tasks/google-controls.ts` | `d14fa5fdfd441d110e256b2644a98a857a15da400485b2e5127cb31f02f17215` |
-| `eval/tasks/grading.ts` | `e75b75e003aa1f445e4f26b35415df47ccf6d4d8abc45c65deded11b39d142f8` |
-| `eval/tasks/counterexamples.ts` | `b4d36c30c625894dd6e3c9bd9c6ea0bbac25ed6ee64a4d9bc0783250649dd1ff` |
-| `eval/selftest.ts` | `000976c29b829e48e7a95d659da7324b19c1b653e8efed1cf2ce26265acf3a83` |
+| `eval/fakes/google.ts` | `5167e7e86cb98aae738ac217d6f53cbea281550c041e85650bd703912dac6c23` |
+| `eval/tasks/google.ts` | `87a14f3ff9d28fcab5f1e9348d9dacec0549463e56b77ea406751f5ffccb9ad8` |
+| `eval/tasks/google-controls.ts` | `c9664a7abec02436330b4800a34a9c02f7028ae7d5835332c8d54c605334674d` |
+| `eval/tasks/grading.ts` | `fb4616e6b534e25fcd2192e31316505be659e5fd7a037ad0e1e364b9ce84ed5f` |
+| `eval/tasks/counterexamples.ts` | `ec2c69ac7ec40206b1106a226d096c69a7351f35a18c6f5e967db277335de642` |
+| `eval/selftest.ts` | `8f7e18297abe762c90bff872052a037ced841c9cb1588ceb7315389cc0db3578` |
 
-## Verification
+## Prerequisite implementation verification
+
+These counts describe #1009's earlier verification. Current #1011 results
+appear in the final section.
 
 Every Vitest run used `VITEST_MAX_WORKERS=2`; the full `check` was intentionally
 not run under the approved load policy.
@@ -241,3 +250,38 @@ variants prove those routes against the same state/outcome checks; negative
 controls still run. The fake-token guard scans every product source and generated
 guide file. Wrong-destination substitutions are scoped to Google tasks. Paging
 masks avoid duplicate top-level `nextPageToken` selections.
+
+
+## #1011 round-1 review fixes before the freeze
+
+Gmail G4 requires the header and attachment within the same `m1` record. G2
+requires each message's Subject header and its own label ids, plus the label
+name join. Valid message and thread reads remain equivalent. Sibling/decoy
+controls preserve answers, writes and final state while changing only the
+read resource. The Drive upload task also verifies the `m1` attachment source.
+
+Dotted, slash and nested field masks select grid data and Drive permissions;
+`developerMetadata` and `dataValidation` do not accidentally select grid data.
+The fake returns grid cells for all requested sheets/ranges, including People.
+Equivalent grid-read controls reuse the fake's actual response builder.
+
+S7 is comparable on BEFORE through `get_spreadsheet(raw: true)`. Selected masks
+that omit metadata no longer expose it. Metadata grading recognizes actual
+metadata response collections and excludes request lookup echoes. Drive D4
+is the only new-coverage row. D2 independently resolves the shared drive from
+a drive record or a file's driveId; inheritedFrom alone does not count as that
+resolution. Single complete hatch receipts must expose a collection shape;
+a truncated placeholder does not establish full paging. S5 and L5 retain their
+successful read-back requirement, documented in the eval guide.
+
+
+Round-1 fix verification used `VITEST_MAX_WORKERS=2`, with no full check or
+live model trials. All 42 tasks pass the full selftest matrix: 164 supported
+outcomes, four expected Drive D4 gap checks and 12 network/body recoveries.
+All 333 negative controls are rejected, including all 42 sibling/decoy controls;
+all 17 equivalent-read positives pass. The final primary rerun confirms those
+control counts after strengthening the Drive cases. Targeted parser/runner and
+provider-standard/convention suites pass 97 tests; all-provider Node goldens
+pass 16. Static checks, typechecking and build/declaration/bundle checks pass.
+No production module, provider surface, golden or Vitest case changed in this
+review fix; the Vitest test-count delta remains zero.

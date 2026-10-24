@@ -224,34 +224,49 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
   const scoped = reads.filter((c) => !resource || at(c.args.path, resource));
   const facts = (selected: typeof reads) => {
     const records: Row[] = [];
-    const visit = (value: unknown): void => {
-      if (Array.isArray(value)) value.forEach(visit);
+    const values = new Set<unknown>();
+    const visit = (value: unknown, into: Row[] = records): void => {
+      if (Array.isArray(value)) value.forEach((entry) => visit(entry, into));
       else if (value && typeof value === "object") {
-        records.push(value);
-        Object.values(value).forEach(visit);
-      }
+        into.push(value);
+        Object.entries(value).forEach(([key, entry]) => {
+          if (key !== "dataFilters" && key !== "developerMetadataLookup") visit(entry, into);
+        });
+      } else values.add(value);
     };
     selected.forEach((c) => visit(c.args.returned));
     const has = (expected: Row) => records.some((record) => subset(record, expected));
-    const contains = (value: string) =>
-      selected.some((c) => JSON.stringify(c.args.returned ?? null).includes(JSON.stringify(value)));
-    return { has, contains };
+    // Keep facts tied to the record they describe, even inside a thread/list.
+    const within = (anchor: Row, ...expected: Row[]) =>
+      records.some((record) => {
+        if (!subset(record, anchor)) return false;
+        const inner: Row[] = [];
+        visit(record, inner);
+        return expected.every((item) => inner.some((entry) => subset(entry, item)));
+      });
+    const contains = (value: string) => values.has(value);
+    return { has, contains, within };
   };
   const supportsOutcome = (selected: typeof reads): boolean => {
-    const { has, contains } = facts(selected);
+    const { has, contains, within } = facts(selected);
     if (product === "gmail") {
       if (task === 2)
         return (
           (GOOGLE_EXPECTED.gmail[1] as Row).messages.every((m: Row) =>
-            has({ id: m.id, threadId: a.messages.find((v) => v.id === m.id)!.threadId }),
+            within(
+              { id: m.id, threadId: a.messages.find((v) => v.id === m.id)!.threadId },
+              { labelIds: a.messages.find((v) => v.id === m.id)!.labelIds },
+              { name: "Subject", value: m.subject },
+            ),
           ) &&
           has({ id: "INBOX", name: "Inbox" }) &&
           has({ id: "UNREAD", name: "Unread" })
         );
       if (task === 4)
-        return (
-          has({ name: "X-Review-Stage", value: "approved" }) &&
-          has({ partId: "1", mimeType: "application/octet-stream", filename: "evidence.bin" })
+        return within(
+          { id: "m1" },
+          { name: "X-Review-Stage", value: "approved" },
+          { partId: "1", mimeType: "application/octet-stream", filename: "evidence.bin" },
         );
       if (task === 6 || task === 7) return has({ id: task === 6 ? "draft1" : "draft-inline" });
       return has({ id: "m1", threadId: "t1" });
@@ -261,19 +276,26 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
         const permissions = facts(selected.filter((c) => at(c.args.path, "/files/pdf1")));
         return (
           has({ id: "folder1" }) &&
-          (has({ id: "shared1" }) || has({ driveId: "shared1" }) || has({ inheritedFrom: "shared1" })) &&
+          (has({ id: "shared1" }) || has({ driveId: "shared1" })) &&
           permissions.has({ id: "perm1", emailAddress: "reviewer@example.com", role: "reader" }) &&
           permissions.has({ id: "perm2", emailAddress: ALICE, role: "organizer" }) &&
           permissions.has({ inherited: false }) &&
           permissions.has({ inherited: true, inheritedFrom: "shared1" })
         );
       }
-      if (task === 4)
+      if (task === 4) {
+        const revisions = facts(selected.filter((c) => at(c.args.path, "/files/pdf1")));
         return (
-          has({ id: "rv1", modifiedTime: "2026-10-01T12:00:00Z" }) &&
-          has({ id: "rv2", modifiedTime: "2026-10-02T12:00:00Z" })
+          revisions.has({ id: "rv1", modifiedTime: "2026-10-01T12:00:00Z" }) &&
+          revisions.has({ id: "rv2", modifiedTime: "2026-10-02T12:00:00Z" })
         );
-      if (task === 5) return true;
+      }
+      if (task === 5)
+        return facts(
+          calls.filter(
+            (c) => c.service === "gmail" && c.kind === "read" && c.outcome === "ok" && c.args.subject === ALICE,
+          ),
+        ).within({ id: "m1" }, { partId: "1", mimeType: "application/octet-stream", filename: "evidence.bin" });
       if (task === 7)
         return facts(selected.filter((c) => at(c.args.path, "/files/pdf1"))).has({
           id: "perm1",
@@ -285,7 +307,18 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
     if (product === "sheets") {
       if (task === 2) return has({ namedRangeId: "nr1", name: "Amounts" }) && contains("Alice") && contains("Bob");
       if (task === 4) return has({ protectedRangeId: 1 }) && has({ spreadsheetId: "sheets1" });
-      if (task === 7) return has({ metadataId: 7, metadataKey: "review", metadataValue: "approved" });
+      if (task === 7)
+        return selected.some((c) => {
+          const returned = c.args.returned;
+          const metadata = [
+            ...(returned?.developerMetadata ?? []),
+            ...(returned?.matchedDeveloperMetadata ?? []).map((match: Row) => match.developerMetadata),
+            ...(returned?.sheets ?? []).flatMap((sheet: Row) => sheet.developerMetadata ?? []),
+          ];
+          return metadata.some((entry) =>
+            subset(entry, { metadataId: 7, metadataKey: "review", metadataValue: "approved" }),
+          );
+        });
       return contains(task === 5 ? "external1" : task === 6 ? "recover1" : "record1");
     }
     if (product === "slides") {
@@ -504,7 +537,19 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
     const completeReply = receipts.some(
       (reply) =>
         reply?.page?.hasMore === false ||
-        (reply?.status === 200 && !reply.page && reply.data !== null && typeof reply.data === "object"),
+        (reply?.status === 200 &&
+          !reply.page &&
+          (product === "docs"
+            ? Array.isArray(reply.data?.tabs)
+            : product === "slides"
+              ? Array.isArray(reply.data?.slides) || Array.isArray(reply.data?.pageElements)
+              : product === "sheets"
+                ? Array.isArray(reply.data?.valueRanges) || Array.isArray(reply.data?.sheets)
+                : product === "gmail"
+                  ? Array.isArray(reply.data?.messages) || Array.isArray(reply.data?.threads)
+                  : product === "drive"
+                    ? Array.isArray(reply.data?.files)
+                    : Array.isArray(reply.data?.responses))),
     );
     add("full-pages", vendorComplete && (scoped.length > 1 || completeReply));
   }
@@ -738,21 +783,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
       });
       await read("get_values", { spreadsheetId: "sheets1", ranges: ["'Alice''s costs'!A1:D8"] });
     }
-    if (task === 7) {
-      const r = await ctx.call("call_tool", {
-        address: "sheets.sheets_api_read",
-        args: {
-          method: "POST",
-          path: "/spreadsheets/sheets1/developerMetadata:search",
-          body: { dataFilters: [{ developerMetadataLookup: { metadataKey: "review" } }] },
-        },
-        resultMode: "value",
-      });
-      if (r.isError) {
-        ctx.answer('ANSWER: {"source":"sheets","unavailable":true}');
-        return;
-      }
-    }
+    if (task === 7) await read("get_spreadsheet", { spreadsheetId: "sheets1", raw: true });
   }
   if (product === "slides") {
     if (task === 2) await joinDrive();
@@ -869,4 +900,4 @@ export const GOOGLE_TASKS: ActiveTask[] = GOOGLE_PRODUCTS.flatMap((product) =>
   })),
 );
 
-export const GOOGLE_COVERAGE_GAPS = ["google-drive-4", "google-sheets-7"] as const;
+export const GOOGLE_COVERAGE_GAPS = ["google-drive-4"] as const;
