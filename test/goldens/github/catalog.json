@@ -280,7 +280,7 @@
     },
     {
       "name": "github_api_read",
-      "description": "Call a reviewed GitHub API read. The operation index checks arguments before anything is sent. Only the reviewed repository reads are available. Nested contents paths such as /repos/alice/widget/contents/src/index.ts and the root /repos/alice/widget/contents are accepted. In commits/{ref} and compare/{basehead}, encode branch-name slashes as %2F. Owner-prefixed refs are refused. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
+      "description": "Call a reviewed GitHub API read. The operation index checks arguments before anything is sent. Only the reviewed repository reads are available. Nested contents paths such as /repos/alice/widget/contents/src/index.ts and the root /repos/alice/widget/contents are accepted. In commits/{ref} and compare/{basehead}, encode branch-name slashes as %2F. Owner-prefixed object refs are refused; PR-list head filters require login:branch. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -462,7 +462,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Maximum returned items, default 30; at most 100. Repeat the same explicit limit with cursor.",
+            "description": "Maximum returned items, default 30; at most 100. Keep the same limit with cursor; omission uses 30.",
             "default": 30
           },
           "cursor": {
@@ -594,7 +594,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "Maximum returned items, default 30; at most 100. Repeat the same explicit limit with cursor.",
+            "description": "Maximum returned items, default 30; at most 100. Keep the same limit with cursor; omission uses 30.",
             "default": 30
           },
           "cursor": {

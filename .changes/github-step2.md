@@ -18,8 +18,8 @@ scope/repository/partition results with `{items,page}`; search rows carry
 `scope`, `repository` and `item`. Search visits one partition page per call,
 retains `incomplete_results`, and omits inexact aggregate totals. The default
 scope-list size changes from 100 to 30; both named lists cap limit at 100.
-Named continuations require the original explicit limit, including 30 after a
-default first page; changed or omitted limits are refused.
+Named continuations bind the original effective limit. Omission uses 30 and is
+accepted for a cursor issued with limit 30; mismatches name the expected limit.
 
 Add `fields` to named reads and both call hatches; hatch continuation uses a
 separate signed cursor. Release hatch replies use `{status,data}`, including
@@ -34,6 +34,8 @@ body reads from malformed JSON. See the GitHub migration section for exact paths
 field selections, paging and authentication setup.
 
 Support canonical nested contents paths and the repository root listing. Encode
-branch-name slashes as `%2F` in commit and compare paths. Refuse owner-prefixed
-refs and cross-repository comparisons before authentication, and withhold
+branch-name slashes as `%2F` in commit and compare paths; unmatched raw-slash
+refs include this repair hint. Refuse owner-prefixed object refs and
+cross-repository comparisons before authentication. PR-list head filters require
+`login:branch`; bare branches are refused because GitHub silently ignores them. Withhold
 configured App private keys when echoed in repository data.

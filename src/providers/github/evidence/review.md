@@ -47,6 +47,8 @@ encoding; empty/dot segments, backslashes, encoded traversal and nested escapes
 refuse before authentication. Commit ref and compare basehead support branch-name
 slashes encoded as `%2F`, only in their final parameter. Resource requests retain the original authorized
 owner/repo path when Link paging extracts a numeric page. URLs are never followed.
+Confinement is by authorized repository ID, not object origin: GitHub can serve
+fork-network objects through the authorized parent repository.
 
 The [contents reference](https://docs.github.com/en/rest/repos/contents#get-repository-content)
 documents that omitting path returns the root directory. GET
@@ -59,8 +61,12 @@ the final path. Directory entries retain the normal secret/URL withholding.
 The [compare reference](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
 documents cross-repository `USERNAME:BASE...USERNAME:HEAD`; the
 [PR list reference](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests)
-documents the head filter's `user:ref-name`. Both owner-prefixed forms are refused
-before key lookup or token minting. The remaining admitted ref/commitish inputs
+documents the head filter's `user:ref-name`. Compare's owner-prefixed form is
+refused before key lookup or token minting. The PR-list head filter instead
+requires exactly one colon, a valid GitHub login and a canonical Git ref without
+percent escapes; it filters only the selected repository's own PRs and never
+reads the login's repository. A bare head is refused because GitHub ignores it.
+The remaining admitted ref/commitish inputs
 are path ref/tag, contents query ref, commits query sha, PR query base, Actions
 query branch/head_sha, and release body target_commitish/tag_name. They also
 refuse colons and latent encoded aliases; names, bodies, labels and timestamps
@@ -102,7 +108,8 @@ are unavailable. No caller-supplied media/header escape exists.
 Named lists use items/page, limit/cursor/fields. Search visits one partition page
 per call, at most 20 partitions and ten pages each, carrying incompleteness in
 its signed continuation. Named cursors carry the fixed limit and refuse a changed
-or omitted limit, including omission after the default first page. Local scope listing performs no I/O. Named and hatch
+effective limit with the expected number in the message. Omission uses the default
+30 and is accepted when the signed limit is 30. Local scope listing performs no I/O. Named and hatch
 continuations use distinct bindings. Hatch fields run after safety and paging.
 
 Release writes and merge remain once-only. Merge requires expected SHA,

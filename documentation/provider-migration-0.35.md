@@ -441,8 +441,9 @@ outcome. A `merged:false` answer now fails instead of returning successful data.
 
 `list_scopes` and `search_scoped` replace top-level per_page with limit, and
 page/pages with opaque cursor from page.nextCursor. Supply the same filters and
-limit on continuation. A changed or omitted continuation limit is refused;
-explicitly pass limit:30 when the first call used the default. Scopes defaults change from 100 to 30; search stays at 30;
+limit on continuation. Omission uses 30 and is accepted when the cursor was issued
+with limit 30; repeat other limits explicitly. Mismatches name the expected limit.
+Scopes defaults change from 100 to 30; search stays at 30;
 both cap limit at 100. Old numeric page values and partition-to-page maps are
 refused. Configure the same persistent deployment storage across requests so signed
 cursors can be checked.
@@ -478,8 +479,11 @@ paths: `/repos/alice/widget/contents/src/index.ts` reads a nested file, while
 `/repos/alice/widget/contents` lists the root. Empty/dot segments, control
 characters, backslashes and encoded traversal are refused. In `commits/{ref}`
 and `compare/{basehead}`, encode branch-name slashes as `%2F`, for example
-`commits/feature%2Fx` or `compare/main...feature%2Fx`. Owner-prefixed refs and
-cross-repository compares are refused before authentication. No Link or redirect
+`commits/feature%2Fx` or `compare/main...feature%2Fx`. Owner-prefixed object refs and
+cross-repository compares are refused before authentication. PR-list head filters
+require `login:branch`, for example `head:"alice:feature/x"`; this only filters the
+selected repository's PRs. Bare head branches are refused because GitHub silently
+ignores them. The base filter stays a branch name. No Link or redirect
 URL is followed. Echoes of the configured App private key are withheld too.
 
 Inline UTF-8 contents keep GitHub's base64 encoding. Decoded file text and patch

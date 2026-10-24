@@ -2215,8 +2215,9 @@ an optional top-level `truncated: string[]` on reads and writes. Without the
 opt-in, the schemas and results are unchanged; size-cut metadata is not inferred
 from vendor booleans or added to other providers.
 
-A binding may expand deployment-owned path defaults before indexed resolution,
-and may prepare a reviewed text/NDJSON body before validation. Both the original
+A binding may expand deployment-owned path defaults (Cloudflare) or canonicalize
+repository contents paths (GitHub) before indexed resolution, and may prepare a
+reviewed text/NDJSON body before validation. Both the original
 and resolved paths pass withheld-value admission. Closed request-header enums
 are opt-in; selected headers join the paging cursor's call identity. Text body
 inputs are opt-in too. A provider with bounded call-owned scope lookups declares

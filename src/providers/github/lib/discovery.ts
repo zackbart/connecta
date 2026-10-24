@@ -4,6 +4,7 @@ import type { HatchDeclaration } from "../../../http/hatch.js";
 import { openapi } from "../openapi.generated.js";
 import { READ_PERMISSIONS, RELEASE_PERMISSIONS, INTERNAL_READS, MERGE } from "./operations.js";
 import { workflowPath } from "./scope.js";
+import { ConnectorCallError } from "../../../errors.js";
 
 /** Only the documented contents path can consume several literal URL segments. */
 export function contentsPath(path: string): string {
@@ -34,7 +35,19 @@ class RepositoryIndex extends OperationIndex {
       const match = super.resolve(method, `${path}/root`);
       return { ...match, params: { ...match.params, path: "" } };
     }
-    return super.resolve(method, contentsPath(path));
+    try {
+      return super.resolve(method, contentsPath(path));
+    } catch (error) {
+      if (
+        method === "GET" &&
+        error instanceof ConnectorCallError &&
+        error.code === "invalid_args" &&
+        error.message.includes(" operation in the pinned API index ") &&
+        /^\/repos\/[^/]+\/[^/]+\/(?:commits|compare)\/[^/]+\/.+/.test(path)
+      )
+        throw new ConnectorCallError("invalid_args", `${error.message} Encode '/' inside refs as %2F.`);
+      throw error;
+    }
   }
 
   override contract(op: Operation, only?: string) {

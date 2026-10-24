@@ -552,6 +552,172 @@
     }
   },
   {
+    "label": "PR head filter",
+    "tool": "github_api_read",
+    "args": {
+      "path": "/repos/acme/one/pulls",
+      "query": {
+        "head": "alice:feature/x"
+      },
+      "fields": [
+        "number",
+        "head.label"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "installations",
+          "method": "GET",
+          "url": "https://api.github.com/app/installations?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "metadata": "read"
+              }
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 2,
+          "auxiliary": "repository-resolution",
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_metadata-read/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ],
+      [
+        {
+          "after": 3,
+          "auxiliary": "installation-token",
+          "method": "POST",
+          "url": "https://api.github.com/app/installations/11/access_tokens",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": {
+              "scheme": "Bearer",
+              "jwt": {
+                "header": {
+                  "alg": "RS256",
+                  "typ": "JWT"
+                },
+                "claims": {
+                  "iat": 1767322985,
+                  "exp": 1767323585,
+                  "iss": "12345"
+                },
+                "signature": "<signature>"
+              }
+            },
+            "content-type": "application/json",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          },
+          "body": {
+            "json": {
+              "permissions": {
+                "pull_requests": "read"
+              },
+              "repository_ids": [
+                101
+              ]
+            }
+          }
+        }
+      ],
+      [
+        {
+          "after": 4,
+          "method": "GET",
+          "url": "https://api.github.com/repos/acme/one/pulls?head=alice%3Afeature%2Fx",
+          "headers": {
+            "accept": "application/vnd.github+json",
+            "authorization": "Bearer ghs_golden_11_pull_requests-read_repos-101/+=",
+            "user-agent": "connecta",
+            "x-github-api-version": "2022-11-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": [
+          {
+            "number": 7,
+            "head": {
+              "label": "alice:feature/x"
+            }
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "param": "page",
+          "in": "query"
+        }
+      }
+    }
+  },
+  {
     "label": "root contents",
     "tool": "github_api_read",
     "args": {

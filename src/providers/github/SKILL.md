@@ -15,8 +15,8 @@ Use `search_scoped` for literal-word data search across installations. Each item
 carries its partition and verified repository. Search completeness can be false
 at GitHub's search limit; narrow the selected scopes or terms when that matters.
 Installation tokens do not override GitHub's own code-search restrictions.
-Repeat the original explicit `limit` with every named-list cursor, including
-`limit:30` when the first call used the default.
+Keep the same `limit` with every named-list cursor. Omission uses 30, so a
+cursor issued with limit 30 can continue without an explicit limit.
 
 ## Join the right identifiers
 
@@ -34,7 +34,10 @@ and `/repos/alice/widget/contents` lists the root directory. No dot segments,
 empty segments, backslashes or encoded traversal are accepted. In `commits/{ref}`
 and `compare/{basehead}`, encode branch-name slashes as `%2F`, for example
 `commits/feature%2Fx` or `compare/main...feature%2Fx`. Refs stay inside the selected
-repository; owner-prefixed refs and cross-repository compares are unavailable.
+repository; owner-prefixed object refs and cross-repository compares are unavailable.
+For a PR list, use `head:"alice:feature/x"`: the required `login:branch` filter
+selects this repository's PRs and never reads the login's repository. A bare
+`head` branch is refused because GitHub silently ignores it. `base` stays a branch name.
 Contents are
 base64 encoded; decode the inline content before interpreting it. Directory
 listings have a vendor cap and are not recursive. Missing inline content or a

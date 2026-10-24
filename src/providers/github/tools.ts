@@ -21,7 +21,7 @@ import { githubConnection, rejectedToken } from "./api.js";
 import { AppAuth, type Permissions } from "./lib/auth.js";
 import { contentsPath, githubIndex, GITHUB_HATCH } from "./lib/discovery.js";
 import { READ_PERMISSIONS, RELEASE_PERMISSIONS, hatchRefusal } from "./lib/operations.js";
-import { ScopePolicy, target, workflowPath, type GitHubScope, type Target } from "./lib/scope.js";
+import { ScopePolicy, target, workflowPath, isPullHead, type GitHubScope, type Target } from "./lib/scope.js";
 
 const text = (description: string) => Schema.String.check(isMinChars(1)).annotate({ description });
 const row = (value: unknown): Record<string, any> =>
@@ -47,7 +47,8 @@ const SearchRow = optional({
 const common = {
   limit: Schema.optionalKey(
     Integer.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({
-      description: "Maximum returned items, default 30; at most 100. Repeat the same explicit limit with cursor.",
+      description:
+        "Maximum returned items, default 30; at most 100. Keep the same limit with cursor; omission uses 30.",
       default: 30,
     }),
   ),
@@ -265,13 +266,15 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         ...extra,
       };
     });
-  const parse = (cursor: string | undefined, limit: number, suppliedLimit: number | undefined) => {
+  const parse = (cursor: string | undefined, limit: number) => {
     if (cursor === undefined) return {};
     const position = JSON.parse(cursor) as Record<string, any>;
-    if (suppliedLimit === undefined || position.limit !== limit)
+    if (!Number.isSafeInteger(position.limit) || position.limit < 1 || position.limit > 100)
+      throw new ConnectorCallError("invalid_args", "This listing cursor is out of date; start a new listing.");
+    if (position.limit !== limit)
       throw new ConnectorCallError(
         "invalid_args",
-        "This cursor requires the original explicit limit; repeat that limit or start a new listing.",
+        `This cursor was issued with limit ${position.limit}; repeat limit ${position.limit} or start a new listing.`,
       );
     return position;
   };
@@ -292,7 +295,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         const limit = args.limit ?? 30,
           normalized = { ...args, limit };
         const raw = yield* decode("list_scopes", normalized);
-        const position = yield* checked(() => parse(raw, limit, args.limit));
+        const position = yield* checked(() => parse(raw, limit));
         const page = position.page ?? 1;
         if (!Number.isSafeInteger(page) || page < 1 || page > 1000)
           return yield* checked(() => {
@@ -401,7 +404,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           limit = args.limit ?? 30,
           normalized = { ...args, limit };
         const raw = yield* decode("search_scoped", normalized),
-          at = yield* checked(() => parse(raw, limit, args.limit));
+          at = yield* checked(() => parse(raw, limit));
         const partitionIndex = at.partition ?? 0,
           page = at.page ?? 1;
         if (
@@ -567,13 +570,17 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         t = target(params.owner, params.repo);
       policy.scope(t, Boolean(RELEASE_PERMISSIONS[key]));
       if (params.path !== undefined && params.path !== "") workflowPath(decodeURIComponent(params.path));
-      // Only compare and PR head document owner-prefixed forms. Refuse those
-      // and the same spelling in every other admitted ref/commitish input.
+      const pullList = key === "GET /repos/{owner}/{repo}/pulls";
+      if (pullList && call.query.head !== undefined && !isPullHead(call.query.head))
+        return "GitHub needs head in owner:branch form; a bare branch is silently ignored. Pass a valid login and branch.";
+      // A PR head label only filters this repository's PRs. Owner-prefixed
+      // object refs can select fork-network objects and remain unavailable.
       const refs = [
         params.ref,
         params.basehead,
         params.tag,
-        ...["ref", "sha", "head", "base", "branch", "head_sha"].map((name) => call.query[name]),
+        ...["ref", "sha", "base", "branch", "head_sha"].map((name) => call.query[name]),
+        ...(pullList ? [] : [call.query.head]),
         ...["target_commitish", "tag_name"].map((name) => row(call.body)[name]),
       ];
       for (const ref of refs) {
@@ -637,7 +644,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           connection,
           binding,
           notes: {
-            read: "Only the reviewed repository reads are available. Nested contents paths such as /repos/alice/widget/contents/src/index.ts and the root /repos/alice/widget/contents are accepted. In commits/{ref} and compare/{basehead}, encode branch-name slashes as %2F. Owner-prefixed refs are refused. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
+            read: "Only the reviewed repository reads are available. Nested contents paths such as /repos/alice/widget/contents/src/index.ts and the root /repos/alice/widget/contents are accepted. In commits/{ref} and compare/{basehead}, encode branch-name slashes as %2F. Owner-prefixed object refs are refused; PR-list head filters require login:branch. Pass page.nextCursor as cursor; raw page numbers, diffs and log downloads are refused.",
             write: "Only release create/update/delete are available here. Use merge_pull_request for merges.",
           },
         }),

@@ -73,7 +73,7 @@ export interface HatchBinding {
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
   readonly allowOtherBodyTypes?: true;
-  /** Expand deployment-owned path defaults before index resolution. */
+  /** Apply reviewed path defaults (Cloudflare) or contents canonicalization (GitHub) before index resolution. */
   readonly path?: (path: string) => string;
   /** Reviewed body framing before index validation, such as NDJSON arrays. */
   readonly prepareBody?: (body: unknown, operation: Operation) => unknown;

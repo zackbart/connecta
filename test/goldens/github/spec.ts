@@ -118,6 +118,12 @@ export default defineGoldenSpec({
       replies: [{ body: { name: "index.ts", path: "src/index.ts", encoding: "base64", content: "ZXhwb3J0IHt9" } }],
     },
     {
+      label: "PR head filter",
+      tool: "github_api_read",
+      args: { path: "/repos/acme/one/pulls", query: { head: "alice:feature/x" }, fields: ["number", "head.label"] },
+      replies: [{ body: [{ number: 7, head: { label: "alice:feature/x" } }] }],
+    },
+    {
       label: "root contents",
       tool: "github_api_read",
       args: { path: "/repos/acme/one/contents", fields: ["name", "path", "type", "download_url"] },

@@ -183,7 +183,7 @@ describe("GitHub App provider", () => {
       ["/repos/acme/one/contents/settings.json", { ref: "outsider:feature" }],
       ["/repos/acme/one/contents", { ref: "outsider%253Afeature" }],
       ["/repos/acme/one/commits", { sha: "outsider:feature" }],
-      ["/repos/acme/one/pulls", { head: "outsider:feature" }],
+      ["/repos/acme/one/pulls", { head: "feature" }],
       ["/repos/acme/one/pulls", { base: "outsider:feature" }],
       ["/repos/acme/one/actions/runs", { branch: "outsider:feature" }],
       ["/repos/acme/one/actions/workflows/1/runs", { head_sha: "outsider:feature" }],
@@ -193,6 +193,27 @@ describe("GitHub App provider", () => {
       await expect(connector.callTool("github_api_read", { path, query }, ctx)).rejects.toMatchObject({
         code: "invalid_args",
       });
+    for (const head of [
+      "feature",
+      "acme:",
+      "bad_owner:feature",
+      "acme:feature:extra",
+      "acme:feature%2Fx",
+      "acme:feature x",
+      "acme:../x",
+      "acme:feature\\x",
+      "acme:feature//x",
+    ]) {
+      await expect(
+        connector.callTool("github_api_read", { path: "/repos/acme/one/pulls", query: { head } }, ctx),
+      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("head in owner:branch form") });
+    }
+    for (const path of ["/repos/acme/one/commits/feature/x", "/repos/acme/one/compare/main...feature/x"]) {
+      await expect(connector.callTool("github_api_read", { path }, ctx)).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("Encode '/' inside refs as %2F."),
+      });
+    }
     for (const args of [
       { method: "POST", path: "/app/installations/11/access_tokens", body: {} },
       { method: "PUT", path: "/repos/acme/one/pulls/7/merge", body: { sha: "a".repeat(40) } },
@@ -284,27 +305,49 @@ describe("GitHub App provider", () => {
           { terms: "bug", kind: "issues", ...(limit === undefined ? {} : { limit }), cursor: first.page.nextCursor },
           ctx,
         ),
-      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringMatching(/original explicit limit.*\.$/) });
+      ).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringMatching(/issued with limit 2; repeat limit 2.*\.$/),
+      });
       expect(fixture.requests).toHaveLength(before);
     }
-    // An omitted first-page limit is 30; continuation must explicitly repeat it.
+    // Default-30 cursors accept the same effective limit, explicit or omitted.
     const defaults = value(await connector.callTool("search_scoped", { terms: "bug", kind: "issues" }, ctx));
+    const omitted = value(
+      await connector.callTool(
+        "search_scoped",
+        { terms: "bug", kind: "issues", cursor: defaults.page.nextCursor },
+        ctx,
+      ),
+    );
+    const explicit = value(
+      await connector.callTool(
+        "search_scoped",
+        { terms: "bug", kind: "issues", limit: 30, cursor: defaults.page.nextCursor },
+        ctx,
+      ),
+    );
+    expect(omitted).toEqual(explicit);
     const beforeDefault = fixture.requests.length;
     await expect(
-      connector.callTool("search_scoped", { terms: "bug", kind: "issues", cursor: defaults.page.nextCursor }, ctx),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+      connector.callTool(
+        "search_scoped",
+        { terms: "bug", kind: "issues", limit: 31, cursor: defaults.page.nextCursor },
+        ctx,
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("issued with limit 30; repeat limit 30"),
+    });
     expect(fixture.requests).toHaveLength(beforeDefault);
-    await connector.callTool(
-      "search_scoped",
-      { terms: "bug", kind: "issues", limit: 30, cursor: defaults.page.nextCursor },
-      ctx,
-    );
     fixture.respond((request) =>
       request.url.pathname === "/installation/repositories"
         ? Response.json(
             { repositories: [{ id: 101, full_name: "acme/one" }] },
             {
-              headers: { link: '<https://api.github.com/installation/repositories?page=2&per_page=1>; rel="next"' },
+              headers: {
+                link: `<https://api.github.com/installation/repositories?page=${Number(request.url.searchParams.get("page")) + 1}&per_page=${request.url.searchParams.get("per_page")}>; rel="next"`,
+              },
             },
           )
         : undefined,
@@ -322,12 +365,36 @@ describe("GitHub App provider", () => {
           ),
         ).rejects.toMatchObject({
           code: "invalid_args",
-          message: expect.stringMatching(/original explicit limit.*\.$/),
+          message: expect.stringMatching(/issued with limit 1; repeat limit 1.*\.$/),
         });
         expect(fixture.requests).toHaveLength(before);
       }
       await connector.callTool("list_scopes", { ...args, limit: 1, cursor: listing.page.nextCursor }, ctx);
     }
+    const ownerDefault = value(await connector.callTool("list_scopes", { owner: "acme" }, ctx));
+    expect(
+      value(await connector.callTool("list_scopes", { owner: "acme", cursor: ownerDefault.page.nextCursor }, ctx)),
+    ).toEqual(
+      value(
+        await connector.callTool(
+          "list_scopes",
+          { owner: "acme", limit: 30, cursor: ownerDefault.page.nextCursor },
+          ctx,
+        ),
+      ),
+    );
+    const local = connection({
+      scopes: Array.from({ length: 31 }, (_, i) => ({ repo: `acme/repo-${i}`, access: "read" })),
+    });
+    const beforeLocal = fixture.requests.length;
+    const localDefault = value(await local.callTool("list_scopes", {}, ctx));
+    expect(localDefault.items).toHaveLength(30);
+    const localNext = value(await local.callTool("list_scopes", { cursor: localDefault.page.nextCursor }, ctx));
+    expect(localNext.items).toHaveLength(1);
+    expect(localNext).toEqual(
+      value(await local.callTool("list_scopes", { limit: 30, cursor: localDefault.page.nextCursor }, ctx)),
+    );
+    expect(fixture.requests).toHaveLength(beforeLocal);
   });
 
   it("INV-4: rejects public-repository search escapes from both configuration and selected subset", async () => {
@@ -589,6 +656,25 @@ describe("GitHub App provider", () => {
         expect(display).toContain("[redacted]");
         expect(display).not.toContain(PRIVATE_KEY.split("\n")[1]!.slice(120, 160));
       }
+    }
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/pulls"
+        ? Response.json([{ number: 7, head: { label: request.url.searchParams.get("head") } }])
+        : undefined,
+    );
+    for (const head of ["acme:feature", "ACME:feature/x", "outsider:feature", "outsider:feature+x"]) {
+      const before = fixture.requests.length;
+      const reply = value(
+        await connector.callTool("github_api_read", { path: "/repos/acme/one/pulls", query: { head } }, context()),
+      );
+      expect(reply.data).toEqual([{ number: 7, head: { label: head } }]);
+      const resource = fixture.requests.slice(before).filter((r) => r.url.pathname === "/repos/acme/one/pulls");
+      expect(resource).toHaveLength(1);
+      expect(resource[0]!.url.searchParams.get("head")).toBe(head);
+      expect(fixture.requests.slice(before).some((r) => r.url.pathname.startsWith("/repos/outsider/"))).toBe(false);
+      const token = fixture.tokens.find((t) => resource[0]!.headers.get("authorization") === `Bearer ${t.value}`)!;
+      expect(token.body.permissions).toEqual({ pull_requests: "read" });
+      expect(token.body.repository_ids).toEqual([101]);
     }
     for (const [key, permissions] of Object.entries(READ_PERMISSIONS)) {
       const path = key
