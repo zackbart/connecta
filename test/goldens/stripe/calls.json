@@ -15,23 +15,23 @@
         "operations": [
           {
             "method": "POST",
-            "path": "/v1/charges/{charge}/refund",
-            "operationId": "PostChargesChargeRefund",
+            "path": "/v1/refunds",
+            "operationId": "PostRefunds",
             "summary": "Create a refund",
             "tool": "stripe_api_write"
           },
           {
             "method": "POST",
-            "path": "/v1/payment_records/{id}/report_refund",
-            "operationId": "PostPaymentRecordsIdReportRefund",
-            "summary": "Report a refund",
+            "path": "/v1/refunds/{refund}",
+            "operationId": "PostRefundsRefund",
+            "summary": "Update a refund",
             "tool": "stripe_api_write"
           },
           {
             "method": "POST",
-            "path": "/v1/application_fees/{id}/refund",
-            "operationId": "PostApplicationFeesIdRefund",
-            "summary": "",
+            "path": "/v1/terminal/refunds",
+            "operationId": "PostTerminalRefunds",
+            "summary": "Create a refund using a Terminal-supported device.",
             "tool": "stripe_api_write"
           }
         ],

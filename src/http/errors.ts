@@ -245,6 +245,8 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly statuses: StatusTable<F>;
   /** Message for a successful status whose body is not JSON. */
   readonly unreadable: string;
+  /** Complete write message; otherwise core appends unknown-outcome and check-before-repeating guidance. */
+  readonly unreadableWrite?: string;
   /** Reviewed opt-in handling when a bounded body cannot be read; no additional I/O or raw causes. */
   readonly bodyFailures?: {
     readonly review: string;
@@ -694,7 +696,7 @@ function ok(status: number | undefined): boolean {
 function verdict(
   failure: HttpFailure,
   vendor: VendorErrors<any>,
-  options: Pick<MapOptions, "withholds" | "signal" | "dispatches">,
+  options: Pick<MapOptions, "withholds" | "signal" | "dispatches"> & Partial<Pick<MapOptions, "classification">>,
   dispatch = options.dispatches.find((entry) => entry.failure === failure),
 ): ConnectorCallError {
   switch (failure._tag) {
@@ -747,14 +749,19 @@ function verdict(
         `This call already sent a write to ${vendor.provider}; a second attempt was stopped before it left.`,
         { retryable: false },
       );
-    case "UnreadableBody":
+    case "UnreadableBody": {
+      const unreadable = failure.readFailed
+        ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? vendor.unreadable)
+        : vendor.unreadable;
       return new ConnectorCallError(
         "connector_call_failed",
-        failure.readFailed
-          ? (captureErrorReviews(vendor).bodyFailures?.readFailed ?? vendor.unreadable)
-          : vendor.unreadable,
+        options.classification === "write" && dispatch?.request?.auxiliary !== true
+          ? (vendor.unreadableWrite ??
+              `${unreadable} Whether the write took effect is unknown; check the target before repeating it.`)
+          : unreadable,
         { retryable: false },
       );
+    }
     case "StatusFailure":
       return statusVerdict(
         failure,

@@ -31,6 +31,15 @@ const fixtures: readonly ContractFixture[] = providerFixtures;
 const BASE = "https://connecta.example";
 const argumentsTable: Record<string, Record<string, Record<string, unknown>>> = argumentsByProvider;
 const GOOGLE = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
+const UNREADABLE_WRITES: Record<string, Record<string, unknown>> = {
+  "breeze.breeze_api_write": { method: "GET", path: "/people/add", query: { first: "Alice", last: "Example" } },
+  "planning-center.pco_api_write": {
+    method: "POST",
+    path: "/people/v2/people",
+    body: { data: { type: "Person", attributes: { first_name: "Alice", last_name: "Example" } } },
+  },
+  "tithely.tithely_api_write": { method: "POST", path: "/refunds/ch_fixture" },
+};
 // These catalog tools consult deployment-owned metadata/indexes and never
 // dispatch. They are still enumerated and checked, rather than silently skipped.
 const LOCAL = new Set([
@@ -202,6 +211,59 @@ describe("API provider failure sweep", () => {
                 providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
               ).toHaveLength(requests.length);
             }
+            const unreadableArgs = UNREADABLE_WRITES[address];
+            if (failure === "503" && unreadableArgs) {
+              for (const [body, type] of [
+                ["<html>ok</html>", "text/html"],
+                ["{broken", "application/json"],
+              ]) {
+                const sent: string[] = [];
+                const unreadable = await sweepCall(provider, tool.name, address, unreadableArgs, "write", (request) => {
+                  sent.push(request.method);
+                  return new Response(body, { status: 200, headers: { "content-type": type! } });
+                });
+                expect(sent).toEqual([unreadableArgs["method"]]);
+                expect(unreadable.structuredContent).toMatchObject({
+                  ok: false,
+                  error: {
+                    code: "connector_call_failed",
+                    retryable: false,
+                    writeOutcome: "unknown",
+                    message: expect.stringContaining(
+                      "Whether the write took effect is unknown; check the target before repeating it.",
+                    ),
+                  },
+                });
+              }
+            }
+            if (failure === "503" && address === "gmail.update_draft") {
+              const sent: string[] = [];
+              const lookup = await sweepCall(
+                provider,
+                tool.name,
+                address,
+                args,
+                "write",
+                (request) => {
+                  sent.push(request.method);
+                  return new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
+                },
+                {},
+                { failAuxiliary: true },
+              );
+              expect(sent).toEqual(["GET"]);
+              expect(lookup.structuredContent).toMatchObject({
+                ok: false,
+                error: {
+                  code: "connector_call_failed",
+                  retryable: false,
+                  message: "Gmail returned a successful response that is not JSON.",
+                },
+              });
+              expect((lookup.structuredContent as { error: CallErrorDetails }).error).not.toHaveProperty(
+                "writeOutcome",
+              );
+            }
           });
           // A write answered 401 is an unknown outcome unless its provider
           // declares reviewed authBeforeExecution evidence; a read keeps its
@@ -333,6 +395,7 @@ async function sweepCall(
   classification: "read" | "write",
   fail: (request: Request) => Response,
   handoffs: Parameters<typeof createMetaTools>[2] = {},
+  options: { failAuxiliary?: boolean } = {},
 ) {
   if (provider.name === "github") {
     const fake = apiFixture();
@@ -371,7 +434,7 @@ async function sweepCall(
             expires_in: 7200,
             scope: "read:individuals",
           });
-        if (provider.name === "gmail" && tool === "update_draft") {
+        if (provider.name === "gmail" && tool === "update_draft" && !options.failAuxiliary) {
           // Let the auxiliary lookup succeed so the sweep refuses the draft
           // replacement itself, rather than a write that was never sent.
           if (request.method === "GET")

@@ -1,4 +1,4 @@
-import { OperationIndex, type OpenApiData, type RestMethod } from "../../_shared/rest/operation-index.js";
+import { OperationIndex, type OpenApiData } from "../../_shared/rest/operation-index.js";
 
 /** Reviewed workflow vocabulary over the unchanged vendor paths and contracts. */
 const summaries: Readonly<Record<string, string>> = {
@@ -36,12 +36,7 @@ const summaries: Readonly<Record<string, string>> = {
   "GET /giving/v2/donations": "List donations by person, date or fund; include designations for fund identities.",
 };
 
-/**
- * A broad singular person query means the profile root, rather than every
- * cross-product relationship ending in /person. Scope only this local alias;
- * qualified queries such as person mergers retain full-index discovery.
- * Shared hatch ranking and every other provider's index are unchanged.
- */
+/** Reviewed vocabulary; shared hatch ranking keeps the full index reachable. */
 export class PlanningCenterIndex extends OperationIndex {
   constructor(data: OpenApiData) {
     super(
@@ -59,14 +54,5 @@ export class PlanningCenterIndex extends OperationIndex {
       },
       { vendor: "pco", title: "Planning Center" },
     );
-  }
-
-  override search(query: string, options: { method?: RestMethod; limit: number }) {
-    const found = super.search(query, { ...options, limit: this.ops.length });
-    const scoped =
-      query.trim().toLowerCase() === "person"
-        ? found.filter((op) => ["/people/v2/people", "/people/v2/people/{person_id}"].includes(op.path))
-        : found;
-    return scoped.slice(0, options.limit);
   }
 }

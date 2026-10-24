@@ -308,6 +308,27 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
       }
       for (const unknown of [null, {}, { _tag: "toString" }, new Error("defect")])
         expect(isHttpFailure(unknown)).toBe(false);
+      // Served classification owns body-failure wording, including writes
+      // implemented with HTTP GET; a read keeps its existing message.
+      const unreadableWrite =
+        "Acme returned an unexpected write response. Its outcome is unknown; check before repeating.";
+      for (const classification of ["read", "write"] as const) {
+        expect(
+          toConnectorCallError(new UnreadableBody(), { ...VENDOR, unreadableWrite }, { classification, dispatches: [] })
+            .message,
+        ).toBe(classification === "write" ? unreadableWrite : VENDOR.unreadable);
+        for (const readFailed of [undefined, true] as const) {
+          const message = toConnectorCallError(new UnreadableBody(readFailed ? { readFailed } : {}), VENDOR, {
+            classification,
+            dispatches: [],
+          }).message;
+          expect(message).toBe(
+            classification === "write"
+              ? `${VENDOR.unreadable} Whether the write took effect is unknown; check the target before repeating it.`
+              : VENDOR.unreadable,
+          );
+        }
+      }
 
       // Only this failure's recorded answer supplies an oversized verdict's
       // operator status. Another request's answer is not its provenance.
