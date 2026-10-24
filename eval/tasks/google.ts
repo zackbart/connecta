@@ -608,7 +608,8 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
   const read = async (tool: string, args: Row = {}) => {
     const r = await ctx.call("execute_code", {
       code: `async () => {
-      const {data:value}=await connecta.call(${JSON.stringify(product)} + "." + ${JSON.stringify(tool)},${JSON.stringify(args)});
+      const {data:delivery}=await connecta.call(${JSON.stringify(product)} + "." + ${JSON.stringify(tool)},${JSON.stringify(args)});
+      const value=${tool.endsWith("_api_read") ? "delivery.data" : "delivery"};
       if(JSON.stringify(value).length<12000)return value;
       return {page:value.page,revisionId:value.revisionId,namedRanges:value.namedRanges,
         records:(value.items??value.files??value.messages??value.responses??value.slides??[]).map(row=>({id:row.id??row.responseId??row.objectId})),
@@ -723,7 +724,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
         ...(task === 3 ? { withIndexes: true, maxChars: 0 } : { maxChars: 200000 }),
       });
     if (task === 4) {
-      await read("get_document", { documentId: "docs1", raw: true });
+      await read("docs_api_read", { path: "/documents/docs1", query: { includeTabsContent: true } });
       await write("batch_update_document", {
         documentId: "docs1",
         requiredRevisionId: "r1",

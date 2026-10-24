@@ -93,7 +93,7 @@ export async function googleTransportControls(): Promise<void> {
 
 export async function googleBoundaryControls(): Promise<void> {
   for (const [product, boundary, tool, args] of [
-    ["docs", "split", "get_document", { documentId: "docs1", raw: true }],
+    ["docs", "split", "docs_api_read", { path: "/documents/docs1", query: { includeTabsContent: true } }],
     ["gmail", "base64", "get_message", { messageId: "m1" }],
     ["drive", "binary", "get_file_content", { fileId: "pdf1" }],
     ["forms", "cursor", "list_responses", { formId: "forms1", limit: 2 }],

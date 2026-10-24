@@ -254,7 +254,7 @@
           "dispatched": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "Google Docs: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "message": "Google Docs: Golden 403 failure The account may lack access, or a Workspace policy may block this request.",
             "retryable": false,
             "connector": "docs",
             "operation": "docs.get_document",
@@ -513,7 +513,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Google Docs: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "message": "Google Docs: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -578,7 +578,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Google Docs: Golden 500 failure Google is failing upstream.",
+            "message": "Google Docs: Golden 500 failure",
             "retryable": true
           }
         }
@@ -1014,7 +1014,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "message": "Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1108,7 +1108,7 @@
           "answered": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "Google Docs: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "message": "Google Docs: Golden 403 failure The account may lack access, or a Workspace policy may block this request.",
             "retryable": false,
             "connector": "docs",
             "operation": "docs.append_text",
@@ -1435,7 +1435,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Google Docs: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "message": "Google Docs: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -1516,7 +1516,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "message": "Google Docs: Golden 500 failure Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1597,7 +1597,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "message": "Google Docs: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Docs rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1690,7 +1690,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "message": "Could not reach the Google Docs API. Whether the write took effect at Google Docs is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1770,10 +1770,28 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "code": "write_outcome_unknown",
+            "message": "Operation \"docs.append_text\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
-            "writeOutcome": "unknown"
+            "details": {
+              "host": "https://docs.googleapis.com",
+              "code": "timeout",
+              "operation": "docs.append_text",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "writeOutcome": "unknown",
+            "connector": "docs",
+            "operation": "docs.append_text",
+            "uncertainCall": {
+              "address": "docs.append_text",
+              "args": {
+                "documentId": "doc-1",
+                "text": "\nAction items follow.",
+                "requiredRevisionId": "rev-1"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

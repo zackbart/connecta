@@ -155,7 +155,7 @@ describe("bounded reads match original spans", () => {
 
 describe("every Docs representation", () => {
   it.each(echoForms(SECRET))(
-    "INV-5: truncated %s text is safe in titles, selected text, indexed previews, and raw branches",
+    "INV-5: truncated %s text is safe in titles, selected text, indexed previews, and the hatch",
     async (_name, form) => {
       const prefix = form.slice(0, Math.ceil(form.length / 2));
       const text = `intro ${form} public tail`;
@@ -173,9 +173,12 @@ describe("every Docs representation", () => {
         },
       }));
       const connector = docs("docs", await workspaceOptions());
-      for (const args of [{}, { withIndexes: true }, { maxChars: 12 }, { raw: true }]) {
+      for (const args of [{}, { withIndexes: true }, { maxChars: 12 }, { hatch: true }]) {
         const ctx = privateContext(SECRET);
-        const result = await connector.callTool("get_document", { documentId: "d1", ...args }, ctx);
+        const result =
+          "hatch" in args
+            ? await connector.callTool("docs_api_read", { path: "/documents/d1" }, ctx)
+            : await connector.callTool("get_document", { documentId: "d1", ...args }, ctx);
         const shown = JSON.stringify(result);
         expect(shown).not.toContain(prefix);
         expect(leaks(shown)).toBe(false);
