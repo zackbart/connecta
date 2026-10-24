@@ -806,18 +806,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
           await page("get_page", { presentationId: "slides1", pageObjectId: `notes${n}`, limit: 1 });
     }
     if (task === 4 || task === 7) {
-      // Reference routing only: retain the legacy BEFORE read and use the
-      // structural hatch when the AFTER catalog advertises it.
-      const catalog = await ctx.call("search_tools", {
-        connector: "slides",
-        query: "slides_api_read",
-        limit: 8,
-      });
-      const indexed = (data(catalog).tools ?? []).some(
-        (tool: Row) => tool.address === "slides.slides_api_read" || tool.name === "slides_api_read",
-      );
-      if (indexed) await read("slides_api_read", { path: "/presentations/slides1/pages/slide1" });
-      else await read("get_page", { presentationId: "slides1", pageObjectId: "slide1", raw: true });
+      await read("slides_api_read", { path: "/presentations/slides1/pages/slide1" });
       await write("batch_update_presentation", {
         presentationId: "slides1",
         requiredRevisionId: "r1",
