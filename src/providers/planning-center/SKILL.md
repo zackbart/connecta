@@ -112,7 +112,8 @@ or committing a batch changes financial records; named giving tools only read.
 
 Episodes, channels and resources are available through the indexed API. A public
 Church Center link and a media resource are different things; use the record
-the task asks for.
+the task asks for. Signed download URL generation is refused because the
+private link would remain withheld.
 <!-- end -->
 
 <!-- when: webhooks -->
@@ -121,6 +122,8 @@ the task asks for.
 A subscription names an event and callback destination. Signing keys, private
 download destinations and opaque event/delivery payloads or headers remain
 withheld. Status and event metadata are available for audits.
+Webhook signing-key rotation is refused: the new credential cannot be returned
+or installed on the receiver through this connection.
 <!-- end -->
 
 <!-- when: api -->
@@ -128,7 +131,8 @@ withheld. Status and event metadata are available for audits.
 
 The organization API includes application metadata and personal-access-token
 inventory. Inventory records describe tokens; they do not return their values.
-Revoking a token is a write and may interrupt another integration.
+Revoking a token is a write and may interrupt another integration, including
+this connection if its own token is revoked.
 <!-- end -->
 
 <!-- when: limited -->

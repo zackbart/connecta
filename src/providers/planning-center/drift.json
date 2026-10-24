@@ -1631,7 +1631,6 @@
       "POST /groups/v2/groups/{group_id}/duplicate",
       "POST /groups/v2/groups/{group_id}/enable_chat",
       "POST /groups/v2/groups/{group_id}/memberships",
-      "POST /people/v2",
       "POST /people/v2/campuses",
       "POST /people/v2/campuses/{campus_id}/service_times",
       "POST /people/v2/field_definitions/{field_definition_id}/field_options",
@@ -1768,7 +1767,7 @@
       "giving.json": "sha256:e334be44c88304520fc223dd9b861bcc1fd2d17515396b44639203e3f2725e34",
       "groups.document.json": "sha256:c3fccd1d23fe0dd8d192c371b4cce16abb0b391717d4077e91c4c7ffba31d544",
       "groups.json": "sha256:63ad0c51ed156e66802af6517bc8dbabfb714c57f0479a8398f3d0a95e2ebd05",
-      "openapi.json": "sha256:4e7b5e447c2feb562a7a45ad27111308558a026e9d36cb536ee1685425191f3b",
+      "openapi.json": "sha256:04d762a3798b39773953ab32009e1ec9d1c27c6e04014efed07c996bfa07c4f8",
       "people.document.json": "sha256:de07f847e8f76dfea589e8c2345853c2e1a0d2ccd457716bd3abd29eb835063f",
       "people.json": "sha256:051fd1c3b8f1c0fc5c107930a8026bddbaf28618baa9f3fbd389b5576f73058a",
       "publishing.document.json": "sha256:7aa86ff1732c45a8e381fee37fc481b2918ca8f653d75ca62c538e9e1ab1ff80",
@@ -1777,7 +1776,7 @@
       "registrations.json": "sha256:1a5324e66f96f469125a95ca8257828ca3aeddfac314380f4d50c13a93839870",
       "services.document.json": "sha256:e3cf7c8b9c92bd5f6cd2fa400c76ac3d2571bfb43f77c5d8e8cfba04c208aabb",
       "services.json": "sha256:62d1d2ebd4557fa001ebbf7faa46ece9bae92d7f6235bde26107e022a0c526c6",
-      "value-safety.json": "sha256:98ac62092d463cc0c934af6c7844a0b388de575ea0e428afdf053d01e63779fd",
+      "value-safety.json": "sha256:e2684d96046661285db7566403ba92e861dbcb926bebe3b80ac6102dc247831e",
       "webhooks.document.json": "sha256:2d7629aaef4e29ebdda98280806af295c11d111331b82a8dbf892ccf6d1faf1c",
       "webhooks.json": "sha256:98ab77a3404972309af67cf4c12725ff017a04ddeeeb2004ca6e2ba0c1396221"
     }
@@ -11615,12 +11614,6 @@
           "page": "https://developer.planning.center/docs/#/groups/2023-07-10",
           "specRevision": "2023-07-10",
           "contract": "sha256:98add4c0443f8797b65a0be4c361d49c5e095faa27620b478c3039e12c05eadb"
-        },
-        {
-          "operation": "POST /people/v2",
-          "page": "https://developer.planning.center/docs/#/people/2026-06-04",
-          "specRevision": "2026-06-04",
-          "contract": "sha256:fd2ddb6393b2050cbb9ca1132d3474aab77298bc468bb307c9490a17d02b530b"
         },
         {
           "operation": "POST /people/v2/campuses",

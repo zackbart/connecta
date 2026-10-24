@@ -17,9 +17,11 @@ The final Luna BEFORE misses are: one merger workflow with no HTTP evidence
 following a QuickJS startup failure and unsuccessful discovery; one otherwise
 correct filtered answer labelled `pco Planning Center`; and one otherwise
 correct merger answer with numeric ids instead of strings. The startup error
-is `QuickJS child did not become ready within 10000ms`. It is retained, with
-no deadline change or selective retry. It prevents attributing the full score
-delta to the provider surface. The original BEFORE also varied materially on
+is `QuickJS child did not become ready within 10000ms`. Final BEFORE contains
+two concurrent startup timeouts on merger repeat 1: Luna fails, while Sonnet
+recovers and passes. Both remain in the evidence and error totals, with no
+deadline change or selective retry. This asymmetry prevents attributing the
+full score delta to the provider surface. The original BEFORE also varied materially on
 the join task, which reinforces the small-sample limitation.
 
 | Task | Luna BEFORE | Luna AFTER | Sonnet BEFORE | Sonnet AFTER |
@@ -80,7 +82,7 @@ writes on read tasks, duplicate writes and missing reconciliation. The full
 selftest exercised six/code presentations and route/outcome modes. Under heavy
 concurrent host load, exploratory code-arm references and two five-second hatch
 tests hit timeouts. Their isolated reruns passed unchanged; the scored six-arm
-runs retain the one startup failure described above. The paging-reference
+runs retain both startup failures described above. The paging-reference
 failure was corrected before the final measured pair, without score changes.
 
 ## Calls, metadata and tokens
@@ -257,3 +259,35 @@ intermediate redistribution still exceeded five seconds and its unfinished
 calls affected the next case; catalog and header checks were then moved to
 the lighter existing cases. No production behavior changed after the frozen
 AFTER snapshot.
+
+## Round-1 fixes
+
+The 2026-10-24 Opus review requested changes at `07777ab94762`. The fix round
+replaces the stale email/phone tool names and GET-only custom-field write
+guidance with real indexed methods/paths. Publishing signed-download generation
+and Webhooks signing-key rotation are refused before transport, with reasons;
+the receiving system cannot use a credential this connection permanently
+withholds. Migration notes also disclose success on empty 2xx replies for the
+removed additive write wrappers.
+
+The source documents still contain 1,753 operations. Exactly one empty-path
+People composition artifact is now omitted, leaving **1,752 indexed operations**
+with 1,124 read / 626 destructive / two refused verdicts. Provider-local reviewed
+summaries and a singular-person profile scope make the requested volunteer,
+group-leader, custom-field, order-of-service and person queries find their
+roots without changing shared ranking. The existing ranking test covers all
+seven requested natural phrasings, including queries without a method filter.
+
+PCO alone opts into optional compiled numeric bounds. All 560 `per_page`
+contracts retain integer 1–100, including intersection of composed constraints;
+malformed, fractional and out-of-range values fail before dispatch. Existing
+indexes without the opt-in keep their current validation. The review probes
+were replayed against the real factory with its fake transport: all four
+signed-link formats and both rotation probes send nothing, all six original
+invalid page sizes send nothing, and all 560 schemas have the exact bounds.
+
+Agent-facing descriptions and discovery text changed materially, so this round
+requires an AFTER-only rerun of all seven tasks, both required models and two
+repeats per task. The original paired results above remain frozen. Excluded
+named-tool pointers and lossless shared-index compaction are deferred by the
+orchestrator; neither is implemented in this round.

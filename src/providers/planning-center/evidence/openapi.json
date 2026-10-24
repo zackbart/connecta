@@ -50,6 +50,7 @@
     "operationIds": false,
     "pathParams": "typed",
     "opBudget": 24000,
-    "valueSafety": true
+    "valueSafety": true,
+    "numericBounds": true
   }
 }

@@ -7,12 +7,13 @@ import { Credentials } from "../../http/services.js";
 import type { SafetyOptions } from "../../http/safety.js";
 import { get, type Connection } from "../../http/vendor.js";
 import { indexedVendor } from "../_shared/rest/kit.js";
-import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { valueSafety } from "../_shared/rest/value-safety.js";
 import { restSafety } from "../../http/safety.js";
 import type { HatchPageAdapter } from "../../http/hatch-paging.js";
 import type { HatchBinding } from "../../http/hatch.js";
 import { openapi } from "./openapi.generated.js";
+import { PlanningCenterIndex } from "./lib/discovery.js";
+import { PCO_REFUSALS } from "./lib/verdicts.js";
 import { TABLE } from "./safety.js";
 import type { ConnectorCredentialConfig } from "../../types.js";
 import type { PlanningCenterOptions } from "./index.js";
@@ -349,7 +350,7 @@ export const errors: VendorErrors = {
 
 /** All ten product pins retain their own public URL and version. */
 export const PCO_PREFIX = "pco";
-export const PCO_INDEX = new OperationIndex(openapi, { vendor: PCO_PREFIX, title: "Planning Center" });
+export const PCO_INDEX = new PlanningCenterIndex(openapi);
 export const getPeopleMe = get("getPeopleMe", "/people/v2/me", {
   success: Schema.Unknown,
   query: { include: Schema.String },
@@ -532,6 +533,8 @@ export function pcoBinding({
     review:
       "The ten reviewed JSON:API product pins each require their own X-PCO-API-Version header. Preserve scalar query values/repeated pairs, exact-URL exclusions and Connection.sendPath safety on every dispatch.",
     refuse: (call) => {
+      const refusal = PCO_REFUSALS[`${call.op.method} ${call.op.path}`];
+      if (refusal) return refusal;
       if (call.op.server)
         return "This Planning Center operation uses a different server, which this connection does not reach.";
       const type = PCO_INDEX.bodyType(call.op)?.split(";", 1)[0]!.trim().toLowerCase();

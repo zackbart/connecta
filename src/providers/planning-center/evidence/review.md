@@ -19,7 +19,7 @@ vendored document. Drift checks visit each actual source separately.
 
 | Product       | Version    | Operations |
 | ------------- | ---------- | ---------: |
-| People        | 2026-06-04 |        520 |
+| People        | 2026-06-04 |        519 |
 | Services      | 2018-11-01 |        440 |
 | Groups        | 2023-07-10 |        108 |
 | Check-Ins     | 2025-05-28 |        171 |
@@ -29,20 +29,25 @@ vendored document. Drift checks visit each actual source separately.
 | Publishing    | 2024-03-25 |         87 |
 | Webhooks      | 2022-10-20 |         13 |
 | API           | 2026-09-24 |         13 |
-| Total         |            |      1,753 |
+| Total         |            |      1,752 |
 
-All 1,753 operations have literal reviewed verdicts in `lib/verdicts.ts`:
-1,124 reads, 628 destructive operations, one refusal. The GET contracts retrieve
+The ten source documents contain 1,753 operations. Composition omits exactly
+one empty-path People `send_verification` artifact; it establishes no route,
+so no `POST /people/v2` operation is invented or offered in discovery.
+All 1,752 indexed operations have literal reviewed verdicts in `lib/verdicts.ts`:
+1,124 reads, 626 destructive operations, two refusals. The GET contracts retrieve
 resources, relationships, status or metadata; none documents an action through
 GET. The mutation contracts create/update/delete records, relationships or
 assignments, or perform actions (including list refresh/automation, workflow
-advancement, webhook key rotation, token revocation, deliveries, live controls
+advancement, token revocation, deliveries, live controls
 and assignment changes). All require write approval through the hatch; no
 method-only runtime classification can admit a new operation. Existing additive
-named writes keep their reviewed named annotations. The People source's empty
-path POST describes `send_verification` without a callable path. Its metadata is
-preserved as `POST /people/v2`, but the hatch refuses it rather than inventing a
-route. It must be re-reviewed against a corrected vendor document before use.
+named writes keep their reviewed named annotations. Publishing's
+`generate_download_url` mints a private signed link, and Webhooks `rotate_secret`
+produces a signing credential that remains withheld; both are refused before
+dispatch with explicit reasons. This prevents credential minting and a rotation
+that cannot update the receiver. The omitted People action needs a corrected
+vendor route before it can be reviewed for admission.
 No file-upload host or arbitrary unindexed/version-overridden route is admitted.
 
 The composed summaries include product, resource, action and the path item's
@@ -54,6 +59,16 @@ index includes nested resource attributes through their declared parent, so
 JSON shape has no invented fields. Details continuation preserves large
 required contracts; the largest list-related contract exceeds one details page.
 Search remains bounded to eight compact hits / 16 KiB and details to 32 KiB.
+`lib/discovery.ts` supplies reviewed workflow summaries for roots and their
+common joins: volunteer rosters, church group leaders, custom fields, profile
+notes, order of service and merged identities. A singular `person` query scopes
+to People profile root/detail paths, preventing relationship endpoints ending
+in `/person` from displacing the root. Qualified queries retain the full index.
+This is provider-local; shared ranking is unchanged. Tests exercise natural
+phrasing without requiring a method filter, alongside the original path nouns.
+PCO opts into `numericBounds` in its compiler options. All 560 `per_page`
+contracts retain the vendor's integer minimum 1 and maximum 100, and the index
+rejects malformed, fractional or out-of-range values before dispatch.
 
 ## Error meanings
 
@@ -88,6 +103,10 @@ other protected properties receive the kit's withheld marker.
 - Webhook subscription `authenticity_secret` is a verification credential.
   Services organization `secret` is credential material. Services Person
   `ical_code` grants private calendar-feed access. Withhold them everywhere.
+- Publishing's signed-download generation response has no declared fields.
+  Protecting known signature-query spellings cannot cover opaque path or token
+  links, so the whole action is refused. Webhook rotation is refused because its
+  permanently dropped new key cannot be installed on the receiving server.
 - Webhook Event `payload` is documented as string-encoded JSON. Delivery
   `request_body`, `response_body`, `request_headers` and `response_headers`
   are opaque stored strings, including third-party response content. Nested
@@ -137,7 +156,7 @@ surfaces. No competing shared implementation is introduced. H9 measures import,
 construction and discovery without changing deadlines.
 
 The public drift check on 2026-10-24 found no contract or byte drift across the
-1,753 indexed operations. It reported a newer People publication, 2026-10-05,
+1,753 source operations. It reported a newer People publication, 2026-10-05,
 against the retained 2026-06-04 pin. This advisory is recorded, not accepted as
 a version update; reviewing that version is separate work.
 

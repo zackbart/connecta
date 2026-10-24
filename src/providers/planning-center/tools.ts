@@ -561,7 +561,7 @@ function tools(connection: Connection, call: Call, defaultPageSize: number): Too
     additive(connection, {
       name: "create_person",
       description:
-        "Create a People profile. Emails and phone numbers are separate records; add them after with add_person_email and add_person_phone_number.",
+        "Create a People profile. Emails and phone numbers are separate records; add them after with pco_api_write: POST /people/v2/people/{person_id}/emails or POST /people/v2/people/{person_id}/phone_numbers.",
       destructive: false,
       input: input(PERSON_WRITE_PROPERTIES, ["firstName", "lastName"]),
       output: PERSON_SUMMARY_SCHEMA,
@@ -791,7 +791,7 @@ function tools(connection: Connection, call: Call, defaultPageSize: number): Too
     list({
       name: "list_person_field_data",
       description:
-        "List one person's custom field values, each labeled with its field name and data type. Writing a value is pco_api_write at /people/v2/field_data.",
+        "List one person's custom field values, each labeled with its field name and data type. Write with pco_api_write: POST /people/v2/people/{person_id}/field_data to create, or PATCH /people/v2/field_data/{field_datum_id} to update.",
 
       item: record({
         id: STRING,

@@ -22,6 +22,8 @@
 // (`evidence/value-safety.json`, or `value-safety.candidates.json` beside a
 // legacy pin), the operations the vendor's reviewed value-safety table must
 // cover; every REST vendor sets it.
+// `options.numericBounds: true` keeps numeric minimum/maximum constraints for
+// pre-dispatch validation (including integer-valued query strings).
 //
 // `pnpm run providers:spec` fetches `url`, refuses bytes whose digest differs
 // from the pin, and writes `openapi.generated.ts` beside it: every
@@ -187,7 +189,10 @@ export async function composeOpenApi(directory, source) {
       for (const [name, value] of Object.entries(definitions)) components[kind][`${namespace}_${name}`] = value;
     }
     for (const [path, item] of Object.entries(renamed.paths ?? {})) {
-      if (path !== "" && !path.startsWith("/")) throw new Error(`${entry.pin} has an invalid path ${path}`);
+      // An empty source path establishes no route. Prefixing it would invent
+      // a callable product root (Planning Center's send_verification artifact).
+      if (path === "") continue;
+      if (!path.startsWith("/")) throw new Error(`${entry.pin} has an invalid path ${path}`);
       const full = `${entry.prefix}${path}`;
       if (Object.hasOwn(paths, full)) throw new Error(`Composed OpenAPI path collision: ${full}`);
       // Resource prose is on path items in APIs such as Planning Center.
@@ -311,7 +316,13 @@ function mergeSchemas(a, b) {
       if (!(key in out) && key === "type") out.type = value;
       continue;
     }
-    if (key === "properties" && value && typeof value === "object") {
+    if ((key === "minimum" || key === "maximum") && Number.isFinite(value)) {
+      out[key] = Number.isFinite(out[key])
+        ? key === "minimum"
+          ? Math.max(out[key], value)
+          : Math.min(out[key], value)
+        : value;
+    } else if (key === "properties" && value && typeof value === "object") {
       const properties = { ...a.properties };
       for (const [name, schema] of Object.entries(value)) {
         properties[name] = properties[name] === undefined ? schema : { allOf: [properties[name], schema] };
@@ -388,6 +399,10 @@ function compactSchema(document, schema, shape, level) {
   if (values && values.length <= shape.maxEnum) out.e = values;
   if (node.format === "binary") out.f = "binary";
   if (node.nullable === true) out.n = 1;
+  if (shape.numericBounds && ["integer", "number"].includes(node.type)) {
+    if (Number.isFinite(node.minimum)) out.l = node.minimum;
+    if (Number.isFinite(node.maximum)) out.u = node.maximum;
+  }
   const description = level === 1 ? plainText(node.description, shape.describe) : undefined;
   if (description) out.d = description;
   const union = Array.isArray(node.anyOf) ? node.anyOf : Array.isArray(node.oneOf) ? node.oneOf : undefined;
@@ -617,6 +632,7 @@ export function buildOperationIndex(document, source) {
     depth: source.options?.depth ?? DEFAULT_DEPTH,
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
+    numericBounds: source.options?.numericBounds === true,
   };
   // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
   // `operationIds: false` drops ids that only restate the summary,

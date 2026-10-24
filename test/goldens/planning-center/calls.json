@@ -16,7 +16,7 @@
             "method": "GET",
             "path": "/people/v2/person_mergers",
             "operationId": "",
-            "summary": "List Person Merger — Planning Center People",
+            "summary": "Find merged person history and the surviving People id for a removed duplicate profile.",
             "tool": "pco_api_read"
           },
           {
@@ -49,7 +49,7 @@
         "method": "GET",
         "path": "/people/v2/person_mergers",
         "operationId": "",
-        "summary": "List Person Merger — Planning Center People",
+        "summary": "Find merged person history and the surviving People id for a removed duplicate profile.",
         "parameters": [
           {
             "name": "where[created_at]",
@@ -161,7 +161,9 @@
             "required": false,
             "description": "Maximum number of records per page",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
             }
           },
           {
@@ -170,7 +172,8 @@
             "required": false,
             "description": "Pagination offset",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             }
           }
         ],

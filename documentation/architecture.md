@@ -1276,7 +1276,8 @@ Each `pin` names a simple supplemental sibling pin and byte-exact document;
 All documents must share an HTTPS origin. A composition has no `url`, `digest`,
 `latest`, or `vendored` field of its own: its actual source URLs and composite
 digest are derived from those pins. `providers:spec` namespaces local component
-references, prefixes paths, refuses collisions, and compiles the combined
+references, prefixes paths, omits empty source paths that establish no route,
+refuses collisions, and compiles the combined
 contract through the same compiler. Missing operation summaries inherit the
 path item's resource description with a method-specific action. Both the source
 pin bytes and normalized composed document are checked for offline freshness.
@@ -1305,6 +1306,9 @@ request-header allowlist, text bodies, and index `slashParams` that admit an
 encoded `/` in a final key segment (`test/rest-connector.test.ts`).
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
+`numericBounds: true` preserves documented numeric minimum/maximum constraints
+in request schemas and enforces them before dispatch, including numeric query
+strings. Existing indexes without those optional constraints are unchanged.
 The compiler separately records response property paths from the lowest
 declared JSON success status (then `2XX`), resolving local references and
 composition. It includes top-level and list-item properties (root arrays or

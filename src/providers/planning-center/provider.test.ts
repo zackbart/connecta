@@ -131,11 +131,6 @@ describe("Planning Center contracts", () => {
       ["pco_api_read", { path: "/services/v2/me" }, { data: organization, included: [signed] }],
       [
         "pco_api_write",
-        { method: "POST", path: "/webhooks/v2/webhook_subscriptions/w1/rotate_secret" },
-        { data: signed },
-      ],
-      [
-        "pco_api_write",
         {
           method: "POST",
           path: "/webhooks/v2/webhook_subscriptions",
@@ -152,6 +147,20 @@ describe("Planning Center contracts", () => {
       // Everything else in the body still comes back.
       expect(text).toContain("hooks.example");
     }
+    // These actions create credentials that the connection must never return.
+    // Refusing before transport avoids minting a private link or breaking a
+    // webhook receiver by rotating to a signing key that remains withheld.
+    const beforeRefused = calls.length;
+    for (const path of [
+      "/publishing/v2/episodes/1/generate_download_url",
+      "/webhooks/v2/webhook_subscriptions/w1/rotate_secret",
+    ]) {
+      await expect(invoke("pco_api_write", { method: "POST", path })).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("Planning Center refuses"),
+      });
+    }
+    expect(calls).toHaveLength(beforeRefused);
     // Safety applies before either fields selection or a named projection.
     const privateRecord = {
       type: "Attachment",
@@ -232,23 +241,32 @@ describe("Planning Center contracts", () => {
     const connector = connection(),
       ctx = context();
     const invoke = (name: string, args: Record<string, unknown>) => call(name, args, connector, ctx);
-    // Discovery must remain useful with all 1,753 operations, within 0014's budgets.
+    // The source's one empty-path artifact is omitted: 1,752 real operations.
     const beforeDiscovery = calls.length;
-    expect(PCO_INDEX.ops).toHaveLength(1753);
-    expect(Object.keys(PCO_VERDICTS)).toHaveLength(1753);
-    for (const [query, expected] of [
-      ["person mergers", "/people/v2/person_mergers"],
-      ["note categories", "/people/v2/note_categories"],
-      ["song arrangements", "/services/v2/songs/{song_id}/arrangements"],
-      ["group memberships", "/groups/v2/groups/{group_id}/memberships"],
+    expect(PCO_INDEX.ops).toHaveLength(1752);
+    expect(Object.keys(PCO_VERDICTS)).toHaveLength(1752);
+    expect(PCO_INDEX.operation("POST", "/people/v2")).toBeUndefined();
+    for (const [query, expected, method] of [
+      ["person mergers", "/people/v2/person_mergers", "GET"],
+      ["note categories", "/people/v2/note_categories", "GET"],
+      ["song arrangements", "/services/v2/songs/{song_id}/arrangements", "GET"],
+      ["group memberships", "/groups/v2/groups/{group_id}/memberships", "GET"],
+      ["volunteer roster", "/services/v2/people"],
+      ["church group leaders", "/groups/v2/groups"],
+      ["volunteer", "/services/v2/people"],
+      ["group leaders", "/groups/v2/groups/{group_id}/memberships"],
+      ["custom field", "/people/v2/field_definitions"],
+      ["order of service", "/services/v2/service_types"],
+      ["person", "/people/v2/people"],
     ]) {
-      const found = await invoke("pco_api_search", { query, method: "GET" });
+      const found = await invoke("pco_api_search", { query, ...(method ? { method } : {}) });
       expect(found.operations.length, query).toBeLessThanOrEqual(8);
       expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
       expect(
         found.operations.map((op: any) => op.path),
         query,
       ).toContain(expected);
+      if (query === "person") expect(found.operations[0].path).toBe(expected);
     }
     const detailArgs = { method: "GET", path: "/people/v2/list_categories/{list_category_id}/lists" };
     const parameters: any[] = [],
@@ -292,6 +310,19 @@ describe("Planning Center contracts", () => {
     expect(calls.at(-1)!.url.searchParams.get("offset")).toBe("1");
     expect(calls.at(-1)!.url.searchParams.get("where[status]")).toBe("active");
     const noRequest = calls.length;
+    const peopleOperation = PCO_INDEX.operation("GET", "/people/v2/people")!;
+    expect(PCO_INDEX.contract(peopleOperation).parameters.find((p) => p.name === "per_page")?.schema).toEqual({
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+    });
+    for (const per_page of [1000, "abc", -1, 0, 101, 1.5, "1.5", "", null, true]) {
+      await expect(invoke("pco_api_read", { path: "/people/v2/people", query: { per_page } })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    }
+    for (const per_page of [1, "1", 100, "100"])
+      expect(() => PCO_INDEX.check(peopleOperation, { per_page }, undefined)).not.toThrow();
     for (const args of [
       { limit: 0 },
       { limit: 101 },
@@ -493,7 +524,7 @@ describe("Planning Center excludeApps", () => {
         call("pco_api_write", compactArgs({ method, path, body }), connector),
         `${method} ${path}`,
       ).rejects.toMatchObject(
-        path.includes("/subscriptions/")
+        path.includes("/subscriptions/") || path.endsWith("/rotate_secret")
           ? { code: "invalid_args", retryable: false }
           : { code: "provider_permission_denied", retryable: false, message: existing },
       );

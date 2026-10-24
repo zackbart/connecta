@@ -1,8 +1,14 @@
 // Reviewed literal policy for all ten pinned product contracts.
 // Reads list resources, relationships, or status; all actions and relationship
-// changes require approval. The source's empty-path verification action has no
-// documented callable route and is refused. See evidence/review.md.
+// changes require approval. Signed-download minting and webhook key rotation
+// are refused; the empty-path source artifact is not indexed. See evidence/review.md.
 import type { RestMethod } from "../../_shared/rest/operation-index.js";
+export const PCO_REFUSALS: Readonly<Record<string, string>> = {
+  "POST /publishing/v2/episodes/{episode_id}/generate_download_url":
+    "Planning Center refuses signed download URL generation because the minted private link cannot be returned.",
+  "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret":
+    "Planning Center refuses webhook key rotation because the new signing credential stays withheld and cannot be installed on the receiver.",
+};
 export const PCO_VERDICTS = {
   "DELETE /calendar/v2/conflicts/{conflict_id}/resource/{resource_id}": "destructive",
   "DELETE /calendar/v2/event_instances/{event_instance_id}/tags/{tag_id}": "destructive",
@@ -1754,7 +1760,6 @@ export const PCO_VERDICTS = {
   "POST /groups/v2/groups/{group_id}/duplicate": "destructive",
   "POST /groups/v2/groups/{group_id}/enable_chat": "destructive",
   "POST /groups/v2/groups/{group_id}/memberships": "destructive",
-  "POST /people/v2": "refuse",
   "POST /people/v2/campuses": "destructive",
   "POST /people/v2/campuses/{campus_id}/service_times": "destructive",
   "POST /people/v2/field_definitions/{field_definition_id}/field_options": "destructive",
@@ -1809,7 +1814,7 @@ export const PCO_VERDICTS = {
   "POST /publishing/v2/episodes/{episode_id}/channel": "destructive",
   "POST /publishing/v2/episodes/{episode_id}/episode_resources": "destructive",
   "POST /publishing/v2/episodes/{episode_id}/episode_times": "destructive",
-  "POST /publishing/v2/episodes/{episode_id}/generate_download_url": "destructive",
+  "POST /publishing/v2/episodes/{episode_id}/generate_download_url": "refuse",
   "POST /publishing/v2/episodes/{episode_id}/series": "destructive",
   "POST /publishing/v2/series": "destructive",
   "POST /publishing/v2/series/{series_id}/channel": "destructive",
@@ -1881,5 +1886,5 @@ export const PCO_VERDICTS = {
   "POST /webhooks/v2/webhook_subscriptions": "destructive",
   "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/ignore": "destructive",
   "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/events/{event_id}/redeliver": "destructive",
-  "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret": "destructive",
+  "POST /webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret": "refuse",
 } as const satisfies Readonly<Record<`${RestMethod} ${string}`, "read" | "destructive" | "refuse">>;

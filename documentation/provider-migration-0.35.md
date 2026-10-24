@@ -218,6 +218,21 @@ raw offset, that cursor is bound to the original read and its other arguments.
 Legacy `raw` and `version` are gone on these routes too. Use operation details
 for current required fields and declared filter spelling.
 
+The removed additive write wrappers required a created resource in their reply.
+Their indexed replacements now treat every empty 2xx, including 204, as success
+and return the vendor envelope, for example `{status:204,data:null}`.
+`list_person_field_data` remains a read. To write a custom field value, use
+POST `/people/v2/people/{person_id}/field_data` or PATCH
+`/people/v2/field_data/{field_datum_id}`; GET `/people/v2/field_data` cannot write.
+
+Publishing POST `/publishing/v2/episodes/{episode_id}/generate_download_url`
+is refused before transport because it mints a private signed link that cannot
+be returned. Webhooks POST
+`/webhooks/v2/webhook_subscriptions/{webhook_subscription_id}/rotate_secret`
+is also refused: its new signing key stays withheld, so rotation cannot be
+completed on the receiver through this connection. Perform required key
+rotation through the provider's own credential-management workflow.
+
 | Removed tool                    | Indexed replacement                                                         | Old arguments / join recipe                                                                                                                                                                                                           |
 | ------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `add_person_email`              | POST `/people/v2/people/{personId}/emails`                                  | JSON:API `Email`; `address`, `location` (Home default), `primary` attributes.                                                                                                                                                         |
@@ -259,10 +274,11 @@ Standard fallback diagnostics replace redundant rate-limit/upstream wording;
 JSON:API diagnostics are complete sentences. Writes are sent once; reconcile
 unknown outcomes with a read.
 
-The pinned source describes `send_verification` at the empty People path. Its
-`POST /people/v2` entry remains discoverable, but calls are refused because the
-source does not establish an unambiguous callable route. Use a reviewed pin
-update to enable it. Response stream failures now say “Planning Center's
+The pinned source describes `send_verification` at the empty People path. That
+single source artifact is omitted from the index; there is no `POST /people/v2`
+operation. Use a reviewed pin update with a documented route to enable it.
+Hatch `per_page` now preserves and enforces the vendor's integer range 1–100
+before transport. Response stream failures now say “Planning Center's
 response body could not be read completely.” Malformed JSON says “Planning
 Center returned malformed JSON.” Both retain `connector_call_failed` and
 unknown write outcomes still require reconciliation.

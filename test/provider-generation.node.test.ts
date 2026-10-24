@@ -1326,9 +1326,22 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
         info: { title: prefix, version: "1" },
         servers: [{ url: `https://vendor.example/${prefix}/v2` }],
         paths: {
+          "": { post: { summary: "Uncallable source artifact" } },
           "/things": {
             summary: "Thing",
             get: {
+              parameters: [
+                {
+                  name: "per_page",
+                  in: "query",
+                  schema: {
+                    allOf: [
+                      { type: "integer", minimum: 0, maximum: 200 },
+                      { minimum: 1, maximum: 100 },
+                    ],
+                  },
+                },
+              ],
               responses: {
                 "200": { content: { "application/json": { schema: { $ref: "#/components/schemas/Thing" } } } },
               },
@@ -1364,10 +1377,20 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     expect(await checkOpenApiOutputs(multi.root, [multi.provider])).toEqual([]);
     const composed = await composeOpenApi(multi.directory, composition);
     const index = new OperationIndex(
-      buildOperationIndex(composed.document, { url: "Actual sources", revision: "1", digest: composed.digest }),
+      buildOperationIndex(composed.document, {
+        url: "Actual sources",
+        revision: "1",
+        digest: composed.digest,
+        options: { numericBounds: true },
+      }),
       { vendor: "fixture", title: "Fixture" },
     );
     expect(index.ops.map((op) => op.path)).toEqual(["/alpha/v2/things", "/beta/v2/things"]);
+    expect(index.contract(index.ops[0]!).parameters[0]?.schema).toEqual({ type: "integer", minimum: 1, maximum: 100 });
+    for (const per_page of [0, 101, 1.5, "invalid", "", null])
+      expect(() => index.check(index.ops[0]!, { per_page }, undefined)).toThrow("Not sent");
+    for (const per_page of [1, "1", 100, "100"])
+      expect(() => index.check(index.ops[0]!, { per_page }, undefined)).not.toThrow();
     expect(index.fields(index.ops[0]!)).toContainEqual({ in: "response", path: "name" });
     expect(index.fields(index.ops[1]!)).toContainEqual({ in: "response", path: "title" });
     expect(index.ops.every((op) => op.summary.includes("Thing"))).toBe(true);
