@@ -13,7 +13,7 @@ describeValueSafety("Vercel", {
   index: new OperationIndex(openapi, { vendor: "vercel", title: "Vercel" }),
   source,
   candidates,
-  counts: { refuse: 25, redact: 56, safe: 68 },
+  counts: { refuse: 25, redact: 57, safe: 71 },
   connector: () => vercel("hosting", { purpose: "Apps", auth: { type: "token" } }),
   ctx: () => ({
     ...connectorContext(),

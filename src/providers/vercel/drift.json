@@ -142,6 +142,8 @@
       "GET /v1/projects/{projectIdOrName}/feature-flags/flags",
       "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}",
       "GET /v1/projects/{projectIdOrName}/feature-flags/flags/{flagIdOrSlug}/versions",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/labels",
+      "GET /v1/projects/{projectIdOrName}/feature-flags/labels/counts",
       "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys",
       "GET /v1/projects/{projectIdOrName}/feature-flags/segments",
       "GET /v1/projects/{projectIdOrName}/feature-flags/segments/{segmentIdOrSlug}",
@@ -270,6 +272,7 @@
       "PATCH /ai-gateway/virtual-model-configs",
       "PATCH /ai-gateway/virtual-model-configs/{vmcSlug}",
       "PATCH /aliases/{id}/protection-bypass",
+      "PATCH /api-keys/{apiKeyID}/quota",
       "PATCH /v1/access-groups/{accessGroupIdOrName}/projects/{projectId}",
       "PATCH /v1/bulk-redirects",
       "PATCH /v1/connect/connectors/{connector}/trigger-destinations",
@@ -375,6 +378,7 @@
       "POST /v1/projects/{idOrName}/rolling-release/complete",
       "POST /v1/projects/{idOrName}/rolling-release/start",
       "POST /v1/projects/{idOrName}/token",
+      "POST /v1/projects/{projectIdOrName}/feature-flags/labels/lookup",
       "POST /v1/projects/{projectId}/pause",
       "POST /v1/projects/{projectId}/rollback/{deploymentId}",
       "POST /v1/projects/{projectId}/routes",
@@ -467,8 +471,8 @@
       "PUT /v8/certs"
     ],
     "evidence": {
-      "openapi.json": "sha256:076a955823818ca21000469e1826f80fd022335c831d8a3049b5e1276baa046c",
-      "value-safety.json": "sha256:7b3c4a9eb924a02c40d1ab2629f42b488106da9fe0ad3453d6ed9985d12bdc9e"
+      "openapi.json": "sha256:6d106e78d9da0bb11b0223e961a67d414864d1e9dcafa16c4bd26abdbf22d63a",
+      "value-safety.json": "sha256:ac90e286c6e7fb468db105694fa712bea1b5b4c152141e5423bdcd5ea621aaac"
     }
   },
   "checks": [
