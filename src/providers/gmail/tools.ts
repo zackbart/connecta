@@ -13,7 +13,8 @@ import { errors, GMAIL, gmailBodyProvenance } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
 import { fieldsProblem, selectFields } from "../../http/fields.js";
-import { Operation } from "../../runtime/call.js";
+import { Caller, Operation } from "../../runtime/call.js";
+import type { GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { index } from "./lib/index.js";
 import { inputs, outputs, rows, type GmailToolName } from "./lib/schemas.js";
 
@@ -1225,7 +1226,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       typeof rawToken !== "string" ||
       rawToken.includes("[redacted]") ||
       /^[a-z][a-z0-9+.-]*:/i.test(rawToken) ||
-      /[\x00-\x20\x7f]/.test(rawToken)
+      [...rawToken].some((character) => character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127)
     )
       throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid paging metadata.", {
         retryable: false,
@@ -1654,7 +1655,10 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
       } else if (key === "omittedIds") {
         for (const name of asArray(child)) cuts.add(target(String(name)));
       } else if (["labelIdsOmitted", "attachmentsOmitted", "labelsOmitted"].includes(key)) {
-        if (Number(child) > 0) cuts.add(target(key.replace("Omitted", "") + "[]"));
+        if (Number(child) > 0)
+          cuts.add(
+            target(key === "labelsOmitted" && tool === "list_labels" ? "items[]" : key.replace("Omitted", "") + "[]"),
+          );
       } else if (key === "nextCursor" && child === null) {
         // A terminal page has no cursor.
       } else out[key] = visit(child, target(key));
@@ -1678,7 +1682,13 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
 }
 
 /** Gmail only reads mail and saves drafts. Sending has no dispatch path. */
-export function gmailTools({ connection }: { connection: Connection }): ApiTool[] {
+export function gmailTools({
+  connection,
+  options,
+}: {
+  connection: Connection;
+  options: GoogleWorkspaceOptions;
+}): ApiTool[] {
   return declarations(googleClient(connection, GMAIL.provider, { standard: true, index })).map((declaration) => {
     const name = declaration.name;
     const isList = name === "search_threads" || name === "list_labels" || name === "list_drafts";
@@ -1703,11 +1713,19 @@ export function gmailTools({ connection }: { connection: Connection }): ApiTool[
             );
             if (problem) return yield* Effect.fail(new Refusal({ error: problem }));
           }
-          if (args["cursor"] !== undefined) args["cursor"] = yield* boundCursor.decode(name, args, args["cursor"]);
+          // Temporary product-local partition until the shared delegated-subject binding lands.
+          // Reading admitted caller metadata never resolves a Workspace subject a second time.
+          const cursorScope =
+            typeof options.subject === "string" ? args : { ...args, delegatedCaller: (yield* Caller) ?? null };
+          if (args["cursor"] !== undefined)
+            args["cursor"] = yield* boundCursor.decode(name, cursorScope, args["cursor"]);
           const result = standardResult(yield* declaration.run(args, ctx), name);
           if (result["page"]?.nextCursor)
-            result["page"].nextCursor = yield* boundCursor.encode(name, args, result["page"].nextCursor, (json) =>
-              encodeForAgent(ctx, json, { url: true, claims: true }),
+            result["page"].nextCursor = yield* boundCursor.encode(
+              name,
+              cursorScope,
+              result["page"].nextCursor,
+              (json) => encodeForAgent(ctx, json, { url: true, claims: true }),
             );
           if (isList) result["items"] = selectFields(result["items"], fields);
           return deliverable(

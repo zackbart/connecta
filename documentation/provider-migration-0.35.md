@@ -607,7 +607,7 @@ Gmail is the approved exception to decision 0014's four-hatch default:
 `gmail_api_search`, `gmail_api_details` and `gmail_api_read` are added;
 there is no `gmail_api_write`. Draft writes remain exclusively in
 `create_draft` and `update_draft`; sending is never available. All nine named
-tools remain. Write annotations and host approval routes stay the same.
+tools remain. Write classifications and host approval routes stay the same.
 The index displays all 79 pinned methods but admits only eleven reviewed
 reads; refused draft operations point to the guarded named tools.
 

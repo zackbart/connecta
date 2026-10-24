@@ -111,7 +111,7 @@ export const result = (body: unknown) =>
     return body;
   });
 const standardErrors = googleErrors(GMAIL, { standard: true });
-export const errors = {
+export const errors: ReturnType<typeof googleErrors> = {
   ...standardErrors,
   meanings: { ...standardErrors.meanings!, conflicts: ["A thread or label list changed before its content cursor."] },
 };

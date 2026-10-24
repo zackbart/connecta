@@ -91,3 +91,29 @@ H8 refuses malformed, redacted, non-ASCII or control-containing copied Message-I
 | gmail.users.threads.trash                        | POST /threads/{id}/trash                                      | refuse        |
 | gmail.users.threads.untrash                      | POST /threads/{id}/untrash                                    | refuse        |
 | gmail.users.watch                                | POST /watch                                                   | refuse        |
+
+## Curated surface and golden accounting
+
+The nine retained named tools keep their MIME, join, attachment identity and guarded-draft workflows: `search_threads`, `get_thread`, `get_message`, `get_attachment`, `list_labels`, `list_drafts`, `get_draft`, `create_draft`, `update_draft`. The three added hatches are `gmail_api_search`, `gmail_api_details`, `gmail_api_read`. No named tool is retired and no generic writer exists. Execution inventory is eleven reviewed GET keys plus the two named draft writes; complete indexed inventory is 79 keys.
+
+Golden deltas are confined to Gmail relative to the merged main branch:
+
+- Names: add three read-side hatches; replace the old raw-message fixture with a full-MIME hatch fixture.
+- Schemas: real Effect declarations replace the legacy catalog bridge; remove `get_message.raw`, add named `fields` and label `limit`, expose standard sparse projections and optional terminal cursors.
+- Envelopes: named lists return `items/page`, the hatch returns `status/data/page?`, size cuts use top-level `truncated`, and private cursors become signed. Named search no longer returns a vendor estimate as a separate envelope field.
+- Errors: activate standard Google meanings/fallbacks and incomplete-body wording while preserving reason vocabulary, numeric Retry-After and call-owned write settlement. Thread/label cursor conflicts remain declared local conflicts.
+- Guide: the shared renderer supplies deployment context and Conventions; Gmail's domain guide states the three-hatch exception and guarded draft recovery.
+
+H8 rejects damaged copied threading values before POST/PUT and preserves valid ASCII token bytes. Existing auxiliary ownership on reply and existing-draft GETs remains unchanged. Full MIME, history and raw-message encoded lanes retain decoded sent-secret safety and attachment-size provenance; data beyond the reviewed MIME nesting is refused. No scope, deadline or privacy-widening option is added.
+
+The provider suite folds 26 cases into 24 without dropping assertions; the failure sweep adds two remote hatch cases and folds both offline hatch checks into its inventory case. Net collected test delta is zero. Seven deterministic Gmail reference tasks, both supported tool presentations and recovery variants pass without paid trials. Paid BEFORE/AFTER evaluation waits for the orchestrator's separate authorization.
+
+## Measurements
+
+Node 22.23.3, esbuild 0.28.1, gzip level 9, on `bigserv`. Like-for-like main baseline `aeae16f7` versus this implementation snapshot (before this evidence paragraph): Gmail standalone 358,072 → 378,275 B gzip (+20,203 B); all six Google exports 417,585 → 438,069 B (+20,484 B). The all-six synthetic deployment retaining every candidate index is 523,712 B gzip. The existing root, Worker, UI and example caps pass; no cap is raised. Frozen evidence JSON is outside runtime imports.
+
+H9 source-loader characterization was one noisy cold/warm run under concurrent fleet work, not an SLA or a deadline change. On Node 22.23.3, before `008251a8` versus the implementation: import 4,195/3,615 ms; factory 74/132 ms; call-to-first-send cold 225/133 ms and warm 14/11 ms; total named read cold 295/188 ms and warm 24/22 ms. AFTER first indexed search was 220 ms. Heap deltas across construction, search and reads were approximately 10.0/9.2 MB; these samples do not establish a regression or improvement.
+
+## Required shared merge dependencies
+
+The two standard-checker issues are owned by #1011. A separate core fix must bind Google hatch continuations to the delegated caller and pool owner before this Gmail change merges. Named cursors currently add a local admitted-caller partition without resolving a Workspace subject twice. The existing cursor regression case covers both human caller and pool-owner changes and intentionally rejects cross-caller hatch continuation; that part remains failing until the shared fix lands. Merge main and replace the temporary local partition with the shared mechanism when available. These dependencies do not authorize edits to shared files in this product branch.

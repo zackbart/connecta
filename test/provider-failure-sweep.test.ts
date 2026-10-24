@@ -131,7 +131,7 @@ describe("API provider failure sweep", () => {
         `${provider.name}: cover tools from every API mode`,
       ).toEqual(tools);
       expect(Object.keys(argumentsTable[provider.name]!).sort(), provider.name).toEqual(tools);
-      // Fold GitHub's two new offline hatches here: injected remote failures
+      // Fold offline GitHub and Gmail hatches here: injected remote failures
       // cannot affect metadata that sends no request.
       if (["github", "gmail"].includes(provider.name))
         for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {

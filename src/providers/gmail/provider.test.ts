@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
+import { attachCaller } from "../../connector-caller.js";
 import { index, verdicts, refusalReasons } from "./lib/index.js";
 import { skill } from "./skill.generated.js";
 import { TABLE } from "./safety.js";
@@ -194,6 +195,14 @@ describe("reading mail (H9, H10)", () => {
     const result = await call(connection(), "get_message", { messageId: "m3" });
     expect(result.bodyFormat).toBe("html");
     expect(result.body).toBe("Café & prêt\n\nLigne 2");
+    await expect(call(connection(), "get_message", { messageId: "m3", fields: ["bodyFormat"] })).resolves.toEqual({
+      bodyFormat: "html",
+    });
+    const before = calls.length;
+    await expect(call(connection(), "get_message", { messageId: "m3", fields: ["unknown"] })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    expect(calls).toHaveLength(before);
   });
 });
 
@@ -631,7 +640,10 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     await expect(call(c, "gmail_api_read", { path: "/messages/m1", fields: ["notAField"] })).rejects.toMatchObject({
       code: "invalid_args",
     });
+    for (const path of ["/messages/send", "/drafts/send"])
+      await expect(call(c, "gmail_api_read", { method: "POST", path })).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toEqual([]);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
     route = () => ({ body: MESSAGE });
     await expect(call(c, "gmail_api_read", { path: "/messages/m2", query: { format: "full" } })).resolves.toMatchObject(
       { status: 200, data: MESSAGE },
@@ -649,9 +661,12 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
       ["mailbox profile", "GET /profile"],
       ["mail history", "GET /history"],
     ])
-      expect(index.search(query!, { limit: 2, partial: true }).map((op) => `${op.method} ${op.path}`)).toContain(
-        operation,
-      );
+      for (const method of [undefined, operation!.split(" ")[0] as "GET" | "POST" | "PUT"])
+        expect(
+          index
+            .search(query!, { limit: 2, partial: true, ...(method ? { method } : {}) })
+            .map((op) => `${op.method} ${op.path}`),
+        ).toContain(operation);
     route = (request) => ({
       body: request.url.searchParams.has("pageToken")
         ? { messages: [{ id: "m2" }], nextPageToken: "" }
@@ -688,6 +703,24 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     const nextLabels = await call(c, "list_labels", { limit: 1, fields: ["name"], cursor: labels.page.nextCursor });
     expect(nextLabels.items).toEqual([{ name: "Second" }]);
     expect(nextLabels.page).toEqual({ hasMore: false });
+    route = () => ({
+      body: {
+        labels: [
+          { id: "L".repeat(5000), name: "Cannot address" },
+          { id: "valid", name: "x".repeat(1000), type: "user" },
+        ],
+      },
+    });
+    const clippedLabels = await call(c, "list_labels");
+    expect(clippedLabels.truncated).toEqual(expect.arrayContaining(["items[]", "items[].name"]));
+    expect(clippedLabels.items[0].id).toBe("valid");
+
+    let nested: Record<string, unknown> = { mimeType: "text/plain", body: { data: b64url("token"), size: 5 } };
+    for (let depth = 0; depth < 42; depth++) nested = { mimeType: "multipart/mixed", parts: [nested] };
+    route = () => ({ body: { id: "m1", payload: nested } });
+    await expect(call(c, "gmail_api_read", { path: "/messages/m1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
 
     // A valid inline body may be much larger than its projected result. The
     // encoded-field validator must stay linear instead of exhausting V8's stack.
@@ -730,6 +763,64 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
         code: "invalid_args",
         message: expect.stringContaining("cursor belongs to a different call"),
       });
+      const mapped = connection({
+        subject: (identity: { principal?: { id: string } }) => `${identity.principal?.id}@example.com`,
+      });
+      const actorCall = (actor: string, tool: string, args: Record<string, unknown>) =>
+        mapped.callTool(
+          tool,
+          args,
+          attachCaller(context(), {
+            authenticated: true,
+            identity: {
+              actor: { kind: "user", id: actor },
+              principal: { namespace: "fixture", id: actor },
+              interactive: true,
+            },
+          }),
+        ) as Promise<any>;
+      const named = await actorCall("alice", "get_thread", { threadId: "t1", maxBodyChars: 100000 });
+      const beforeNamed = calls.length;
+      await expect(
+        actorCall("bob", "get_thread", { threadId: "t1", maxBodyChars: 100000, cursor: named.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(beforeNamed);
+      await expect(
+        actorCall("alice", "get_thread", { threadId: "t1", maxBodyChars: 100000, cursor: named.page.nextCursor }),
+      ).resolves.toHaveProperty("messages");
+      const poolCall = (owner: string, tool: string, args: Record<string, unknown>) =>
+        mapped.callTool(
+          tool,
+          args,
+          attachCaller(context(), {
+            authenticated: true,
+            pool: "notes",
+            poolOwner: `${owner}@example.com`,
+            identity: { actor: { kind: "agent", id: "assistant" }, agent: "assistant", interactive: false },
+          }),
+        ) as Promise<any>;
+      const poolNamed = await poolCall("alice", "get_thread", { threadId: "t1", maxBodyChars: 100000 });
+      const beforePool = calls.length;
+      await expect(
+        poolCall("bob", "get_thread", { threadId: "t1", maxBodyChars: 100000, cursor: poolNamed.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(beforePool);
+      // Core prerequisite: shared Google hatches must bind both caller and pool owner before either product merges.
+      route = () => ({ body: { messages: [], nextPageToken: "mail-next" } });
+      for (const delegatedCall of [actorCall, poolCall]) {
+        const indexed = await delegatedCall("alice", "gmail_api_read", { path: "/messages", query: { maxResults: 1 } });
+        const beforeHatch = calls.length;
+        await expect
+          .soft(
+            delegatedCall("bob", "gmail_api_read", {
+              path: "/messages",
+              query: { maxResults: 1 },
+              cursor: indexed.page.nextCursor,
+            }),
+          )
+          .rejects.toMatchObject({ code: "invalid_args" });
+        expect.soft(calls).toHaveLength(beforeHatch);
+      }
     });
 
     it("answers conflict when a message is added or removed before where the page ended", async () => {
