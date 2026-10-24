@@ -3253,6 +3253,26 @@
           "page": "https://vercel.com/docs/rest-api/untagged/createwebinsightstoggle",
           "specRevision": "0.0.1",
           "contract": "sha256:2fd6937093b004748f0ed1ab5920dbc86103e0cef600210454da5c1c62d2c3c9"
+        },
+        {
+          "operation": "PATCH /api-keys/{apiKeyID}/quota",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3e82406fa1b6fb45f21fa1e5c233d177c933366acc1d7cb358c63880853b341c"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/labels",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b774417e7a7a38cca2b4ea79aa91ef57bd48771a6bff5bd8cb0bc662028acb02"
+        },
+        {
+          "operation": "GET /v1/projects/{projectIdOrName}/feature-flags/labels/counts",
+          "specRevision": "0.0.1",
+          "contract": "sha256:67523b7114bf9e7b24cf4e2b6b65462655d671ce386c6bc7dfb65386fa036aec"
+        },
+        {
+          "operation": "POST /v1/projects/{projectIdOrName}/feature-flags/labels/lookup",
+          "specRevision": "0.0.1",
+          "contract": "sha256:bf161f66e289808282b1f3449670d07f4ffdf15aba1b108d7bea7445619db76e"
         }
       ]
     },

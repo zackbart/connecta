@@ -112,3 +112,37 @@ was 7.7–12.9 ms versus 19.0–27.5 ms. This small loaded sample is not a perfo
 budget or a production latency estimate. Factory time is outside calls; the
 60-second HTTP AbortSignal timer starts at dispatch, while the caller's signal
 also bounds validation/preparation and body reads. No deadline is changed.
+
+### Endpoint digest addendum
+
+The advisory check against the approved retained document also reports 21
+changed existing endpoint digests. These baseline rows are independent of the
+old compiled request index; the old raw response schemas cannot be recovered.
+Their old digests remain unchanged: this PR does not silently accept unexplained
+response-contract changes. The four new reviewed operations have endpoint rows
+recorded by providers:check --record in a scratch manifest containing only those
+four rows, using --spec vercel=<the exact retained bytes>, then incorporated here.
+No existing digest was restamped. The advisory report therefore retains these
+21 findings (the OpenAPI index itself matches its approved pin):
+
+- POST /storage/stores/blob
+- GET /storage/stores/{id}
+- GET /v1/events/types
+- GET /v1/microfrontends/groups/{groupId}/projects
+- POST /v1/projects/{idOrName}/avatar
+- DELETE /v1/projects/{idOrName}/avatar
+- PATCH /v1/projects/{projectId}/microfrontends
+- GET /v1/query/web-analytics/events/aggregate
+- GET /v1/query/web-analytics/events/count
+- GET /v1/query/web-analytics/visits/aggregate
+- GET /v1/query/web-analytics/visits/count
+- POST /v1/storage/stores/integration/direct
+- GET /v10/projects
+- POST /v11/projects
+- PATCH /v12/deployments/{id}/cancel
+- POST /v13/deployments
+- GET /v13/deployments/{idOrUrl}
+- GET /v3/events
+- GET /v7/deployments
+- GET /v9/projects/{idOrName}
+- PATCH /v9/projects/{idOrName}
