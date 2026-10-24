@@ -1,0 +1,7 @@
+{
+  "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+  "revision": "20261020",
+  "digest": "sha256:1d40cef60f2c8b85c6f9f207affadd4c27bcee9b5d5eb31c9850b88ec5f1ae73",
+  "documentation": "https://developers.google.com/workspace/drive/api/reference/rest/v3",
+  "vendored": true
+}

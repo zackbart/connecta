@@ -55,18 +55,27 @@ describe("bounded reads match original spans", () => {
     expect(result.content).not.toContain("private-begin");
     expect(leaks(JSON.stringify(result), privateValue)).toBe(false);
 
-    // Private values matching wire keys must leave the projection, paging
-    // and error decisions intact. The public result boundary still redacts.
-    for (const key of ["files", "nextPageToken", "incompleteSearch", "emailAddress", "trashed"]) {
+    // Wire keys (files/emailAddress) must still reach the standard projection.
+    // Public envelope/item keys (items/owners/trashed) are withheld afterward,
+    // without losing their array/value or changing the paging decisions.
+    for (const key of ["files", "items", "nextPageToken", "incompleteSearch", "emailAddress", "owners", "trashed"]) {
       stubGoogle(() => ({
         files: [{ id: "f1", name: "F", owners: [{ emailAddress: "alice@example.com" }], trashed: false }],
         nextPageToken: "next-1",
         incompleteSearch: true,
       }));
       const listing: any = await connector.callTool("search_files", {}, privateContext(key));
-      expect(listing[key === "files" ? MARKER : "files"]).toEqual([
-        { id: "f1", name: "F", owners: ["alice@example.com"], [key === "trashed" ? MARKER : "trashed"]: false },
+      const items = listing[key === "items" ? MARKER : "items"];
+      expect(items).toEqual([
+        {
+          id: "f1",
+          name: "F",
+          [key === "owners" ? MARKER : "owners"]: ["alice@example.com"],
+          [key === "trashed" ? MARKER : "trashed"]: false,
+        },
       ]);
+      if (key === "items") expect(listing).not.toHaveProperty("items");
+      if (key === "owners" || key === "trashed") expect(items[0]).not.toHaveProperty(key);
       expect(listing.page.hasMore).toBe(true);
       expect(listing.page.nextCursor).toBeTypeOf("string");
       expect(listing[key === "incompleteSearch" ? MARKER : "incompleteSearch"]).toBe(true);

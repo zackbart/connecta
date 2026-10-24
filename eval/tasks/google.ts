@@ -683,7 +683,7 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
     if (task === 4) {
       const r = await ctx.call("call_tool", {
         address: "drive.drive_api_read",
-        args: { path: "/files/pdf1/revisions" },
+        args: { path: "/files/pdf1/revisions", fields: ["revisions.id", "revisions.modifiedTime"] },
         resultMode: "value",
       });
       if (r.isError) {
