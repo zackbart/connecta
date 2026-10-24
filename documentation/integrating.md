@@ -108,7 +108,8 @@ mapping from admitted identity to the downstream account; an agent acts as its
 pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files. Google Docs setup and hatch limits are in
-[Google Docs setup](./providers.md#google-docs).
+[Google Docs setup](./providers.md#google-docs). Slides setup is in
+[Google Slides setup](./providers.md#google-slides).
 
 Stripe, Vercel, and Cloudflare vendor only their APIs. Cloudflare setup is in
 [Maintained provider setup](./providers.md#cloudflare).

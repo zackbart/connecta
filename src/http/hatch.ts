@@ -73,6 +73,8 @@ export interface HatchBinding {
   readonly query?: (call: RestCall) => Readonly<Record<string, unknown>>;
   /** Opt in to size-cut paths supplied by this reviewed binding. */
   readonly truncated?: true;
+  /** Opt in to reviewed warnings that survive result field selection. */
+  readonly warnings?: true;
   /** Explicitly replace the default other-server guard with the binding's confined routing. */
   readonly allowOtherServers?: true;
   /** Explicitly replace the default JSON/form guard with the binding's reviewed encoding. */
@@ -91,6 +93,7 @@ export interface HatchBinding {
       readonly data: unknown;
       readonly headers?: Readonly<Record<string, string>>;
       readonly truncated?: readonly string[];
+      readonly warnings?: readonly string[];
     },
     HttpFailure,
     CallServices
@@ -350,14 +353,25 @@ export function hatch(
       return [key, snapshot] as const;
     }),
   );
-  const callEnvelope = options.binding?.truncated
-    ? Schema.Struct({
-        ...Envelope.fields,
-        truncated: Schema.optionalKey(
-          Schema.Array(Schema.String).annotate({ description: "Dot paths cut for size, including the data prefix." }),
-        ),
-      })
-    : Envelope;
+  const callEnvelope = Schema.Struct({
+    ...Envelope.fields,
+    ...(options.binding?.truncated
+      ? {
+          truncated: Schema.optionalKey(
+            Schema.Array(Schema.String).annotate({ description: "Dot paths cut for size, including the data prefix." }),
+          ),
+        }
+      : {}),
+    ...(options.binding?.warnings
+      ? {
+          warnings: Schema.optionalKey(
+            Schema.Array(Schema.String).annotate({
+              description: "Reviewed warnings preserved after fields selection.",
+            }),
+          ),
+        }
+      : {}),
+  });
   const envelope = pages.size
     ? Schema.Struct({
         ...callEnvelope.fields,
@@ -1229,6 +1243,9 @@ export function hatch(
         ...(page ? { page } : {}),
         ...(options.binding?.truncated && "truncated" in answer && answer.truncated?.length
           ? { truncated: answer.truncated }
+          : {}),
+        ...(options.binding?.warnings && "warnings" in answer && answer.warnings?.length
+          ? { warnings: answer.warnings }
           : {}),
         ...(key ? { idempotencyKey: key } : {}),
       };

@@ -1,8 +1,8 @@
 {
   "read": {
-    "tool": "get_presentation",
+    "tool": "slides_api_read",
     "args": {
-      "presentationId": "deck1"
+      "path": "/presentations/deck1"
     },
     "cases": {
       "400": {
@@ -51,7 +51,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -115,7 +115,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -166,7 +166,7 @@
             {
               "after": 3,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -182,7 +182,7 @@
             "message": "Google Slides: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
             "connector": "decks",
-            "operation": "decks.get_presentation",
+            "operation": "decks.slides_api_read",
             "recovery": "unavailable",
             "nextAction": {
               "tool": "authorize_connector",
@@ -191,7 +191,7 @@
               },
               "operatorHandoff": "Give the URL and instructions it returns to the operator."
             },
-            "retry": "Retry decks.get_presentation after the operator completes recovery."
+            "retry": "Retry decks.slides_api_read after the operator completes recovery."
           }
         }
       },
@@ -241,7 +241,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -254,10 +254,10 @@
           "dispatched": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "Google Slides: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "message": "Google Slides: Golden 403 failure The account may lack access, or a Workspace policy may block this request.",
             "retryable": false,
             "connector": "decks",
-            "operation": "decks.get_presentation",
+            "operation": "decks.slides_api_read",
             "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
           }
         }
@@ -308,7 +308,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -372,7 +372,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -436,7 +436,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -500,7 +500,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -513,7 +513,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Google Slides: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "message": "Google Slides: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -565,7 +565,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -578,7 +578,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Google Slides: Golden 500 failure Google is failing upstream.",
+            "message": "Google Slides: Golden 500 failure",
             "retryable": true
           }
         }
@@ -629,7 +629,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -680,7 +680,7 @@
             {
               "after": 3,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -696,7 +696,7 @@
             "message": "Google Slides: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
             "connector": "decks",
-            "operation": "decks.get_presentation",
+            "operation": "decks.slides_api_read",
             "recovery": "unavailable",
             "nextAction": {
               "tool": "authorize_connector",
@@ -705,7 +705,7 @@
               },
               "operatorHandoff": "Give the URL and instructions it returns to the operator."
             },
-            "retry": "Retry decks.get_presentation after the operator completes recovery."
+            "retry": "Retry decks.slides_api_read after the operator completes recovery."
           }
         }
       },
@@ -755,7 +755,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -823,7 +823,7 @@
             {
               "after": 1,
               "method": "GET",
-              "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+              "url": "https://slides.googleapis.com/v1/presentations/deck1",
               "headers": {
                 "accept": "application/json",
                 "authorization": "Bearer <secret:accessToken>"
@@ -836,12 +836,12 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Operation \"decks.get_presentation\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "message": "Operation \"decks.slides_api_read\" timed out during downstream after 0ms (effective deadline undefinedms).",
             "retryable": true,
             "details": {
               "host": "https://slides.googleapis.com",
               "code": "timeout",
-              "operation": "decks.get_presentation",
+              "operation": "decks.slides_api_read",
               "stage": "downstream",
               "elapsedMs": 0
             }
@@ -851,11 +851,22 @@
     }
   },
   "write": {
-    "tool": "create_slide",
+    "tool": "slides_api_write",
     "args": {
-      "presentationId": "deck1",
-      "layout": "TITLE_AND_BODY",
-      "insertionIndex": 1
+      "method": "POST",
+      "path": "/presentations/deck1:batchUpdate",
+      "body": {
+        "requests": [
+          {
+            "createSlide": {
+              "objectId": "newslide"
+            }
+          }
+        ],
+        "writeControl": {
+          "requiredRevisionId": "rev-1"
+        }
+      }
     },
     "cases": {
       "400": {
@@ -915,13 +926,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -995,13 +1006,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1012,11 +1023,11 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Slides: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Read the deck with get_presentation and look for the new slide before adding another.",
+            "message": "Google Slides: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Slides rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "decks",
-            "operation": "decks.create_slide",
+            "operation": "decks.slides_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -1087,13 +1098,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1105,10 +1116,10 @@
           "answered": true,
           "error": {
             "code": "provider_permission_denied",
-            "message": "Google Slides: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "message": "Google Slides: Golden 403 failure The account may lack access, or a Workspace policy may block this request.",
             "retryable": false,
             "connector": "decks",
-            "operation": "decks.create_slide",
+            "operation": "decks.slides_api_write",
             "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
           }
         }
@@ -1170,13 +1181,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1250,13 +1261,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1330,13 +1341,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1410,13 +1421,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1428,7 +1439,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Google Slides: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "message": "Google Slides: Golden 429 failure",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -1491,13 +1502,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1508,7 +1519,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Slides answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Read the deck with get_presentation and look for the new slide before adding another.",
+            "message": "Google Slides: Golden 500 failure Whether the write took effect at Google Slides is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1571,13 +1582,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1588,11 +1599,11 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Slides: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Read the deck with get_presentation and look for the new slide before adding another.",
+            "message": "Google Slides: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. The write was sent before Google Slides rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "decks",
-            "operation": "decks.create_slide",
+            "operation": "decks.slides_api_write",
             "recovery": "unavailable",
             "reconciliationRequired": true,
             "nextAction": {
@@ -1663,13 +1674,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1680,7 +1691,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Google Slides was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Read the deck with get_presentation and look for the new slide before adding another.",
+            "message": "Could not reach the Google Slides API. Whether the write took effect at Google Slides is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1743,13 +1754,13 @@
                   "requests": [
                     {
                       "createSlide": {
-                        "insertionIndex": 1,
-                        "slideLayoutReference": {
-                          "predefinedLayout": "TITLE_AND_BODY"
-                        }
+                        "objectId": "newslide"
                       }
                     }
-                  ]
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
                 }
               }
             }
@@ -1759,10 +1770,39 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "Google Slides was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Read the deck with get_presentation and look for the new slide before adding another.",
+            "code": "write_outcome_unknown",
+            "message": "Operation \"decks.slides_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
             "retryable": false,
-            "writeOutcome": "unknown"
+            "details": {
+              "host": "https://slides.googleapis.com",
+              "code": "timeout",
+              "operation": "decks.slides_api_write",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "writeOutcome": "unknown",
+            "connector": "decks",
+            "operation": "decks.slides_api_write",
+            "uncertainCall": {
+              "address": "decks.slides_api_write",
+              "args": {
+                "method": "POST",
+                "path": "/presentations/deck1:batchUpdate",
+                "body": {
+                  "requests": [
+                    {
+                      "createSlide": {
+                        "objectId": "newslide"
+                      }
+                    }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
+                  }
+                }
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

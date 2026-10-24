@@ -631,6 +631,53 @@ on the batch wrapper and hatch. Google supplies no idempotency key. Set
 `callAdmission` for the deployment's shared quota; the connector does not
 reserve a Workspace-wide quota.
 
+## Google Slides
+
+```ts
+import { slides } from "@zackbart/connecta/providers/slides";
+
+const decks = slides("decks", {
+  purpose: "Team presentations",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+**Authentication.** Enable the Google Slides API in a Google Cloud project.
+Create a service account and JSON key; no project IAM role grants access to
+users' decks. A Workspace super admin must add its numeric client ID under
+Security → Access and data control → API controls → Manage Domain Wide
+Delegation, with `https://www.googleapis.com/auth/presentations`. The grant
+can take up to 24 hours to apply. If key creation is blocked by
+`iam.disableServiceAccountKeyCreation`, an organization policy administrator
+can allow it for that project. Store the key in a deployment secret.
+
+Configure inbound authentication and a subject mapping for admitted callers.
+A fixed `subject: "alice@example.com"` acts as one shared account; a function
+maps the admitted identity to an account. An agent uses its pool owner unless
+a fixed account is configured. Unmapped callers fail `auth_required` before
+minting; no tool selects another subject. A deck's absence and lack of access
+are indistinguishable. Delegation is resolved when a data call needs it.
+
+**Options and boundaries.** `readOnly: true` omits and refuses every write.
+`baseUrl` is an HTTPS proxy override, or HTTP on loopback for tests. There is
+no configurable sensitive-field set; field selection only narrows replies.
+The five-method frozen index includes four generic executable JSON routes.
+Thumbnails mint temporary access links and are refused in the generic hatch;
+`get_slide_thumbnail` remains the reviewed named workflow. Existing comment
+methods and request kinds remain available without adding preview methods.
+Slides cannot search, share, move or delete presentation files; use Drive for
+those separately authorized workflows.
+
+**Limits.** Named content windows default to 20 slides (maximum 100), 50 page
+elements (maximum 500), 100 layout rows (maximum 500), and 50 comment threads
+(maximum 500). Batches allow 1–100 reviewed requests and the generic batch
+requires `writeControl.requiredRevisionId`. Revision ids are preconditions,
+not idempotency keys. Deck and comment changes can save separately; uncertain
+comment saves require reading both outcomes before another edit. Responses
+are bounded at 16 MiB; named results use a smaller content budget and provide
+continuation. Set `callAdmission` when the deployment needs a tighter budget.
+
 ## Google Drive
 
 Import `drive` from `@zackbart/connecta/providers/drive`. Enable Google Drive API

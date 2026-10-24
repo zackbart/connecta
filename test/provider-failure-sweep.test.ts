@@ -49,9 +49,19 @@ const LOCAL = new Set([
   "docs.docs_api_search",
   "docs.docs_api_details",
   "planning-center.pco_api_details",
-  ...["breeze", "ccb", "cloudflare", "drive", "forms", "github", "overflow", "stripe", "tithely", "vercel"].flatMap(
-    (name) => [`${name}.${name}_api_search`, `${name}.${name}_api_details`],
-  ),
+  ...[
+    "breeze",
+    "ccb",
+    "cloudflare",
+    "drive",
+    "forms",
+    "github",
+    "overflow",
+    "stripe",
+    "tithely",
+    "vercel",
+    "slides",
+  ].flatMap((name) => [`${name}.${name}_api_search`, `${name}.${name}_api_details`]),
 ]);
 
 function create(fixture: ContractFixture): Connector {
@@ -163,7 +173,7 @@ describe("API provider failure sweep", () => {
         }
       // Fold offline hatch coverage here: injected remote failures
       // cannot affect metadata that sends no request.
-      if (["github", "docs"].includes(provider.name))
+      if (["github", "docs", "slides"].includes(provider.name))
         for (const name of [`${provider.name}_api_search`, `${provider.name}_api_details`]) {
           const result = await sweepCall(
             provider,
@@ -218,8 +228,10 @@ describe("API provider failure sweep", () => {
       const examples = provider.catalog
         .filter(
           (tool) =>
-            !(provider.name === "github" && ["github_api_search", "github_api_details"].includes(tool.name)) &&
-            !(["docs", "drive", "forms"].includes(provider.name) && tool.name.startsWith(`${provider.name}_api_`)),
+            !(
+              ["github", "slides"].includes(provider.name) &&
+              [`${provider.name}_api_search`, `${provider.name}_api_details`].includes(tool.name)
+            ) && !(["docs", "drive", "forms"].includes(provider.name) && tool.name.startsWith(`${provider.name}_api_`)),
         )
         .flatMap((tool) => [
           { tool, args: argumentsTable[provider.name]?.[tool.name], suffix: "" },
