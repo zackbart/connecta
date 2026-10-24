@@ -180,16 +180,24 @@ describe("vercel() over an access token", () => {
       inviteCode: REDACTED,
       role: "MEMBER",
     });
-    const event = {
-      id: "ev_drain",
-      payload: { drainUrl: "https://logs.example/secret-path?token=secret-query", id: "drain_1" },
-    };
-    for (const shape of [event, [event], { events: [event] }, { data: { events: [event] } }]) {
-      respond = () => Response.json(shape);
-      const result = await call(connector, "vercel_api_read", { path: "/v3/events" });
-      expect(JSON.stringify(result)).not.toMatch(/secret-path|secret-query|token=/);
-      expect(JSON.stringify(result)).toContain(REDACTED);
-      expect(JSON.stringify(result)).toContain("drain_1");
+    for (const field of ["drainUrl", "logDrainUrl", "webhookUrl", "prevWebhookUrl"]) {
+      const event = {
+        id: "ev_drain",
+        payload: { [field]: "https://logs.example/secret-path?token=secret-query", id: "drain_1" },
+      };
+      for (const shape of [event, [event], { events: [event] }, { data: { events: [event] } }]) {
+        respond = () => Response.json(shape);
+        const result = await call(connector, "vercel_api_read", { path: "/v3/events" });
+        expect(JSON.stringify(result), field).not.toMatch(/secret-path|secret-query|token=/);
+        expect(JSON.stringify(result), field).toContain(REDACTED);
+        expect(JSON.stringify(result), field).toContain("drain_1");
+      }
+      for (const fields of [[`events[].payload.${field}`], ["events[].payload"]]) {
+        respond = () => Response.json({ events: [event] });
+        const selected = await call(connector, "vercel_api_read", { path: "/v3/events", fields });
+        expect(selected.data.events[0].payload[field], field).toBe(REDACTED);
+        expect(JSON.stringify(selected), field).not.toMatch(/secret-path|secret-query|token=/);
+      }
     }
     respond = () =>
       Response.json({

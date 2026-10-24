@@ -643,11 +643,16 @@ export const VERCEL_VALUE_SAFETY: ValueSafetyTable = {
   envBodies: /^\/v\d+\/(?:env(?:\/|$)|projects\/\{[^}]+\}\/env(?:\/|$))/,
   scopeMaps: ["permissions"],
   fields: {
-    drainUrl: {
-      verdict: "redact",
-      reason:
-        "Audit-event drain destinations may embed credentials in path segments and query tokens; withhold the entire URL in every response shape.",
-    },
+    ...Object.fromEntries(
+      ["drainUrl", "logDrainUrl", "webhookUrl", "prevWebhookUrl"].map((name) => [
+        name,
+        {
+          verdict: "redact" as const,
+          reason:
+            "Audit-event drain and budget webhook destinations may embed credentials in path segments and query tokens; withhold the entire URL in every response shape.",
+        },
+      ]),
+    ),
     ...Object.fromEntries(
       (
         [
