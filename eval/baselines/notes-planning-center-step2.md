@@ -361,3 +361,53 @@ provides no universal context-cost or task-success gain.
 After freezing these runs, only evidence and bundle-report metadata change.
 The bundle note records the review's index/repeated-filter attribution and the
 orchestrator's deferred compaction work. No cap or request/test budget moves.
+
+
+### Verification after the main squash merge
+
+#990 squash-merged as `9e3fbbfb745b392dac506fff7a53cf4ae2d1529a`.
+#992 now targets main; merge `e5fc4d2b5189fef68ea818f601d921c06913223a`
+reconciles its inherited Stripe commits with that squash. The hatch conflict
+keeps main's shared guards and `fb717c71`'s lookup cache. All Stripe code,
+tasks/fake behavior and goldens, every other provider's source, and all non-PCO
+stored goldens match main. The remaining shared compiler/range, evidence,
+contract and eval changes support PCO's approved index. No Planning Center
+behavior or agent-facing text changed after the frozen AFTER R1 source snapshot,
+so the model runs above remain the applicable follow-up.
+
+Post-merge checks on Node 22.23.3, with `VITEST_MAX_WORKERS=2`, all pass:
+
+| Check | Result |
+| --- | --- |
+| PCO provider, shared hatch and REST connector | 30/30 |
+| Provider generation, run alone | 21/21 |
+| Provider standard/conventions, purity and package surface | 107/107 |
+| Filtered PCO failure sweep and inventory | 57/57 (56 PCO cases) |
+| All-provider Node goldens, `CONNECTA_GOLDENS_DETERMINISM=1` | 16/16; PCO 67.226 s |
+| All-provider workerd goldens | 16/16; PCO 8.524 s |
+| `check:static` and `check:build` | Pass, including all existing capped entries |
+| Browser behavior and visual checks | 20/20, two workers |
+| Eve check and packed runtime/type smoke, Node 24 | 5/5 and pass |
+| Public `providers:check --provider planning-center` | No pinned drift; existing newer-People-version advisory |
+
+No golden changed during post-merge verification. No case or deadline was added
+in round 1: PCO's provider suite stays at eight cases and its existing five-second
+budgets; the overall step-2 test delta stays −42. An earlier pre-main combined
+run hit one existing generation test's five-second limit. Its complete isolated
+rerun passed unchanged, as did the post-main isolated run above; the initial
+failure remains in `r1-targeted.log`. This is separate from the two frozen
+BEFORE QuickJS startup timeouts.
+
+The final build with system zlib reports **638,026 B gzip** for the PCO entry:
+**+288,473 B** against the recorded pre-step-2 349,553 B at `8e92eed9`, and
++2,457 B against the initial step-2 metadata baseline of 635,569 B. The latter
+stays explicitly historical. The review's original 635,566 B measurement is
+3 B below that metadata baseline; neither measurement is relabelled as this
+round's result. Provider entries are report-only and no cap moves. The index's
+roughly 263 KB attribution and deferred lossless compaction remain disclosed.
+
+Scratch evidence includes `r1-main-diff-audit.txt`, `r1-main-check-results.json`,
+`r1-main-targeted.log` and each `r1-main-<check>.log`. The read-only drift run
+again reports People 2026-10-05 published against the retained 2026-06-04 pin;
+it does not accept or refresh that version. The full root `pnpm run check` was
+not run. The orchestrator owns independent round 2 and CI/merge decisions.

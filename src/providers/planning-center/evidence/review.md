@@ -176,3 +176,24 @@ opt-out: its duplicate other-server guard is removed, while its stricter
 JSON-only body rule and two credential-action refusals remain. The merge keeps
 the shared lookup cache unchanged; `hatch.ts` differs from Stripe only by that
 previously approved fix.
+
+After #990 squash-merged as `9e3fbbfb745b392dac506fff7a53cf4ae2d1529a`,
+#992 targets main. Merge `e5fc4d2b5189fef68ea818f601d921c06913223a`
+reconciles the old Stripe commits with the squash. The `hatch.ts` conflict
+retains main's binding guards and the previously approved lookup cache; its
+remaining diff is exactly 19 inserted/two replaced lines, plus nine assertions
+in an existing hatch test. All Stripe source, fake/task behavior and goldens,
+all other provider source, and every non-PCO stored golden match main.
+The remaining shared compiler/range, evidence, eval and contract changes support
+PCO's approved full-document index; no unrelated Stripe/Breeze change remains.
+The AFTER-only source snapshot stays `37faf86bd93f`: this reconciliation adds
+no Planning Center behavior or agent-facing text change.
+
+Post-main targeted suites, all-provider Node determinism and workerd goldens,
+`check:static`, `check:build`, browser and Node 24 Eve/package checks pass.
+PCO's final entry measures 638,026 B gzip with Node 22.23.3/system zlib,
++288,473 B against the recorded 349,553 B before step 2. Provider entries remain
+report-only and no cap changes. The refreshed read-only public drift check finds
+no pinned drift and repeats the newer-People-publication advisory above.
+The evaluation notes retain the full validation/provenance details, including
+the earlier combined-run unit-test timeout and unchanged-budget isolated pass.
