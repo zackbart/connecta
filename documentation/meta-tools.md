@@ -793,10 +793,11 @@ stale catalog returns `auth_replay_refused` and reconciliation guidance.
 Each round also checks its own invocation facts. Normal stale-fallback calls
 retain their existing behavior.
 An auth failure after a write handler or transport was entered keeps its
-ordinary error code,
-`retryable: false`, `reconciliationRequired: true`, and manual `/connect` guidance
-where available. The write may have partially run; reconcile its target before
-retrying after connection. Handler-authored error fields cannot clear this guard.
+ordinary error code and manual `/connect` guidance where available. Unless a
+maintained provider's complete ledger proves that only auxiliary resource reads
+departed, it also carries `retryable: false` and `reconciliationRequired: true`:
+the write may have partially run, so reconcile its target before retrying after
+connection. An explicit `writeOutcome: "unknown"` always keeps this guard.
 
 State integrity, expiry, principal, endpoint, and tool failures produce the
 SDK's JSON-RPC `-32602` with `data.reason: "invalid_request_state"` before the
@@ -1011,8 +1012,11 @@ Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never
 list connectors from another pool or identity's grants.
 
-A write that times out after dispatch returns `write_outcome_unknown` with
+A write that times out after dispatch without complete auxiliary-only proof
+returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
+An auxiliary-only timeout reported by a completed maintained-provider call keeps
+its `timeout` verdict under the rule below.
 No write is automatically replayed. `recovery` carries facts the connector
 recorded before dispatch, such as a REST connector's
 generated or caller-supplied `idempotencyKey`. A caller-supplied key that is
@@ -1059,15 +1063,18 @@ failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
 
 A dispatched write is never reported as retryable once the downstream may
-have acted on it (INV-9). A failed write call whose complete request ledger
-records an auxiliary resource read and proves that no call-owned request departed
-keeps the failure's retry advice and needs no write reconciliation. For example, if `crm.update_person` fails
-during an auxiliary lookup before its update is sent, its authorization
-handoff says to retry after recovery. The same rule applies to a timeout
-reported by that completed call. An authentication POST alone supplies no
-resource-read proof. An empty, absent or incomplete ledger, an
-untracked handler, or an invocation deadline or caller cancellation without a complete
-answer cannot supply this proof; those calls retain conservative write outcomes.
+have acted on it (INV-9). A failed maintained-provider write call whose complete
+request ledger records an auxiliary resource read and proves that no call-owned
+request departed keeps the failure's retry advice and needs no write
+reconciliation. For example, a Gmail connector named `mail` can fail
+`mail.update_draft` during its auxiliary draft lookup before sending the update;
+its authorization handoff then says to retry after recovery. The same rule applies
+to a timeout reported by that completed call. An explicit `writeOutcome: "unknown"`
+always takes precedence. An authentication POST alone supplies no resource-read
+proof. Empty, absent or incomplete ledgers, invocation deadlines and caller
+cancellation without a complete answer retain conservative write outcomes.
+Custom `api()` and `remoteMcp()` connectors always stay conservative: the internal
+complete-tracking declaration is available only to maintained providers.
 A 5xx (a gateway's 502 to 504 included), any
 network failure of its send (a refused connection included), or a reply that
 broke off is a non-retryable `connector_call_failed` whose outcome is unknown,

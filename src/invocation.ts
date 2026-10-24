@@ -426,7 +426,8 @@ export class InvocationService {
         // A known answer alone is not dispatch evidence. Require an owned,
         // complete ledger with a positively recorded auxiliary resource read;
         // an empty ledger, custom entry or interruption proves nothing.
-        const mayHaveWritten = enteredWrite && !(answered && onlyAuxiliaryRequests(logicalCall));
+        const mayHaveWritten =
+          enteredWrite && (error.writeOutcome === "unknown" || !(answered && onlyAuxiliaryRequests(logicalCall)));
         // A recorded key is a diagnostic; advice to reuse it needs proof that
         // it protects the whole logical call, not one request inside it. Q8's
         // settled verdict is final: no enricher adds advice to it.
@@ -462,6 +463,13 @@ export class InvocationService {
                   ? ""
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
+        }
+        if (mayHaveWritten && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+          // An empty resource ledger cannot settle this auth failure. Keep
+          // actual resource-refusal provenance, but withdraw an empty ledger's
+          // known mark before composing advice and counting program writes.
+          answered = false;
+          if (!logicalCall?.sent.some((request) => request.dispatched)) forgetProviderFailure(error);
         }
         // A dispatched write without refusal provenance is unknown whatever
         // its connector's code says, a custom connector's included: never

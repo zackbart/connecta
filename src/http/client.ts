@@ -243,6 +243,8 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         const headers = Object.fromEntries(
           Object.entries(request.headers).filter(([name]) => name !== "content-length"),
         );
+        if (facts.effect === "read" && !readRequest({ classification: "read", method: request.method }, headers))
+          return yield* refuse("Auxiliary reads must use GET or HEAD without a method override.");
         // A genuine key the vendor honors rides only on the tool's own request,
         // added after sent-secret registration like guarded-fetch's visible
         // headers. Only a key sent here is recorded, so only it can make the

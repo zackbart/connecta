@@ -4150,6 +4150,26 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
   });
 
   it("INV-9: each named step of a write is sent once; reads are replayed freely", NODE, async () => {
+    for (const request of [
+      POST_ITEMS,
+      { ...POST_ITEMS, method: "PUT" as const },
+      { ...LOOKUP, headers: { "X-HTTP-Method-Override": "POST" } },
+    ]) {
+      sent = [];
+      answers = [() => Response.json({ rows: [] })];
+      const refused = await invoke(acme(), (connection) =>
+        connection
+          .sendPath(LOOKUP, { effect: "read", step: "lookup" })
+          .pipe(Effect.flatMap(() => connection.sendPath(request, { effect: "read", step: "write" }))),
+      );
+      expect(sent.map((entry) => entry.method)).toEqual(["GET"]);
+      expect(refused.error).toMatchObject({
+        code: "invalid_args",
+        message: "Auxiliary reads must use GET or HEAD without a method override.",
+        retryable: false,
+      });
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: refused.error as never })).toBe("failed");
+    }
     for (const separate of [false, true]) {
       sent = [];
       answers = [() => Response.json({ rows: [] }), () => Response.json({ ok: true })];

@@ -28,6 +28,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { InvocationService } from "../src/invocation.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
 import { github } from "../src/providers/github/index.js";
+import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { hatch } from "../src/http/hatch.js";
 import { STRIPE_VERDICTS, stripeBinding, stripeConnection, stripeIndex } from "../src/providers/stripe/api.js";
@@ -122,7 +123,9 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
 
     for (const code of ["auth_required", "timeout", "unavailable"] as const) {
       for (const ownership of ["auxiliary", "call-owned"] as const) {
-        for (const tracking of ["complete", "untracked", "wrapper", "no-ledger"] as const) {
+        for (const tracking of ["complete", "untracked", "wrapper", "no-ledger", "explicit-marker"] as const) {
+          const explicitMarker = tracking === "explicit-marker";
+          if (explicitMarker && (ownership !== "auxiliary" || code === "timeout")) continue;
           const label = `${code}, ${ownership}, ${tracking}`;
           const requests: string[] = [];
           const request = guardedFetch({
@@ -146,7 +149,10 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
               ctx,
               () => {
                 throw resendAdvice(
-                  new ConnectorCallError(code, "The request failed.", { retryable: code === "unavailable" }),
+                  new ConnectorCallError(code, "The request failed.", {
+                    retryable: code === "unavailable",
+                    ...(explicitMarker ? { writeOutcome: "unknown" } : {}),
+                  }),
                   "Retry this call later.",
                 );
               },
@@ -177,7 +183,7 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
           expect(requests, label).toEqual([ownership === "auxiliary" ? "GET" : "POST"]);
           if (served.ok) throw new Error(`expected failure: ${label}`);
           const noWrite = ownership === "auxiliary" && tracking === "complete";
-          expect(served.answered, label).toBe(noWrite);
+          expect(served.answered, label).toBe(noWrite || (explicitMarker && code === "unavailable"));
           expect(classifyWriteOutcome(served), label).toBe(noWrite ? "failed" : "unknown");
           if (noWrite) expect(served.error.writeOutcome, label).toBeUndefined();
           else if (code !== "timeout") expect(served.error.writeOutcome, label).toBe("unknown");
@@ -202,8 +208,119 @@ describe("an error code after dispatch is no refusal (round 11)", () => {
             expect(served.error.retryable, label).toBe(noWrite);
             expect(served.error.message.includes("Retry this call later."), label).toBe(noWrite);
           }
+          if (explicitMarker) {
+            const program = await catchingProgram(registry, "tickets.send");
+            expect(program.structuredContent, label).toMatchObject({
+              error: {
+                retryable: false,
+                writes: { succeeded: 0, failed: 0, unknown: 1 },
+                ...(code === "auth_required" ? { reconciliationRequired: true } : {}),
+              },
+            });
+            expect(JSON.stringify(program.structuredContent), label).not.toContain("Retry this call later.");
+            expect(requests, label).toEqual(["GET", "GET"]);
+          }
         }
       }
+    }
+
+    // A token POST alone supplies no auxiliary-read proof. Its direct auth
+    // handoff and the caught program must both report an uncertain write.
+    const token = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.test",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => Response.json({}, { status: 401 }),
+    });
+    const tokenBoundary = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Authenticate, then send",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) =>
+              token({ method: "POST", path: "/token", auxiliary: true, classification: "write" }, ctx, () => {
+                throw new ConnectorCallError("auth_required", "Token refused.");
+              }),
+          },
+        ],
+      }),
+    );
+    const tokenRegistry = makeRegistry([tokenBoundary]);
+    const tokenFailure = await new InvocationService(tokenRegistry, new CatalogService(tokenRegistry, BASE)).invoke(
+      "tickets.send",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(tokenFailure).toMatchObject({
+      ok: false,
+      answered: false,
+      error: { code: "auth_required", retryable: false, reconciliationRequired: true },
+    });
+    expect(classifyWriteOutcome(tokenFailure)).toBe("unknown");
+    expect((await catchingProgram(tokenRegistry, "tickets.send")).structuredContent).toMatchObject({
+      error: { reconciliationRequired: true, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+
+    // Maintained providers supply the same auxiliary-only evidence as the
+    // synthetic rows: GitHub installation discovery and an unpinned zone's
+    // ownership lookup both fail before the resource write can depart.
+    for (const scenario of ["github-401", "cloudflare-401", "cloudflare-503"] as const) {
+      const githubLookup = scenario === "github-401";
+      const status = scenario === "cloudflare-503" ? 503 : 401;
+      const zone = "023e105f4ecef8ad9ca31a8372d0c353";
+      const path = githubLookup ? "/app/installations" : `/client/v4/zones/${zone}`;
+      const requests: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return Response.json(
+          githubLookup
+            ? { message: "Lookup refused." }
+            : { success: false, errors: [{ code: 10000, message: "Lookup refused." }] },
+          { status },
+        );
+      });
+      const connector = githubLookup
+        ? github("tickets", {
+            purpose: "Review",
+            app: { appId: "12345", privateKey: PRIVATE_KEY },
+            scopes: [{ org: "acme", access: "read-write" }],
+          })
+        : cloudflare("tickets", {
+            purpose: "Review",
+            auth: { type: "apiToken" },
+            pin: { accountIds: ["0123456789abcdef0123456789abcdef"] },
+          });
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+      await vault.set("tickets", "cf_7z9ob83m4p6x2q0l", "fixture");
+      const registry = makeRegistry([connector], { storage, credentialVault: vault });
+      const address = githubLookup ? "tickets.create_release" : "tickets.cloudflare_api_write";
+      const args = githubLookup
+        ? { owner: "acme", repo: "one", tag_name: "v1.2.0" }
+        : { method: "PATCH", path: `/zones/${zone}/dns_records/r1`, body: { ttl: 300 } };
+      const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(address, args, {
+        source: "call_destructive_tool",
+      });
+      if (served.ok) throw new Error(`expected lookup failure: ${scenario}`);
+      expect(served.answered, scenario).toBe(true);
+      expect(classifyWriteOutcome(served), scenario).toBe("failed");
+      expect(served.error, scenario).toMatchObject({
+        code: status === 401 ? "auth_required" : "unavailable",
+        retryable: status === 503,
+        ...(status === 401 ? { retry: `Retry ${address} after the operator completes recovery.` } : {}),
+      });
+      expect(served.error, scenario).not.toHaveProperty("writeOutcome");
+      expect(served.error, scenario).not.toHaveProperty("reconciliationRequired");
+      // Fail after catching so program accounting renders its failed count.
+      const program = await catchingProgram(registry, address, args, true);
+      expect(program.structuredContent, scenario).toMatchObject({
+        error: { writes: { succeeded: 0, failed: 1, unknown: 0 } },
+      });
+      expect(requests, scenario).toEqual([`GET ${path}`, `GET ${path}`]);
     }
 
     // Without complete auxiliary-read proof, a custom entry's declaration
@@ -527,15 +644,22 @@ describe("an operation hint grants no retry credit (round 11)", () => {
 });
 
 /** A program that calls `address` once, catches its failure, and returns. */
-function catchingProgram(registry: ReturnType<typeof makeRegistry>, address: string) {
+function catchingProgram(
+  registry: ReturnType<typeof makeRegistry>,
+  address: string,
+  args: Record<string, unknown> = {},
+  failAfterCatch = false,
+) {
   const executor: Executor = {
     async execute(_code, providers) {
       try {
-        await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(address, {});
+        await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(address, args);
       } catch {
         /* caught by the guest */
       }
-      return { result: "caught and continued" };
+      return failAfterCatch
+        ? { result: undefined, error: "Stopped after the caught call." }
+        : { result: "caught and continued" };
     },
   };
   return createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({

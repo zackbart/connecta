@@ -2903,6 +2903,28 @@ compiling and configuring the real thing.
   the failing request carries the refusal. A custom connector that composes
   calls, or that could send around them, never inherits an inner verdict; the
   invocation withdraws the mark and the write is unknown.
+  Write inference also needs positive evidence before relaxing timeout or auth
+  reconciliation. `LogicalCall.auxiliaryReads` records each auxiliary GET or HEAD
+  at dispatch, without method-override headers, separately from the call-owned
+  requests in `sent`. Its physical read proof does not depend on the served
+  tool's write classification. `onlyAuxiliaryRequests` requires exactly one
+  boundary that owns the logical call and declares complete request tracking
+  (`tracksEveryRequest`), at least one dispatched auxiliary resource read, and
+  no dispatched call-owned request. The invocation's `mayHaveWritten` is true
+  for an entered write unless the call answered with that proof; an explicit
+  `writeOutcome: "unknown"` always overrides the relaxation. Empty or partial
+  ledgers, token POSTs alone, multiple boundaries, custom `api()` and
+  `remoteMcp()` connectors, deadlines, and caller cancellation supply no such
+  proof. Only maintained providers have the internal tracking declaration;
+  they must route every dispatch through their tracked transports. The kit
+  refuses `effect: "read"` requests unless the final request is GET or HEAD
+  without method-override headers. Token mints use separate guarded transports
+  and supply no auxiliary-read proof. When a timeout or auth failure still
+  may have written, the invocation withdraws `answered`; an auth failure with
+  an empty resource ledger also loses its private known-failure mark before
+  advice is composed. Actual resource-refusal provenance remains intact.
+  Token-only auth failures therefore keep conservative program accounting as
+  well as reconciliation wording.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
   `tools/call` is sent, and GitHub's REST target check and token mint.
