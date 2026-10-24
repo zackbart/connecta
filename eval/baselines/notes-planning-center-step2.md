@@ -411,3 +411,70 @@ Scratch evidence includes `r1-main-diff-audit.txt`, `r1-main-check-results.json`
 again reports People 2026-10-05 published against the retained 2026-06-04 pin;
 it does not accept or refresh that version. The full root `pnpm run check` was
 not run. The orchestrator owns independent round 2 and CI/merge decisions.
+
+
+### CI fixture correction after round 1
+
+CI at `b39de42dad4716427d92c5277e8ac3957289f712` exposed five failures in
+cross-provider suites omitted from the earlier local selection. These are stale
+fixtures, rather than changed transport/redaction behavior:
+
+- Drift coverage supplied an object for every JSON:API response, including
+  list reads, and called retired Group-events/Check-Ins wrappers. It now supplies
+  arrays for collections and objects for single records/writes, drops the two
+  retired wrappers, and requires every request sent by a retained named tool
+  to match a manifest row. The old reverse direction is replaced by exact
+  full-index ↔ manifest coverage. It also verifies each product-version header.
+- Provider evidence discovery assumed every index had one top-level URL and
+  digest. It now validates a composition and every actual child URL/digest,
+  including exact retained document bytes; single-document checks remain.
+- The short-secret output-boundary case called `pco_api_get` twice. Both calls
+  use `pco_api_read`, preserving its complete INV-5 assertions.
+- Both real-socket hidden-replay controls invoked `pco_api_mutate`, so admission
+  stopped at an unknown tool before sending. They now invoke `pco_api_write`,
+  preserving POST body/DELETE receipt, non-retryability and unknown-outcome
+  assertions under INV-9.
+
+A whole-test-tree audit covers all 25 retired names (23 wrappers/two hatches),
+version overrides, query pairs and path forms. No stale positive PCO call remains.
+Other removed-name matches belong to CCB/Breeze or intentional catalog-absence
+assertions. The only PCO `version` argument is its before-dispatch rejection
+control; concrete successful paths and the failure-arguments table use the new
+indexed surface. Audit files and the complete suite inventory are retained in
+scratch as `ci-pco-audit-report.txt`, `ci-hatch-argument-audit.txt`,
+`ci-removed-name-audit.txt` and `ci-pco-suite-inventory.json`.
+
+All five originally failing cases pass in the focused reproduction. Before the
+round-2 search correction, all 16 selected Node files passed (880 tests), as did
+workerd HTTP kit (13 native cases). The queue was stopped during workerd golden
+harness when round 2 arrived, to finish both fixes in one push. These are partial
+local selections; the full unfiltered `pnpm run test:node` was not run locally.
+No test case is added or removed; every existing title, INV citation and time
+budget is retained. The CI repair itself changes tests/evidence only.
+
+
+### Round-2 discovery correction
+
+The reviewed workflow text replaced generated summaries, losing CRUD verbs and
+resource nouns because PCO compiles without operation ids. Retain both: append
+`(<generated summary without its Planning Center product suffix>)` to each of
+the 19 reviewed summaries. The longest resulting label is 126 characters,
+within the hatch's 300-character cap. Four rows folded into the existing
+ranking case require `list person mergers`, `create phone number`, `list people`
+and `list groups` in the first two results, keeping the natural-phrasing rows
+and search/details byte budgets. The real-factory verb probes cover the other
+reported regressions with/without method filters and send no HTTP requests.
+Only two summary values change in PCO's calls golden; no other stored golden
+changes. No shared ranker changes.
+
+The optional bare `person` reorder stays deferred: the shared hatch reorders
+index results by literal path after the provider's search, so sorting locally
+would not keep profile roots first. Its existing documented filter remains.
+The expanded name/argument audit also covers `src/providers/*` and `eval/`.
+Its remaining PCO legacy hatch is the deliberately frozen BEFORE reference
+branch, plus retained BEFORE transcripts and migration narrative; none is a
+current-surface positive call.
+
+The production summary correction is validated separately from the completed
+CI-fixture selection above. Final checks and a fresh AFTER-only follow-up will
+be recorded below; prompts, graders, PCO fake behavior and deadlines stay fixed.

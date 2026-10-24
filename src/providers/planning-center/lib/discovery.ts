@@ -47,11 +47,15 @@ export class PlanningCenterIndex extends OperationIndex {
     super(
       {
         ...data,
-        ops: data.ops.map(([method, path, id, summary, tag, server]) =>
-          server === undefined
-            ? ([method, path, id, summaries[`${method} ${path}`] ?? summary, tag] as const)
-            : ([method, path, id, summaries[`${method} ${path}`] ?? summary, tag, server] as const),
-        ),
+        ops: data.ops.map(([method, path, id, summary, tag, server]) => {
+          const reviewed = summaries[`${method} ${path}`];
+          // PCO omits operation ids: preserve the generated CRUD/resource words
+          // alongside workflow synonyms so verb-led queries remain discoverable.
+          const combined = reviewed ? `${reviewed} (${summary.replace(/ — Planning Center \w[\w-]*$/, "")})` : summary;
+          return server === undefined
+            ? ([method, path, id, combined, tag] as const)
+            : ([method, path, id, combined, tag, server] as const);
+        }),
       },
       { vendor: "pco", title: "Planning Center" },
     );

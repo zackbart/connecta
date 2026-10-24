@@ -246,6 +246,7 @@ describe("Planning Center contracts", () => {
     expect(PCO_INDEX.ops).toHaveLength(1752);
     expect(Object.keys(PCO_VERDICTS)).toHaveLength(1752);
     expect(PCO_INDEX.operation("POST", "/people/v2")).toBeUndefined();
+    expect(Math.max(...PCO_INDEX.ops.map((op) => op.summary.length))).toBeLessThanOrEqual(300);
     for (const [query, expected, method] of [
       ["person mergers", "/people/v2/person_mergers", "GET"],
       ["note categories", "/people/v2/note_categories", "GET"],
@@ -267,6 +268,20 @@ describe("Planning Center contracts", () => {
         query,
       ).toContain(expected);
       if (query === "person") expect(found.operations[0].path).toBe(expected);
+    }
+    for (const [query, expected] of [
+      ["list person mergers", "/people/v2/person_mergers"],
+      ["create phone number", "/people/v2/people/{person_id}/phone_numbers"],
+      ["list people", "/people/v2/people"],
+      ["list groups", "/groups/v2/groups"],
+    ]) {
+      const found = await invoke("pco_api_search", { query });
+      expect(
+        found.operations.slice(0, 2).map((op: any) => op.path),
+        query,
+      ).toContain(expected);
+      expect(found.operations.length, query).toBeLessThanOrEqual(8);
+      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
     }
     const detailArgs = { method: "GET", path: "/people/v2/list_categories/{list_category_id}/lists" };
     const parameters: any[] = [],

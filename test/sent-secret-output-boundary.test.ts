@@ -429,7 +429,7 @@ describe("provider sites the boundary cannot cover", () => {
       };
       const error = (await connector
         .callTool(
-          name === "planning-center" ? "pco_api_get" : "tithely_api_read",
+          name === "planning-center" ? "pco_api_read" : "tithely_api_read",
           name === "planning-center" ? { path: "/people/v2/people" } : { path: "/organizations-list" },
           ctx,
         )
@@ -469,7 +469,7 @@ describe("provider sites the boundary cannot cover", () => {
         requestSentSecrets(held).arguments({ value }, schema);
       const out = shown(
         await connector.callTool(
-          pco ? "pco_api_get" : "tithely_api_read",
+          pco ? "pco_api_read" : "tithely_api_read",
           { path: pco ? "/webhooks/v2/webhook_subscriptions" : "/organizations/org_1" },
           held,
         ),
