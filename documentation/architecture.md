@@ -1361,9 +1361,9 @@ every vendor ships one reviewed table through one mechanism
    character references. References are read whole as value data; decoding
    only finds nested-reference boundaries and classifies a placeholder's
    remainder. No decoded replacement is returned. Possible named references
-   are read fail-closed with their required semicolon and bounded HTML name length;
-   numeric references also accept an omitted semicolon, and `amp` may omit
-   its semicolon immediately before `#`. Signing separators accept nested
+   are read fail-closed with their required semicolon and bounded HTML name
+   length. Numeric references also accept an omitted semicolon, and `amp`
+   may omit its semicolon immediately before `#`. Signing separators accept nested
    ampersand references around decimal, hexadecimal or named `=` references.
    A literal query separator such as `&name=alice` still ends the signing
    value. Ordinary query strings and prose retain their original spelling.
@@ -1457,10 +1457,13 @@ every vendor ships one reviewed table through one mechanism
    base64 or base64url characters (letters, digits, `+`, `/`, `=`, `-`, `_`)
    or `%` escapes is withheld with them through the end of the value
    (`splitRemainder`), so a tail of `+/` alone goes too. A reference in an
-   inferred remainder counts only when it decodes to credential characters
-   or an ampersand; other references end that remainder, preserving text after
-   spacing or punctuation references. Known signing values read references
-   whole regardless of the character they spell. A value's end never splits
+   inferred remainder counts when it decodes to credential characters or an
+   ampersand. Without a semicolon, numeric digits may run into the following
+   value: a credential character spelled by the first 1–3 decimal or 1–2 hex
+   digits after leading zeros also counts. Other references end that
+   remainder, preserving text after spacing or punctuation references.
+   Known signing values read references whole regardless of the character
+   they spell. A value's end never splits
    a placeholder. In reviewed links, a query component that carries the
    placeholder and has no readable name withholds the query. What
    stays visible cannot complete a credential: other punctuation alone after a

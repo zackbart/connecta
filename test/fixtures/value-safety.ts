@@ -614,7 +614,7 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
             `X-Goog-Signature=${tailHex.slice(0, -7)}`,
             `X-Amz-Security-Token=${plus}`,
             `X-Goog-Security-Token=${url}`,
-            // Review probe: private values ending inside a reference.
+            // Private values ending inside a reference or an encoded separator.
             "X-Amz-Signature=&",
             "X-Amz-Security-Token&",
           ]
@@ -633,6 +633,8 @@ export function describeValueSafety(name: string, harness: ValueSafetyHarness): 
             ].map((value) => ({
               separator: `diagnostic X-Amz-Security-Token&amp;#61;VENDOR_HELD_SEPARATOR_${value.length}&name=alice now`,
               split: `diagnostic X-Amz-Security-Token&#61;VENDOR_HELD_SPLIT_${value.length}&name=alice now`,
+              greedy: `diagnostic X-Amz-Security-Token=raw&#479VENDOR_HELD_GREEDY_${value.length}&name=alice now`,
+              greedySplit: `diagnostic X-Amz-Security-Token&#619VENDOR_HELD_GREEDY_SPLIT_${value.length}&name=alice now`,
               note: `diagnostic X-Amz-Signature=${value}&name=alice now`,
               link: `see http://storage.example/f?X-Goog-Credential=${value}&name=alice now`,
               ...(table.resources

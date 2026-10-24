@@ -426,6 +426,16 @@ describe("reviewed text policy and global admission (#846)", () => {
       ["&CounterClockwiseContourIntegral;PRIVATE", false],
       ["&#00000000000000000000000000000050;PRIVATE", true],
       ["&#50&#97PRIVATE", true],
+      ["raw&#479PRIVATE", true],
+      ["&#x2faPRIVATE", true],
+      ["&#00000479PRIVATE", true],
+      ["&#x0002faPRIVATE", true],
+      ["&#1000PRIVATE", true],
+      ["&#x250PRIVATE", true],
+      ["&amp;#479PRIVATE", true],
+      ["&#479;PRIVATE", false],
+      ["&#x2fa;PRIVATE", false],
+      ["&amp;#479;PRIVATE", false],
     ] as const) {
       for (const name of ["X-Amz-Signature", "X-Goog-Credential", "X-Amz-Security-Token"]) {
         const input = `diagnostic ${name}=${value}&name=alice now`;
@@ -448,8 +458,21 @@ describe("reviewed text policy and global admission (#846)", () => {
         expect(withholdEmbeddedUrls(ending), ending).toBe("see [file](https://files.example/a?[redacted]).");
       }
     }
-    // Every cut is inside an encoded value or separator, before the private value is replaced.
     const schema = { type: "object", properties: { pin: { type: "string", writeOnly: true } } } as const;
+    for (const [parameter, pin] of [
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "X-Amz-Security-Token="],
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "X-Amz-Security-Token=raw&"],
+      ["X-Amz-Security-Token=raw&#479PRIVATE", "Security-Token"],
+      ["X-Amz-Security-Token&#619PRIVATE", "X-Amz-Security-Token&"],
+    ]) {
+      const secrets = new SentSecrets();
+      secrets.arguments({ pin }, schema);
+      const input = secrets.redact(`diagnostic ${parameter}&name=alice now`);
+      const out = safety.redact({ description: input }, "GET", "/v1/things") as { description: string };
+      expect(out.description, pin).not.toContain("PRIVATE");
+      expect(out.description, pin).toContain("&name=alice now");
+    }
+    // Every cut is inside an encoded value or separator, before the private value is replaced.
     for (const prefix of ["&", "&a", "&am", "&amp", "&amp;", "&amp#", "&amp;#", "&#", "&#x"]) {
       const hex = prefix === "&#x";
       const value = `${hex ? "&#x50;" : prefix.startsWith("&a") ? "&amp;#80;" : "&#80;"}RIVATE`;

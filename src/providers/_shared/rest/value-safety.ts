@@ -837,10 +837,12 @@ function valueEnd(text: string, at: number, inferred: boolean): number {
  * after `from`, or `-1` (#703). Redaction may have taken a signing name, its
  * `=`, and the start of its value, so a placeholder followed by any of a
  * value's base64 or base64url characters (`+`, `/`, `=`, `-`, `_` included)
- * or `%` escapes or character references goes with them, however short. One
- * inside a name ending at an encoded `=` (`&#61;`, `\u003d`) gives that
- * value's start. A placeholder right after an `=` with nothing readable after
- * it is a withheld value. Each placeholder is read once, resuming after its run.
+ * or `%` escapes goes with them, however short. References count when they
+ * spell credential data or an ampersand, including a short numeric prefix
+ * when no semicolon ends the reference. One inside a name ending at an
+ * encoded `=` (`&#61;`, `\u003d`) gives that value's start. A placeholder
+ * right after an `=` with nothing readable after it is a withheld value.
+ * Each placeholder is read once, resuming after its run.
  */
 function alteredParameter(text: string, from: number): number {
   for (let at = text.indexOf(REDACTED, from); at >= 0;) {

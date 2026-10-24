@@ -59,10 +59,23 @@ function referenceBodyEnd(text: string, from: number, at: number, credentialOnly
             : -1;
     const ampersand = code === 0x26;
     readable = ampersand || credentialUnit(code) || (name !== undefined && CREDENTIAL_REFERENCE.test(name));
+    if (!readable && name === undefined && text.charCodeAt(end - 1) !== 0x3b)
+      readable = prefixSpellsCredential(reference[1] ?? reference[2]!, reference[1] === undefined ? 16 : 10);
     if (!ampersand) break;
     from = end;
   }
   return credentialOnly && !readable ? at : end;
+}
+
+// Without its `;`, a numeric reference's digits may run into the value's next characters (`&#47`
+// then `9` reads as `&#479`), so a short digit prefix spelling credential data counts.
+function prefixSpellsCredential(digits: string, radix: number): boolean {
+  let at = 0;
+  while (digits.charCodeAt(at) === 0x30) at++;
+  const limit = radix === 16 ? 2 : 3;
+  for (let length = 1; length <= limit && at + length <= digits.length; length++)
+    if (credentialUnit(Number.parseInt(digits.slice(at, at + length), radix))) return true;
+  return false;
 }
 
 /**
