@@ -5,6 +5,7 @@ import { withCorrectness, EXISTING_CORRECTNESS } from "./correctness.js";
 import { REST_TASKS } from "./rest.js";
 import { P5_TASKS } from "./p5.js";
 import { CCB_TASKS } from "./ccb.js";
+import { OVERFLOW_TASKS } from "./overflow.js";
 import { BREEZE_TASKS } from "./breeze.js";
 import { TITHELY_TASKS } from "./tithely.js";
 import { STRIPE_TASKS } from "./stripe.js";
@@ -19,6 +20,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...REST_TASKS,
   ...TITHELY_TASKS,
   ...BREEZE_TASKS,
+  ...OVERFLOW_TASKS,
   ...STRIPE_TASKS,
   ...CCB_TASKS,
 ];

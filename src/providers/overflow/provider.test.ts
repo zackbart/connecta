@@ -1,12 +1,13 @@
 import { kitInputDisagreements } from "../../../test/helpers/kit-schema.js";
+import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import goldenSpec from "../../../test/goldens/overflow/spec.js";
 import { resultSafety } from "../../http/safety.js";
 import type { Connection } from "../../http/vendor.js";
 import { validateToolInput } from "../../validate.js";
-import { errors, safety } from "./api.js";
+import { errors, safety, OVERFLOW_INDEX, OVERFLOW_VERDICTS } from "./api.js";
 import { overflowTools } from "./tools.js";
-// The goldens cover tools, projections and errors. Keep only Overflow's
-// reset-header fallback and candidate credential probe beyond that evidence.
+// Goldens own catalog and fixture bytes. Fold wire-edge regressions into the
+// existing reset-header and candidate-credential cases without adding rows.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { overflow } from "./index.js";
@@ -37,6 +38,7 @@ function queue(...items: StubResponse[]): void {
 }
 
 beforeEach(() => {
+  installOwnedTransport();
   responses = [];
   calls.length = 0;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
@@ -100,8 +102,8 @@ async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
   return error as ConnectorCallError;
 }
 
-describe("overflow() rate limits", () => {
-  it("INV-11: aligns catalog decoding and waits out the reported 429 window or the whole window without one", async () => {
+describe("overflow() standard surface", () => {
+  it("INV-1 INV-5 INV-9 INV-11: admits the standard contracts, binds exact-count pages, strips secrets and preserves single-send recovery", async () => {
     const kitConnection = { errors, safety: resultSafety(safety) } as Connection;
     for (const tool of overflowTools({ connection: kitConnection, pageSize: 25 })) {
       const base = goldenSpec.calls.find((fixture) => fixture.tool === tool.name)?.args ?? {};
@@ -122,6 +124,278 @@ describe("overflow() rate limits", () => {
     const error = await failure(call(connection(), "list_locations"));
     expect(error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 37_000 });
     expect((await failure(call(connection(), "list_locations"))).retryAfterMs).toBe(60_000);
+
+    const connector = connection();
+    const ctx = context();
+    const id = "0123456789abcdef01234567";
+    expect(OVERFLOW_INDEX.ops).toHaveLength(38);
+    expect(Object.keys(OVERFLOW_VERDICTS)).toHaveLength(38);
+    const beforeDiscovery = calls.length;
+    for (const [query, path] of [
+      ["payout", "/deposits"],
+      ["recurring gift", "/subscriptions"],
+      ["refund", `/contributions/{contributionId}/initiate-refund`],
+      ["delivery failures", "/webhooks/{webhookId}/event-logs"],
+    ]) {
+      const found = await call(connector, "overflow_api_search", { query, limit: 8 }, ctx);
+      expect(
+        found.operations.some((op: { path: string }) => op.path === path),
+        query,
+      ).toBe(true);
+      expect(new TextEncoder().encode(JSON.stringify(found)).length).toBeLessThanOrEqual(16 * 1024);
+    }
+    for (const query of [
+      "refund a gift",
+      "refund gift",
+      "refund donation",
+      "refund a donation",
+      "issue a refund",
+      "refund a cash gift",
+      "refund duplicate gift",
+    ]) {
+      for (const method of [undefined, "POST"]) {
+        const found = await call(connector, "overflow_api_search", { query, ...(method ? { method } : {}) }, ctx);
+        expect(found.operations[0], `${query} (${method ?? "any method"})`).toMatchObject({
+          method: "POST",
+          path: "/contributions/{contributionId}/initiate-refund",
+        });
+      }
+    }
+    for (const [query, method, path] of [
+      ["cancel recurring gift", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
+      ["stop a recurring donation", "DELETE", "/subscriptions/{donorId}/{subscriptionId}"],
+      ["edit donor phone", "PATCH", "/donors/{donorId}"],
+      ["charge saved card", "POST", "/contributions"],
+    ]) {
+      const found = await call(connector, "overflow_api_search", { query }, ctx);
+      expect(found.operations[0], query).toMatchObject({ method, path });
+    }
+    const details = await call(
+      connector,
+      "overflow_api_details",
+      { method: "POST", path: "/subscriptions/{donorId}" },
+      ctx,
+    );
+    expect(details.body.schema.required).toEqual(expect.arrayContaining(["paymentMethodId", "amount", "frequency"]));
+    expect(calls).toHaveLength(beforeDiscovery);
+
+    // Fields and withheld values fail before auth or dispatch, including on writes.
+    for (const [tool, args] of [
+      ["get_donor", { donorId: id, fields: ["not_a_property"] }],
+      ["list_donors", { fields: ["phone"] }],
+      ["list_donors", { fields: ["address"] }],
+      [
+        "overflow_api_write",
+        { method: "PATCH", path: `/donors/${id}`, body: { phone: "new" }, fields: ["not_a_property"] },
+      ],
+      ["overflow_api_write", { method: "POST", path: `/contributions/${id}/initiate-refund`, fields: ["id"] }],
+      ["overflow_api_read", { path: "/unsupported" }],
+      ["overflow_api_read", { path: "/donors/%2e%2e/health" }],
+      ["overflow_api_write", { method: "PATCH", path: `/donors/${id}`, body: { phone: "[redacted]" } }],
+      ["overflow_api_read", { path: "/donors/%5Bredacted%5D" }],
+    ] as const) {
+      expect(await failure(call(connector, tool, args, context(null)))).toMatchObject({ code: "invalid_args" });
+    }
+    for (const limit of [0, -1, 101, 1.5]) {
+      expect(await failure(call(connector, "list_donors", { limit }, ctx))).toMatchObject({ code: "invalid_args" });
+      expect(
+        await failure(call(connector, "overflow_api_read", { path: "/donors", query: { limit } }, ctx)),
+      ).toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(beforeDiscovery);
+
+    queue({ body: { data: [{ id, email: "alice@example.com" }], totalCount: 2 } });
+    const first = await call(connector, "list_donors", { limit: 1, fields: ["id"] }, ctx);
+    expect(first).toMatchObject({ items: [{ id }], page: { hasMore: true, total: 2 } });
+    const start = calls.length;
+    for (const args of [
+      { limit: 2, cursor: first.page.nextCursor },
+      { limit: 1, sortBy: "email", cursor: first.page.nextCursor },
+      { limit: 1, cursor: first.page.nextCursor + "x" },
+    ])
+      expect(await failure(call(connector, "list_donors", args, ctx))).toMatchObject({ code: "invalid_args" });
+    expect(
+      await failure(call(connection(), "list_donors", { limit: 1, cursor: first.page.nextCursor }, context())),
+    ).toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(start);
+    queue({ body: { data: [{ id, email: "bob@example.com" }], totalCount: 2 } });
+    expect(
+      await call(connector, "list_donors", { limit: 1, cursor: first.page.nextCursor, fields: ["email"] }, ctx),
+    ).toEqual({ items: [{ email: "bob@example.com" }], page: { hasMore: false, total: 2 } });
+    expect(new URL(calls.at(-1)!.url).searchParams.get("page")).toBe("2");
+    queue({ body: { data: [{ id }] } });
+    const uncounted = await call(connector, "list_donors", { limit: 1 }, ctx);
+    expect(uncounted.page).toMatchObject({ hasMore: true });
+    expect(uncounted.page).not.toHaveProperty("total");
+    queue({ body: { data: [] } });
+    expect(await call(connector, "list_donors", { limit: 1, cursor: uncounted.page.nextCursor }, ctx)).toEqual({
+      items: [],
+      page: { hasMore: false },
+    });
+    queue({ body: { data: [], totalCount: 0 } });
+    expect(await call(connector, "list_donors", { fields: ["id"] }, ctx)).toEqual({
+      items: [],
+      page: { hasMore: false, total: 0 },
+    });
+    for (const totalCount of [-1, "2", 1.5]) {
+      queue({ body: { data: [], totalCount } });
+      expect(await failure(call(connector, "list_donors", {}, ctx))).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+      });
+    }
+
+    // Hatch adapters inspect safe metadata before fields, restore numeric pages and bind filters/fields.
+    const hatchArgs = { path: "/donors", query: { limit: 1 }, fields: ["data.id"] };
+    queue({ body: { data: [{ id, email: "alice@example.com" }], totalCount: 2 } });
+    const hatchFirst = await call(connector, "overflow_api_read", hatchArgs, ctx);
+    expect(hatchFirst).toMatchObject({
+      status: 200,
+      data: { data: [{ id }] },
+      page: { hasMore: true, param: "page", in: "query" },
+    });
+    const bound = calls.length;
+    expect(
+      await failure(
+        call(
+          connector,
+          "overflow_api_read",
+          { ...hatchArgs, query: { limit: 2, page: hatchFirst.page.nextCursor } },
+          ctx,
+        ),
+      ),
+    ).toMatchObject({ code: "invalid_args" });
+    expect(
+      await failure(
+        call(
+          connector,
+          "overflow_api_read",
+          { ...hatchArgs, fields: ["data.email"], query: { limit: 1, page: hatchFirst.page.nextCursor } },
+          ctx,
+        ),
+      ),
+    ).toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(bound);
+    queue({ body: { data: [{ id }], totalCount: 2 } });
+    const hatchLast = await call(
+      connector,
+      "overflow_api_read",
+      { ...hatchArgs, query: { limit: 1, page: hatchFirst.page.nextCursor } },
+      ctx,
+    );
+    expect(hatchLast.page).toEqual({ hasMore: false, param: "page", in: "query" });
+    expect(new URL(calls.at(-1)!.url).searchParams.get("page")).toBe("2");
+    queue({ body: { data: [], totalCount: 0 } });
+    await call(
+      connector,
+      "overflow_api_read",
+      { path: "/contributions", query: { "statusBucket[]": ["PENDING", "CONFIRMED"], "locationIds[]": [id] } },
+      ctx,
+    );
+    expect(new URL(calls.at(-1)!.url).searchParams.getAll("statusBucket[]")).toEqual(["PENDING", "CONFIRMED"]);
+    expect(new URL(calls.at(-1)!.url).searchParams.getAll("locationIds[]")).toEqual([id]);
+
+    const logs = { path: `/webhooks/${id}/event-logs`, query: { limit: 1 } };
+    queue({
+      body: { data: [{ id: "attempt" }], pageInfo: { hasNextPage: true, nextCursor: "native-delivery-token" } },
+    });
+    const delivery = await call(connector, "overflow_api_read", logs, ctx);
+    queue({ body: { data: [], pageInfo: { hasNextPage: false, nextCursor: null } } });
+    expect(
+      (
+        await call(
+          connector,
+          "overflow_api_read",
+          { ...logs, query: { limit: 1, cursor: delivery.page.nextCursor } },
+          ctx,
+        )
+      ).page.hasMore,
+    ).toBe(false);
+    expect(new URL(calls.at(-1)!.url).searchParams.get("cursor")).toBe("native-delivery-token");
+    for (const pageInfo of [
+      { hasNextPage: true, nextCursor: null },
+      { hasNextPage: "true", nextCursor: "x" },
+      { hasNextPage: true, nextCursor: KEYS.apiKey },
+    ]) {
+      queue({ body: { data: [], pageInfo } });
+      const error = await failure(call(connector, "overflow_api_read", logs, ctx));
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(error.message).not.toContain(KEYS.apiKey);
+    }
+    for (const body of [
+      { id, secret: "private-signing-value" },
+      { data: { id, signingSecret: "private-signing-value" } },
+      [{ id, secret: "private-signing-value" }],
+      { data: [{ id, signingKey: "private-signing-value" }] },
+      {
+        data: [
+          {
+            id,
+            Secret: "private-signing-value",
+            secretKey: "private-signing-value",
+            signing_key: "private-signing-value",
+            delivery: { hmacSecret: "private-signing-value", HMAC_KEY: "private-signing-value" },
+          },
+        ],
+      },
+    ]) {
+      queue({ body });
+      expect(
+        JSON.stringify(await call(connector, "overflow_api_read", { path: `/webhooks/${id}` }, ctx)),
+      ).not.toContain("private-signing-value");
+    }
+    queue({ body: { data: { id, metadata: { secretKey: "ordinary-operator-data" } } } });
+    expect(await call(connector, "get_contribution", { contributionId: id, fields: ["metadata"] }, ctx)).toEqual({
+      metadata: { secretKey: "ordinary-operator-data" },
+    });
+    queue({ body: { data: { id, phone: "+15555550123", address: { city: "Example" } } } });
+    expect(await call(connector, "get_donor", { donorId: id, fields: ["phone", "address"] }, ctx)).toEqual({
+      phone: "+15555550123",
+      address: { city: "Example" },
+    });
+
+    queue({ text: "ok", headers: { "content-type": "text/plain" } });
+    expect(await call(connector, "overflow_api_read", { path: "/health" }, ctx)).toEqual({ status: 200, data: "ok" });
+    queue({ status: 202, body: "Refund initiated" });
+    expect(
+      await call(
+        connector,
+        "overflow_api_write",
+        { method: "POST", path: `/contributions/${id}/initiate-refund` },
+        ctx,
+      ),
+    ).toEqual({ status: 202, data: "Refund initiated" });
+    queue({ status: 202, text: "Refund initiated", headers: { "content-type": "text/html; charset=utf-8" } });
+    const beforeRefund = calls.length;
+    expect(
+      await call(
+        connector,
+        "overflow_api_write",
+        {
+          method: "POST",
+          path: `/contributions/${id}/initiate-refund`,
+        },
+        ctx,
+      ),
+    ).toEqual({ status: 202, data: "Refund initiated" });
+    expect(calls).toHaveLength(beforeRefund + 1);
+    queue({ status: 204 });
+    expect(
+      await call(
+        connector,
+        "overflow_api_write",
+        { method: "PATCH", path: `/donors/${id}`, body: { phone: "new" } },
+        ctx,
+      ),
+    ).toEqual({ status: 204, data: null });
+    queue({ status: 500, body: { message: "Upstream failure" } });
+    const sent = calls.length;
+    expect(
+      await failure(
+        call(connector, "overflow_api_write", { method: "PATCH", path: `/donors/${id}`, body: { phone: "new" } }, ctx),
+      ),
+    ).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(calls).toHaveLength(sent + 1);
   });
 });
 

@@ -2092,7 +2092,13 @@ A `list` without the legacy `key` returns `{ items, page }`, with
 `page.nextCursor` only while `hasMore`, and the kit appends `limit` (the
 declared default and maximum), `cursor` and `fields` to the tool's filters;
 `read` and `get` take `fields: true`. `src/http/fields.ts` narrows after every
-projection and refuses an unknown first segment before dispatch; a selected
+projection. A standard list may opt into `total: true` and supply an optional
+exact vendor count as `page.total` from its page callback. The kit validates a
+nonnegative safe integer and includes it on continuing and terminal pages;
+without a vendor count the property is absent. Lists without the opt-in keep
+their existing schema and result bytes. Never derive an exact total from a
+partial page or an estimate. `src/http/fields.ts` refuses an unknown first
+segment before dispatch; a selected
 result renders against a sparse output schema. `src/http/hatch.ts` is the
 standard hatch (`_api_search`, `_api_details`, `_api_read`, `_api_write`) over
 an `OperationIndex` with explicit verdicts. It keeps the REST family's

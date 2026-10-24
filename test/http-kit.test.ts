@@ -1471,6 +1471,41 @@ describe("kit construction (decision 0010, B.4)", () => {
       expect((rows.outputSchema as { properties: { items: { items: unknown } } }).properties.items.items).toEqual(
         sparse,
       );
+      // Exact totals are opt-in, optional, validated and retained on both last and continuing pages.
+      for (const total of [undefined, 0, 8, -1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+        for (const hasMore of [false, true]) {
+          for (const expose of [false, true]) {
+            const exact = list(connection, {
+              name: "list_exact",
+              description: "Exact vendor totals",
+              filters: {},
+              row: Row,
+              limit: { default: 2, max: 5, description: "Rows" },
+              ...(expose ? { total: true as const } : {}),
+              page: () =>
+                Effect.succeed({
+                  rows: [],
+                  page: { hasMore, nextCursor: hasMore ? "next" : null, ...(total === undefined ? {} : { total }) },
+                }),
+            });
+            const schema = exact.outputSchema as { properties: { page: { properties: Record<string, unknown> } } };
+            expect(Object.hasOwn(schema.properties.page.properties, "total")).toBe(expose);
+            const result = apiConnector("acme", { tools: [exact] }).callTool("list_exact", {}, context());
+            if (expose && total !== undefined && (!Number.isSafeInteger(total) || total < 0)) {
+              await expect(result).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+            } else {
+              expect(await result).toEqual({
+                items: [],
+                page: {
+                  hasMore,
+                  ...(hasMore ? { nextCursor: "next" } : {}),
+                  ...(expose && total !== undefined ? { total } : {}),
+                },
+              });
+            }
+          }
+        }
+      }
       expect(
         await apiConnector("acme", { tools: [selected] }).callTool(
           "sample",

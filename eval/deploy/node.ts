@@ -19,6 +19,7 @@ import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 import { vercel } from "@zackbart/connecta/providers/vercel";
 import { ccb } from "@zackbart/connecta/providers/ccb";
+import { overflow } from "@zackbart/connecta/providers/overflow";
 import { breeze } from "@zackbart/connecta/providers/breeze";
 import { tithely } from "@zackbart/connecta/providers/tithely";
 import { ACCOUNT_A, SHOP_ZONE, installRestKitTransport } from "../fakes/rest.js";
@@ -99,6 +100,8 @@ export async function startNodeDeployment(
             access: "read-write",
             ...JSON.parse(spec.credential!.value!),
           });
+        if (spec.rest === "overflow")
+          return overflow(spec.id, { ...options, environment: "staging", baseUrl: spec.url });
         if (spec.rest === "breeze") return breeze(spec.id, { ...options, subdomain: "church" });
         if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
         if (spec.rest === "tithely")
@@ -132,7 +135,7 @@ export async function startNodeDeployment(
   });
   for (const spec of connectors) {
     if (spec.rest !== "ccb" && spec.credential?.value) {
-      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely")
+      if (spec.id === "cloudflare_legacy" || spec.rest === "tithely" || spec.rest === "overflow")
         await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
       else await vault.set(spec.id, spec.credential.value, "operator");
     }

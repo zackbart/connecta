@@ -495,31 +495,21 @@
     }
   },
   "overflow": {
-    "overflow_api_get": {
-      "path": "/refunds/9910f34fd5061afeec3eab01",
-      "query": [
-        {
-          "name": "statusBucket[]",
-          "value": "PENDING"
-        },
-        {
-          "name": "statusBucket[]",
-          "value": "FAILED"
-        },
-        {
-          "name": "limit",
-          "value": 5
-        }
-      ]
+    "overflow_api_search": {
+      "query": "gift"
     },
-    "overflow_api_mutate": {
-      "method": "POST",
-      "path": "/subscriptions",
+    "overflow_api_details": {
+      "method": "GET",
+      "path": "/donors"
+    },
+    "overflow_api_read": {
+      "path": "/refunds/9910f34fd5061afeec3eab01"
+    },
+    "overflow_api_write": {
+      "method": "PATCH",
+      "path": "/donors/6710f34fd5061afeec3eab50",
       "body": {
-        "donorId": "6710f34fd5061afeec3eab50",
-        "amount": 25,
-        "frequency": "monthly",
-        "campaignId": "7710f34fd5061afeec3eab78"
+        "phone": "+15555550101"
       }
     },
     "list_contributions": {
@@ -582,19 +572,6 @@
     },
     "list_locations": {
       "sortBy": "name"
-    },
-    "list_tap_events": {
-      "groupIds": [
-        "6710f34fd5061afeec3eab58"
-      ],
-      "startDate": "2026-05-01"
-    },
-    "list_webhooks": {
-      "status": "enabled"
-    },
-    "list_webhook_event_logs": {
-      "webhookId": "6710f34fd5061afeec3eab99",
-      "status": "failed"
     }
   },
   "planning-center": {

@@ -4,6 +4,7 @@
  */
 import { FakeRestService, restState, type RestVendor } from "./rest.js";
 import { FakeCcb, ccbState } from "./ccb.js";
+import { FakeOverflow, overflowState } from "./overflow.js";
 import { FakeBreeze, breezeState } from "./breeze.js";
 import { FakeTithely, tithelyState, type TithelyFault } from "./tithely.js";
 import type { ProgramObservation } from "../deploy/observed-executor.js";
@@ -45,7 +46,7 @@ export interface ConnectorSpec {
   description: string;
   url: string;
   usageGuide?: string;
-  rest?: RestVendor | "tithely" | "breeze" | "ccb";
+  rest?: RestVendor | "tithely" | "breeze" | "ccb" | "overflow";
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -54,6 +55,7 @@ export interface WorldOptions {
   restVendor?: RestVendor;
   breeze?: { fault?: "update-500" };
   ccb?: { fault?: "update-500" };
+  overflow?: { fault?: "update-500" };
   /** A Tithe.ly giving world, with an optional injected fault. */
   tithely?: { fault?: TithelyFault };
   refundFault?: boolean;
@@ -82,9 +84,10 @@ const META: Record<ServiceId, { title: string; description: string }> = {
 
 export class World {
   readonly rest = restState();
-  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakeCcb> = [];
+  readonly restServices: Array<FakeRestService | FakeTithely | FakeBreeze | FakeCcb | FakeOverflow> = [];
   readonly breeze = breezeState();
   readonly ccb = ccbState();
+  readonly overflow = overflowState();
   readonly tithely = tithelyState();
   readonly now = Date.now();
   readonly ledger = new Ledger();
@@ -123,6 +126,8 @@ export class World {
       this.restServices = [new FakeTithely("tithely", this.ledger, this.tithely, options.tithely.fault)];
     if (options.breeze) this.restServices = [new FakeBreeze("breeze", this.ledger, this.breeze, options.breeze.fault)];
     if (options.ccb) this.restServices = [new FakeCcb("ccb", this.ledger, this.ccb, options.ccb.fault)];
+    if (options.overflow)
+      this.restServices = [new FakeOverflow("overflow", this.ledger, this.overflow, options.overflow.fault)];
     this.tracker = trackerState(this.now);
     this.chat = chatState(this.now);
     const clock = () => Date.now();
@@ -158,7 +163,13 @@ export class World {
   }
 
   connectorSpecs(): ConnectorSpec[] {
-    if (this.options.restVendor || this.options.tithely || this.options.breeze || this.options.ccb)
+    if (
+      this.options.restVendor ||
+      this.options.tithely ||
+      this.options.breeze ||
+      this.options.ccb ||
+      this.options.overflow
+    )
       return this.restServices.map((service) => ({
         id: service.name,
         title: service.name,
