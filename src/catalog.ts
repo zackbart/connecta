@@ -161,9 +161,14 @@ const CONVERSATIONAL_QUERY_WORDS = new Set([
  * search into an unfiltered catalog browse.
  */
 export function lexicalSearchQuery(query: string): string {
+  return lexicalSearchContent(query) || query;
+}
+
+/** Normalized content only; empty means every query word was framing. */
+export function lexicalSearchContent(query: string): string {
   const terms = normalized(query).split(/\s+/).filter(Boolean);
   const contentTerms = terms.filter((term) => !CONVERSATIONAL_QUERY_WORDS.has(term));
-  return contentTerms.length > 0 ? contentTerms.join(" ") : query;
+  return contentTerms.join(" ");
 }
 
 interface SearchDocument {

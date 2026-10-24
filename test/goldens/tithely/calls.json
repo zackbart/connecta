@@ -24,41 +24,11 @@
             "operationId": "cancelRecurring",
             "summary": "Cancel a recurring charge's future charges; refunds nothing",
             "tool": "tithely_api_write"
-          },
-          {
-            "method": "POST",
-            "path": "/charge-once",
-            "operationId": "chargeOnce",
-            "summary": "Quick charge a donor once from a Tithely.js token, without an account",
-            "tool": "tithely_api_write"
-          },
-          {
-            "method": "POST",
-            "path": "/charges",
-            "operationId": "createCharge",
-            "summary": "Create a charge (gift) on a donor's stored payment method",
-            "tool": "tithely_api_write"
-          },
-          {
-            "method": "POST",
-            "path": "/recurring",
-            "operationId": "createRecurring",
-            "summary": "Create a recurring charge (gift)",
-            "tool": "tithely_api_write"
-          },
-          {
-            "method": "GET",
-            "path": "/charges-list",
-            "operationId": "listCharges",
-            "summary": "List charges (gifts) for an organization or donor",
-            "tool": "tithely_api_read",
-            "named": "list_charges"
           }
         ],
         "revision": "v1",
         "page": {
-          "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiZGY0OTA0OGZjYjhlYmY2ZTA3MzFjMGZhOTNhMWQzYWMiLCJjIjoiNiIsIm0iOiJCWnRsWk5EQWF5Q05UTFlRMC0yeU05UkhjdUtYSHpfQUNOZzNtbEtDeExVIn0"
+          "hasMore": false
         }
       }
     }
