@@ -90,7 +90,7 @@ export const forms = defineApiProvider<FormsOptions>({
   readme: "Google Forms",
   bundle: {
     baselineGzip: 372120,
-    note: "./providers/forms step-2 round-1 snapshot measures 372,120 B gzip standalone before recording these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main ff3f7c3b snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    note: "./providers/forms step-2 round-2 snapshot measures 372,120 B gzip standalone before refreshing these bundle facts (#703), Node 26.12.0 with scripts/measure-google-index.mjs. The same-toolchain main f9bf5afb snapshot measures 353,598 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

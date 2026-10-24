@@ -23,7 +23,7 @@
             "method": "POST",
             "path": "/forms/{formId}:batchUpdate",
             "operationId": "forms.forms.batchUpdate",
-            "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+            "summary": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
             "tool": "forms_api_write",
             "named": "batch_update_form"
           },
@@ -66,7 +66,7 @@
         "method": "POST",
         "path": "/forms/{formId}:batchUpdate",
         "operationId": "forms.forms.batchUpdate",
-        "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+        "summary": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
         "parameters": [
           {
             "name": "prettyPrint",
@@ -1180,7 +1180,7 @@
         },
         "page": {
           "hasMore": true,
-          "nextCursor": "eyJ2IjoyLCJkIjoiMjQ3MTk3OTJlODJjYzEwZGIwY2RlZjI3MDVmMmNiZGIiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicGFnZS0yXCJ9IiwibSI6Il9DRzJ2OWdkNlR3RFM5ZGZpa1dTaElzeWUwa0ZYc1B6SFl4amVHOGZCNncifQ",
+          "nextCursor": "eyJ2IjoyLCJkIjoiYjFhNzMyNTllNzMzOGMwOTMwYTcwZTU0ZTdhMDBhYTYiLCJjIjoie1wicGFyYW1cIjpcInBhZ2VUb2tlblwiLFwiaW5cIjpcInF1ZXJ5XCIsXCJ2YWx1ZVwiOlwicGFnZS0yXCJ9IiwibSI6InZjckFXS0J6S183ZEljTlZpNHUzV0gycG1oc2QwbTBUWEotSzN1cHJhSkUifQ",
           "param": "pageToken",
           "in": "query"
         }

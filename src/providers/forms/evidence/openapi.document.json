@@ -2822,7 +2822,7 @@
             "description": "Success"
           }
         },
-        "summary": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+        "summary": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
         "tags": [
           "forms"
         ],

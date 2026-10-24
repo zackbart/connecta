@@ -9,7 +9,7 @@
     "format": "google-discovery-v1",
     "summaries": {
       "forms.forms.get": "Get read form question options, quiz grading answer key, images and section navigation.",
-      "forms.forms.batchUpdate": "Batch update form: edit/change name/title, rename choice option, add/delete/move question, set correct quiz answer key.",
+      "forms.forms.batchUpdate": "Edit form: change name/title/quiz settings/correct answer key, rename choice option, add/delete/move item/question.",
       "forms.forms.create": "Create add an empty form with title and optional Drive document title.",
       "forms.forms.responses.list": "List find form responses since a timestamp, submitted answers and respondent email.",
       "forms.forms.responses.get": "Get read one form response with answers, quiz grades and feedback.",

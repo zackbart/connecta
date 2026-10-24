@@ -317,6 +317,8 @@ describe("worst-case results fit one host result (256 KiB)", () => {
       ["rename form", "/forms/{formId}:batchUpdate"],
       ["change form name", "/forms/{formId}:batchUpdate"],
       ["set correct answer", "/forms/{formId}:batchUpdate"],
+      ["quiz settings", "/forms/{formId}:batchUpdate"],
+      ["update item", "/forms/{formId}:batchUpdate"],
     ]) {
       const discovery = await call(connector, "forms_api_search", { query });
       expect(
