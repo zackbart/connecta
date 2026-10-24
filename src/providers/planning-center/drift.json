@@ -1776,7 +1776,7 @@
       "registrations.json": "sha256:1a5324e66f96f469125a95ca8257828ca3aeddfac314380f4d50c13a93839870",
       "services.document.json": "sha256:e3cf7c8b9c92bd5f6cd2fa400c76ac3d2571bfb43f77c5d8e8cfba04c208aabb",
       "services.json": "sha256:62d1d2ebd4557fa001ebbf7faa46ece9bae92d7f6235bde26107e022a0c526c6",
-      "value-safety.json": "sha256:e2684d96046661285db7566403ba92e861dbcb926bebe3b80ac6102dc247831e",
+      "value-safety.json": "sha256:98ac62092d463cc0c934af6c7844a0b388de575ea0e428afdf053d01e63779fd",
       "webhooks.document.json": "sha256:2d7629aaef4e29ebdda98280806af295c11d111331b82a8dbf892ccf6d1faf1c",
       "webhooks.json": "sha256:98ab77a3404972309af67cf4c12725ff017a04ddeeeb2004ca6e2ba0c1396221"
     }

@@ -287,7 +287,7 @@ signed-link formats and both rotation probes send nothing, all six original
 invalid page sizes send nothing, and all 560 schemas have the exact bounds.
 
 Agent-facing descriptions and discovery text changed materially, so this round
-requires an AFTER-only rerun of all seven tasks, both required models and two
+ran an AFTER-only follow-up of all seven tasks, both required models and two
 repeats per task. The original paired results above remain frozen. Excluded
 named-tool pointers and lossless shared-index compaction are deferred by the
 orchestrator; neither is implemented in this round.
@@ -299,3 +299,65 @@ refusals. No shared seam or ranking change is authored by this fix round.
 Stripe's plural-refund task/fake updates also move the global protocol hashes;
 the seven PCO prompts, graders and fake behavior are unchanged. This is an
 AFTER-only follow-up, rather than a newly paired BEFORE/AFTER experiment.
+
+
+### AFTER-only follow-up result
+
+The clean snapshot is `37faf86bd93f`, source tree `bdecfc375823`, after the
+Stripe merge. Both runners used Node 22.23.3, the same CLI/model versions and
+six/outcome settings as before, two repeats, eight-minute limits, and one
+active trial per runner (at most two globally). The pair-window id is
+`planning-center-step2-r1-2026-10-24`; both files agree on:
+
+- Task hash: `ad9aaf9ad07de3f45d58a4938a065f7e788cd2f6fa5b1bd0691d05f173371373`.
+- Harness hash: `4dd487f0c591e61405e9dc665d0379a211155cee31a169a2be95451a255d895c`.
+
+All 28 new trials are retained in the JSON as `after-r1`, alongside the original
+84. No prompt, grader, PCO fake behavior, deadline or score was changed and no
+trial was selectively rerun. Both models pass all write/recovery checks, and
+no executor startup failure occurred in this follow-up.
+
+| Task | Luna AFTER R1 | Sonnet AFTER R1 |
+| --- | ---: | ---: |
+| Filtered People profiles | 2/2 | 2/2 |
+| Groups → People → Services schedules | 2/2 | 2/2 |
+| Plan/items/team join | 2/2 | 2/2 |
+| All 137 profiles, count ids divisible by seven | 1/2 | 2/2 |
+| Merger history through coverage hatch | 1/2 | 2/2 |
+| Exactly one categorized note | 2/2 | 2/2 |
+| Reconcile update committed before HTTP 500 | 2/2 | 2/2 |
+| Total | 12/14 | 14/14 |
+
+The totals equal the original AFTER (12/14 and 14/14), with different Luna
+answer-format failures. Paging repeat 1 reads both pages at offsets 0/100,
+processes all 137 profiles and correctly computes 20 ids divisible by seven;
+its source label `Planning Center People` fails the frozen source normalizer.
+Merger repeat 2 reads the correct history and surviving profile, but returns
+numeric ids 2999/1001 instead of the required strings. Both remain failures.
+The global hashes differ from the original pair because of Stripe's task/fake
+changes, so these follow-up figures do not establish a new paired improvement.
+
+| Metric (14 trials per runner) | Luna R1 | Sonnet R1 |
+| --- | ---: | ---: |
+| MCP calls | 78 | 58 |
+| HTTP calls | 49 | 52 |
+| Tool errors | 8 | 5 |
+| Maximum discovery result, B | 40,420 | 11,503 |
+| Cumulative discovery results, B | 498,261 | 185,024 |
+| Uncached input tokens | 294,958 | 140 |
+| Output tokens | 8,347 | 10,824 |
+| Cache-read tokens | 1,520,000 | 445,291 |
+| Cache-creation tokens | 0 | 100,483 |
+| Median trial wall time, ms | 18,116.5 | 12,773.5 |
+
+Luna retrieves more metadata than in the original AFTER: 33 program searches,
+three indexed searches and three indexed details calls. Its largest result is
+a generic `connecta.search` response, not a hatch budget breach. The indexed
+search maximum is 1,859 B and details maximum is 32,642 B, within 16/32 KiB.
+Sonnet uses known hatch paths without retrieving indexed metadata. The local
+natural-phrasing regression checks improve discovery coverage; this rerun
+provides no universal context-cost or task-success gain.
+
+After freezing these runs, only evidence and bundle-report metadata change.
+The bundle note records the review's index/repeated-filter attribution and the
+orchestrator's deferred compaction work. No cap or request/test budget moves.

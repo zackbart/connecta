@@ -95,7 +95,7 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   readme: "Planning Center",
   bundle: {
     baselineGzip: 635569,
-    note: "./providers/planning-center measures 635,569 B gzip standalone in step 2, versus 349,553 B on main 8e92eed9 (+286,016 B), Node 22.23.3 with system zlib. This accepts the full 1,753-operation ten-product index, reviewed safety and standard discovery. The shared Effect kit is paid once per deployment; provider entries are reported, not capped, and sizes are not additive (#899).",
+    note: "./providers/planning-center initial step-2 baseline is 635,569 B gzip, versus 349,553 B on main 8e92eed9 (+286,016 B), Node 22.23.3 with system zlib. The ten products now index 1,752 operations after omitting one empty-path artifact. Review attributes about 263 KB gzip to the index, mostly repeated where[] rows; lossless shared compaction is deferred. Reviewed safety and standard discovery remain. The shared Effect kit is paid once per deployment; provider entries are reported, not capped, and sizes are not additive (#899).",
   },
   skill,
   options: PLANNING_CENTER_OPTIONS,

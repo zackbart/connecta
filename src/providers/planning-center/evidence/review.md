@@ -40,7 +40,7 @@ resources, relationships, status or metadata; none documents an action through
 GET. The mutation contracts create/update/delete records, relationships or
 assignments, or perform actions (including list refresh/automation, workflow
 advancement, token revocation, deliveries, live controls
-and assignment changes). All require write approval through the hatch; no
+and assignment changes). All admitted mutations require write approval through the hatch; no
 method-only runtime classification can admit a new operation. Existing additive
 named writes keep their reviewed named annotations. Publishing's
 `generate_download_url` mints a private signed link, and Webhooks `rotate_secret`
