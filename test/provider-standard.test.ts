@@ -71,6 +71,21 @@ function changed(name: string, update: (tool: any) => void): ToolFacts[] {
 describe("standard authored tool surfaces on both runtimes (decision 0011)", () => {
   it("accepts typed envelopes, optional cursors, projections, and hatch pages", () => {
     expect(surfaceViolations(standard())).toEqual([]);
+    const capped = changed("list_charges", (tool) => {
+      delete tool.inputSchema.properties.cursor;
+      tool.outputSchema.properties.page = object({ hasMore: { const: false } }, ["hasMore"]);
+    });
+    capped.push({
+      name: "update_person",
+      annotations: DESTRUCTIVE,
+      inputSchema: object({ values: { type: "array", items: object({ fieldId: { type: "string" } }) } }),
+    });
+    expect(surfaceViolations(capped)).toEqual([]);
+    const mutable = structuredClone(capped) as any[];
+    mutable.find((t) => t.name === "list_charges").outputSchema.properties.page.properties.hasMore = {
+      type: "boolean",
+    };
+    expect(surfaceViolations(mutable)).toContain("S2: list_charges pages with limit and cursor");
   });
 
   it.each([

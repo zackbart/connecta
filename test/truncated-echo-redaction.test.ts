@@ -354,9 +354,9 @@ describe("Breeze contribution dates", () => {
       { start: "2026-01-01", end: "2026-01-31" },
       keyed(),
     )) as {
-      contributions: { paidOn?: string }[];
+      items: { paidOn?: string }[];
     };
-    expect(result.contributions.map((row) => row.paidOn)).toEqual(["[redacted]", "2026-01-02"]);
+    expect(result.items.map((row) => row.paidOn)).toEqual(["[redacted]", "2026-01-02"]);
   });
 });
 
