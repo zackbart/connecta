@@ -21,6 +21,12 @@ export const ContinuationStorage = Context.Reference<KVStorage | undefined>("con
   defaultValue: () => undefined,
 });
 
+/** Admitted connection and personal credential owner; never derived from tool arguments. */
+export const ContinuationBinding = Context.Reference<{
+  readonly connection: string;
+  readonly principal: string | null;
+}>("connecta/call/ContinuationBinding", { defaultValue: () => ({ connection: "", principal: null }) });
+
 /** The credentials this call may send, already registered as sent secrets when read. */
 export class Credentials extends Context.Service<
   Credentials,

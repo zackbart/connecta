@@ -940,18 +940,18 @@ carries no `errorCode`.
 
 ## Argument recovery
 
-Standard API hatches refuse request paths, query keys/values and bodies that
-carry `[redacted]`, including embedded or URL-encoded forms, with
-`invalid_args` before sending. Named tools built with the provider kit also
-refuse these markers in write arguments. Obtain the original value or omit
-the field. For example, do not copy `{ "token": "[redacted]" }` from a read
-into a write. Legacy tools and generic remote MCP connections keep their
-own input rules.
+Standard API hatches refuse marker containment in request paths and query
+keys/values. Body fields and named kit writes refuse whole `[redacted]` values
+(including decoded spellings) and withheld links, before sending. Longer prose
+such as `the log says [redacted]` is allowed. Obtain the original value/link or
+omit its field: do not copy `{ "token": "[redacted]" }` from a read into a write.
+These rules check agent arguments; a body composed later from internal reads
+is not rescanned as a whole. Legacy tools and remote MCP keep their own rules.
 
 Pass hatch search/details cursors back unchanged. They authenticate the
-continuation and bind its arguments and index revision; an altered cursor
-or changed revision is `invalid_args`. Start discovery again after that
-refusal. Cursors survive restarts when the deployment uses persistent storage.
+continuation and bind its connection, personal owner, arguments and index content; an altered cursor
+or changed scope/index is `invalid_args`. Start discovery again after that
+refusal. Cursors survive restarts with persistent storage. A signing-key load failure is retryable `unavailable`; operators can follow [cursor-key recovery](./deploying.md#recover-a-cursor-signing-key).
 
 A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
 path before admission and provider dispatch, so a mismatch is the non-retryable

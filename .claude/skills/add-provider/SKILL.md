@@ -392,12 +392,16 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
 6. Remove the provider from `PENDING.step2` and its committed baseline entry.
 7. Use the standard hatch's withheld-scalar admission and derived
    `kit.refusesWithheld` fact. Hatch request paths, query keys/values and
-   bodies reject `[redacted]`, embedded markers and URL-encoded forms with
-   `invalid_args` before dispatch. Kit write builders apply the same check
-   to every argument of named writes. Do not add a provider opt-out or
+   bodies reject whole `[redacted]` values (including decoded spellings) and
+   withheld links with `invalid_args` before dispatch; paths and queries reject
+   any containment. Longer prose may mention the marker. Kit write builders
+   apply whole-value/link admission to named-write arguments; typed kit requests
+   also check actual path/query inputs. Bodies composed later from internal reads
+   are not rescanned as a whole. Do not add a provider opt-out or
    claim this admission for legacy non-kit tools or arbitrary encoded bytes.
    Bound discovery cursors authenticate their payload with the root store's
-   lazy compare-and-set signing key, bind the index revision, and validate
+   lazy compare-and-set signing key, bind the connection/personal owner and an
+   index content hash, and validate
    offsets and piece boundaries. Use the same store for successive calls;
    never supply a process-local key or log signing material. Error meanings
    and declared kit codes must pass runtime ConnectorCallErrorCode membership

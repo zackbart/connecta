@@ -17,7 +17,8 @@ import { PROVIDER_COMMON, type ProviderOptions } from "../src/provider.js";
 import { boundaryFor, originalCallIdentity, tracksRequests } from "../src/provider-call-facts.js";
 import { OperationIndex } from "../src/providers/_shared/rest/operation-index.js";
 import { runEdge } from "../src/runtime/run.js";
-import { ContinuationStorage, serviceFor, setViewService } from "../src/runtime/call.js";
+import { ContinuationBinding, ContinuationStorage, serviceFor, setViewService } from "../src/runtime/call.js";
+import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -339,7 +340,7 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   ctx.credential = { get: async () => "stored", getAll: credentials };
   for (const payload of [
     "[redacted]",
-    { value: ["prefix[redacted]tail"] },
+    { value: ["%255Bredacted%255D"] },
     { "[redacted]": "value" },
     "%5Bredacted%5D",
   ]) {
@@ -354,12 +355,24 @@ it("INV-5 INV-9: keeps the canonical tracked api boundary and routes tools throu
   expect(fetch).not.toHaveBeenCalled();
   expect(await named.callTool("save_payload", { payload: "unredacted" }, ctx)).toBe("unredacted");
   const root = memoryStorage();
-  const registry = makeRegistry([named], { storage: root });
+  const prose = "the log says: Authorization: Bearer [redacted]";
+  expect(await named.callTool("save_payload", { payload: prose }, ctx)).toBe(prose);
+  const registry = new Registry([{ ...named, authScope: "personal" }], {
+    storage: root,
+    catalogStorage: memoryStorage(),
+    logger: ctx.logger,
+  });
   // Signing uses the root store even though connector storage is namespaced per context.
   for (const request of [{}, {}]) {
     const view = registry.contextFor("tickets", "https://connecta.example", request);
     expect(view.storage).not.toBe(root);
     expect(serviceFor(view, ContinuationStorage)).toBe(root);
+    expect(serviceFor(view, ContinuationBinding)).toEqual({ connection: "tickets", principal: null });
+    for (const principal of ["alice", "bob"]) {
+      const personal = registry.personalRegistry(principal).contextFor("tickets", "https://connecta.example", {});
+      expect(serviceFor(personal, ContinuationStorage)).toBe(root);
+      expect(serviceFor(personal, ContinuationBinding)).toEqual({ connection: "tickets", principal });
+    }
   }
 });
 

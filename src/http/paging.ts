@@ -13,7 +13,8 @@ import { Effect, Option, Schema, Stream } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { Refusal, type HttpFailure } from "./errors.js";
 import { confinementBase } from "../http-policy.js";
-import { ContinuationStorage } from "../runtime/call.js";
+import { canonicalJson } from "../canonical-json.js";
+import { ContinuationBinding, ContinuationStorage } from "../runtime/call.js";
 import { continuationKeys } from "../storage/keys.js";
 import type { KVStorage } from "../types.js";
 
@@ -224,23 +225,34 @@ async function signingKey(storage: KVStorage): Promise<CryptoKey> {
   return key;
 }
 
+const keyUnavailable = () =>
+  new Refusal({
+    error: new ConnectorCallError(
+      "unavailable",
+      "The cursor signing key is unavailable. Retry after storage recovers; a corrupt key requires operator recovery.",
+      { retryable: true },
+    ),
+  });
+
 const keyForCall = ContinuationStorage.use((storage) =>
   storage
-    ? Effect.promise(() => signingKey(storage))
-    : Effect.die(new Error("Bound continuation cursors require storage.")),
+    ? Effect.tryPromise({ try: () => signingKey(storage), catch: keyUnavailable })
+    : Effect.fail(keyUnavailable()),
 );
 
 /**
  * Authenticated base64url JSON `{v, d, c, m}`: the MAC covers the version,
- * tool/argument digest and continuation payload. The deployment store owns
+ * connection/personal-owner binding, tool/argument digest and continuation
+ * payload in a canonical tuple and envelope. The deployment store owns
  * the key across isolates/restarts; limit and cursor are excluded from args.
  */
 export const boundCursor = {
-  encode(tool: string, args: Readonly<Record<string, unknown>>, cursor: string): Effect.Effect<string> {
+  encode(tool: string, args: Readonly<Record<string, unknown>>, cursor: string): Effect.Effect<string, Refusal> {
     return Effect.gen(function* () {
       const d = yield* digest(tool, args);
       const key = yield* keyForCall;
-      const claims = new TextEncoder().encode(JSON.stringify([2, d, cursor]));
+      const binding = yield* ContinuationBinding;
+      const claims = new TextEncoder().encode(canonicalJson([2, binding.connection, binding.principal, d, cursor]));
       const mac = yield* Effect.promise(() => crypto.subtle.sign("HMAC", key, claims));
       const m = base64urlBytes(new Uint8Array(mac));
       return base64url(JSON.stringify({ v: 2, d, c: cursor, m }));
@@ -265,9 +277,14 @@ export const boundCursor = {
       ) {
         return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
       }
+      if (token !== base64url(JSON.stringify({ v: record.v, d: record.d, c: record.c, m: record.m })))
+        return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
       const key = yield* keyForCall;
       const mac = fromBase64url(record.m);
-      const claims = new TextEncoder().encode(JSON.stringify([record.v, record.d, record.c]));
+      const binding = yield* ContinuationBinding;
+      const claims = new TextEncoder().encode(
+        canonicalJson([record.v, binding.connection, binding.principal, record.d, record.c]),
+      );
       const valid = yield* Effect.promise(() => crypto.subtle.verify("HMAC", key, mac, claims));
       if (!valid || base64urlBytes(mac) !== record.m) {
         return yield* Effect.fail(new Refusal({ error: new ConnectorCallError("invalid_args", STRAY_CURSOR) }));
@@ -282,7 +299,7 @@ function digest(tool: string, args: Readonly<Record<string, unknown>>): Effect.E
     .filter((key) => key !== "cursor" && key !== "limit" && args[key] !== undefined)
     .sort()
     .map((key) => [key, args[key]]);
-  const bytes = new TextEncoder().encode(JSON.stringify([tool, shape]));
+  const bytes = new TextEncoder().encode(canonicalJson([tool, shape]));
   return Effect.promise(() => crypto.subtle.digest("SHA-256", bytes)).pipe(
     Effect.map((hash) =>
       Array.from(new Uint8Array(hash).slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join(""),

@@ -1021,13 +1021,14 @@ sent and records nothing: it was never an attempt (`W9`).
 
 ## Writes
 
-Kit write tools reject `[redacted]` placeholders in argument keys and values,
-including embedded and URL-encoded markers, with `invalid_args` before the
-program or any downstream request runs. Standard API hatches apply this
-admission to their request path, query and body on reads too. Obtain the
-original value or omit the field instead of copying a withheld value back.
-For example, repair `{ name: "[redacted]" }` before passing it to a write.
-Legacy non-kit tools and generic remote MCP tools keep their own input rules.
+Kit write tools refuse whole `[redacted]` string values (including decoded
+spellings) and withheld links in argument keys/values with `invalid_args`
+before the program runs. Longer prose may mention the marker: for example,
+`{ body: "the log says [redacted]" }` is accepted. Standard hatches and typed
+kit requests refuse any marker containment in paths and queries, including on
+reads. Obtain the original value/link or omit the field when a whole value is
+withheld. Admission checks agent arguments rather than bodies later composed
+from internal reads. Legacy non-kit and remote MCP tools keep their own rules.
 
 Whether an endpoint writes belongs to deployment code. Every deployment sets
 `readOnly` for `/mcp` explicitly; construction fails without it. Each named pool inherits

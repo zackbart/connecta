@@ -9,7 +9,8 @@ import { guardedClient } from "../src/http/client.js";
 import { RequestRefused, type VendorErrors } from "../src/http/errors.js";
 import { DETAILS_BUDGET_BYTES, hatch, SEARCH_BUDGET } from "../src/http/hatch.js";
 import { boundCursor } from "../src/http/paging.js";
-import { ContinuationStorage } from "../src/runtime/call.js";
+import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
+import { Registry } from "../src/registry.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { Integer } from "../src/http/json-schema.js";
@@ -133,10 +134,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 function setup(
-  options: { revision?: string; deny?: boolean; verdicts?: Parameters<typeof hatch>[0]["verdicts"] } = {},
+  options: {
+    revision?: string;
+    data?: OpenApiData;
+    deny?: boolean;
+    verdicts?: Parameters<typeof hatch>[0]["verdicts"];
+  } = {},
 ) {
   const index = new OperationIndex(
-    { ...DATA, revision: options.revision ?? DATA.revision },
+    { ...(options.data ?? DATA), revision: options.revision ?? DATA.revision },
     { vendor: "items", title: "Items" },
   );
   const reviewed = valueSafety(
@@ -209,11 +215,82 @@ it(
     await expect(
       setup({ revision: "r2" }).call("search", { query: "item", cursor: searchPage.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
+    // Same declared label, different operation content: the old continuation is stale.
+    await expect(
+      setup({ data: { ...DATA, ops: [...DATA.ops].reverse() } }).call("search", {
+        query: "item",
+        cursor: searchPage.page.nextCursor,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      apiConnector("other_items", { tools }).callTool(
+        "items_api_search",
+        {
+          query: "item",
+          cursor: searchPage.page.nextCursor,
+        },
+        connectorContext(storage),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    const personal = apiConnector("items", { tools, authScope: "personal" });
+    const registry = new Registry([personal], { storage, logger: connectorContext(storage).logger });
+    const personalContext = (owner: string) =>
+      registry.personalRegistry(owner).contextFor("items", "https://connecta.example", {});
+    const alicePage = (await personal.callTool(
+      "items_api_search",
+      { query: "item", limit: 1 },
+      personalContext("alice"),
+    )) as { page: { nextCursor: string } };
+    await expect(
+      personal.callTool(
+        "items_api_search",
+        { query: "item", cursor: alicePage.page.nextCursor },
+        personalContext("bob"),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      personal.callTool(
+        "items_api_search",
+        { query: "item", cursor: alicePage.page.nextCursor },
+        personalContext("alice"),
+      ),
+    ).resolves.toHaveProperty("operations");
+    // A wrapper keeps the registry's configured id rather than its inner adapter id.
+    const inner = apiConnector("items", { tools });
+    const aliases = new Registry([{ ...inner, id: "alias_items" }], {
+      storage,
+      logger: connectorContext(storage).logger,
+    });
+    await expect(
+      inner.callTool(
+        "items_api_search",
+        { query: "item", cursor: searchPage.page.nextCursor },
+        aliases.contextFor("alias_items", "https://connecta.example", {}),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    const originalStore = storage;
+    for (const get of [
+      async () => {
+        throw new Error("database offline");
+      },
+      async () => "corrupt-private-material",
+    ]) {
+      storage = { ...originalStore, get };
+      await expect(call("search", { query: "item", limit: 1 })).rejects.toMatchObject({
+        code: "unavailable",
+        retryable: true,
+        message: expect.stringContaining("cursor signing key"),
+      });
+    }
+    storage = originalStore;
     for (const offset of ["", "0", "-1", "1.5", "01", "11", "999999999999999999999"]) {
       const cursor = await runEdge(
         boundCursor
-          .encode("items_api_search", { revision: "r1", query: "item" }, offset)
-          .pipe(Effect.provideService(ContinuationStorage, storage)),
+          .encode("items_api_search", { revision: await index.cursorRevision(), query: "item" }, offset)
+          .pipe(
+            Effect.provideService(ContinuationStorage, storage),
+            Effect.provideService(ContinuationBinding, { connection: "items", principal: null }),
+          ),
       );
       await expect(call("search", { query: "item", cursor })).rejects.toMatchObject({ code: "invalid_args" });
     }
@@ -342,15 +419,19 @@ it(
       const firstCursor = pages[0]?.["page"]?.nextCursor;
       if (firstCursor) {
         const claims = JSON.parse(atob(firstCursor.replace(/-/g, "+").replace(/_/g, "/")));
-        const tampered = btoa(JSON.stringify({ ...claims, c: '{"i":0,"o":1}' }));
+        const tampered = btoa(JSON.stringify({ ...claims, c: '{"i":0,"o":1}' }))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
         await expect(call("details", { ...args, cursor: tampered })).rejects.toMatchObject({ code: "invalid_args" });
-        const scope = { revision: derived.revision, ...args };
+        const label = derived.revision;
+        const scope = { revision: await derived.cursorRevision(), ...args };
         if (call === formsCall) {
           Object.defineProperty(derived, "revision", { value: "v2", configurable: true });
           await expect(call("details", { ...args, cursor: firstCursor })).rejects.toMatchObject({
             code: "invalid_args",
           });
-          Object.defineProperty(derived, "revision", { value: scope.revision, configurable: true });
+          Object.defineProperty(derived, "revision", { value: label, configurable: true });
           for (const at of [
             { i: 0, o: 0 },
             { i: -1, o: 0 },
@@ -361,7 +442,10 @@ it(
             const cursor = await runEdge(
               boundCursor
                 .encode("forms_api_details", scope, JSON.stringify(at))
-                .pipe(Effect.provideService(ContinuationStorage, storage)),
+                .pipe(
+                  Effect.provideService(ContinuationStorage, storage),
+                  Effect.provideService(ContinuationBinding, { connection: "forms", principal: null }),
+                ),
             );
             await expect(call("details", { ...args, cursor })).rejects.toMatchObject({ code: "invalid_args" });
           }
@@ -471,10 +555,13 @@ it(
       boundCursor
         .encode(
           "heavy_api_details",
-          { revision: big.index.revision, method: "POST", path: "/heavy" },
+          { revision: await big.index.cursorRevision(), method: "POST", path: "/heavy" },
           JSON.stringify({ i: 1, o: splitPair }),
         )
-        .pipe(Effect.provideService(ContinuationStorage, storage)),
+        .pipe(
+          Effect.provideService(ContinuationStorage, storage),
+          Effect.provideService(ContinuationBinding, { connection: "heavy", principal: null }),
+        ),
     );
     await expect(big.call("details", { method: "POST", path: "/heavy", cursor: splitCursor })).rejects.toMatchObject({
       code: "invalid_args",
@@ -618,23 +705,55 @@ it("INV-1 INV-3 INV-9: validates and admits only reviewed requests through sendP
       args: { method: "POST", path: "/items", body: { name: "unredacted" } },
       body: '{"name":"unredacted"}',
     },
-    ...["[redacted]", "prefix[redacted]tail", "%5Bredacted%5D"].flatMap((marker) => [
-      { kind: "write", args: { method: "POST", path: "/items", body: { name: marker } }, message: "withheld" },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "alice", payload: { nested: [marker] } } },
-        message: "withheld",
-      },
-      {
-        kind: "write",
-        args: { method: "POST", path: "/items", body: { name: "alice", payload: { [marker]: true } } },
-        message: "withheld",
-      },
-      { kind: "write", args: { method: "POST", path: "/form", body: { name: marker } }, message: "withheld" },
-      { kind: "write", args: { method: "DELETE", path: `/items/${marker}` }, message: "withheld" },
-      { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
-      { kind: "read", args: { method: "POST", path: "/query", body: { filter: marker } }, message: "withheld" },
-    ]),
+    {
+      kind: "write",
+      args: { method: "POST", path: "/items", body: { name: "the log says: Authorization: Bearer [redacted]" } },
+      body: JSON.stringify({ name: "the log says: Authorization: Bearer [redacted]" }),
+    },
+    ...[
+      ["[redacted]", true],
+      ["pre[redacted]", false],
+      ["sk_live_[redacted]", false],
+      ["[redacted][redacted]", false],
+      ["%5Bredacted%5D", true],
+      ["%5bredacted%5d", true],
+      ["%255Bredacted%255D", true],
+      ["%25255Bredacted%25255D", true],
+      ["&#91;redacted&#93;", true],
+      ["&#x5b;redacted&#x5d;", true],
+      ["&lbrack;redacted&rbrack;", true],
+      ["&amp;#91;redacted&amp;#93;", true],
+      ["\\[redacted\\]", true],
+      ["\\u005bredacted\\u005d", true],
+      ["https://x.test/a?token=[redacted]", true],
+      ["https://hooks.test/[redacted]", true],
+      ["Bearer [redacted]", false],
+    ].flatMap(([text, whole]) => {
+      const marker = String(text);
+      const body = { name: marker };
+      const keyed = { name: "alice", payload: { [marker]: "x" } };
+      return [
+        {
+          kind: "write",
+          args: { method: "POST", path: "/items", body },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(body) }),
+        },
+        {
+          kind: "write",
+          args: { method: "POST", path: "/items", body: keyed },
+          ...(whole ? { message: "withheld" } : { body: JSON.stringify(keyed) }),
+        },
+        {
+          kind: "write",
+          args: { method: "DELETE", path: `/items/${encodeURIComponent(marker)}` },
+          message: "withheld",
+        },
+        { kind: "write", args: { method: "DELETE", path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: `/items/i_${marker}` }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { tag: [marker] } }, message: "withheld" },
+        { kind: "read", args: { path: "/items", query: { [marker]: "x" } }, message: "withheld" },
+      ];
+    }),
     { kind: "read", args: { path: "/touch" }, message: "items_api_write" },
     { kind: "write", args: { method: "GET", path: "/items" }, message: "items_api_read" },
     { kind: "read", args: { path: "/blocked" }, message: "refuses" },

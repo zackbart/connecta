@@ -953,7 +953,7 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
         continue;
       }
       if (ancestors.has(item)) {
-        throw new ConnectorCallError("invalid_args", "Not sent: URL admission cannot inspect cyclic JSON.");
+        throw new ConnectorCallError("invalid_args", "Not sent: value admission cannot inspect cyclic JSON.");
       }
       ancestors.add(item);
       pending.push({ value: item, leave: true });
@@ -970,12 +970,25 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
   return false;
 }
 
-/** Kit admission: scalar markers, embedded markers, and their URL-encoded forms are never inputs. */
-export function refuseWithheldValues(value: unknown, title: string): void {
-  if (!carriesString(value, (text) => redactionAltered(text) || redactionAltered(decodeLinkText(text)))) return;
+/** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
+export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
+  if (
+    !carriesString(value, (text) => {
+      const decoded = decodeLinkText(text);
+      if (containment) return redactionAltered(text) || redactionAltered(decoded);
+      if (decoded === REDACTED) return true;
+      for (const candidate of [text, decoded])
+        for (const { start, end } of linkSpans(candidate))
+          if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
+      return false;
+    })
+  )
+    return;
   throw new ConnectorCallError(
     "invalid_args",
-    `Not sent: ${title} arguments carry a value Connecta withheld ([redacted]). Obtain the original value or omit the field; do not write withheld placeholders back.`,
+    containment
+      ? `Not sent: ${title} path or query contains a withheld placeholder ([redacted]). Supply the original path/query value or omit the parameter.`
+      : `Not sent: ${title} arguments contain a whole withheld value ([redacted]) or a withheld link. Supply the original value/link or omit the field. Longer prose may mention the marker.`,
   );
 }
 

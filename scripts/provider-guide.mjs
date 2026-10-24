@@ -127,7 +127,7 @@ export function renderConventions({ name, kind, kit }) {
     if (kit?.hatch !== undefined) api.push(hatchLine(name, kit.hatch));
     if (kit?.refusesWithheld === true) {
       tail.push(
-        '- **Withheld values:** a value withheld for safety reads `"[redacted]"`, and a write that carries one is refused.',
+        '- **Withheld values:** a value withheld for safety reads `"[redacted]"`. Writes refuse whole marker values and withheld links; longer prose may mention the marker. Paths and queries refuse any containment.',
       );
     }
   }

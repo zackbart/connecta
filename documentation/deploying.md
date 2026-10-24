@@ -3,7 +3,8 @@
 Use this guide when creating or maintaining a deployment. For changes to the
 Connecta package itself, follow [repository policy](https://github.com/zackbart/connecta/blob/main/AGENTS.md).
 For work through an already connected endpoint, use [Operating an endpoint](./operating.md).
-[All agent routes](./README.md) are in the index.
+[All agent routes](./README.md) are in the index. For a cursor signing-key error,
+follow [cursor-key recovery](#recover-a-cursor-signing-key).
 
 ## Choose a deployment
 
@@ -275,6 +276,28 @@ The current Node template already declares this dependency.
 - [Worker deployments on Wrangler](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy) move to Alchemy once, adopting the Worker, D1 database, and Access applications so the script tag and Access AUD stay unchanged.
 - [Notion, Vercel, and Cloudflare for 0.29](./provider-migration-0.29.md) records historical defaults and retained API tool names.
 - [Executor wiring](./code-mode.md#deploy-time-capability) requires branded shipped executors or a self-managed custom executor.
+
+## Recover a cursor signing key
+
+Paged API discovery and bound list continuations use one signing key in the
+deployment store. A load failure returns retryable `unavailable` and names the
+cursor signing key without revealing its value. Restore database connectivity
+first, then retry the call. A valid key already cached by a process keeps working.
+
+If the stored key is corrupt, pause incoming traffic and stop every Node process
+(or prepare a fresh Worker version), then delete only this row from the
+existing SQLite/D1 database:
+
+```sql
+DELETE FROM connecta_kv WHERE key = 'continuation-key:v1:signing';
+```
+
+Restart all Node processes or switch all traffic to the fresh Worker version
+before accepting requests again, so no instance retains an older cached key.
+The next paged call creates one replacement key atomically. Do not print or
+inspect its value. Outstanding cursors signed with the old key fail
+`invalid_args`; start each affected search, details walk or list at its first
+page. Other deployment state and credentials remain in the database.
 
 ## Contributor reference
 

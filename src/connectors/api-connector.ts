@@ -1,5 +1,5 @@
 import { credentialProbe } from "../runtime/credential-probe.js";
-import { settleOnClose } from "../runtime/call.js";
+import { ContinuationBinding, serviceFor, setViewService, settleOnClose } from "../runtime/call.js";
 import { registerCallEntry } from "../runtime/call-entry.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
@@ -426,6 +426,10 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       const handlerCtx = deriveContext<ApiHandlerContext>(callCtx, {
         fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
         ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),
+      });
+      setViewService(handlerCtx, ContinuationBinding, {
+        connection: serviceFor(ctx, ContinuationBinding)?.connection || id,
+        principal: serviceFor(ctx, ContinuationBinding)?.principal ?? null,
       });
       let result: unknown;
       try {

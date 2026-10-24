@@ -340,7 +340,7 @@ export function hatch(
       run: (args) =>
         Effect.gen(function* () {
           const scope = {
-            revision: index.revision,
+            revision: yield* Effect.promise(() => index.cursorRevision()),
             query: args.query,
             ...(args.method ? { method: args.method } : {}),
           };
@@ -478,7 +478,7 @@ export function hatch(
           // Bounded pages: every parameter and body property arrives whole on some page, and a
           // piece too large for one page arrives as consecutive chunks of its JSON. Nothing is dropped.
           const scope = {
-            revision: index.revision,
+            revision: yield* Effect.promise(() => index.cursorRevision()),
             method: args.method,
             path: args.path,
             ...(args.param ? { param: args.param } : {}),
@@ -629,7 +629,8 @@ export function hatch(
 
   const run = (kind: "read" | "write", args: CallArgs) =>
     checked((): WriteRequest => {
-      refuseWithheldValues({ path: args.path, query: args.query, body: args.body }, name);
+      refuseWithheldValues({ path: args.path, query: args.query }, name, true);
+      refuseWithheldValues(args.body, name);
       const method = args.method ?? defaultRead;
       const { op } = index.resolve(method, args.path);
       const verdict = verdictOf(op);

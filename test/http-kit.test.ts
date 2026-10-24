@@ -71,7 +71,7 @@ import {
   type Dispatch,
 } from "../src/http/services.js";
 import { typedParams, indexedVendor, restKitTools } from "../src/providers/_shared/rest/kit.js";
-import { ContinuationStorage } from "../src/runtime/call.js";
+import { ContinuationBinding, ContinuationStorage } from "../src/runtime/call.js";
 import { continuationKeys } from "../src/storage/keys.js";
 import { callMemo } from "../src/runtime/call.js";
 import { kitInput, read, write, list, get as getTool, action } from "../src/http/tools.js";
@@ -1182,13 +1182,39 @@ describe("paging (decision 0010, B.4)", () => {
   it("authenticates cursor payloads across storage clients and binds the tool and arguments", WORKERS, async () => {
     const storage = memoryStorage();
     const args = { organizationId: "org_1", order: "asc", limit: 5 };
-    const run = <A, E>(work: Effect.Effect<A, E>, client = storage) =>
-      runEdge(work.pipe(Effect.provideService(ContinuationStorage, client)));
+    const binding = { connection: "giving", principal: "alice" };
+    const run = <A, E>(
+      work: Effect.Effect<A, E>,
+      client = storage,
+      owner: { connection: string; principal: string | null } = binding,
+    ) =>
+      runEdge(
+        work.pipe(
+          Effect.provideService(ContinuationStorage, client),
+          Effect.provideService(ContinuationBinding, owner),
+        ),
+      );
     // Distinct clients model separate processes/isolates racing on first use.
-    const clients = Array.from({ length: 4 }, () => ({ ...storage }));
+    let reads = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const clients = Array.from({ length: 4 }, () => ({
+      ...storage,
+      get: async (key: string) => {
+        const value = await storage.get(key);
+        if (key === continuationKeys.signingKey && value === null) {
+          if (++reads === 4) release();
+          await barrier;
+        }
+        return value;
+      },
+    }));
     const tokens = await Promise.all(
       clients.map((client) => run(boundCursor.encode("list_charges", args, "ch_2"), client)),
     );
+    expect(reads).toBe(4);
     expect(new Set(tokens).size).toBe(1);
     expect(await storage.list("")).toEqual([continuationKeys.signingKey]);
     const token = tokens[0]!;
@@ -1205,7 +1231,7 @@ describe("paging (decision 0010, B.4)", () => {
       { ...claims, m: "a".repeat(43) },
       { ...claims, m: undefined },
     ]) {
-      const forged = btoa(JSON.stringify(altered));
+      const forged = btoa(JSON.stringify(altered)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       const result = await run(Effect.result(boundCursor.decode("list_charges", args, forged)));
       expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
     }
@@ -1218,6 +1244,28 @@ describe("paging (decision 0010, B.4)", () => {
       const result = await run(Effect.result(boundCursor.decode(tool, fields, supplied)), client);
       expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
     }
+    for (const owner of [
+      { connection: "other", principal: "alice" },
+      { connection: "giving", principal: "bob" },
+      { connection: "giving", principal: null },
+    ]) {
+      const result = await run(Effect.result(boundCursor.decode("list_charges", args, token)), storage, owner);
+      expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
+    }
+    // Canonical envelope encoding rejects equivalent reordered/whitespace/extra-key spellings.
+    for (const altered of [
+      JSON.stringify({ m: claims.m, c: claims.c, d: claims.d, v: claims.v }),
+      JSON.stringify(claims, null, 1),
+      JSON.stringify({ ...claims, extra: 1 }),
+    ]) {
+      const forged = btoa(altered).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const result = await run(Effect.result(boundCursor.decode("list_charges", args, forged)));
+      expect(result._tag === "Failure" && result.failure.error.code).toBe("invalid_args");
+    }
+    // Object key order never changes the canonical argument binding.
+    expect(await run(boundCursor.encode("list_charges", { filter: { a: 1, b: 2 } }, "next"))).toBe(
+      await run(boundCursor.encode("list_charges", { filter: { b: 2, a: 1 } }, "next")),
+    );
     // Warm calls cache only the imported key, and a failed load can be retried.
     const get = vi.spyOn(cold, "get");
     await run(boundCursor.encode("list_charges", args, "ch_3"), cold);
@@ -1226,8 +1274,19 @@ describe("paging (decision 0010, B.4)", () => {
       ...storage,
       get: vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(storage.get),
     };
-    await expect(run(boundCursor.encode("list_charges", args, "ch_2"), broken)).rejects.toThrow();
+    const outage = await run(Effect.result(boundCursor.encode("list_charges", args, "ch_2")), broken);
+    expect(outage._tag === "Failure" && outage.failure.error).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+      message: expect.stringContaining("cursor signing key"),
+    });
     expect(await run(boundCursor.encode("list_charges", args, "ch_2"), broken)).toBe(token);
+    for (const corrupt of ["private-corrupt-key", "", "ff".repeat(31)]) {
+      const client = { ...storage, get: async () => corrupt };
+      const result = await run(Effect.result(boundCursor.encode("list_charges", args, "ch_2")), client);
+      expect(result._tag === "Failure" && result.failure.error).toMatchObject({ code: "unavailable", retryable: true });
+      if (corrupt) expect(result._tag === "Failure" && result.failure.error.message).not.toContain(corrupt);
+    }
   });
 
   it("streams every row across pages with one cursor rule", NODE, async () => {
