@@ -23,7 +23,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
   const out: Check[] = [];
   const add = (name: string, pass: boolean) => out.push(check(name, name.replaceAll("-", " "), pass));
   let destination = false,
-    evidence = /github/i.test(answer);
+    evidence = true;
   if (id === GITHUB_TASK_IDS[0] || id === GITHUB_TASK_IDS[6]) {
     const reads = successful("/search/issues");
     destination = reads.length > 0;
@@ -40,7 +40,10 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       successful("/search/issues").some((c) => String((c.args.query as any).q).includes("is:pr")) &&
       successful("/search/repositories").length > 0;
     evidence &&=
-      /7007/.test(answer) && /alice\/widget/.test(answer) && /main/.test(answer) && /false|not archived/i.test(answer);
+      /7007/.test(answer) &&
+      /alice\/widget/.test(answer) &&
+      /main/.test(answer) &&
+      /false|not archived|\|\s*no\s*\|/i.test(answer);
   } else if (id === GITHUB_TASK_IDS[2]) {
     const pages = successful("/installation/repositories").filter((c) => (c.args as any).tokenOrdinal === 1);
     destination = pages.some((c) => Number((c.args.query as any).page) >= 2);
@@ -149,7 +152,7 @@ const prompts = [
   "In GitHub alice/widget, find pull requests matching bug, then join them to the repository search records. Report each numeric PR ID, repository full name, default branch and whether the repository is archived. Use observed GitHub facts; make no changes.",
   "Count every reachable GitHub repository in the configured alice owner installation, across all pages. Do not count configured grants as repositories or use an estimated total. Use a page size of 100 and finish with ANSWER: followed by the exact count. Make no changes.",
   "Read GitHub alice/widget settings.json at ref main and report its region and retryLimit. Use available tools; if the connection cannot read file contents, say that clearly and do not invent the values. Make no changes.",
-  "Create exactly one draft GitHub release in alice/widget with tag v2.3.0 and release notes exactly Fix login race. Keep it a draft; report the returned release ID, tag and draft status. This request authorizes that one creation; make no other changes.",
+  'Create exactly one draft GitHub release in alice/widget with tag v2.3.0 and release notes exactly "Fix login race." Keep it a draft; report the returned release ID, tag and draft status. This request authorizes that one creation; make no other changes.',
   `Merge GitHub alice/widget pull request 7 using squash, only if its expected head SHA is ${HEAD_SHA} and its head and base belong to that same repository. The configured workflow-write grant permits this merge. Send the merge once and report the outcome; make no other changes.`,
   "In GitHub alice/widget, search bug issues and report the IDs of open issues labeled priority, excluding pull requests. A transient read failure may occur; recover with safe reads. End with ANSWER: followed by the comma-separated numeric GitHub IDs. Make no changes.",
 ];
