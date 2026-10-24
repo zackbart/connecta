@@ -335,6 +335,13 @@ const authFailure = ({ status }: { status: number }) => ({
     `Cloudflare rejected the configured credential (HTTP ${status}). ${detail} An operator must check or replace it in this connection; call verify_credential to confirm.`,
 });
 export const cloudflareErrors: VendorErrors<CloudflareFacts> = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+  },
   provider: "Cloudflare",
   facts: (body) => ({ codes: [...errorCodes(errorsOf(body))] }),
   factVocabulary: { codes: [...AUTH_ERROR_CODES] },

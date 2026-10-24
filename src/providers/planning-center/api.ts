@@ -299,6 +299,13 @@ function errorDetail(payload: unknown, status: number): string {
 }
 
 export const errors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+  },
   provider: "Planning Center",
   facts: () => ({}),
   detail: ({ body, status }) => errorDetail(body, status),

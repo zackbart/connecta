@@ -183,6 +183,13 @@ function bodyDetail(text: string): string {
 // These account-wide keys have no scopes: 401 and 403 both mean key recovery;
 // a 404 is an absent endpoint or record. No evidence establishes auth before execution.
 export const errors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+  },
   provider: "Breeze",
   facts: () => ({}),
   detail: ({ body }) => bodyDetail(typeof body === "string" ? body : ""),

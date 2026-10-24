@@ -226,7 +226,11 @@ placeholders.
   advertised as retryable once it may have reached the vendor.
   Declare each value-keyed body rule's closed public values in `factVocabulary`,
   sharing constants with the rule so classification survives sent-secret
-  redaction while diagnostic facts and text stay redacted. Enable
+  redaction while diagnostic facts and text stay redacted. Declare
+  each numeric classifier or retry source through `numericFacts` with an exact
+  body path or lowercase header, a review and its integer/delay format; name
+  the standard Retry-After fact `retryAfterMs`. Rules receive parsed bounded
+  numbers from before redaction; wording receives only redacted sources. Enable
   `inBandRefusals` only when a result hook needs the whole response's declared
   facts to classify a refusal on a successful response.
 - **S5 `fields`:** every named read and `_api_read`/`_api_write` take

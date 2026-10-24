@@ -1,6 +1,5 @@
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
-import { retryAfterMs } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
@@ -57,16 +56,6 @@ export function truthy(value: unknown): boolean {
   return value === true || value === 1 || (typeof value === "string" && /^(?:1|true)$/i.test(value.trim()));
 }
 
-function resetAfterMs(headers: Headers): number | undefined {
-  const retryAfter = retryAfterMs(headers);
-  if (retryAfter !== undefined) return retryAfter;
-  const raw = headers.get("x-ratelimit-reset");
-  if (!raw) return undefined;
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds)) return undefined;
-  return Math.max(0, Math.trunc(seconds * 1_000 - Date.now()));
-}
-
 /**
  * Error codes a secret-family failure may name: Vercel's documented generic
  * codes and its environment-variable conflicts. Anything else is withheld,
@@ -94,9 +83,20 @@ export function reviewedCode(value: unknown): string | undefined {
 }
 
 export const vercelErrors: VendorErrors = {
+  numericFacts: {
+    retryAfterMs: {
+      header: "retry-after",
+      format: "retry-after",
+      review: "HTTP Retry-After delay for failure recovery.",
+    },
+    resetAfterMs: {
+      header: "x-ratelimit-reset",
+      format: "epoch-seconds",
+      review: "Vercel endpoint rate-limit reset time in epoch seconds.",
+    },
+  },
   provider: "Vercel",
   facts: (body) => ({ code: reviewedCode(record(record(body)["error"])["code"]) }),
-  headers: ["x-ratelimit-reset"],
   detail: ({ body, status, withheld, facts }) => {
     const root = record(withholdEmbeddedUrlsIn(body));
     const error = record(root["error"]);
@@ -109,9 +109,9 @@ export const vercelErrors: VendorErrors = {
       : (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
   },
   statuses: {
-    429: ({ headers, retryAfterMs }) => ({
+    429: ({ numbers, retryAfterMs }) => ({
       code: "rate_limited",
-      retryAfterMs: retryAfterMs ?? resetAfterMs(new Headers(headers)),
+      retryAfterMs: retryAfterMs ?? numbers["resetAfterMs"],
       words: (detail) => `${detail} Vercel meters endpoints separately.`,
       advice: "; wait for the reported reset before retrying this operation",
     }),
@@ -133,9 +133,9 @@ export const vercelErrors: VendorErrors = {
     400: () => ({ code: "invalid_args" }),
     409: () => ({ code: "invalid_args" }),
     422: () => ({ code: "invalid_args" }),
-    serverError: ({ headers, retryAfterMs }) => ({
+    serverError: ({ numbers, retryAfterMs }) => ({
       code: "unavailable",
-      retryAfterMs: retryAfterMs ?? resetAfterMs(new Headers(headers)),
+      retryAfterMs: retryAfterMs ?? numbers["resetAfterMs"],
       words: (detail) => `${detail} Vercel is failing upstream.`,
     }),
   },
