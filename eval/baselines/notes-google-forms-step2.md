@@ -1,0 +1,218 @@
+# Google Forms step 2 evaluation (#703)
+
+Seven fake-only workflows compare the six named Forms tools on main with the
+standard surface's six retained names and four indexed hatches. The paired
+matrix completes **56 trials**, with no reruns or rescoring: **17/28 BEFORE →
+20/28 AFTER**. The [JSON summary](./google-forms-step2.json) retains source,
+protocol and CLI metadata, every trial's outcome and metrics, attempted tools,
+discovery sizes, failed checks, and exact write destinations/bodies. Original
+JSON, complete transcripts and saved grading inputs remain under
+`/home/zackbart/.t3/scratch/connecta-orchestrator/step2/forms/`.
+
+## Frozen protocol and provenance
+
+BEFORE is clean main `ff3f7c3b9cbf0e8958599834850876c24ab64d7e`, source tree
+`d5e26d1d940e`. AFTER is clean `7ec41a1fc9e61708f5c15be23c4d233d972f2a4b`, source
+tree `2edb103a3775`. Both include the frozen route-neutral graders, checker fixes
+and caller-bound cursors from #1011/#1013, and the independently merged H1.
+The later reporting commit changes no production source. Main was fetched again
+for handoff and remained at the BEFORE commit.
+
+Codex CLI `0.163.0` uses `gpt-6-luna`; Claude Code `2.1.309` uses
+`claude-sonnet-5-5`. Each arm has two repeats of each of the seven tasks, default
+effort, `six` surface, `route` grading, and an eight-minute trial deadline on
+Node `26.12.0`, linux-x64. One serial batch per runner allows at most two Forms
+trials concurrently. Each runner finishes BEFORE before starting AFTER. Pair id:
+`google-forms-step2-2026-10-24`. Cache conditions are ordinary CLI defaults;
+there is no cache reset or cache matching. Fake credentials pass the neutral
+substring guard. No real Workspace data call or service-account token mint is
+used.
+
+All task prompts, graders, fake responses and paid-trial reference definitions
+are byte-identical. The only changed file in the frozen task/fake/harness tree
+is the explicitly approved **surface adapter**, committed separately as
+`7ec41a1f`: [google-controls.ts:250](../tasks/google-controls.ts) now selects
+`items ?? responses`. An `items` result must have `page.hasMore === false` and
+omit `nextCursor`; the legacy result retains its null terminal cursor check.
+Both branches require an empty array, so a non-empty result still fails. The
+original failure was at line 247; the changed expectation is now lines 245–256,
+with row selection at **line 250**.
+
+There is no checked-in per-file frozen-hash manifest to refresh. The explicit
+file audit in the summary has exactly one changed row, `eval/tasks/google-controls.ts`:
+`cf6d73782e7820287aaaa3e65275d9534b7df9e57a9697b5307fdb3e25bd3a75` →
+`51bc61da3eebc0b41a390a05a5efbb8755a0ac22ab1da7809f56f07c498edf3b`.
+The harness fingerprints the whole task directory, so this approved control
+changes the aggregate task hash from
+`56e66bd447b3fb1ed8bcd6a56d4c9623c86db9c6a3e7f4a7a7c8cece2b130edd` to
+`2de39234aca7099f03c19f57e82c59e57bbcec5b0c82ef8984cd80df9715f1ea`.
+The harness hash remains
+`6b137f4efc0796a786185600fa89c30cfa738911ec208081de3406a225fa04ca`.
+No grader, prompt or fake changed, and no paid outcome was revised.
+
+The BEFORE scripted references pass the frozen graders without adaptation.
+AFTER selftests use an external, reference-only preload for F4: its old
+`get_form({raw:true})` call becomes `forms_api_read({path:"/forms/forms1"})`,
+unwrapping the vendor Form from `reply.data`. The preload does not modify the
+on-disk task file, prompts, graders or fakes, and **is never loaded in paid
+trials**. Its artifact is `forms-reference-adapter.mjs` in the directory above,
+SHA-256 `ddbc36bba8eee60e688c2c5f941a1bb303f424396ccede4d89ba8332318066ac`.
+Both references pass all seven tasks on six/code surfaces and route/outcome
+grading, including negative and saved-input checks. Reproduce the AFTER check
+with `node --import tsx --import <artifact-directory>/forms-reference-adapter.mjs
+eval/selftest.ts --tasks google-forms-1,google-forms-2,google-forms-3,google-forms-4,google-forms-5,google-forms-6,google-forms-7`.
+The initial control failure and final passing logs are retained separately.
+
+| Original artifact | SHA-256 |
+| --- | --- |
+| `before-luna.json` | `6e1d5dba50fa81e5349f91eae3ea18e2c7410340ce4de382b215daa219cb9711` |
+| `before-sonnet.json` | `ff2f03866c95ebb068d84bae8f94b069fad922a9c19dbf7706512f7f56d342f9` |
+| `after-luna.json` | `e3c9fd0c9eb2d64b8aae2fc40027176befee2ab2e0026fe7ef73791905fd84fd` |
+| `after-sonnet.json` | `dd4bf3d1000e58db506a91658cc6b17d49c008a4abb29d9f93dedc084dbcfb50` |
+
+## Outcomes and regression analysis
+
+All seven tasks preserve existing capabilities; Forms has no new-coverage row.
+The existing-capability score therefore equals the all-task score.
+
+| Task | BEFORE Luna | AFTER Luna | BEFORE Sonnet | AFTER Sonnet |
+| --- | --- | --- | --- | --- |
+| F1 filtered responses | 1/2 | 1/2 | 2/2 | 2/2 |
+| F2 question/response join | 0/2 | 0/2 | 0/2 | 0/2 |
+| F3 complete paging | 0/2 | 1/2 | 2/2 | 2/2 |
+| F4 quiz/navigation edit | 0/2 | 1/2 | 2/2 | 2/2 |
+| F5 create question once | 1/2 | 2/2 | 2/2 | 2/2 |
+| F6 reconcile uncertain rename | 1/2 | 1/2 | 2/2 | 2/2 |
+| F7 stale revision recovery | 2/2 | 2/2 | 2/2 | 2/2 |
+| **Total** | **5/14** | **8/14** | **12/14** | **12/14** |
+
+No task's pass count declines. Luna gains one completion each in paging, rare
+metadata/editing and the write-once task. This small correlated sample cannot
+establish causation or production reliability.
+
+The failures remain significant:
+
+- Luna treats the supplied `forms1` id as a name to search in Drive in several
+  trials. BEFORE F1 #1, F3 #1/#2, F4 #1 and F6 #2 never read the requested form.
+  AFTER F1 #1, F3 #1, F6 #1 and F2 #2 make the same mistake. The last is a
+  qualitative regression hidden by F2's unchanged failing score: both BEFORE
+  joins read the right facts, while AFTER #2 never reaches them. It also makes
+  an invalid `connecta.describe({connector,query})` attempt. No tool error
+  establishes that the supplied form id was unavailable.
+- Both Sonnet joins in each arm, both BEFORE Luna joins, and AFTER Luna F2 #1
+  correctly read the question and two responses but return a different JSON
+  structure from the frozen expected `questionId`, `title`, `answers` shape.
+  The prompt lists the top-level keys but does not spell out the nested
+  `answers: [{id,value}]` structure, which limits what these format failures
+  establish about workflow quality. Those answer-evidence failures stay failed.
+  BEFORE Luna F5 #1 creates the correct
+  question once but omits `source` from its final JSON; that also stays failed.
+- BEFORE Luna F4 #2 and AFTER F4 #1 send malformed `updateItem` requests missing
+  the required location. The fake faults, the option remains unchanged, and
+  both agents read back without replay. AFTER #1 also returns `correct` as an
+  array rather than the expected scalar. AFTER #2 uses structural hatch
+  discovery/read and completes the edit while preserving grading/navigation.
+- Sonnet AFTER F4 #1 first guesses a native `forms_api_details` tool on the
+  six-tool surface, then supplies an unsupported `method` key to the read
+  hatch. It repairs the call and passes. Luna AFTER F5 #1 repairs an invalid
+  `connecta.describe({query})` attempt and passes. These failed discovery/call
+  attempts remain in the telemetry.
+
+## Calls, discovery, time and tokens
+
+| Arm/model | MCP calls total / mean | HTTP reads / writes | Mean discovery bytes | Max cumulative / reply bytes | Mean wall time |
+| --- | --- | --- | --- | --- | --- |
+| BEFORE Luna | 77 / 5.50 | 48 / 8 | 16,942 | 25,300 / 13,602 | 17.33 s |
+| AFTER Luna | 99 / 7.07 | 81 / 9 | 32,295 | 54,234 / 15,451 | 21.30 s |
+| BEFORE Sonnet | 73 / 5.21 | 73 / 10 | 14,287 | 54,271 / 36,820 | 13.94 s |
+| AFTER Sonnet | 68 / 4.86 | 68 / 10 | 14,756 | 28,393 / 12,959 | 13.64 s |
+
+MCP counts include failed calls to the six exposed meta tools and execute_code;
+Sonnet's one unavailable native-tool guess is recorded separately. HTTP counts
+are physical ledger dispatches, including stale-write refusals and injected
+post-commit failures. OAuth mints are separate: BEFORE Luna/Sonnet 15/16, AFTER
+18/16. There are no trial timeouts, CLI auth/rate-limit stops or batch retries.
+
+Discovery bytes count UTF-8 top-level search/description/guide and Forms hatch
+search/details replies, plus compact JSON received by guest
+`connecta.search/describe/skill` and hatch discovery calls. Program output is not
+counted a second time. The largest actual Forms hatch discovery reply is
+15,451 B, within its budget; the larger BEFORE Sonnet reply is shared catalog
+discovery. Luna's discovery cost, calls, HTTP reads and latency increase, and
+Sonnet's mean cumulative discovery bytes also increase slightly. These results
+do not demonstrate an overall efficiency improvement.
+
+| Arm/model | Input tokens | Output | Cache read | Cache creation | API-equivalent USD |
+| --- | --- | --- | --- | --- | --- |
+| BEFORE Luna | 316,855 | 8,111 | 1,332,992 | 0 | unknown |
+| AFTER Luna | 421,376 | 10,392 | 1,973,888 | 0 | unknown |
+| BEFORE Sonnet | 148 | 12,044 | 513,657 | 99,600 | 0.570502 |
+| AFTER Sonnet | 148 | 11,524 | 573,494 | 101,632 | 0.579413 |
+
+Claude cost is API-equivalent telemetry from subscription CLI runs, not an
+invoice. Luna does not report a dollar cost; unknown does not mean zero.
+
+## Writes, recovery and tool retention
+
+All **37 physical write attempts** target only `POST /forms/forms1:batchUpdate`.
+They include eight deliberately stale revision refusals and the two malformed
+rare-edit attempts described above. There are **zero duplicate writes and zero
+unauthorized requests**. F6's six completed recovery workflows each send one
+rename, observe its post-commit 500, read back and do not resend. Two Luna F6
+trials never reach the target. Every F7 trial re-reads after its stale attempt
+and applies one authorized edit at the new revision. There are no authorization
+calls, URL elicitations, permission denials or confirmation nudges.
+
+| Tool attempted | BEFORE Luna | AFTER Luna | BEFORE Sonnet | AFTER Sonnet |
+| --- | --- | --- | --- | --- |
+| `get_form` | 14 | 12 | 17 | 13 |
+| `get_response` | 4 | 2 | 4 | 4 |
+| `list_responses` | 3 | 17 | 23 | 20 |
+| `batch_update_form` | 3 | 4 | 4 | 4 |
+| `update_form_info` | 5 | 5 | 6 | 6 |
+| `create_form` | 0 | 0 | 0 | 0 |
+| `forms_api_search` | — | 4 | — | 0 |
+| `forms_api_details` | — | 1 | — | 0 |
+| `forms_api_read` | — | 3 | — | 6 |
+| `forms_api_write` | — | 0 | — | 0 |
+
+Counts include direct calls, observed guest calls and failed attempts; the
+unavailable native-tool guess is excluded from this registered-tool table.
+The JSON also records Drive discovery and failures. All six named tools remain
+under the approved retention ruling. In particular, zero `create_form` calls
+in these seven workflows does not authorize retirement. No new named tool or
+batch-wrapper retirement is proposed. The hatch write boundary has deterministic
+direct/native/execute_code coverage; these models chose retained writers.
+
+## Deterministic and size evidence
+
+Post-merge Forms/delegation/standards/conventions checks pass **190/190**; both
+previous checker failures pass. Full Node collection at the paired commits is
+**4,205 → 4,205**, with identical counts in every file: **net test delta 0**.
+The Forms caller-isolation row exercises real
+named and hatch cursors: delegated B receives `invalid_args` with no token mint
+or API send, while A continues to the second response. All custom Forms cursors
+use signed bound cursors; no legacy unsigned continuation is emitted.
+
+All-provider Node goldens pass with `CONNECTA_GOLDENS_DETERMINISM=1` (**16/16**),
+and all-provider workerd goldens pass (**16/16**). Only Forms stored goldens
+change: four names added; real schemas/fields and raw removal; standard items,
+terminal cursor omission and truncation paths; standard errors; plain guide and
+generated Conventions. Phase-1 evidence additionally includes the failure sweep
+(441), cross-provider provenance/privacy/registry/purity/package checks, native
+and execute_code cases, workerd delegation/hatch/native probes, Node 24 Eve checks
+(5) and packed-consumer smoke. Public contract checking reports no drift.
+`check:static` and `check:build` pass after the main merge; root/Worker/UI bundle
+caps pass. Checks use `VITEST_MAX_WORKERS=2`. No full local `pnpm run check` runs;
+the required full CI gate remains the merge requirement.
+
+The same measurement toolchain against exact BEFORE `ff3f7c3b` gives Forms
+**353,598 → 371,901 B gzip (+18,303 B)** and all-six deployment
+**417,651 → 436,748 B (+19,097 B)**. The actual generated Forms module is
+30,034 B text / 5,533 B gzip with ten indexed methods and five admitted methods.
+Publish settings and every watch operation remain refused before authentication.
+Responses, respondent emails and quiz answers remain requested user data under
+S6; temporary `Image.contentUri` destinations are permanently withheld across
+named and hatch result shapes. H5 is folded in; H9 is characterized without a
+deadline change. Loaded-host cold/warm timing samples are retained in the scratch
+artifacts and are not an SLA.
